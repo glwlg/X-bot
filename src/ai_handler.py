@@ -47,7 +47,12 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         
         summary = await summarize_webpage(urls[0])
-        await thinking_msg.edit_text(summary, parse_mode="Markdown")
+        try:
+            await thinking_msg.edit_text(summary, parse_mode="Markdown")
+        except BadRequest as e:
+            # Fallback to plain text if Markdown parsing fails
+            logger.warning(f"Markdown parsing failed for web summary: {e}, falling back to plain text.")
+            await thinking_msg.edit_text(summary, parse_mode=None)
         
         # 记录统计
         from stats import increment_stat

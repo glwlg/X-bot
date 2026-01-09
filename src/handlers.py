@@ -12,6 +12,22 @@ from downloader import download_video
 
 logger = logging.getLogger(__name__)
 
+WELCOME_MESSAGE = (
+    "👋 <b>欢迎使用多平台媒体助手！</b>\n\n"
+    "我是一个功能强大的 AI 助手，支持以下功能：\n\n"
+    "🎬 <b>多媒体处理</b>\n"
+    "• 下载 YouTube, X, TikTok, Bilibili 视频\n"
+    "• 支持视频转音频 (MP3) 下载\n"
+    "• 视频/图片内容 AI 分析\n\n"
+    "🤖 <b>AI 智能助手</b>\n"
+    "• 多轮上下文对话\n"
+    "• 语音转文字与回复\n"
+    "• 网页链接自动摘要\n"
+    "• 文档分析 (PDF/Word)\n"
+    "• AI 绘画\n\n"
+    "请点击下方按钮开始使用："
+)
+
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """处理 /start 命令，显示欢迎消息和功能菜单"""
@@ -35,19 +51,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_html(
-        "👋 <b>欢迎使用多平台媒体助手！</b>\n\n"
-        "我是一个功能强大的 AI 助手，支持以下功能：\n\n"
-        "🎬 <b>多媒体处理</b>\n"
-        "• 下载 YouTube, X, TikTok, Bilibili 视频\n"
-        "• 支持视频转音频 (MP3) 下载\n"
-        "• 视频/图片内容 AI 分析\n\n"
-        "🤖 <b>AI 智能助手</b>\n"
-        "• 多轮上下文对话\n"
-        "• 语音转文字与回复\n"
-        "• 网页链接自动摘要\n"
-        "• 文档分析 (PDF/Word)\n"
-        "• AI 绘画 (Imagen 3)\n\n"
-        "请点击下方按钮开始使用：",
+        WELCOME_MESSAGE,
         reply_markup=reply_markup,
     )
 
@@ -178,19 +182,7 @@ async def back_to_main_and_cancel(update: Update, context: ContextTypes.DEFAULT_
     
     try:
         await query.edit_message_text(
-            "👋 <b>欢迎使用多平台媒体助手！</b>\n\n"
-            "我是一个功能强大的 AI 助手，支持以下功能：\n\n"
-            "🎬 <b>多媒体处理</b>\n"
-            "• 下载 YouTube, X, TikTok, Bilibili 视频\n"
-            "• 支持视频转音频 (MP3) 下载\n"
-            "• 视频/图片内容 AI 分析\n\n"
-            "🤖 <b>AI 智能助手</b>\n"
-            "• 多轮上下文对话\n"
-            "• 语音转文字与回复\n"
-            "• 网页链接自动摘要\n"
-            "• 文档分析 (PDF/Word)\n"
-            "• AI 绘画 (Imagen 3)\n\n"
-            "请点击下方按钮开始使用：",
+            WELCOME_MESSAGE,
             parse_mode="HTML",
             reply_markup=reply_markup,
         )
@@ -325,19 +317,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
-                "👋 <b>欢迎使用多平台媒体助手！</b>\n\n"
-                "我是一个功能强大的 AI 助手，支持以下功能：\n\n"
-                "🎬 <b>多媒体处理</b>\n"
-                "• 下载 YouTube, X, TikTok, Bilibili 视频\n"
-                "• 支持视频转音频 (MP3) 下载\n"
-                "• 视频/图片内容 AI 分析\n\n"
-                "🤖 <b>AI 智能助手</b>\n"
-                "• 多轮上下文对话\n"
-                "• 语音转文字与回复\n"
-                "• 网页链接自动摘要\n"
-                "• 文档分析 (PDF/Word)\n"
-                "• AI 绘画 (Imagen 3)\n\n"
-                "请点击下方按钮开始使用：",
+                WELCOME_MESSAGE,
                 parse_mode="HTML",
                 reply_markup=reply_markup,
             )
