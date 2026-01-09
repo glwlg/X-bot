@@ -37,10 +37,16 @@ async def get_user_stats_text(user_id: int) -> str:
     return (
         "📊 <b>您的使用统计</b>\n\n"
         f"💬 AI 对话次数：{stats.get('ai_chats', 0)}\n"
+        f"🎤 语音对话次数：{stats.get('voice_chats', 0)}\n"
+        f"📄 文档分析次数：{stats.get('doc_analyses', 0)}\n"
+        f"🌍 翻译消息数：{stats.get('translations_count', 0)}\n"
         f"📹 视频下载次数：{stats.get('downloads', 0)}\n"
         f"🎨 图片生成次数：{stats.get('image_generations', 0)}\n"
         f"🔍 图片分析次数：{stats.get('photo_analyses', 0)}\n"
-        f"🎬 视频分析次数：{stats.get('video_analyses', 0)}\n\n"
+        f"🎬 视频分析次数：{stats.get('video_analyses', 0)}\n"
+        f"📝 视频摘要次数：{stats.get('video_summaries', 0)}\n"
+        f"⏰ 设置提醒次数：{stats.get('reminders_set', 0)}\n"
+        f"📢 添加订阅次数：{stats.get('subscriptions_added', 0)}\n\n"
         f"📅 首次使用：{first_use}\n"
         f"📅 最近使用：{last_use}"
     )

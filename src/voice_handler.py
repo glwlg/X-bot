@@ -84,7 +84,7 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
             await thinking_msg.edit_text(response.text)
             # 记录统计
             from stats import increment_stat
-            increment_stat(user_id, "ai_chats")
+            await increment_stat(user_id, "voice_chats")
         else:
             await thinking_msg.edit_text("抱歉，我无法识别这段语音。请稍后再试。")
         

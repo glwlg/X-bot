@@ -932,6 +932,9 @@ async def _process_remind(update: Update, context: ContextTypes.DEFAULT_TYPE, ti
         f"👌 已设置提醒：{message}\n"
         f"⏰ 将在 {display_time} 提醒你。"
     )
+    # 统计
+    from stats import increment_stat
+    await increment_stat(user_id, "reminders_set")
     return True
 
 
@@ -1038,6 +1041,11 @@ async def _process_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE,
         try:
             await add_subscription(user_id, url, title)
             await msg.edit_text(f"✅ **订阅成功！**\n\n源：{title}\nBot 将每 30 分钟检查一次更新。")
+            
+            # 统计
+            from stats import increment_stat
+            await increment_stat(user_id, "subscriptions_added")
+            
             return True
         except Exception as e:
             if "UNIQUE constraint failed" in str(e):
@@ -1184,6 +1192,18 @@ async def list_subs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await update.message.reply_text(msg, parse_mode="Markdown")
 
 
+async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理 /stats 命令"""
+    if not await check_permission(update):
+        return
+
+    from stats import get_user_stats_text
+    user_id = update.effective_user.id
+    stats_text = await get_user_stats_text(user_id)
+    
+    await update.message.reply_html(stats_text)
+
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """取消当前操作"""
     await update.message.reply_text(
@@ -1301,4 +1321,4 @@ async def handle_video_actions(update: Update, context: ContextTypes.DEFAULT_TYP
         
         # 统计
         from stats import increment_stat
-        await increment_stat(user_id, "ai_chats")
+        await increment_stat(user_id, "video_summaries")

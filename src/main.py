@@ -47,6 +47,7 @@ from handlers import (
     monitor_command,
     handle_monitor_input,
     handle_video_actions,
+    stats_command,
 )
 from ai_handler import handle_ai_chat, handle_ai_photo, handle_ai_video
 from voice_handler import handle_voice_message
@@ -208,6 +209,7 @@ def main() -> None:
     application.add_handler(monitor_conv_handler)
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
     application.add_handler(CommandHandler("list_subs", list_subs_command))
+    application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(video_conv_handler)
     application.add_handler(image_conv_handler)
     

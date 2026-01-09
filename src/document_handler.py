@@ -139,7 +139,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await thinking_msg.edit_text(response.text)
             # 记录统计
             from stats import increment_stat
-            increment_stat(user_id, "ai_chats")
+            await increment_stat(user_id, "doc_analyses")
         else:
             await thinking_msg.edit_text("抱歉，我无法分析这个文档。请稍后再试。")
         

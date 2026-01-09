@@ -105,6 +105,9 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             if response.text:
                 await thinking_msg.edit_text(f"🌍 **译文**\n\n{response.text}", parse_mode="Markdown")
+                # 统计
+                from stats import increment_stat
+                await increment_stat(user_id, "translations_count")
             else:
                 await thinking_msg.edit_text("❌ 无法翻译。")
         except Exception as e:

@@ -45,10 +45,38 @@ async def init_db():
                 image_generations INTEGER DEFAULT 0,
                 photo_analyses INTEGER DEFAULT 0,
                 video_analyses INTEGER DEFAULT 0,
+                voice_chats INTEGER DEFAULT 0,
+                doc_analyses INTEGER DEFAULT 0,
+                video_summaries INTEGER DEFAULT 0,
+                translations_count INTEGER DEFAULT 0,
+                reminders_set INTEGER DEFAULT 0,
+                subscriptions_added INTEGER DEFAULT 0,
                 first_use TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_use TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        
+        # 简单迁移逻辑：检查并添加新字段 (针对旧数据库)
+        try:
+            async with db.execute("PRAGMA table_info(user_stats)") as cursor:
+                columns = [row[1] for row in await cursor.fetchall()]
+                
+            new_columns = [
+                ("voice_chats", "INTEGER DEFAULT 0"),
+                ("doc_analyses", "INTEGER DEFAULT 0"),
+                ("video_summaries", "INTEGER DEFAULT 0"),
+                ("translations_count", "INTEGER DEFAULT 0"),
+                ("reminders_set", "INTEGER DEFAULT 0"),
+                ("subscriptions_added", "INTEGER DEFAULT 0"),
+            ]
+            
+            for col_name, col_def in new_columns:
+                if col_name not in columns:
+                    await db.execute(f"ALTER TABLE user_stats ADD COLUMN {col_name} {col_def}")
+                    logger.info(f"Added column {col_name} to user_stats")
+                    
+        except Exception as e:
+            logger.error(f"Migration error: {e}")
         
         # 提醒任务表
         await db.execute("""
@@ -159,7 +187,11 @@ async def get_chat_history(user_id: int, limit: int = 10) -> list[dict]:
 # --- 用户统计操作 ---
 
 async def increment_stat(user_id: int, stat_name: str, count: int = 1):
-    valid_stats = {"ai_chats", "downloads", "image_generations", "photo_analyses", "video_analyses"}
+    valid_stats = {
+        "ai_chats", "downloads", "image_generations", "photo_analyses", 
+        "video_analyses", "voice_chats", "doc_analyses", "video_summaries",
+        "translations_count", "reminders_set", "subscriptions_added"
+    }
     if stat_name not in valid_stats:
         logger.error(f"Invalid stat name: {stat_name}")
         return
