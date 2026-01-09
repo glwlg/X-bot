@@ -123,19 +123,19 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # 1. 尝试提取引用消息中的 URL 并获取内容
         reply_urls = []
         
+        # DEBUG LOG
+        logger.info(f"Checking reply_to message {reply_to.message_id} for URLs")
+        
         # A. 从实体（超链接/文本链接）提取
         entities = reply_to.entities or reply_to.caption_entities or []
         for entity in entities:
+            logger.info(f"Found entity: {entity.type} at offset {entity.offset}")
             if entity.type == "text_link":
                 # Markdown/HTML 链接 [text](url)
                 reply_urls.append(entity.url)
             elif entity.type == "url":
                 # 纯文本 URL，需要从文本中截取
                 text = reply_to.text or reply_to.caption or ""
-                # offset 和 length 是 utf-16 编码单元，Python 字符串是 unicode，
-                # 对于大多数字符通常直接切片是可以的，但如果有 emoji 可能有偏差。
-                # PTB 提供了 parse_text_entities / parse_caption_entities 但返回的是 text，不是 url
-                # 简单起见，既然是 url 类型，直接切片通常没问题，或者直接用 regex 补充
                 url_in_text = text[entity.offset : entity.offset + entity.length]
                 reply_urls.append(url_in_text)
                 
@@ -143,10 +143,14 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if not reply_urls:
             reply_text = reply_to.text or reply_to.caption or ""
             from web_summary import extract_urls
-            reply_urls = extract_urls(reply_text)
+            found = extract_urls(reply_text)
+            logger.info(f"Regex found URLs: {found}")
+            reply_urls = found
         
         # 去重
         reply_urls = list(set(reply_urls))
+        logger.info(f"Final detected reply_urls: {reply_urls}")
+
         from web_summary import fetch_webpage_content
         
         if reply_urls:

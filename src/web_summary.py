@@ -102,6 +102,29 @@ async def fetch_webpage_content(url: str) -> str | None:
         网页文本内容，如果失败返回 None
     """
     # -----------------------------------------------------------------
+    # 策略升级：如果是 Google News 链接，先尝试解码还原真实 URL
+    # -----------------------------------------------------------------
+    if "news.google.com" in url or "google.com/news" in url:
+        try:
+            logger.info(f"Detected Google News URL, decoding with googlenewsdecoder: {url}")
+            from googlenewsdecoder import gnewsdecoder
+            # gnewsdecoder 是同步函数，包裹在 executor 中运行以免阻塞
+            def decode_func():
+                return gnewsdecoder(url, interval=1)
+            
+            decoded_result = await asyncio.to_thread(decode_func)
+            
+            if decoded_result.get("status"):
+                real_url = decoded_result.get("decoded_url")
+                if real_url:
+                    logger.info(f"Successfully decoded Google News URL: {url} -> {real_url}")
+                    url = real_url
+            else:
+                logger.warning(f"Google News decoding failed: {decoded_result.get('message')}")
+        except Exception as e:
+            logger.error(f"Error decoding Google News URL: {e}")
+
+    # -----------------------------------------------------------------
     # 策略升级：如果是视频平台，优先尝试使用 yt-dlp 获取元数据
     # 这能解决 X (Twitter) 等前端渲染页面的抓取问题
     # -----------------------------------------------------------------
