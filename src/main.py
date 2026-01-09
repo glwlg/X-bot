@@ -72,6 +72,7 @@ async def initialize_data(application: Application) -> None:
             ("download", "下载视频"),
             ("remind", "设置提醒"),
             ("translate", "沉浸式翻译(开关)"),
+            ("monitor", "监控关键词"),
             ("image", "AI 画图"),
             ("stats", "使用统计"),
             ("help", "使用帮助"),
