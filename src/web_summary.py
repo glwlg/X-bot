@@ -153,9 +153,14 @@ async def fetch_webpage_content(url: str) -> str | None:
             
             # 1. 检查文本长度，太短通常视为无效
             if len(text.strip()) < 50:
-                logger.warning(f"Extracted content too short ({len(text)} chars) for {url}")
+                logger.warning(f"Extracted content too short ({len(text)} chars) for {url}. Final URL: {response.url}")
+                # 尝试 yt-dlp 兜底 (即使不是视频平台，yt-dlp 也能处理很多通用网页元数据)
+                logger.info(f"Falling back to yt-dlp for {url}")
+                video_content = await fetch_video_metadata(url)
+                if video_content:
+                    return f"【通过工具提取的元数据】\n{video_content}"
                 return None
-
+            
             # 2. 检查常见错误关键字 (JavaScript, Error page, etc)
             error_keywords = [
                 "JavaScript is disabled",
@@ -170,6 +175,7 @@ async def fetch_webpage_content(url: str) -> str | None:
                 "Access Denied",
                 "JavaScript 已经被禁用",
                 "请启用 JavaScript",
+                "Google News", # Google News interstitial page title often contains this
             ]
             
             # 检查前 500 个字符即可 (通常错误提示在最前面)
@@ -177,12 +183,24 @@ async def fetch_webpage_content(url: str) -> str | None:
             for ignored in error_keywords:
                 if ignored.lower() in preview_text:
                     logger.warning(f"Detected invalid content ('{ignored}') for {url}")
+                    # 同样尝试 yt-dlp 兜底
+                    logger.info(f"Falling back to yt-dlp due to invalid content for {url}")
+                    video_content = await fetch_video_metadata(url)
+                    if video_content:
+                        return f"【通过工具提取的元数据】\n{video_content}"
                     return None
             
             return f"标题：{title}\n\n内容：\n{text}"
             
     except Exception as e:
         logger.error(f"Failed to fetch webpage: {e}")
+        # 出错时也尝试一次 yt-dlp 兜底 (比如 403/404 但 yt-dlp 可能有办法)
+        try:
+             video_content = await fetch_video_metadata(url)
+             if video_content:
+                 return f"【通过工具提取的元数据】\n{video_content}"
+        except:
+             pass
         return None
 
 

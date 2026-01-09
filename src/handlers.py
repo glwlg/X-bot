@@ -7,7 +7,13 @@ import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
-from config import WAITING_FOR_VIDEO_URL, WAITING_FOR_IMAGE_PROMPT
+from config import (
+    WAITING_FOR_VIDEO_URL, 
+    WAITING_FOR_IMAGE_PROMPT,
+    WAITING_FOR_REMIND_INPUT,
+    WAITING_FOR_MONITOR_KEYWORD,
+    WAITING_FOR_SUBSCRIBE_URL
+)
 from utils import extract_video_url
 from downloader import download_video
 
@@ -740,22 +746,53 @@ async def handle_image_prompt(
     return ConversationHandler.END
 
 
-async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """处理 /remind 命令"""
+async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """处理 /remind 命令，支持交互式输入"""
     args = context.args
-    # 用法：/remind <time> <message>
-    if not args or len(args) < 2:
-        await update.message.reply_text(
-            "⚠️ 用法：/remind <时间> <提醒内容>\n"
-            "示例：\n"
-            "/remind 10m 喝水\n"
-            "/remind 1h30m 开会\n"
-            "时间单位：s(秒), m(分), h(时), d(天)"
-        )
-        return
+    # 如果有参数，直接执行逻辑
+    if args and len(args) >= 2:
+        await _process_remind(update, context, args[0], " ".join(args[1:]))
+        return ConversationHandler.END
+        
+    # 没有参数，提示输入
+    await update.message.reply_text(
+        "⏰ <b>设置定时提醒</b>\n\n"
+        "请发送您想要的提醒时间和内容。\n"
+        "格式：&lt;时间&gt; &lt;内容&gt;\n\n"
+        "示例：\n"
+        "• 10m 喝水\n"
+        "• 1h30m 开会\n"
+        "• 20s 测试一下\n\n"
+        "发送 /cancel 取消。",
+        parse_mode="HTML"
+    )
+    return WAITING_FOR_REMIND_INPUT
 
-    time_str = args[0]
-    message = " ".join(args[1:])
+
+async def handle_remind_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """处理提醒的交互式输入"""
+    text = update.message.text
+    if not text:
+        await update.message.reply_text("请发送有效文本。")
+        return WAITING_FOR_REMIND_INPUT
+        
+    parts = text.strip().split(" ", 1)
+    if len(parts) < 2:
+        await update.message.reply_text(
+            "⚠️ 格式不正确。请同时提供时间和内容，用空格分开。\n"
+            "例如：10m 喝水"
+        )
+        return WAITING_FOR_REMIND_INPUT
+        
+    success = await _process_remind(update, context, parts[0], parts[1])
+    if success:
+        return ConversationHandler.END
+    else:
+        return WAITING_FOR_REMIND_INPUT
+
+
+async def _process_remind(update: Update, context: ContextTypes.DEFAULT_TYPE, time_str: str, message: str) -> bool:
+    """实际处理提醒逻辑（复用）"""
     
     # 解析时间
     import re
@@ -766,9 +803,10 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # pattern: findall (\d+)([smhd])
     matches = re.findall(r"(\d+)([smhd])", time_str.lower())
     
+    args = context.args
     if not matches:
         await update.message.reply_text("❌ 时间格式错误。请使用如 10m, 1h, 30s 等格式。")
-        return
+        return False
         
     delta_seconds = 0
     for value, unit in matches:
@@ -784,7 +822,7 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
     if delta_seconds <= 0:
         await update.message.reply_text("❌ 时间必须大于 0。")
-        return
+        return False
         
     trigger_time = datetime.datetime.now().astimezone() + datetime.timedelta(seconds=delta_seconds)
     
@@ -805,6 +843,7 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         f"👌 已设置提醒：{message}\n"
         f"⏰ 将在 {display_time} 提醒你。"
     )
+    return True
 
 
 async def toggle_translation_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -836,42 +875,65 @@ async def toggle_translation_command(update: Update, context: ContextTypes.DEFAU
         )
 
 
-async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """处理 /subscribe 命令"""
+async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """处理 /subscribe 命令，支持交互式输入"""
     args = context.args
-    if not args:
-        await update.message.reply_text("⚠️ 用法：/subscribe <RSS链接>")
-        return
+    if args:
+        await _process_subscribe(update, context, args[0])
+        return ConversationHandler.END
         
-    url = args[0]
+    # 无参数，提示输入
+    await update.message.reply_text(
+        "📢 <b>订阅 RSS 源</b>\n\n"
+        "请发送您想订阅的 RSS 链接。\n"
+        "Bot 将每 30 分钟检查更新。\n\n"
+        "示例：\n"
+        "https://feeds.feedburner.com/PythonInsider\n\n"
+        "发送 /cancel 取消。",
+        parse_mode="HTML"
+    )
+    return WAITING_FOR_SUBSCRIBE_URL
+
+
+async def handle_subscribe_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """处理 RSS 链接的输入"""
+    url = update.message.text
+    if not url:
+        await update.message.reply_text("请发送有效的链接。")
+        return WAITING_FOR_SUBSCRIBE_URL
+        
+    success = await _process_subscribe(update, context, url)
+    if success:
+        return ConversationHandler.END
+    else:
+        return WAITING_FOR_SUBSCRIBE_URL
+
+
+async def _process_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str) -> bool:
+    """实际处理订阅逻辑"""
     user_id = update.effective_user.id
     
     # 简单的 URL 校验
     if not url.startswith("http"):
         await update.message.reply_text("❌ 请输入有效的 HTTP/HTTPS 链接。")
-        return
+        return False
 
     # 限制每人最多 5 个
     from database import get_user_subscriptions, add_subscription
     current_subs = await get_user_subscriptions(user_id)
     if len(current_subs) >= 5:
         await update.message.reply_text("❌ 订阅数量已达上限 (5个)。请先取消一些订阅。")
-        return
+        return False
         
     # 尝试解析 RSS 验证有效性
     import feedparser
     # 简单的验证，不阻塞太久
     try:
         msg = await update.message.reply_text("🔍 正在验证 RSS 源...")
-        # 异步运行 feedparser (虽然它主要是同步的，这里简化处理)
-        # 最好放到 run_in_executor，但为了保持简单直接调用
+        # 异步运行 feedparser
         feed = feedparser.parse(url)
         
-        if feed.bozo and feed.bozo_exception:
-             # 有些 feed 虽然报错但也能用，这里严格一点
-             # await msg.edit_text(f"❌ 无效的 RSS 源: {feed.bozo_exception}")
-             # return
-             pass # 暂时忽略 bozo，只要有 entries 或 title 就行
+        # 暂时忽略 bozo，只要有 entries 或 title 就行
              
         title = feed.feed.get("title", url)
         if not title:
@@ -881,15 +943,19 @@ async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         try:
             await add_subscription(user_id, url, title)
             await msg.edit_text(f"✅ **订阅成功！**\n\n源：{title}\nBot 将每 30 分钟检查一次更新。")
+            return True
         except Exception as e:
             if "UNIQUE constraint failed" in str(e):
                 await msg.edit_text("⚠️ 您已经订阅过这个源了。")
+                return True # 算作成功
             else:
                  await msg.edit_text(f"❌ 订阅失败: {e}")
+                 return False
                  
     except Exception as e:
         logger.error(f"Subscribe error: {e}")
         await msg.edit_text("❌ 无法访问该 RSS 源。")
+        return False
 
 
 async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -910,14 +976,45 @@ async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     await update.message.reply_text(f"🗑️ 已取消订阅：{url}")
 
 
-async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """处理 /monitor 命令，监控关键词 (via Google News RSS)"""
+async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """处理 /monitor 命令，支持交互式输入"""
     args = context.args
-    if not args:
-        await update.message.reply_text("⚠️ 用法：/monitor <关键词>")
-        return
+    # 如果有参数，直接执行
+    if args:
+        await _process_monitor(update, context, " ".join(args))
+        return ConversationHandler.END
         
-    keyword = " ".join(args)
+    # 无参数，提示输入
+    await update.message.reply_text(
+        "🔍 <b>监控关键词</b>\n\n"
+        "请发送您想监控的关键词。\n"
+        "Bot 将通过 Google News 监控并在有新内容时通知您。\n\n"
+        "示例：\n"
+        "• Python 教程\n"
+        "• 人工智能\n\n"
+        "发送 /cancel 取消。",
+        parse_mode="HTML"
+    )
+    return WAITING_FOR_MONITOR_KEYWORD
+
+
+async def handle_monitor_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """处理监控关键词的输入"""
+    keyword = update.message.text
+    if not keyword:
+        await update.message.reply_text("请发送有效文本。")
+        return WAITING_FOR_MONITOR_KEYWORD
+        
+    success = await _process_monitor(update, context, keyword)
+    if success:
+        return ConversationHandler.END
+    else:
+        # 如果失败（非重复订阅错误），允许重试
+        return WAITING_FOR_MONITOR_KEYWORD
+
+
+async def _process_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE, keyword: str) -> bool:
+    """实际处理监控逻辑"""
     user_id = update.effective_user.id
     
     # 限制每人最多 5 个 (与普通订阅共享额度)
@@ -925,7 +1022,7 @@ async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     current_subs = await get_user_subscriptions(user_id)
     if len(current_subs) >= 5:
         await update.message.reply_text("❌ 订阅数量已达上限 (5个)。请先取消一些订阅。")
-        return
+        return False
 
     # 构造 Google News RSS URL
     import urllib.parse
@@ -949,13 +1046,16 @@ async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             f"来源：Google News\n"
             f"Bot 将每 30 分钟推送相关新闻。"
         )
+        return True
             
     except Exception as e:
         if "UNIQUE constraint failed" in str(e):
              await msg.edit_text("⚠️ 您已经监控过这个关键词了。")
+             return True # 算作成功结束，不再 retry
         else:
              logger.error(f"Monitor error: {e}")
              await msg.edit_text(f"❌ 设置失败: {e}")
+             return False
 
 
 async def list_subs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:

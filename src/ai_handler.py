@@ -95,8 +95,65 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     has_media = False
     media_data = None
     mime_type = None
+    extra_context = ""
     
     if reply_to:
+        # 1. 尝试提取引用消息中的 URL 并获取内容
+        reply_urls = []
+        
+        # A. 从实体（超链接/文本链接）提取
+        entities = reply_to.entities or reply_to.caption_entities or []
+        for entity in entities:
+            if entity.type == "text_link":
+                # Markdown/HTML 链接 [text](url)
+                reply_urls.append(entity.url)
+            elif entity.type == "url":
+                # 纯文本 URL，需要从文本中截取
+                text = reply_to.text or reply_to.caption or ""
+                # offset 和 length 是 utf-16 编码单元，Python 字符串是 unicode，
+                # 对于大多数字符通常直接切片是可以的，但如果有 emoji 可能有偏差。
+                # PTB 提供了 parse_text_entities / parse_caption_entities 但返回的是 text，不是 url
+                # 简单起见，既然是 url 类型，直接切片通常没问题，或者直接用 regex 补充
+                url_in_text = text[entity.offset : entity.offset + entity.length]
+                reply_urls.append(url_in_text)
+                
+        # B. 从文本正则提取 (兜底，防止实体未解析)
+        if not reply_urls:
+            reply_text = reply_to.text or reply_to.caption or ""
+            from web_summary import extract_urls
+            reply_urls = extract_urls(reply_text)
+        
+        # 去重
+        reply_urls = list(set(reply_urls))
+        from web_summary import fetch_webpage_content
+        
+        if reply_urls:
+            # 发现 URL，尝试获取内容
+            # 先发送一个提示，避免用户以为卡死
+            status_msg = await update.message.reply_text("📄 正在获取引用网页内容...")
+            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+            
+            try:
+                web_content = await fetch_webpage_content(reply_urls[0])
+                if web_content:
+                    extra_context = f"【引用网页内容】\n{web_content}\n\n"
+                    # 获取成功，删除提示消息
+                    await status_msg.delete()
+                else:
+                    # 获取失败，提示 AI 告知用户
+                    extra_context = (
+                        "【系统提示】引用的网页链接无法访问（无法提取内容，可能是反爬虫限制）。"
+                        "请在回答中明确告知用户你无法读取该链接的内容，并仅根据现有的文本信息进行回答。"
+                        "\n\n"
+                    )
+                    await status_msg.delete()
+            except Exception as e:
+                logger.error(f"Error fetching reply URL: {e}")
+                # 出错也提示 AI
+                extra_context = "【系统提示】读取链接时发生错误。请告知用户无法访问该链接。\n\n"
+                await status_msg.delete()
+
+        # 2. 处理媒体
         if reply_to.video:
             has_media = True
             video = reply_to.video
@@ -115,9 +172,8 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     with open(cache_path, "rb") as f:
                         media_data = bytearray(f.read())
                 else:
-                    # 缓存文件不存在，这里我们不主动删除数据库记录，因为 database.py 没实现删除，
-                    # 也可以后续添加 cleanup，这里暂时忽略
-                    pass # 缓存文件丢失，需要重新下载
+                    # 缓存文件不存在
+                    pass 
             
             # 缓存未命中，通过 Telegram API 下载
             if media_data is None:
@@ -144,6 +200,10 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # 普通文本对话
         thinking_msg = await update.message.reply_text(THINKING_MESSAGE)
     
+    # 将网页上下文合并到用户消息中
+    if extra_context:
+        user_message = extra_context + "用户请求：" + user_message
+
     # 发送"正在输入"状态
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 

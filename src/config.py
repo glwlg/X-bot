@@ -57,6 +57,9 @@ COOKIES_FILE = "cookies.txt"  # yt-dlp cookies file path
 # 会话状态常量
 WAITING_FOR_VIDEO_URL = 1
 WAITING_FOR_IMAGE_PROMPT = 2
+WAITING_FOR_REMIND_INPUT = 3
+WAITING_FOR_MONITOR_KEYWORD = 4
+WAITING_FOR_SUBSCRIBE_URL = 5
 
 # 确保目录存在
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)

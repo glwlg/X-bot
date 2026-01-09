@@ -14,7 +14,14 @@ from telegram.ext import (
 )
 from telegram import Update
 
-from config import TELEGRAM_BOT_TOKEN, WAITING_FOR_VIDEO_URL, WAITING_FOR_IMAGE_PROMPT
+from config import (
+    TELEGRAM_BOT_TOKEN,
+    WAITING_FOR_VIDEO_URL,
+    WAITING_FOR_IMAGE_PROMPT,
+    WAITING_FOR_REMIND_INPUT,
+    WAITING_FOR_MONITOR_KEYWORD,
+    WAITING_FOR_SUBSCRIBE_URL,
+)
 from handlers import (
     start,
     button_callback,
@@ -26,19 +33,17 @@ from handlers import (
     handle_video_download,
     image_command,
     handle_image_prompt,
-    image_command,
-    handle_image_prompt,
-    image_command,
-    handle_image_prompt,
     cancel,
     handle_large_file_action,
     remind_command,
-    remind_command,
+    handle_remind_input,
     toggle_translation_command,
     subscribe_command,
+    handle_subscribe_input,
     unsubscribe_command,
     list_subs_command,
     monitor_command,
+    handle_monitor_input,
 )
 from ai_handler import handle_ai_chat, handle_ai_photo, handle_ai_video
 from voice_handler import handle_voice_message
@@ -153,14 +158,46 @@ def main() -> None:
         allow_reentry=True,
     )
 
+    # 3.1 提醒功能对话处理器
+    remind_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("remind", remind_command)],
+        states={
+            WAITING_FOR_REMIND_INPUT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remind_input)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    # 3.2 监控功能对话处理器
+    monitor_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("monitor", monitor_command)],
+        states={
+            WAITING_FOR_MONITOR_KEYWORD: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_monitor_input)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
+    # 3.3 订阅功能对话处理器
+    subscribe_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("subscribe", subscribe_command)],
+        states={
+            WAITING_FOR_SUBSCRIBE_URL: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_subscribe_input)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+
     # 4. 注册核心功能处理器
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("remind", remind_command))
+    application.add_handler(remind_conv_handler)
     application.add_handler(CommandHandler("translate", toggle_translation_command))
     application.add_handler(CommandHandler("fanyi", toggle_translation_command))
-    application.add_handler(CommandHandler("subscribe", subscribe_command))
-    application.add_handler(CommandHandler("monitor", monitor_command))
+    application.add_handler(subscribe_conv_handler)
+    application.add_handler(monitor_conv_handler)
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
     application.add_handler(CommandHandler("list_subs", list_subs_command))
     application.add_handler(video_conv_handler)
