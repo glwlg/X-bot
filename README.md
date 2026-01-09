@@ -1,4 +1,4 @@
-# X-Bot (原 DLP Bot)
+# X-Bot
 
 **X-Bot** 是一个全能型 AI Telegram 机器人，集成了多平台媒体下载、智能对话、文档分析、语音交互和 AI 绘图功能。
 
