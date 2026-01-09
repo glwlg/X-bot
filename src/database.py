@@ -72,6 +72,7 @@ async def init_db():
             )
         """)
         
+        
         # 订阅表
         await db.execute("""
             CREATE TABLE IF NOT EXISTS subscriptions (
@@ -84,6 +85,16 @@ async def init_db():
                 last_entry_hash TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, feed_url)
+            )
+        """)
+
+        # 允许用户表 (白名单)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS allowed_users (
+                user_id INTEGER PRIMARY KEY,
+                added_by INTEGER,
+                description TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         
@@ -305,3 +316,40 @@ async def update_subscription_status(sub_id: int, last_entry_hash: str, last_eta
             (last_entry_hash, last_etag, last_modified, sub_id)
         )
         await db.commit()
+
+
+# --- 白名单用户操作 ---
+
+async def add_allowed_user(user_id: int, added_by: int = None, description: str = None):
+    """添加用户到白名单"""
+    async with await get_db() as db:
+        await db.execute(
+            "INSERT INTO allowed_users (user_id, added_by, description) VALUES (?, ?, ?)",
+            (user_id, added_by, description)
+        )
+        await db.commit()
+
+
+async def remove_allowed_user(user_id: int):
+    """从白名单移除用户"""
+    async with await get_db() as db:
+        await db.execute("DELETE FROM allowed_users WHERE user_id = ?", (user_id,))
+        await db.commit()
+
+
+async def get_allowed_users() -> list[dict]:
+    """获取所有白名单用户"""
+    async with await get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM allowed_users") as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+async def check_user_allowed_in_db(user_id: int) -> bool:
+    """检查用户是否在 DB 白名单中"""
+    async with await get_db() as db:
+        async with db.execute(
+            "SELECT 1 FROM allowed_users WHERE user_id = ?", (user_id,)
+        ) as cursor:
+            return await cursor.fetchone() is not None

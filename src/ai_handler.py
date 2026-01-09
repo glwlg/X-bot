@@ -30,7 +30,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # 检查用户权限
     from config import is_user_allowed
-    if not is_user_allowed(user_id):
+    if not await is_user_allowed(user_id):
         await update.message.reply_text(
             "⛔ 抱歉，您没有使用 AI 对话功能的权限。\n\n"
             "如需下载视频，请使用 /download 命令。"
@@ -399,7 +399,7 @@ async def handle_ai_video(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     # 检查用户权限
     from config import is_user_allowed
-    if not is_user_allowed(user_id):
+    if not await is_user_allowed(user_id):
         await update.message.reply_text(
             "⛔ 抱歉，您没有使用 AI 功能的权限。"
         )

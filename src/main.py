@@ -24,6 +24,8 @@ from config import (
 )
 from handlers import (
     start,
+    adduser_command,
+    deluser_command,
     button_callback,
     start_download_video,
     start_generate_image,
@@ -197,6 +199,8 @@ def main() -> None:
 
     # 4. 注册核心功能处理器
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("adduser", adduser_command))
+    application.add_handler(CommandHandler("deluser", deluser_command))
     application.add_handler(remind_conv_handler)
     application.add_handler(CommandHandler("translate", toggle_translation_command))
     application.add_handler(CommandHandler("fanyi", toggle_translation_command))

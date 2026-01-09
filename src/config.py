@@ -30,21 +30,53 @@ gemini_client = genai.Client(
 )
 
 # 用户访问控制
-ALLOWED_USER_IDS_STR = os.getenv("ALLOWED_USER_IDS", "")
-ALLOWED_USER_IDS = set()
-if ALLOWED_USER_IDS_STR.strip():
-    # 解析逗号分隔的用户 ID 列表
-    ALLOWED_USER_IDS = {
-        int(uid.strip()) for uid in ALLOWED_USER_IDS_STR.split(",") if uid.strip()
+# 从环境变量加载管理员列表
+ADMIN_USER_IDS_STR = os.getenv("ADMIN_USER_IDS") or os.getenv("ALLOWED_USER_IDS", "")
+ADMIN_USER_IDS = set()
+if ADMIN_USER_IDS_STR.strip():
+    ADMIN_USER_IDS = {
+        int(uid.strip()) for uid in ADMIN_USER_IDS_STR.split(",") if uid.strip()
     }
 
 
-def is_user_allowed(user_id: int) -> bool:
-    """检查用户是否在白名单中"""
-    # 如果白名单为空，允许所有用户
-    if not ALLOWED_USER_IDS:
+async def is_user_allowed(user_id: int) -> bool:
+    """
+    检查用户是否有权限使用 Bot
+    权限逻辑：管理员 OR 在数据库白名单中
+    """
+    # 1. 如果是管理员，直接允许
+    if user_id in ADMIN_USER_IDS:
         return True
-    return user_id in ALLOWED_USER_IDS
+        
+    # 2. 如果没有设置任何管理员，且没有启用白名单模式（默认），是否允许所有人？
+    # 现在的逻辑是：如果设置了 ADMIN_USER_IDS，则作为白名单基础。
+    # 之前的逻辑：如果 ALLOWED_USER_IDS 为空，允许所有人。
+    # 我们保持兼容：如果 ADMIN_USER_IDS 为空，且数据库白名单也为空，则允许所有人？
+    # 或者如果不设置 Admin，则没人能管理，但大家都能用？
+    # User Request: "Allowed user variable changed to Admin list"
+    # Let's assume strict mode if Admin is set.
+    
+    # 检查数据库
+    from database import check_user_allowed_in_db
+    try:
+        if await check_user_allowed_in_db(user_id):
+            return True
+    except Exception:
+        # DB 可能还没初始化或出错
+        pass
+        
+    # 如果管理员列表为空，是否开放？
+    # 为了安全，如果有 DB 但不在里面，且有 Admin 设置，则拒绝。
+    # 如果 Admin 也没设置，通常意味着开放模式。
+    if not ADMIN_USER_IDS:
+        return True
+        
+    return False
+
+
+def is_user_admin(user_id: int) -> bool:
+    """检查用户是否为管理员"""
+    return user_id in ADMIN_USER_IDS
 
 # 下载配置
 DOWNLOAD_DIR = "downloads"

@@ -12,8 +12,82 @@ from config import (
     WAITING_FOR_IMAGE_PROMPT,
     WAITING_FOR_REMIND_INPUT,
     WAITING_FOR_MONITOR_KEYWORD,
-    WAITING_FOR_SUBSCRIBE_URL
+    WAITING_FOR_SUBSCRIBE_URL,
+    is_user_allowed,
+    is_user_admin,
 )
+from database import add_allowed_user, remove_allowed_user, check_user_allowed_in_db
+
+# ... (existing imports)
+
+async def check_permission(update: Update) -> bool:
+    """通用权限检查辅助函数"""
+    user_id = update.effective_user.id
+    if not await is_user_allowed(user_id):
+        if update.effective_message:
+            await update.effective_message.reply_text("⛔ 抱歉，您没有使用此 Bot 的权限。")
+        return False
+    return True
+
+
+async def adduser_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """添加用户到白名单 (仅限管理员)"""
+    user_id = update.effective_user.id
+    message = update.effective_message
+    
+    if not is_user_admin(user_id):
+        if message: await message.reply_text("⛔ 您不是管理员，无法执行此操作。")
+        return
+
+    try:
+        # 获取参数 /adduser 123456 [备注]
+        args = context.args
+        if not args:
+            if message: await message.reply_text("用法: /adduser <user_id> [备注]")
+            return
+            
+        target_id = int(args[0])
+        description = " ".join(args[1:]) if len(args) > 1 else "Added via command"
+        
+        await add_allowed_user(target_id, added_by=user_id, description=description)
+        if message: await message.reply_text(f"✅ 用户 {target_id} 已添加到白名单。")
+        
+    except ValueError:
+        if message: await message.reply_text("❌ 用户 ID 必须是数字。")
+    except Exception as e:
+        if "UNIQUE constraint failed" in str(e):
+            if message: await message.reply_text(f"⚠️ 用户 {target_id} 已经在白名单中了。")
+        else:
+            logger.error(f"Error adding user: {e}")
+            if message: await message.reply_text("❌ 添加失败，请检查日志。")
+
+
+async def deluser_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """从白名单移除用户 (仅限管理员)"""
+    user_id = update.effective_user.id
+    message = update.effective_message
+
+    if not is_user_admin(user_id):
+        if message: await message.reply_text("⛔ 您不是管理员，无法执行此操作。")
+        return
+
+    try:
+        args = context.args
+        if not args:
+            if message: await message.reply_text("用法: /deluser <user_id>")
+            return
+            
+        target_id = int(args[0])
+        
+        await remove_allowed_user(target_id)
+        if message: await message.reply_text(f"✅ 用户 {target_id} 已从白名单移除。")
+        
+    except ValueError:
+        if message: await message.reply_text("❌ 用户 ID 必须是数字。")
+    except Exception as e:
+        logger.error(f"Error removing user: {e}")
+        if message: await message.reply_text("❌ 移除失败，请检查日志。")
+
 from utils import extract_video_url
 from downloader import download_video
 
@@ -41,6 +115,9 @@ WELCOME_MESSAGE = (
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """处理 /start 命令，显示欢迎消息和功能菜单"""
+    if not await check_permission(update):
+        return
+
     keyboard = [
         [
             InlineKeyboardButton("📹 下载视频", callback_data="download_video"),
@@ -214,6 +291,9 @@ async def back_to_main_and_cancel(update: Update, context: ContextTypes.DEFAULT_
 
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """处理通用内联键盘按钮点击（非会话入口）"""
+    if not await check_permission(update):
+        return ConversationHandler.END
+
     query = update.callback_query
     await query.answer()
     
@@ -440,6 +520,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
 async def download_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """处理 /download 命令，进入视频下载模式"""
+    if not await check_permission(update):
+        return ConversationHandler.END
+
     await update.message.reply_html(
         "📹 <b>视频下载模式</b>\n\n"
         "请发送视频链接，支持以下平台：\n"
@@ -714,6 +797,9 @@ async def handle_large_file_action(update: Update, context: ContextTypes.DEFAULT
 
 async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """处理 /image 命令，进入画图模式"""
+    if not await check_permission(update):
+        return ConversationHandler.END
+
     await update.message.reply_html(
         "🎨 <b>AI 画图模式</b>\n\n"
         "请发送您想要生成的图片描述。\n\n"
@@ -748,6 +834,9 @@ async def handle_image_prompt(
 
 async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """处理 /remind 命令，支持交互式输入"""
+    if not await check_permission(update):
+        return ConversationHandler.END
+
     args = context.args
     # 如果有参数，直接执行逻辑
     if args and len(args) >= 2:
@@ -848,6 +937,9 @@ async def _process_remind(update: Update, context: ContextTypes.DEFAULT_TYPE, ti
 
 async def toggle_translation_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """处理 /translate 命令，切换沉浸式翻译模式"""
+    if not await check_permission(update):
+        return
+
     user_id = update.effective_user.id
     
     from database import get_user_settings, set_translation_mode
@@ -877,6 +969,9 @@ async def toggle_translation_command(update: Update, context: ContextTypes.DEFAU
 
 async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """处理 /subscribe 命令，支持交互式输入"""
+    if not await check_permission(update):
+        return ConversationHandler.END
+
     args = context.args
     if args:
         await _process_subscribe(update, context, args[0])
@@ -960,6 +1055,9 @@ async def _process_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE,
 
 async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """处理 /unsubscribe 命令"""
+    if not await check_permission(update):
+        return
+
     # 如果有参数，直接取消该 URL
     # 如果没参数，显示列表按钮（简化起见，让用户复制 URL）
     args = context.args
@@ -978,6 +1076,9 @@ async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """处理 /monitor 命令，支持交互式输入"""
+    if not await check_permission(update):
+        return ConversationHandler.END
+
     args = context.args
     # 如果有参数，直接执行
     if args:
@@ -1060,6 +1161,9 @@ async def _process_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE, k
 
 async def list_subs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """处理 /list_subs 命令"""
+    if not await check_permission(update):
+        return
+
     user_id = update.effective_user.id
     
     from database import get_user_subscriptions

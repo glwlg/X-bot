@@ -20,7 +20,7 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.message.from_user.id
     
     # 检查用户权限
-    if not is_user_allowed(user_id):
+    if not await is_user_allowed(user_id):
         await update.message.reply_text(
             "⛔ 抱歉，您没有使用 AI 功能的权限。"
         )

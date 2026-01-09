@@ -68,8 +68,15 @@ GEMINI_MODEL="gemini-2.0-flash"
 IMAGE_MODEL="imagen-3.0-generate-002"
 
 # 访问控制 (可选)
-ALLOWED_USER_IDS="123456789"
+# ADMIN_USER_IDS: 管理员 ID 列表，拥有 /adduser 和 /deluser 权限
+ADMIN_USER_IDS="123456789"
 ```
+
+### 4. 权限管理 (新)
+ Bot 启动后，管理员可以使用以下命令动态管理允许使用的用户白名单：
+ - `/adduser <user_id> [备注]` : 添加用户到白名单
+ - `/deluser <user_id>` : 从白名单移除用户
+ - 所有白名单用户的权限数据将持久化保存在数据库中。
 
 ### 3. 一键启动
 ```bash
