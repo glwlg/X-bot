@@ -42,6 +42,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         ],
         [
             InlineKeyboardButton("🎨 AI 画图", callback_data="generate_image"),
+            InlineKeyboardButton("📢 订阅", callback_data="list_subs"),
+        ],
+        [
+            InlineKeyboardButton("🌍 翻译(开关)", callback_data="toggle_translation"),
+            InlineKeyboardButton("⏰ 提醒", callback_data="remind_help"),
         ],
         [
             InlineKeyboardButton("ℹ️ 帮助", callback_data="help"),
@@ -172,6 +177,11 @@ async def back_to_main_and_cancel(update: Update, context: ContextTypes.DEFAULT_
         ],
         [
             InlineKeyboardButton("🎨 AI 画图", callback_data="generate_image"),
+            InlineKeyboardButton("📢 订阅", callback_data="list_subs"),
+        ],
+        [
+            InlineKeyboardButton("🌍 翻译(开关)", callback_data="toggle_translation"),
+            InlineKeyboardButton("⏰ 提醒", callback_data="remind_help"),
         ],
         [
             InlineKeyboardButton("ℹ️ 帮助", callback_data="help"),
@@ -263,7 +273,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "当前配置：\n"
                 f"• Gemini 模型：{gemini_model}\n"
                 f"• 画图模型：{image_model}\n"
-                f"• OpenAI 模型：{openai_model}\n"
                 f"• 视频质量：最高\n"
                 f"• 文件大小限制：49 MB\n\n"
                 "更多设置功能即将推出...",
@@ -303,6 +312,83 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             )
             return ConversationHandler.END
         
+        elif data == "list_subs":
+            keyboard = [[InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            user_id = query.from_user.id
+            from database import get_user_subscriptions
+            subs = await get_user_subscriptions(user_id)
+            
+            if not subs:
+                text = (
+                    "📢 <b>我的订阅</b>\n\n"
+                    "您还没有订阅任何内容。\n\n"
+                    "<b>使用方法：</b>\n"
+                    "• /subscribe &lt;URL&gt; : 订阅 RSS\n"
+                    "• /monitor &lt;关键词&gt; : 监控新闻\n"
+                )
+            else:
+                text = "📢 <b>我的订阅列表</b>\n\n"
+                for sub in subs:
+                    title = sub['title'] or '无标题'
+                    url = sub['feed_url']
+                    text += f"• [{title}]({url})\n"
+                
+                text += "\n使用 /unsubscribe &lt;URL&gt; 取消订阅。"
+            
+            await query.edit_message_text(
+                text,
+                parse_mode="HTML",
+                reply_markup=reply_markup,
+                disable_web_page_preview=True
+            )
+            return ConversationHandler.END
+            
+        elif data == "toggle_translation":
+            keyboard = [[InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            user_id = query.from_user.id
+            from database import get_user_settings, set_translation_mode
+            
+            settings = await get_user_settings(user_id)
+            current_status = settings.get("auto_translate", 0)
+            new_status = not current_status
+            await set_translation_mode(user_id, new_status)
+            
+            status_text = "🌍 <b>已开启</b>" if new_status else "🚫 <b>已关闭</b>"
+            desc = (
+                "现在发送任何文本消息，我都会为您自动翻译。\n(外语->中文，中文->英文)" 
+                if new_status else 
+                "已恢复正常 AI 助手模式。"
+            )
+            
+            await query.edit_message_text(
+                f"ℹ️ <b>沉浸式翻译模式</b>\n\n"
+                f"当前状态：{status_text}\n\n"
+                f"{desc}\n\n"
+                f"点击按钮可再次切换。",
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+            return ConversationHandler.END
+            
+        elif data == "remind_help":
+            keyboard = [[InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                "⏰ <b>定时提醒使用帮助</b>\n\n"
+                "请直接发送命令设置提醒：\n\n"
+                "• <b>/remind 10m 关火</b> (10分钟后)\n"
+                "• <b>/remind 1h30m 休息一下</b> (1小时30分后)\n\n"
+                "时间单位支持：s(秒), m(分), h(时), d(天)",
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+            return ConversationHandler.END
+            
         elif data == "back_to_main":
             # 重新显示主菜单
             keyboard = [
@@ -312,6 +398,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 ],
                 [
                     InlineKeyboardButton("🎨 AI 画图", callback_data="generate_image"),
+                    InlineKeyboardButton("📢 订阅", callback_data="list_subs"),
+                ],
+                [
+                    InlineKeyboardButton("🌍 翻译(开关)", callback_data="toggle_translation"),
+                    InlineKeyboardButton("⏰ 提醒", callback_data="remind_help"),
                 ],
                 [
                     InlineKeyboardButton("ℹ️ 帮助", callback_data="help"),
