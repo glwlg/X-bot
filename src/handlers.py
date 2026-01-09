@@ -1086,3 +1086,115 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
         "操作已取消。\n\n" "发送消息继续 AI 对话，或使用 /download 下载视频。"
     )
     return ConversationHandler.END
+
+
+async def handle_video_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理视频链接的智能选项（下载 vs 摘要）"""
+    query = update.callback_query
+    await query.answer()
+    
+    url = context.user_data.get('pending_video_url')
+    if not url:
+        await query.edit_message_text("❌ 链接已过期，请重新发送。")
+        return
+
+    action = query.data
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
+    if action == "action_download_video":
+        await query.edit_message_text("📹 准备下载视频...")
+        
+        # 模拟进入下载流程
+        processing_message = await context.bot.send_message(
+            chat_id=chat_id, text=f"正在下载视频，请稍候... ⏳"
+        )
+        
+        # 调用下载逻辑
+        result = await download_video(url, chat_id, processing_message, audio_only=False)
+        
+        if not result.success:
+             if result.error_message:
+                try:
+                    await context.bot.edit_message_text(
+                        chat_id=chat_id,
+                        message_id=processing_message.message_id,
+                        text=f"❌ 下载失败: {result.error_message}"
+                    )
+                except:
+                    pass
+             return
+
+        file_path = result.file_path
+        
+        # 处理文件过大 (复用 handle_video_download 的逻辑)
+        if result.is_too_large:
+            context.user_data["large_file_path"] = file_path
+            keyboard = [
+                [
+                    InlineKeyboardButton("📝 生成内容摘要 (AI)", callback_data="large_file_summary"),
+                    InlineKeyboardButton("🎵 仅发送音频", callback_data="large_file_audio"),
+                ],
+                [
+                    InlineKeyboardButton("🗑️ 删除文件", callback_data="large_file_delete"),
+                ],
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await context.bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=processing_message.message_id,
+                text=f"⚠️ <b>视频文件过大 ({result.file_size_mb:.1f}MB)</b>\n\n"
+                     f"超过 Telegram 限制 (50MB)，无法直接发送。\n"
+                     f"您可以选择：",
+                parse_mode="HTML",
+                reply_markup=reply_markup
+            )
+            return
+
+        # 发送文件
+        if file_path and os.path.exists(file_path):
+            logger.info(f"Downloaded to {file_path}. Uploading to chat {chat_id}.")
+            try:
+                sent_message = await context.bot.send_video(
+                    chat_id=chat_id, video=open(file_path, "rb"), supports_streaming=True
+                )
+                
+                # 缓存
+                if sent_message.video:
+                    from database import save_video_cache
+                    file_id = sent_message.video.file_id
+                    await save_video_cache(file_id, file_path)
+                
+                # 统计
+                from stats import increment_stat
+                await increment_stat(user_id, "downloads")
+                
+                # 删除进度消息
+                await context.bot.delete_message(
+                    chat_id=chat_id, message_id=processing_message.message_id
+                )
+            except Exception as e:
+                logger.error(f"Failed to send video: {e}")
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=processing_message.message_id,
+                    text="❌ 发送视频失败。",
+                )
+
+    elif action == "action_summarize_video":
+        await query.edit_message_text("📄 正在获取网页内容并生成摘要...")
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        
+        from web_summary import summarize_webpage
+        summary = await summarize_webpage(url)
+        
+        from telegram.error import BadRequest
+        try:
+            await query.edit_message_text(summary, parse_mode="Markdown")
+        except BadRequest:
+            await query.edit_message_text(summary, parse_mode=None)
+        
+        # 统计
+        from stats import increment_stat
+        await increment_stat(user_id, "ai_chats")

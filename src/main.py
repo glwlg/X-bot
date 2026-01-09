@@ -44,6 +44,7 @@ from handlers import (
     list_subs_command,
     monitor_command,
     handle_monitor_input,
+    handle_video_actions,
 )
 from ai_handler import handle_ai_chat, handle_ai_photo, handle_ai_video
 from voice_handler import handle_voice_message
@@ -116,11 +117,14 @@ def main() -> None:
     # 处理 help, settings, platforms, back_to_main, ai_chat
     # 注意：排除 download_video, generate_image, back_to_main_cancel 以及 dl_format_ 和 large_file_ 开头的回调
     
+    # 1.0 先注册智能视频操作按钮 (优先级高于通用按钮)
+    application.add_handler(CallbackQueryHandler(handle_video_actions, pattern="^action_.*"))
+
     # 1.1 大文件处理按钮
     application.add_handler(CallbackQueryHandler(handle_large_file_action, pattern="^large_file_"))
     
     # 1.2 通用菜单按钮
-    common_pattern = "^(?!download_video$|generate_image$|back_to_main_cancel$|dl_format_|large_file_).*$"
+    common_pattern = "^(?!download_video$|generate_image$|back_to_main_cancel$|dl_format_|large_file_|action_).*$"
     application.add_handler(CallbackQueryHandler(button_callback, pattern=common_pattern))
 
     # 2. 视频下载对话处理器

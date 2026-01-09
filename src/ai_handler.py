@@ -38,15 +38,37 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # 检查消息中是否包含 URL（自动生成网页摘要）
-    from web_summary import extract_urls, summarize_webpage
+    from web_summary import extract_urls, summarize_webpage, is_video_platform
     urls = extract_urls(user_message)
     
-    # 如果只是一个 URL 且没有其他内容，则生成摘要
+    # 如果只是一个 URL 且没有其他内容
     if urls and user_message.strip() in urls:
+        url = urls[0]
+        
+        # 智能逻辑：如果是视频平台链接，询问用户意图
+        if is_video_platform(url):
+            context.user_data['pending_video_url'] = url
+            
+            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+            keyboard = [
+                [
+                    InlineKeyboardButton("📹 下载视频", callback_data="action_download_video"),
+                    InlineKeyboardButton("📝 AI 摘要", callback_data="action_summarize_video"),
+                ]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.message.reply_text(
+                "🤔 检测到视频链接，您想要做什么？",
+                reply_markup=reply_markup
+            )
+            return
+
+        # 普通网页，直接生成摘要
         thinking_msg = await update.message.reply_text("📄 正在获取网页内容并生成摘要...")
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         
-        summary = await summarize_webpage(urls[0])
+        summary = await summarize_webpage(url)
         try:
             await thinking_msg.edit_text(summary, parse_mode="Markdown")
         except BadRequest as e:
