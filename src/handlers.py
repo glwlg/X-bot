@@ -3,6 +3,7 @@ Telegram 消息处理器模块
 """
 import os
 import logging
+import asyncio
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
@@ -376,9 +377,52 @@ async def handle_video_download(
     )
 
     # 下载视频/音频
-    file_path = await download_video(url, chat_id, processing_message, audio_only=audio_only)
+    result = await download_video(url, chat_id, processing_message, audio_only=audio_only)
 
-    # 如果下载成功，发送文件
+    if not result.success:
+        # 失败已在 downloader 中通过 progress_message 提示过，或者返回了 error_message
+        if result.error_message:
+             # 尝试更新消息显示错误（如果 downloader 没做）
+            try:
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=processing_message.message_id,
+                    text=f"❌ 下载失败: {result.error_message}"
+                )
+            except:
+                pass
+        return ConversationHandler.END
+
+    file_path = result.file_path
+    
+    # 处理文件过大情况
+    if result.is_too_large:
+        # 暂存路径到 user_data以供后续操作
+        context.user_data["large_file_path"] = file_path
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("📝 生成内容摘要 (AI)", callback_data="large_file_summary"),
+                InlineKeyboardButton("🎵 仅发送音频", callback_data="large_file_audio"),
+            ],
+            [
+                InlineKeyboardButton("🗑️ 删除文件", callback_data="large_file_delete"),
+            ],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=processing_message.message_id,
+            text=f"⚠️ <b>视频文件过大 ({result.file_size_mb:.1f}MB)</b>\n\n"
+                 f"超过 Telegram 限制 (50MB)，无法直接发送。\n"
+                 f"您可以选择：",
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
+        return ConversationHandler.END
+
+    # 如果下载成功且大小合适，发送文件
     if file_path and os.path.exists(file_path):
         logger.info(f"Downloaded to {file_path}. Uploading to chat {chat_id}.")
         try:
@@ -407,6 +451,11 @@ async def handle_video_download(
                 from stats import increment_stat
                 await increment_stat(update.message.from_user.id, "downloads")
                 
+            # 删除进度消息
+            await context.bot.delete_message(
+                chat_id=chat_id, message_id=processing_message.message_id
+            )
+            
         except Exception as e:
             logger.error(f"Failed to send video to chat {chat_id}: {e}")
             await context.bot.edit_message_text(
@@ -414,14 +463,150 @@ async def handle_video_download(
                 message_id=processing_message.message_id,
                 text="❌ 发送视频失败，可能是网络问题或格式不受支持。",
             )
-        finally:
-            # 无论成功失败，都保留文件在 downloads 目录，供下次秒传
-            # 仅删除进度消息
-            await context.bot.delete_message(
-                chat_id=chat_id, message_id=processing_message.message_id
-            )
 
     return ConversationHandler.END
+
+
+async def handle_large_file_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理大文件操作的回调 (摘要/音频/删除)"""
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    file_path = context.user_data.get("large_file_path")
+    
+    if not file_path or not os.path.exists(file_path):
+        await query.edit_message_text("❌ 文件已过期或不存在，请重新下载。")
+        return
+
+    chat_id = update.effective_chat.id
+    
+    try:
+        if data == "large_file_delete":
+            os.remove(file_path)
+            await query.edit_message_text("🗑️ 文件已删除。")
+            
+        elif data == "large_file_audio":
+            await query.edit_message_text("🎵 正在提取音频并发送，请稍候...")
+            # 这里调用提取音频逻辑，简单起见先检查如果是 mp3直接发，如果是 mp4 用 ffmpeg 转
+            # 由于 download_video 已经支持 mp3，如果是 mp4，我们可能需要转码
+            # 但用户也可能一开始就选了 video 格式下载了 mp4
+            
+            # 简单实现：如果是 mp4，尝试发原文件当音频？不行，Telegram 会认出是视频。
+            # 需要转码。
+            # 为了保持 handler 简单，我们假设 file_path 如果是 mp4，我们用 ffmpeg 提取
+            base, ext = os.path.splitext(file_path)
+            if ext.lower() == '.mp4':
+                audio_path = f"{base}.mp3"
+                if not os.path.exists(audio_path):
+                    # 调用 ffmpeg 提取
+                    import subprocess
+                    cmd = [
+                        "ffmpeg", "-i", file_path, 
+                        "-vn", "-acodec", "libmp3lame", "-q:a", "4", 
+                        "-y", audio_path
+                    ]
+                    process = await asyncio.create_subprocess_exec(
+                        *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+                    )
+                    await process.wait()
+                
+                final_path = audio_path
+            else:
+                final_path = file_path # 假设已经是音频
+                
+            # 检查音频大小
+            if os.path.getsize(final_path) > 50 * 1024 * 1024:
+                 await query.edit_message_text(f"❌ 提取的音频也超过 50MB，无法发送。")
+            else:
+                 await context.bot.send_audio(
+                    chat_id=chat_id, 
+                    audio=open(final_path, "rb"),
+                    caption="🎵 仅音频 (从大视频提取)"
+                 )
+                 await query.delete_message()
+                 
+        elif data == "large_file_summary":
+            await query.edit_message_text("📝 正在提取并压缩音频，请稍候... (这可能需要几分钟)")
+            
+            # 使用 ffmpeg 提取并压缩音频，确保大小适合 inline传输 (<20MB)
+            # 目标：单声道(ac 1), 16kHz(ar 16000), 32kbps(b:a 32k) -> ~14MB/hour
+            base, _ = os.path.splitext(file_path)
+            compressed_audio_path = f"{base}_compressed.mp3"
+            
+            import subprocess
+            cmd = [
+                "ffmpeg", 
+                "-i", file_path, 
+                "-vn",               # 去除视频
+                "-acodec", "libmp3lame", 
+                "-ac", "1",          # 单声道
+                "-ar", "16000",      # 16kHz
+                "-b:a", "32k",       # 32kbps
+                "-y",                # 覆盖
+                compressed_audio_path
+            ]
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL
+            )
+            await process.wait()
+            
+            if not os.path.exists(compressed_audio_path):
+                await query.edit_message_text("❌ 音频提取失败。")
+                return
+
+            # 读取文件并进行 base64 编码 (仿照 voice_handler)
+            import base64
+            with open(compressed_audio_path, "rb") as f:
+                audio_bytes = f.read()
+            
+            # 检查压缩后大小
+            if len(audio_bytes) > 25 * 1024 * 1024:
+                await query.edit_message_text("❌ 即使压缩后音频仍然过大，无法分析。")
+                os.remove(compressed_audio_path)
+                return
+
+            await query.edit_message_text("📝 音频处理完成，正在通过 AI 生成摘要...")
+
+            # 构造 inline data 请求
+            from config import gemini_client, GEMINI_MODEL
+            
+            contents = [
+                {
+                    "parts": [
+                        {"text": "请详细总结这段视频音频的内容。请描述主要发生了什么，核心观点是什么，并列出关键时间点 (如果可能)。"},
+                        {
+                            "inline_data": {
+                                "mime_type": "audio/mp3",
+                                "data": base64.b64encode(audio_bytes).decode("utf-8"),
+                            }
+                        },
+                    ]
+                }
+            ]
+            
+            # Generate content
+            response = gemini_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=contents
+            )
+            
+            # 清理压缩的临时文件
+            try:
+                os.remove(compressed_audio_path)
+            except:
+                pass
+            
+            if response.text:
+                await query.message.reply_text(f"📝 **视频内容摘要**\n\n{response.text}", parse_mode="Markdown")
+                await query.delete_message()
+            else:
+                await query.edit_message_text("❌ AI 无法生成摘要。")
+
+    except Exception as e:
+        logger.error(f"Error handling large file action: {e}")
+        await query.message.reply_text(f"❌ 操作失败: {str(e)}")
 
 
 async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -453,6 +638,249 @@ async def handle_image_prompt(
     await handle_image_generation(update, context, user_prompt)
     
     return ConversationHandler.END
+
+
+    return ConversationHandler.END
+
+
+async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理 /remind 命令"""
+    args = context.args
+    # 用法：/remind <time> <message>
+    if not args or len(args) < 2:
+        await update.message.reply_text(
+            "⚠️ 用法：/remind <时间> <提醒内容>\n"
+            "示例：\n"
+            "/remind 10m 喝水\n"
+            "/remind 1h30m 开会\n"
+            "时间单位：s(秒), m(分), h(时), d(天)"
+        )
+        return
+
+    time_str = args[0]
+    message = " ".join(args[1:])
+    
+    # 解析时间
+    import re
+    import datetime
+    
+    # 简单的正则解析：支持单个单位 (e.g. 10m) 或组合 (e.g. 1h30m)
+    # 暂时只实现简单的单个单位解析，或者分段解析
+    # pattern: findall (\d+)([smhd])
+    matches = re.findall(r"(\d+)([smhd])", time_str.lower())
+    
+    if not matches:
+        await update.message.reply_text("❌ 时间格式错误。请使用如 10m, 1h, 30s 等格式。")
+        return
+        
+    delta_seconds = 0
+    for value, unit in matches:
+        value = int(value)
+        if unit == 's':
+            delta_seconds += value
+        elif unit == 'm':
+            delta_seconds += value * 60
+        elif unit == 'h':
+            delta_seconds += value * 3600
+        elif unit == 'd':
+            delta_seconds += value * 86400
+            
+    if delta_seconds <= 0:
+        await update.message.reply_text("❌ 时间必须大于 0。")
+        return
+        
+    trigger_time = datetime.datetime.now().astimezone() + datetime.timedelta(seconds=delta_seconds)
+    
+    # 调度任务
+    from scheduler import schedule_reminder
+    
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    
+    await schedule_reminder(context.job_queue, user_id, chat_id, message, trigger_time)
+    
+    # 格式化显示的触发时间 (HH:MM:SS)
+    display_time = trigger_time.strftime("%H:%M:%S")
+    if delta_seconds > 86400:
+        display_time = trigger_time.strftime("%Y-%m-%d %H:%M:%S")
+        
+    await update.message.reply_text(
+        f"👌 已设置提醒：{message}\n"
+        f"⏰ 将在 {display_time} 提醒你。"
+    )
+
+
+async def toggle_translation_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理 /translate 命令，切换沉浸式翻译模式"""
+    user_id = update.effective_user.id
+    
+    from database import get_user_settings, set_translation_mode
+    
+    # 获取当前状态
+    settings = await get_user_settings(user_id)
+    current_status = settings.get("auto_translate", 0)
+    
+    # 切换状态
+    new_status = not current_status
+    await set_translation_mode(user_id, new_status)
+    
+    if new_status:
+        await update.message.reply_text(
+            "🌍 **沉浸式翻译模式：已开启**\n\n"
+            "现在发送任何文本消息，我都会为您自动翻译。\n"
+            "• 外语 -> 中文\n"
+            "• 中文 -> 英文\n\n"
+            "再次输入 /translate 可关闭。"
+        )
+    else:
+        await update.message.reply_text(
+            "🚫 **沉浸式翻译模式：已关闭**\n\n"
+            "已恢复正常 AI 助手模式。"
+        )
+
+
+async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理 /subscribe 命令"""
+    args = context.args
+    if not args:
+        await update.message.reply_text("⚠️ 用法：/subscribe <RSS链接>")
+        return
+        
+    url = args[0]
+    user_id = update.effective_user.id
+    
+    # 简单的 URL 校验
+    if not url.startswith("http"):
+        await update.message.reply_text("❌ 请输入有效的 HTTP/HTTPS 链接。")
+        return
+
+    # 限制每人最多 5 个
+    from database import get_user_subscriptions, add_subscription
+    current_subs = await get_user_subscriptions(user_id)
+    if len(current_subs) >= 5:
+        await update.message.reply_text("❌ 订阅数量已达上限 (5个)。请先取消一些订阅。")
+        return
+        
+    # 尝试解析 RSS 验证有效性
+    import feedparser
+    # 简单的验证，不阻塞太久
+    try:
+        msg = await update.message.reply_text("🔍 正在验证 RSS 源...")
+        # 异步运行 feedparser (虽然它主要是同步的，这里简化处理)
+        # 最好放到 run_in_executor，但为了保持简单直接调用
+        feed = feedparser.parse(url)
+        
+        if feed.bozo and feed.bozo_exception:
+             # 有些 feed 虽然报错但也能用，这里严格一点
+             # await msg.edit_text(f"❌ 无效的 RSS 源: {feed.bozo_exception}")
+             # return
+             pass # 暂时忽略 bozo，只要有 entries 或 title 就行
+             
+        title = feed.feed.get("title", url)
+        if not title:
+             title = url
+             
+        # 入库
+        try:
+            await add_subscription(user_id, url, title)
+            await msg.edit_text(f"✅ **订阅成功！**\n\n源：{title}\nBot 将每 30 分钟检查一次更新。")
+        except Exception as e:
+            if "UNIQUE constraint failed" in str(e):
+                await msg.edit_text("⚠️ 您已经订阅过这个源了。")
+            else:
+                 await msg.edit_text(f"❌ 订阅失败: {e}")
+                 
+    except Exception as e:
+        logger.error(f"Subscribe error: {e}")
+        await msg.edit_text("❌ 无法访问该 RSS 源。")
+
+
+async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理 /unsubscribe 命令"""
+    # 如果有参数，直接取消该 URL
+    # 如果没参数，显示列表按钮（简化起见，让用户复制 URL）
+    args = context.args
+    if not args:
+         await update.message.reply_text("⚠️ 用法：/unsubscribe <RSS链接>\n请使用 /list_subs 查看您的订阅链接。")
+         return
+         
+    url = args[0]
+    user_id = update.effective_user.id
+    
+    from database import delete_subscription
+    await delete_subscription(user_id, url)
+    
+    await update.message.reply_text(f"🗑️ 已取消订阅：{url}")
+
+
+async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理 /monitor 命令，监控关键词 (via Google News RSS)"""
+    args = context.args
+    if not args:
+        await update.message.reply_text("⚠️ 用法：/monitor <关键词>")
+        return
+        
+    keyword = " ".join(args)
+    user_id = update.effective_user.id
+    
+    # 限制每人最多 5 个 (与普通订阅共享额度)
+    from database import get_user_subscriptions, add_subscription
+    current_subs = await get_user_subscriptions(user_id)
+    if len(current_subs) >= 5:
+        await update.message.reply_text("❌ 订阅数量已达上限 (5个)。请先取消一些订阅。")
+        return
+
+    # 构造 Google News RSS URL
+    import urllib.parse
+    encoded_keyword = urllib.parse.quote(keyword)
+    rss_url = f"https://news.google.com/rss/search?q={encoded_keyword}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+    
+    msg = await update.message.reply_text(f"🔍 正在为关键词 '{keyword}' 配置监控...")
+    
+    try:
+        # 验证一下 RSS (虽然 Google News 通常没问题)
+        import feedparser
+        feed = feedparser.parse(rss_url)
+        
+        # Google News RSS title通常是 "Google News - keyword"
+        title = f"监控: {keyword}"
+        
+        await add_subscription(user_id, rss_url, title)
+        await msg.edit_text(
+            f"✅ **监控已设置！**\n\n"
+            f"关键词：{keyword}\n"
+            f"来源：Google News\n"
+            f"Bot 将每 30 分钟推送相关新闻。"
+        )
+            
+    except Exception as e:
+        if "UNIQUE constraint failed" in str(e):
+             await msg.edit_text("⚠️ 您已经监控过这个关键词了。")
+        else:
+             logger.error(f"Monitor error: {e}")
+             await msg.edit_text(f"❌ 设置失败: {e}")
+
+
+async def list_subs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理 /list_subs 命令"""
+    user_id = update.effective_user.id
+    
+    from database import get_user_subscriptions
+    subs = await get_user_subscriptions(user_id)
+    
+    if not subs:
+        await update.message.reply_text("📭 您当前没有订阅任何 RSS 源。")
+        return
+        
+    msg = "📋 **您的订阅列表**：\n\n"
+    for sub in subs:
+        title = sub["title"]
+        url = sub["feed_url"]
+        msg += f"• [{title}]({url})\n  `{url}`\n\n"
+        
+    msg += "发送 `/unsubscribe <链接>` 可取消订阅。"
+    
+    await update.message.reply_text(msg, parse_mode="Markdown")
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:

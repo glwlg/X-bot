@@ -7,7 +7,10 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
     volumes:
       - ./downloads:/app/downloads
       - ./data:/app/data
+      - ./cookies.txt:/app/cookies.txt
       - /mnt/d/media/dlp:/app/media

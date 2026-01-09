@@ -26,7 +26,19 @@ from handlers import (
     handle_video_download,
     image_command,
     handle_image_prompt,
+    image_command,
+    handle_image_prompt,
+    image_command,
+    handle_image_prompt,
     cancel,
+    handle_large_file_action,
+    remind_command,
+    remind_command,
+    toggle_translation_command,
+    subscribe_command,
+    unsubscribe_command,
+    list_subs_command,
+    monitor_command,
 )
 from ai_handler import handle_ai_chat, handle_ai_photo, handle_ai_video
 from voice_handler import handle_voice_message
@@ -45,10 +57,21 @@ async def initialize_data(application: Application) -> None:
     from database import init_db
     await init_db()
     
+    
+    # 加载待执行的提醒任务
+    # 加载待执行的提醒任务
+    from scheduler import load_jobs_from_db, start_rss_scheduler
+    await load_jobs_from_db(application.job_queue)
+    
+    # 启动 RSS 检查
+    start_rss_scheduler(application.job_queue)
+
     await application.bot.set_my_commands(
         [
             ("start", "主菜单"),
             ("download", "下载视频"),
+            ("remind", "设置提醒"),
+            ("translate", "沉浸式翻译(开关)"),
             ("image", "AI 画图"),
             ("stats", "使用统计"),
             ("help", "使用帮助"),
@@ -82,8 +105,13 @@ def main() -> None:
 
     # 1. 独立注册通用按钮 (保证这些按钮永远可点，不受会话状态影响)
     # 处理 help, settings, platforms, back_to_main, ai_chat
-    # 注意：排除 download_video, generate_image, back_to_main_cancel 以及 dl_format_ 开头的回调
-    common_pattern = "^(?!download_video$|generate_image$|back_to_main_cancel$|dl_format_).*$"
+    # 注意：排除 download_video, generate_image, back_to_main_cancel 以及 dl_format_ 和 large_file_ 开头的回调
+    
+    # 1.1 大文件处理按钮
+    application.add_handler(CallbackQueryHandler(handle_large_file_action, pattern="^large_file_"))
+    
+    # 1.2 通用菜单按钮
+    common_pattern = "^(?!download_video$|generate_image$|back_to_main_cancel$|dl_format_|large_file_).*$"
     application.add_handler(CallbackQueryHandler(button_callback, pattern=common_pattern))
 
     # 2. 视频下载对话处理器
@@ -123,6 +151,14 @@ def main() -> None:
 
     # 4. 注册核心功能处理器
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("remind", remind_command))
+    application.add_handler(CommandHandler("translate", toggle_translation_command))
+    application.add_handler(CommandHandler("fanyi", toggle_translation_command))
+    application.add_handler(CommandHandler("subscribe", subscribe_command))
+    application.add_handler(CommandHandler("monitor", monitor_command))
+    application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
+    application.add_handler(CommandHandler("list_subs", list_subs_command))
     application.add_handler(video_conv_handler)
     application.add_handler(image_conv_handler)
     

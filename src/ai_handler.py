@@ -59,6 +59,37 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await increment_stat(user_id, "ai_chats")
         return
 
+    # 检查是否开启了沉浸式翻译
+    from database import get_user_settings
+    settings = await get_user_settings(user_id)
+    if settings.get("auto_translate", 0):
+        # 翻译模式开启
+        thinking_msg = await update.message.reply_text("🌍 翻译中...")
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        
+        try:
+            response = gemini_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=user_message,
+                config={
+                    "system_instruction": (
+                        "你是一个专业的翻译助手。请根据以下规则进行翻译：\n"
+                        "1. 如果输入是中文，请翻译成英文。\n"
+                        "2. 如果输入是其他语言，请翻译成简体中文。\n"
+                        "3. 只输出译文，不要包含任何解释或额外的文本。\n"
+                        "4. 保持原文的语气和格式。"
+                    ),
+                },
+            )
+            if response.text:
+                await thinking_msg.edit_text(f"🌍 **译文**\n\n{response.text}", parse_mode="Markdown")
+            else:
+                await thinking_msg.edit_text("❌ 无法翻译。")
+        except Exception as e:
+            logger.error(f"Translation error: {e}")
+            await thinking_msg.edit_text("❌ 翻译服务出错。")
+        return
+
     # 检查是否引用了包含媒体的消息
     reply_to = update.message.reply_to_message
     has_media = False

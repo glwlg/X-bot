@@ -50,6 +50,43 @@ async def init_db():
             )
         """)
         
+        # 提醒任务表
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                chat_id INTEGER NOT NULL,
+                message TEXT NOT NULL,
+                trigger_time TIMESTAMP NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # 用户设置表
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS user_settings (
+                user_id INTEGER PRIMARY KEY,
+                auto_translate BOOLEAN DEFAULT 0,
+                target_lang TEXT DEFAULT 'zh-CN',
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # 订阅表
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                feed_url TEXT NOT NULL,
+                title TEXT,
+                last_etag TEXT,
+                last_modified TEXT,
+                last_entry_hash TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, feed_url)
+            )
+        """)
+        
         await db.commit()
     logger.info("Database initialized successfully")
 
@@ -145,3 +182,126 @@ async def get_user_stats(user_id: int) -> dict | None:
             if row:
                 return dict(row)
             return None
+
+
+# --- 提醒事项操作 ---
+
+async def add_reminder(user_id: int, chat_id: int, message: str, trigger_time: str) -> int:
+    """添加提醒任务"""
+    async with await get_db() as db:
+        cursor = await db.execute(
+            "INSERT INTO reminders (user_id, chat_id, message, trigger_time) VALUES (?, ?, ?, ?)",
+            (user_id, chat_id, message, trigger_time)
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def delete_reminder(reminder_id: int):
+    """删除提醒任务"""
+    async with await get_db() as db:
+        await db.execute("DELETE FROM reminders WHERE id = ?", (reminder_id,))
+        await db.commit()
+
+
+async def get_pending_reminders() -> list[dict]:
+    """获取所有未执行的提醒任务"""
+    async with await get_db() as db:
+        db.row_factory = aiosqlite.Row
+        # 按触发时间排序
+        async with db.execute(
+            "SELECT * FROM reminders ORDER BY trigger_time ASC"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+# --- 用户设置操作 ---
+
+async def set_translation_mode(user_id: int, enabled: bool):
+    """设置自动翻译模式开关"""
+    async with await get_db() as db:
+        await db.execute(
+            """
+            INSERT INTO user_settings (user_id, auto_translate) 
+            VALUES (?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET 
+            auto_translate = ?, updated_at = CURRENT_TIMESTAMP
+            """,
+            (user_id, enabled, enabled)
+        )
+        await db.commit()
+
+
+async def get_user_settings(user_id: int) -> dict:
+    """获取用户设置"""
+    async with await get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM user_settings WHERE user_id = ?",
+            (user_id,)
+        ) as cursor:
+            row = await cursor.fetchone()
+            if row:
+                return dict(row)
+            if row:
+                return dict(row)
+            # 默认设置
+            return {"user_id": user_id, "auto_translate": 0, "target_lang": "zh-CN"}
+
+
+# --- 订阅操作 ---
+
+async def add_subscription(user_id: int, feed_url: str, title: str):
+    """添加订阅"""
+    async with await get_db() as db:
+        await db.execute(
+            "INSERT INTO subscriptions (user_id, feed_url, title) VALUES (?, ?, ?)",
+            (user_id, feed_url, title)
+        )
+        await db.commit()
+
+
+async def delete_subscription(user_id: int, feed_url: str):
+    """删除订阅"""
+    async with await get_db() as db:
+        await db.execute(
+            "DELETE FROM subscriptions WHERE user_id = ? AND feed_url = ?",
+            (user_id, feed_url)
+        )
+        await db.commit()
+
+
+async def get_user_subscriptions(user_id: int) -> list[dict]:
+    """获取用户的订阅列表"""
+    async with await get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM subscriptions WHERE user_id = ?",
+            (user_id,)
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+async def get_all_subscriptions() -> list[dict]:
+    """获取所有订阅（用于后台刷新）"""
+    async with await get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute("SELECT * FROM subscriptions") as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+async def update_subscription_status(sub_id: int, last_entry_hash: str, last_etag: str = None, last_modified: str = None):
+    """更新订阅状态（更新时间和哈希）"""
+    async with await get_db() as db:
+        await db.execute(
+            """
+            UPDATE subscriptions 
+            SET last_entry_hash = ?, last_etag = ?, last_modified = ? 
+            WHERE id = ?
+            """,
+            (last_entry_hash, last_etag, last_modified, sub_id)
+        )
+        await db.commit()

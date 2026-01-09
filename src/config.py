@@ -52,6 +52,7 @@ DATA_DIR = "data"
 PERMANENT_STORAGE_DIR = "/app/media"  # For files > 49MB
 UPDATE_INTERVAL_SECONDS = 2  # 进度更新间隔（秒）
 MAX_FILE_SIZE_MB = 49  # Telegram 最大文件大小限制
+COOKIES_FILE = "cookies.txt"  # yt-dlp cookies file path
 
 # 会话状态常量
 WAITING_FOR_VIDEO_URL = 1

@@ -5,10 +5,11 @@ import re
 import json
 import logging
 import asyncio
+import os
 import httpx
 from bs4 import BeautifulSoup
 
-from config import gemini_client, GEMINI_MODEL
+from config import gemini_client, GEMINI_MODEL, COOKIES_FILE
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,11 @@ def is_video_platform(url: str) -> bool:
 async def fetch_video_metadata(url: str) -> str | None:
     """使用 yt-dlp 获取视频/帖子元数据"""
     try:
+        # 检查 cookies 文件
+        cookies_arg = []
+        if os.path.exists(COOKIES_FILE):
+             cookies_arg = ["--cookies", COOKIES_FILE]
+
         # 使用 yt-dlp 获取 JSON 元数据 (不下载)
         command = [
             "yt-dlp",
@@ -47,6 +53,7 @@ async def fetch_video_metadata(url: str) -> str | None:
             "--skip-download",
             "--no-warnings",
             "--no-playlist",
+        ] + cookies_arg + [
             # 为了防止被 X/Twitter 限制，尝试使用 cookies-from-browser 或者简单的 UA 伪装
             # 这里暂时只依赖 yt-dlp 内置的反爬能力
             url

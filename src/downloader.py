@@ -8,6 +8,8 @@ import time
 import shutil
 import asyncio
 import logging
+from dataclasses import dataclass
+from typing import Optional
 from telegram import Message
 from telegram.error import BadRequest
 
@@ -15,14 +17,24 @@ from config import (
     DOWNLOAD_DIR,
     PERMANENT_STORAGE_DIR,
     UPDATE_INTERVAL_SECONDS,
+    UPDATE_INTERVAL_SECONDS,
     MAX_FILE_SIZE_MB,
+    COOKIES_FILE,
 )
 from utils import create_progress_bar
 
 logger = logging.getLogger(__name__)
 
+@dataclass
+class DownloadResult:
+    success: bool
+    file_path: Optional[str] = None
+    file_size_mb: float = 0.0
+    error_message: Optional[str] = None
+    is_too_large: bool = False
 
-async def download_video(url: str, user_id: int, progress_message: Message, audio_only: bool = False) -> str | None:
+
+async def download_video(url: str, user_id: int, progress_message: Message, audio_only: bool = False) -> DownloadResult:
     """
     从给定 URL 下载视频或音频，提供进度更新，检查文件大小
     
@@ -33,7 +45,7 @@ async def download_video(url: str, user_id: int, progress_message: Message, audi
         audio_only: 如果为 True，只下载音频（MP3 格式）
         
     Returns:
-        如果文件可发送则返回文件路径，否则返回 None
+        DownloadResult 对象
     """
     mode_str = "audio" if audio_only else "video"
     logger.info(f"[{user_id}] Attempting to download {mode_str} from URL: {url}")
@@ -57,8 +69,15 @@ async def download_video(url: str, user_id: int, progress_message: Message, audi
     expected_path = os.path.join(DOWNLOAD_DIR, expected_filename)
     if os.path.exists(expected_path):
         logger.info(f"[{user_id}] File already exists: {expected_path}")
-        return expected_path
+        return await _handle_downloaded_file(expected_path, user_id, progress_message)
 
+    # 检查 cookies 文件是否存在
+    cookies_arg = []
+    if os.path.exists(COOKIES_FILE):
+        logger.info(f"[{user_id}] Using cookies from {COOKIES_FILE}")
+        cookies_arg = ["--cookies", COOKIES_FILE]
+    
+    # Simplify by appending to the constructed list
     if audio_only:
         command = [
             "yt-dlp",
@@ -66,6 +85,7 @@ async def download_video(url: str, user_id: int, progress_message: Message, audi
             "--newline",
             "--js-runtimes",
             "node",
+        ] + cookies_arg + [
             "-x",  # 提取音频
             "--audio-format",
             "mp3",
@@ -82,6 +102,7 @@ async def download_video(url: str, user_id: int, progress_message: Message, audi
             "--newline",
             "--js-runtimes",
             "node",
+        ] + cookies_arg + [
             "-f",
             "bestvideo+bestaudio/best",
             "--merge-output-format",
@@ -120,7 +141,7 @@ async def download_video(url: str, user_id: int, progress_message: Message, audi
             await progress_message.edit_text(f"❌ 下载失败\n{error_line}")
         except Exception:
             pass
-        return None
+        return DownloadResult(success=False, error_message=error_line)
 
     # 检查文件大小并处理
     return await _handle_downloaded_file(expected_path, user_id, progress_message)
@@ -157,7 +178,7 @@ async def _update_download_progress(proc, progress_message: Message) -> None:
 
 async def _handle_downloaded_file(
     file_path: str, user_id: int, progress_message: Message
-) -> str | None:
+) -> DownloadResult:
     """处理下载完成的文件，检查大小并决定是否可发送"""
     try:
         if not os.path.exists(file_path):
@@ -165,7 +186,7 @@ async def _handle_downloaded_file(
                 f"[{user_id}] yt-dlp succeeded but file not found: {file_path}"
             )
             await progress_message.edit_text("❌ 下载后未找到文件。")
-            return None
+            return DownloadResult(success=False, error_message="File not found")
 
         file_size_bytes = os.path.getsize(file_path)
         file_size_mb = file_size_bytes / (1024 * 1024)
@@ -174,28 +195,32 @@ async def _handle_downloaded_file(
             f"[{user_id}] Downloaded file: {file_path}, Size: {file_size_mb:.2f} MB"
         )
 
-        # 如果文件太大，移动到永久存储（虽然现在已经在 storage 中，但为了区分无法发送的文件，还是移动一下？）
-        # 或者直接报错不移动，或者保留原地？
-        # 原逻辑是移走。我们保持原逻辑，但也可能是为了避免占位？
+        # 如果文件太大，标记 is_too_large=True，但暂时保留文件在 downloads 目录
         if file_size_mb > MAX_FILE_SIZE_MB:
-            os.makedirs(PERMANENT_STORAGE_DIR, exist_ok=True)
-            new_path = os.path.join(
-                PERMANENT_STORAGE_DIR, os.path.basename(file_path)
-            )
             logger.info(
-                f"File is too large ({file_size_mb:.2f} MB). Moving to {new_path}"
+                f"File is too large ({file_size_mb:.2f} MB). Marking as too large."
             )
-            shutil.move(file_path, new_path)
-            await progress_message.edit_text(
-                f"❌ 视频文件过大 ({file_size_mb:.2f} MB)，无法发送。"
+            # 不再自动移动，交由上层逻辑处理
+            # await progress_message.edit_text(
+            #     f"❌ 视频文件过大 ({file_size_mb:.2f} MB)，无法发送。"
+            # )
+            return DownloadResult(
+                success=True,
+                file_path=file_path,
+                file_size_mb=file_size_mb,
+                is_too_large=True
             )
-            return None
 
         # 文件大小合适，可以发送
         await progress_message.edit_text("✅ 下载完成，正在上传...")
-        return file_path
+        return DownloadResult(
+            success=True, 
+            file_path=file_path, 
+            file_size_mb=file_size_mb,
+            is_too_large=False
+        )
 
     except Exception as e:
         logger.error(f"[{user_id}] Error during file size check or move: {e}")
         await progress_message.edit_text("❌ 处理文件时出错。")
-        return None
+        return DownloadResult(success=False, error_message=str(e))
