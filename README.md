@@ -1,0 +1,78 @@
+# X-Bot (原 DLP Bot)
+
+**X-Bot** 是一个全能型 AI Telegram 机器人，集成了多平台媒体下载、智能对话、文档分析、语音交互和 AI 绘图功能。
+
+它不仅仅是一个下载工具，更是你的智能生活助手。
+
+## ✨ 核心功能
+
+### 🤖 强大的 AI 能力
+-   **多轮智能对话**：基于 Gemini 2.0 Flash 模型，支持上下文记忆（自动保存最近 10 条对话）。
+-   **多模态分析**：
+    -   **图片分析**：发送图片，AI 识别内容并回答问题。
+    -   **视频分析**：发送视频，AI 理解画面并进行总结或问答。
+    -   **文档分析**：支持 PDF 和 DOCX 文档，提取内容并回答相关问题。
+-   **网页摘要**：发送链接，自动抓取网页内容并生成精简摘要。
+-   **语音交互**：发送语音消息，AI 自动转录为文字并进行回复。
+-   **AI 绘图**：使用 Google Imagen 3 模型，根据描述生成高质量图像。
+
+### 📹 全能媒体下载
+-   **支持平台**：YouTube, X (Twitter), Instagram, TikTok, Bilibili 等。
+-   **多种格式**：支持下载高清视频或仅提取音频 (MP3)。
+-   **秒传技术**：智能文件缓存与去重，已下载内容无需重复下载，直接秒发。
+
+### 📊 数据持久化与统计
+-   **SQLite 数据库**：所有数据（对话历史、文件映射、用户统计）持久化存储。
+-   **Docker 卷映射**：重启容器不丢失任何数据。
+-   **使用统计**：通过 `/stats` 命令随时查看个人使用数据。
+
+## 🚀 快速部署
+
+### 1. 准备环境
+确保已安装 [Docker](https://docs.docker.com/get-docker/) 和 [Docker Compose](https://docs.docker.com/compose/install/)。
+
+### 2. 获取配置
+创建一个 `.env` 文件（参考 `.env.example`）：
+
+```ini
+# Telegram
+TELEGRAM_BOT_TOKEN="你的 Bot Token"
+
+# Gemini AI (https://aistudio.google.com/)
+GEMINI_API_KEY="你的 API Key"
+GEMINI_MODEL="gemini-2.0-flash"
+IMAGE_MODEL="imagen-3.0-generate-002"
+
+# 访问控制 (可选)
+ALLOWED_USER_IDS="123456789"
+```
+
+### 3. 一键启动
+```bash
+docker-compose up --build -d
+```
+
+### 4. 数据管理
+所有持久化数据存储在 `./data` 目录（SQLite 数据库）和 `./downloads` 目录（媒体文件）。
+
+## 🤖 使用指南
+
+### 常用命令
+-   `/start` - 呼出主菜单
+-   `/download` - 快速进入下载模式
+-   `/image` - 快速进入画图模式
+-   `/stats` - 查看我的使用统计
+-   `/help` - 查看帮助信息
+
+### 交互方式
+-   **直接聊天**：发送文字、语音、图片、视频或文件，AI 自动响应。
+-   **下载视频**：点击菜单中的「下载视频」，选择格式后发送链接。
+
+## 🛠️ 技术栈
+-   **语言**: Python 3.14
+-   **框架**: python-telegram-bot, Google Gemini SDK
+-   **数据库**: SQLite (aiosqlite)
+-   **工具**: uv (依赖管理), yt-dlp (视频下载)
+
+---
+Enjoy X-Bot! 🚀

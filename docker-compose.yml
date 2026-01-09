@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  x-bot:
+    build: .
+    container_name: x-bot
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - ./downloads:/app/downloads
+      - ./data:/app/data
+      - /mnt/d/media/dlp:/app/media

@@ -1,0 +1,358 @@
+"""
+AI 对话处理模块 - 使用 Gemini API，支持文本、图片和视频
+"""
+import time
+import logging
+import base64
+from telegram import Update
+from telegram.ext import ContextTypes
+from telegram.error import BadRequest
+
+from config import gemini_client, GEMINI_MODEL
+
+logger = logging.getLogger(__name__)
+
+# 思考提示消息
+THINKING_MESSAGE = "🤔 正在思考中..."
+
+
+async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    处理普通文本消息，使用 Gemini AI 生成回复
+    支持引用（回复）包含图片或视频的消息
+    """
+    user_message = update.message.text
+    chat_id = update.message.chat_id
+    user_id = update.message.from_user.id
+
+    if not user_message:
+        return
+
+    # 检查用户权限
+    from config import is_user_allowed
+    if not is_user_allowed(user_id):
+        await update.message.reply_text(
+            "⛔ 抱歉，您没有使用 AI 对话功能的权限。\n\n"
+            "如需下载视频，请使用 /download 命令。"
+        )
+        return
+
+    # 检查消息中是否包含 URL（自动生成网页摘要）
+    from web_summary import extract_urls, summarize_webpage
+    urls = extract_urls(user_message)
+    
+    # 如果只是一个 URL 且没有其他内容，则生成摘要
+    if urls and user_message.strip() in urls:
+        thinking_msg = await update.message.reply_text("📄 正在获取网页内容并生成摘要...")
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        
+        summary = await summarize_webpage(urls[0])
+        await thinking_msg.edit_text(summary, parse_mode="Markdown")
+        
+        # 记录统计
+        from stats import increment_stat
+        await increment_stat(user_id, "ai_chats")
+        return
+
+    # 检查是否引用了包含媒体的消息
+    reply_to = update.message.reply_to_message
+    has_media = False
+    media_data = None
+    mime_type = None
+    
+    if reply_to:
+        if reply_to.video:
+            has_media = True
+            video = reply_to.video
+            file_id = video.file_id
+            mime_type = video.mime_type or "video/mp4"
+            
+            # 优先检查本地缓存
+            from database import get_video_cache
+            cache_path = await get_video_cache(file_id)
+            
+            if cache_path:
+                import os
+                if os.path.exists(cache_path):
+                    logger.info(f"Using cached video: {cache_path}")
+                    thinking_msg = await update.message.reply_text("🎬 正在分析视频（使用缓存）...")
+                    with open(cache_path, "rb") as f:
+                        media_data = bytearray(f.read())
+                else:
+                    # 缓存文件不存在，这里我们不主动删除数据库记录，因为 database.py 没实现删除，
+                    # 也可以后续添加 cleanup，这里暂时忽略
+                    pass # 缓存文件丢失，需要重新下载
+            
+            # 缓存未命中，通过 Telegram API 下载
+            if media_data is None:
+                # 检查大小限制（Telegram API 限制 20MB）
+                if video.file_size and video.file_size > 20 * 1024 * 1024:
+                    await update.message.reply_text(
+                        "⚠️ 引用的视频文件过大（超过 20MB），无法通过 Telegram 下载分析。\n\n"
+                        "提示：Bot 下载的视频会被缓存，可以直接分析。"
+                    )
+                    return
+                thinking_msg = await update.message.reply_text("🎬 正在下载并分析视频...")
+                file = await context.bot.get_file(video.file_id)
+                media_data = await file.download_as_bytearray()
+                
+        elif reply_to.photo:
+            has_media = True
+            photo = reply_to.photo[-1]
+            mime_type = "image/jpeg"
+            thinking_msg = await update.message.reply_text("🔍 正在分析图片...")
+            file = await context.bot.get_file(photo.file_id)
+            media_data = await file.download_as_bytearray()
+    
+    if not has_media:
+        # 普通文本对话
+        thinking_msg = await update.message.reply_text(THINKING_MESSAGE)
+    
+    # 发送"正在输入"状态
+    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+
+    try:
+        if has_media and media_data:
+            # 带媒体的请求
+            contents = [
+                {
+                    "parts": [
+                        {"text": user_message},
+                        {
+                            "inline_data": {
+                                "mime_type": mime_type,
+                                "data": base64.b64encode(bytes(media_data)).decode("utf-8"),
+                            }
+                        },
+                    ]
+                }
+            ]
+            response = gemini_client.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=contents,
+                config={
+                    "system_instruction": "你是一个友好的助手，可以分析图片和视频内容并回答问题。请用中文回复。",
+                },
+            )
+            if response.text:
+                await thinking_msg.edit_text(response.text)
+            else:
+                await thinking_msg.edit_text("抱歉，我无法分析这个内容。")
+        else:
+            # 纯文本对话（流式响应 + 多轮上下文）
+            from user_context import get_user_context, add_message
+            
+            # 添加用户消息到上下文
+            await add_message(user_id, "user", user_message)
+            
+            # 获取对话历史
+            context_messages = await get_user_context(user_id)
+            
+            response = gemini_client.models.generate_content_stream(
+                model=GEMINI_MODEL,
+                contents=context_messages,
+                config={
+                    "system_instruction": "你是一个友好的助手，可以帮助用户解答问题。请用中文回复。记住之前的对话内容。",
+                },
+            )
+
+            # 流式响应
+            full_response = ""
+            last_update_time = 0
+
+            for chunk in response:
+                if chunk.text:
+                    full_response += chunk.text
+
+                    # 每 0.5 秒更新一次消息
+                    now = time.time()
+                    if now - last_update_time > 0.5:
+                        try:
+                            await thinking_msg.edit_text(full_response)
+                        except BadRequest:
+                            pass
+                        last_update_time = now
+
+            # 最终更新完整回复
+            if full_response:
+                try:
+                    await thinking_msg.edit_text(full_response)
+                    # 保存 AI 回复到上下文
+                    await add_message(user_id, "model", full_response)
+                    # 记录统计
+                    from stats import increment_stat
+                    await increment_stat(user_id, "ai_chats")
+                except BadRequest:
+                    pass
+            else:
+                await thinking_msg.edit_text("抱歉，我无法生成回复。请稍后再试。")
+
+    except Exception as e:
+        logger.error(f"AI chat error: {e}")
+        try:
+            await thinking_msg.edit_text(
+                "❌ AI 服务出现错误，请稍后再试。\n\n"
+                "如需下载视频，请点击 /download 进入下载模式。"
+            )
+        except BadRequest:
+            pass
+
+
+async def handle_ai_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    处理图片消息，使用 Gemini AI 分析图片
+    """
+    chat_id = update.message.chat_id
+    user_id = update.message.from_user.id
+    
+    # 检查用户权限
+    from config import is_user_allowed
+    if not is_user_allowed(user_id):
+        await update.message.reply_text(
+            "⛔ 抱歉，您没有使用 AI 功能的权限。"
+        )
+        return
+    
+    # 获取图片（选择最大分辨率）
+    photo = update.message.photo[-1]
+    caption = update.message.caption or "请描述这张图片"
+    
+    # 立即发送"正在分析"提示
+    thinking_msg = await update.message.reply_text("🔍 正在分析图片...")
+    
+    # 发送"正在输入"状态
+    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+    
+    try:
+        # 下载图片
+        file = await context.bot.get_file(photo.file_id)
+        image_bytes = await file.download_as_bytearray()
+        
+        # 构建带图片的内容
+        contents = [
+            {
+                "parts": [
+                    {"text": caption},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": base64.b64encode(bytes(image_bytes)).decode("utf-8"),
+                        }
+                    },
+                ]
+            }
+        ]
+        
+        # 调用 Gemini API
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=contents,
+            config={
+                "system_instruction": "你是一个友好的助手，可以分析图片并回答问题。请用中文回复。",
+            },
+        )
+        
+        if response.text:
+            await thinking_msg.edit_text(response.text)
+            # 记录统计
+            from stats import increment_stat
+            await increment_stat(user_id, "photo_analyses")
+        else:
+            await thinking_msg.edit_text("抱歉，我无法分析这张图片。请稍后再试。")
+        
+    except Exception as e:
+        logger.error(f"AI photo analysis error: {e}")
+        try:
+            await thinking_msg.edit_text("❌ 图片分析失败，请稍后再试。")
+        except BadRequest:
+            pass
+
+
+async def handle_ai_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    处理视频消息，使用 Gemini AI 分析视频
+    """
+    chat_id = update.message.chat_id
+    user_id = update.message.from_user.id
+    
+    # 检查用户权限
+    from config import is_user_allowed
+    if not is_user_allowed(user_id):
+        await update.message.reply_text(
+            "⛔ 抱歉，您没有使用 AI 功能的权限。"
+        )
+        return
+    
+    # 获取视频
+    video = update.message.video
+    if not video:
+        return
+    
+    caption = update.message.caption or "请分析这个视频的内容"
+    
+    # 检查视频大小（Gemini 有限制）
+    if video.file_size and video.file_size > 20 * 1024 * 1024:  # 20MB 限制
+        await update.message.reply_text(
+            "⚠️ 视频文件过大（超过 20MB），无法分析。\n\n"
+            "请尝试发送较短的视频片段。"
+        )
+        return
+    
+    # 立即发送"正在分析"提示
+    thinking_msg = await update.message.reply_text("🎬 正在分析视频，这可能需要一些时间...")
+    
+    # 发送"正在输入"状态
+    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+    
+    try:
+        # 下载视频
+        file = await context.bot.get_file(video.file_id)
+        video_bytes = await file.download_as_bytearray()
+        
+        # 获取 MIME 类型
+        mime_type = video.mime_type or "video/mp4"
+        
+        # 构建带视频的内容
+        contents = [
+            {
+                "parts": [
+                    {"text": caption},
+                    {
+                        "inline_data": {
+                            "mime_type": mime_type,
+                            "data": base64.b64encode(bytes(video_bytes)).decode("utf-8"),
+                        }
+                    },
+                ]
+            }
+        ]
+        
+        # 调用 Gemini API
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=contents,
+            config={
+                "system_instruction": "你是一个友好的助手，可以分析视频内容并回答问题。请用中文回复。",
+            },
+        )
+        
+        if response.text:
+            await thinking_msg.edit_text(response.text)
+            # 记录统计
+            from stats import increment_stat
+            await increment_stat(user_id, "video_analyses")
+        else:
+            await thinking_msg.edit_text("抱歉，我无法分析这个视频。请稍后再试。")
+        
+    except Exception as e:
+        logger.error(f"AI video analysis error: {e}")
+        try:
+            await thinking_msg.edit_text(
+                "❌ 视频分析失败，请稍后再试。\n\n"
+                "可能的原因：\n"
+                "• 视频格式不支持\n"
+                "• 视频时长过长\n"
+                "• 服务暂时不可用"
+            )
+        except BadRequest:
+            pass
