@@ -4,6 +4,66 @@
 
 它不仅仅是一个下载工具，更是你的智能生活助手。
 
+## 🏗️ 系统架构
+
+```mermaid
+graph TD
+    User([👤 User]) <-->|Telegram API| Bot([🤖 X-Bot Server])
+
+    subgraph "X-Bot Core (Docker Container)"
+        Dispatcher[📨 Dispatcher & Router]
+        
+        subgraph "Handlers Layer"
+            StartH[🏁 Start Handlers]
+            MediaH[📹 Media Handlers]
+            AIH[🧠 AI Handlers]
+            ServiceH[🛠️ Service Handlers]
+            AdminH[🛡️ Admin Handlers]
+        end
+        
+        subgraph "Service Layer"
+            Downloader[📥 yt-dlp Wrapper]
+            WebSum[🕸️ Web Scraper]
+            ImgGen[🎨 Image Gen]
+            Scheduler[⏰ APScheduler]
+        end
+        
+        subgraph "Data Layer"
+            DB[(🗄️ SQLite DB)]
+            Context[📝 User Context]
+            Cache[💾 File Cache]
+        end
+
+        Dispatcher --> StartH
+        Dispatcher --> MediaH
+        Dispatcher --> AIH
+        Dispatcher --> ServiceH
+        Dispatcher --> AdminH
+
+        MediaH --> Downloader
+        MediaH --> ImgGen
+        AIH --> WebSum
+        AIH --> Context
+        ServiceH --> Scheduler
+
+        Downloader --> Cache
+        Context --> DB
+        Scheduler --> DB
+    end
+
+    subgraph "External Services"
+        Gemini([✨ Google Gemini Pro])
+        Platforms([🌐 Video Platforms\nX, YouTube, TikTok...])
+        Web([🌍 World Wide Web])
+    end
+
+    AIH <--> Gemini
+    ImgGen <--> Gemini
+    WebSum <--> Gemini
+    WebSum <--> Web
+    Downloader <--> Platforms
+```
+
 ## ✨ 核心功能
 
 ### 🤖 强大的 AI 能力
