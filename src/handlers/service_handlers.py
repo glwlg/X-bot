@@ -39,7 +39,7 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     args = context.args
     # 如果有参数，直接执行逻辑
     if args and len(args) >= 2:
-        await _process_remind(update, context, args[0], " ".join(args[1:]))
+        await process_remind(update, context, args[0], " ".join(args[1:]))
         return ConversationHandler.END
         
     # 没有参数，提示输入
@@ -72,14 +72,14 @@ async def handle_remind_input(update: Update, context: ContextTypes.DEFAULT_TYPE
         )
         return WAITING_FOR_REMIND_INPUT
         
-    success = await _process_remind(update, context, parts[0], parts[1])
+    success = await process_remind(update, context, parts[0], parts[1])
     if success:
         return ConversationHandler.END
     else:
         return WAITING_FOR_REMIND_INPUT
 
 
-async def _process_remind(update: Update, context: ContextTypes.DEFAULT_TYPE, time_str: str, message: str) -> bool:
+async def process_remind(update: Update, context: ContextTypes.DEFAULT_TYPE, time_str: str, message: str) -> bool:
     """实际处理提醒逻辑（复用）"""
     
     # 解析时间
@@ -173,7 +173,7 @@ async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
     args = context.args
     if args:
-        await _process_subscribe(update, context, args[0])
+        await process_subscribe(update, context, args[0])
         return ConversationHandler.END
         
     # 无参数，提示输入
@@ -196,14 +196,14 @@ async def handle_subscribe_input(update: Update, context: ContextTypes.DEFAULT_T
         await update.message.reply_text("请发送有效的链接。")
         return WAITING_FOR_SUBSCRIBE_URL
         
-    success = await _process_subscribe(update, context, url)
+    success = await process_subscribe(update, context, url)
     if success:
         return ConversationHandler.END
     else:
         return WAITING_FOR_SUBSCRIBE_URL
 
 
-async def _process_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str) -> bool:
+async def process_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str) -> bool:
     """实际处理订阅逻辑"""
     user_id = update.effective_user.id
     
@@ -284,7 +284,7 @@ async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     args = context.args
     # 如果有参数，直接执行
     if args:
-        await _process_monitor(update, context, " ".join(args))
+        await process_monitor(update, context, " ".join(args))
         return ConversationHandler.END
         
     # 无参数，提示输入
@@ -308,7 +308,7 @@ async def handle_monitor_input(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text("请发送有效文本。")
         return WAITING_FOR_MONITOR_KEYWORD
         
-    success = await _process_monitor(update, context, keyword)
+    success = await process_monitor(update, context, keyword)
     if success:
         return ConversationHandler.END
     else:
@@ -316,7 +316,7 @@ async def handle_monitor_input(update: Update, context: ContextTypes.DEFAULT_TYP
         return WAITING_FOR_MONITOR_KEYWORD
 
 
-async def _process_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE, keyword: str) -> bool:
+async def process_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE, keyword: str) -> bool:
     """实际处理监控逻辑"""
     user_id = update.effective_user.id
     

@@ -113,6 +113,76 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await thinking_msg.edit_text("❌ 翻译服务出错。")
         return
 
+    # --- Smart Intent Routing ---
+    from intent_router import analyze_intent, UserIntent
+    
+    # Analyze intent
+    # We pass the user message. The router uses a fast model to determine intent.
+    intent_result = await analyze_intent(user_message)
+    intent = intent_result.get("intent")
+    params = intent_result.get("params", {})
+    
+    logger.info(f"Smart Routing: {intent} | params={params}")
+
+    if intent == UserIntent.DOWNLOAD_VIDEO:
+        # 尝试从 params 获取 URL，或者回退到 extract_urls
+        target_url = params.get("url")
+        if not target_url:
+             # Fallback extraction
+            found_urls = extract_urls(user_message)
+            if found_urls:
+                target_url = found_urls[0]
+        
+        if target_url:
+            # await update.message.reply_text(f"🚀 识别到下载意图，正在处理链接：{target_url}")
+            from .media_handlers import process_video_download
+            # Force non-audio-only (default) unless specified (could extend router to detect audio only)
+            # For now, default to video.
+            await process_video_download(update, context, target_url, audio_only=False)
+            return
+        else:
+             # 如果意图是下载但没找到 URL，可能用户只说了"下载视频"但没给连接。
+             # 此时让其进入常规对话，或者由 Gemini 回复询问。
+             pass
+
+    elif intent == UserIntent.GENERATE_IMAGE:
+        prompt = params.get("prompt")
+        if not prompt:
+            prompt = user_message # Fallback to full message
+            
+        # await update.message.reply_text(f"🎨 识别到画图意图，正在生成：{prompt}")
+        from image_generator import handle_image_generation
+        await handle_image_generation(update, context, prompt)
+        return
+
+    elif intent == UserIntent.SET_REMINDER:
+        time_str = params.get("time")
+        content = params.get("content")
+        
+        if time_str and content:
+            from .service_handlers import process_remind
+            await process_remind(update, context, time_str, content)
+            return
+        else:
+             # Missing params, fallback to Chat or ask user
+             pass
+
+    elif intent == UserIntent.RSS_SUBSCRIBE:
+        url = params.get("url")
+        if url:
+             from .service_handlers import process_subscribe
+             await process_subscribe(update, context, url)
+             return
+
+    elif intent == UserIntent.MONITOR_KEYWORD:
+        keyword = params.get("keyword")
+        if keyword:
+             from .service_handlers import process_monitor
+             await process_monitor(update, context, keyword)
+             return
+
+    # ----------------------------
+
     # 检查是否引用了包含媒体的消息
     reply_to = update.message.reply_to_message
     has_media = False

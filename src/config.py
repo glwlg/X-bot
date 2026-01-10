@@ -18,6 +18,7 @@ if not TELEGRAM_BOT_TOKEN:
 GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+ROUTING_MODEL = os.getenv("ROUTING_MODEL", "gemini-2.0-flash")
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "imagen-3.0-generate-002")
 
 if not GEMINI_API_KEY:

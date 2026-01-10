@@ -120,6 +120,20 @@ async def handle_video_download(
     
     # 获取用户选择的下载格式（默认视频）
     audio_only = context.user_data.get("download_format") == "audio"
+    
+    # Delegate to the shared processing function
+    await process_video_download(update, context, url, audio_only)
+
+    return ConversationHandler.END
+
+
+async def process_video_download(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str, audio_only: bool = False) -> None:
+    """
+    Core video download logic, shared by direct command and AI router.
+    """
+    chat_id = update.effective_chat.id
+    user_id = update.effective_user.id
+    
     format_text = "音频" if audio_only else "视频"
 
     processing_message = await context.bot.send_message(
@@ -141,7 +155,7 @@ async def handle_video_download(
                 )
             except:
                 pass
-        return ConversationHandler.END
+        return
 
     file_path = result.file_path
     
@@ -170,7 +184,7 @@ async def handle_video_download(
             parse_mode="HTML",
             reply_markup=reply_markup
         )
-        return ConversationHandler.END
+        return
 
     # 如果下载成功且大小合适，发送文件
     if file_path and os.path.exists(file_path):
@@ -199,7 +213,7 @@ async def handle_video_download(
                 
                 # 记录统计
                 from stats import increment_stat
-                await increment_stat(update.message.from_user.id, "downloads")
+                await increment_stat(user_id, "downloads")
                 
             # 删除进度消息
             await context.bot.delete_message(
@@ -213,8 +227,6 @@ async def handle_video_download(
                 message_id=processing_message.message_id,
                 text="❌ 发送视频失败，可能是网络问题或格式不受支持。",
             )
-
-    return ConversationHandler.END
 
 async def handle_video_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """处理视频链接的智能选项（下载 vs 摘要）"""
