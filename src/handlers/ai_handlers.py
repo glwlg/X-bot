@@ -190,139 +190,32 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # ----------------------------
 
+    # ----------------------------
     # 检查是否引用了包含媒体的消息
-    reply_to = update.message.reply_to_message
-    has_media = False
-    media_data = None
-    mime_type = None
-    extra_context = ""
+    from .message_utils import process_reply_message
     
-    if reply_to:
-        # 1. 尝试提取引用消息中的 URL 并获取内容
-        reply_urls = []
-        
-        # DEBUG LOG
-        logger.info(f"Checking reply_to message {reply_to.message_id} for URLs")
-        
-        # A. 从实体（超链接/文本链接）提取
-        if reply_to.entities:
-            for entity in reply_to.entities:
-                logger.info(f"Found text entity: {entity.type} at offset {entity.offset}")
-                if entity.type == "text_link":
-                    reply_urls.append(entity.url)
-                elif entity.type == "url":
-                    reply_urls.append(reply_to.parse_entity(entity))
-
-        if reply_to.caption_entities:
-            for entity in reply_to.caption_entities:
-                logger.info(f"Found caption entity: {entity.type} at offset {entity.offset}")
-                if entity.type == "text_link":
-                    reply_urls.append(entity.url)
-                elif entity.type == "url":
-                    reply_urls.append(reply_to.parse_caption_entity(entity))
-                
-        # B. 从文本正则提取 (兜底，防止实体未解析)
-        if not reply_urls:
-            reply_text = reply_to.text or reply_to.caption or ""
-            found = extract_urls(reply_text)
-            logger.info(f"Regex found URLs: {found}")
-            reply_urls = found
-        
-        # 去重
-        reply_urls = list(set(reply_urls))
-        logger.info(f"Final detected reply_urls: {reply_urls}")
-
-        if reply_urls:
-            # 发现 URL，尝试获取内容
-            # 先发送一个提示，避免用户以为卡死
-            status_msg = await smart_reply_text(update, "📄 正在获取引用网页内容...")
-            await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-            
-            try:
-                web_content = await fetch_webpage_content(reply_urls[0])
-                if web_content:
-                    extra_context = f"【引用网页内容】\n{web_content}\n\n"
-                    # 获取成功，删除提示消息
-                    await status_msg.delete()
-                else:
-                    # 获取失败，提示 AI 告知用户
-                    extra_context = (
-                        "【系统提示】引用的网页链接无法访问（无法提取内容，可能是反爬虫限制）。"
-                        "请在回答中明确告知用户你无法读取该链接的内容，并仅根据现有的文本信息进行回答。"
-                        "\n\n"
-                    )
-                    await status_msg.delete()
-            except Exception as e:
-                logger.error(f"Error fetching reply URL: {e}")
-                # 出错也提示 AI
-                extra_context = "【系统提示】读取链接时发生错误。请告知用户无法访问该链接。\n\n"
-                await status_msg.delete()
-
-        # 2. 处理媒体
-        if reply_to.video:
-            has_media = True
-            video = reply_to.video
-            file_id = video.file_id
-            mime_type = video.mime_type or "video/mp4"
-            
-            # 优先检查本地缓存
-            cache_path = await get_video_cache(file_id)
-            
-            if cache_path:
-                import os
-                if os.path.exists(cache_path):
-                    logger.info(f"Using cached video: {cache_path}")
-                    thinking_msg = await smart_reply_text(update, "🎬 正在分析视频（使用缓存）...")
-                    with open(cache_path, "rb") as f:
-                        media_data = bytearray(f.read())
-                else:
-                    # 缓存文件不存在
-                    pass 
-            
-            # 缓存未命中，通过 Telegram API 下载
-            if media_data is None:
-                # 检查大小限制（Telegram API 限制 20MB）
-                if video.file_size and video.file_size > 20 * 1024 * 1024:
-                    await smart_reply_text(update,
-                        "⚠️ 引用的视频文件过大（超过 20MB），无法通过 Telegram 下载分析。\n\n"
-                        "提示：Bot 下载的视频会被缓存，可以直接分析。"
-                    )
-                    return
-                thinking_msg = await smart_reply_text(update, "🎬 正在下载并分析视频...")
-                file = await context.bot.get_file(video.file_id)
-                media_data = await file.download_as_bytearray()
-                
-        elif reply_to.photo:
-            has_media = True
-            photo = reply_to.photo[-1]
-            mime_type = "image/jpeg"
-            thinking_msg = await smart_reply_text(update, "🔍 正在分析图片...")
-            file = await context.bot.get_file(photo.file_id)
-            media_data = await file.download_as_bytearray()
-
-        elif reply_to.audio or reply_to.voice:
-            has_media = True
-            if reply_to.audio:
-                file_id = reply_to.audio.file_id
-                mime_type = reply_to.audio.mime_type or "audio/mpeg"
-                file_size = reply_to.audio.file_size
-                label = "音频"
-            else:
-                file_id = reply_to.voice.file_id
-                mime_type = reply_to.voice.mime_type or "audio/ogg"
-                file_size = reply_to.voice.file_size
-                label = "语音"
-
-            # Check size limit (20MB)
-            if file_size and file_size > 20 * 1024 * 1024:
-                await smart_reply_text(update,
-                    f"⚠️ 引用的{label}文件过大（超过 20MB），无法通过 Telegram 下载分析。"
-                )
-                return
-
-            thinking_msg = await smart_reply_text(update, f"🎧 正在分析{label}...")
-            file = await context.bot.get_file(file_id)
-            media_data = await file.download_as_bytearray()
+    has_media, reply_extra_context, media_data, mime_type = await process_reply_message(update, context)
+    
+    # process_reply_message returns False if size limit exceeded or no media/reply
+    # If returned False but we had a reply with media that was too big, we should probably stop?
+    # Actually process_reply_message sends the warning itself.
+    # However, if it returns False, it might mean "no reply" OR "failed".
+    # We need to distinguish. 
+    # But for now, if has_media is False and extra_context is empty, it means nothing happened.
+    
+    if reply_extra_context:
+        extra_context += reply_extra_context
+    
+    # Need to handle the case where process_reply_message aborted (e.g. file too big)
+    # Since we can't easily signal "abort" vs "nothing found" with current signature without checking logs or changing sign.
+    # But wait, if process_reply_message sends a message "File too big", we should probably return here.
+    # Check if update.message.reply_to_message exists but has_media is False and we expected it?
+    # Simple check: If reply_to had video/audio but has_media is False, then we aborted.
+    if update.message.reply_to_message:
+         r = update.message.reply_to_message
+         if (r.video or r.audio or r.voice) and not has_media:
+             # Likely aborted due to size limit
+             return
     
     # 3. 检查当前消息中是否有 URL (混合文本情况)
     # 如果 extra_context 为空（说明没有 Reply URL），且 urls 不为空（说明当前消息有 URL）
@@ -425,174 +318,21 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             })
 
             # -----------------------------------------------------------------
-            # 3. 准备工具 (MCP Memory)
-            from config import MCP_MEMORY_ENABLED
-            tools_config = None
+            # 4. 生成回复 (Delegated to AiService)
+            from services.ai_service import AiService
+            ai_service = AiService()
             
-            if MCP_MEMORY_ENABLED:
-                try:
-                    from mcp_client import mcp_manager
-                    from mcp_client.tools_bridge import convert_mcp_tools_to_gemini
-                    from mcp_client.memory import register_memory_server
-                    
-                    # 确保 Memory Server 类已注册
-                    register_memory_server()
-                    
-                    # 获取该用户专属的 Memory Server 实例
-                    # mcp_manager.get_server 会为每个 user_id 创建/复用独立的实例
-                    # 实例 Key 如: memory_12345
-                    memory_server = await mcp_manager.get_server("memory", user_id=user_id)
-                    
-                    if memory_server and memory_server.session:
-                        # 主动列出工具
-                        mcp_tools_result = await memory_server.session.list_tools()
-                        gemini_funcs = convert_mcp_tools_to_gemini(mcp_tools_result.tools)
-                        
-                        # 按 Gemini 格式包装
-                        if gemini_funcs:
-                            tools_config = [{"function_declarations": gemini_funcs}]
-                            logger.info(f"Injected {len(gemini_funcs)} memory tools into Gemini for user {user_id}.")
-                except Exception as e:
-                    logger.error(f"Failed to setup memory tools: {e}")
-
-            # -----------------------------------------------------------------
-            # 4. 生成回复 (支持 Function Calling 循环)
-            
-            # 定义最大循环次数防止死循环
-            MAX_TURNS = 5
-            turn_count = 0
             final_text_response = ""
+            last_update_time = 0
             
-            while turn_count < MAX_TURNS:
-                turn_count += 1
+            async for chunk_text in ai_service.generate_response_stream(user_id, context_messages):
+                final_text_response += chunk_text
                 
-                # 如果有 tools，首轮使用非流式以支持 Function Calling
-                # 如果 tools_config 为空，则回退到流式
-                if tools_config:
-                    response = gemini_client.models.generate_content(
-                        model=GEMINI_MODEL,
-                        contents=context_messages,
-                        config={
-                            "system_instruction": (
-                                "你是一个友好的助手。请用中文回复。\n\n"
-                                "【记忆管理指南】\n"
-                                "请遵循以下步骤进行交互：\n\n"
-                                "1. **身份识别**：\n"
-                                "   - 始终将当前交互用户视为实体 'User'。\n\n"
-                                "2. **记忆检索（Memory Retrieval）**：\n"
-                                "   - 在回答之前，积极使用 `open_nodes(names=['User'])` 检索关于 'User' 的所有上下文信息。\n"
-                                "   - 如果遇到特定话题，也可以通过关键词搜索相关节点。\n\n"
-                                "3. **记忆更新（Memory Update）**：\n"
-                                "   - 在对话中时刻关注以下类别的新信息：\n"
-                                "     a) **基本身份**：年龄、性别、居住地（Location）、职业等。\n"
-                                "     b) **行为习惯**、**偏好**、**目标**、**关系**等。\n\n"
-                                "   - 当捕获到新信息时：\n"
-                                "     a) 使用 `create_entities` 为重要的人、地点、组织创建实体。\n"
-                                "     b) 使用 `create_relations` 将它们连接到 'User'（例如：Relation('User', 'lives in', '无锡')）。\n"
-                                "     c) 使用 `add_observations` 存储具体的观察事实。\n"
-                            ),
-                            "tools": tools_config
-                        },
-                    )
-                    
-                    # 检查是否有 function call
-                    # Gemini Python SDK genai.types structure:
-                    # response.candidates[0].content.parts[0].function_call
-                    function_calls = []
-                    
-                    if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
-                        for part in response.candidates[0].content.parts:
-                            if part.function_call:
-                                function_calls.append(part.function_call)
-                    
-                    if function_calls:
-                        # 有工具调用请求
-                        logger.info(f"AI requested function calls: {[fc.name for fc in function_calls]}")
-                        
-                        # 1. 将模型回复（包含 function_call）加入历史
-                        context_messages.append(response.candidates[0].content)
-                        
-                        # 2. 执行所有工具
-                        for fc in function_calls:
-                            tool_name = fc.name
-                            tool_args = fc.args
-                            
-                            logger.info(f"Executing tool: {tool_name} args={tool_args}")
-                            
-                            tool_result_content = {}
-                            try:
-                                # 执行 MCP 工具
-                                # 注意: memory server 的 override 已经在 call_tool 内部处理好了 schema 校验问题
-                                
-                                # 使用 mcp_manager.call_tool 需要知道准确的 instance_key
-                                # 或者直接使用我们上面获取到的 memory_server 实例 (如果在 scope 内)
-                                # 之前我们在 scope 435行左右获取了 memory_server。
-                                # 但是该变量在 while 循环之外。
-                                # Python 变量作用域在函数内是可见的。
-                                
-                                # 但是，如果 multiple servers (e.g. playwright + memory), 需要区分。
-                                # Playwright 工具不是 memory 工具。
-                                # 简单判断：如果 tool_name 在 memory tools 中，则调 memory_server。
-                                # 目前 tools_config 只有 memory。
-                                
-                                # 为了健壮性，我们可以检查 tool_name 是否属于 memory_server 的 capabilities?
-                                # 或者简单地：当前场景我们只注入了 memory tools。
-                                
-                                if memory_server:
-                                     raw_result = await memory_server.call_tool(tool_name, tool_args)
-                                else:
-                                     # Fallback (unlikely)
-                                     raw_result = await mcp_manager.call_tool("memory", tool_name, tool_args)
-                                
-                                tool_result_content = {"result": raw_result}
-                            except Exception as e:
-                                logger.error(f"Tool execution failed: {e}")
-                                tool_result_content = {"error": str(e)}
-                                
-                            # 3. 将工具结果（FunctionResponse）加入历史
-                            context_messages.append({
-                                "role": "tool", # Gemini SDK 期望 role="tool"
-                                "parts": [{
-                                    "function_response": {
-                                        "name": tool_name,
-                                        "response": tool_result_content
-                                    }
-                                }]
-                            })
-                            
-                        # 继续下一轮循环，把工具结果发回给模型
-                        continue
-                        
-                    else:
-                        # 没有工具调用，这是最终回复
-                        # 提取文本
-                        if response.text:
-                            final_text_response = response.text
-                        else:
-                            final_text_response = "（无文本回复）"
-                        break
-                        
-                else:
-                    # 没有工具配置，走原来的流式逻辑
-                    response = gemini_client.models.generate_content_stream(
-                        model=GEMINI_MODEL,
-                        contents=context_messages,
-                        config={
-                            "system_instruction": "你是一个友好的助手，可以帮助用户解答问题。请用中文回复。",
-                        },
-                    )
-                    
-                    # 流式处理
-                    last_update_time = 0
-                    for chunk in response:
-                        if chunk.text:
-                            final_text_response += chunk.text
-                            # 每 0.8 秒更新一次消息 (流式模式下)
-                            now = time.time()
-                            if now - last_update_time > 0.8:
-                                await smart_edit_text(thinking_msg, final_text_response)
-                                last_update_time = now
-                    break
+                # Update typing status / message
+                now = time.time()
+                if now - last_update_time > 0.8:
+                    await smart_edit_text(thinking_msg, final_text_response)
+                    last_update_time = now
 
             # -----------------------------------------------------------------
             # 5. 发送最终回复并入库

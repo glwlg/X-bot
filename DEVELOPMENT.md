@@ -79,9 +79,14 @@ graph TD
 | **`downloader.py`** | 封装 `yt-dlp`，负责具体的视频下载和文件处理。 |
 | **`web_summary.py`** | 网页抓取与摘要生成模块。 |
 | **`scheduler.py`** | `APScheduler` 定时任务管理。 |
-| **`mcp/`** | **MCP 模块**。Model Context Protocol 客户端，支持调用外部 MCP 服务。 |
+| **`message_utils.py`** | **消息处理工具**。提取回复消息中的上下文、媒体等公共逻辑。 |
+| **`prompts.py`** | **提示词中心**。统一管理所有系统提示词 (System Prompts)。 |
+| **`services/`** | **服务层**。封装核心业务逻辑，解耦 Handler。 |
+| ├── `ai_service.py` | 封装 Gemini AI 交互、MCP 工具调用与 Function Calling 循环。 |
+| **`mcp_client/`** | **MCP 客户端模块**。Model Context Protocol 客户端实现。 |
 | ├── `base.py` | MCP 服务抽象基类 `MCPServerBase`。 |
-| ├── `manager.py` | MCP 服务管理器 `MCPManager`（单例）。 |
+| ├── `manager.py` | MCP 服务管理器 `MCPManager`。 |
+| ├── `memory.py` | **长期记忆服务**。基于 Knowledge Graph 的记忆存储实现 (Local npx)。 |
 | └── `playwright.py` | Playwright 浏览器自动化 MCP 实现。 |
 
 ---
@@ -91,10 +96,15 @@ graph TD
 MCP 模块允许 X-Bot 调用外部 MCP 服务（如 Playwright 浏览器自动化）。
 
 #### 当前支持的 MCP 服务
-
-| 服务类型 | 功能 | Docker 镜像 |
-| :--- | :--- | :--- |
-| `playwright` | 网页截图、导航、交互 | `mcr.microsoft.com/playwright/mcp` |
+ 
+ | 服务类型 | 功能 | 运行方式 |
+ | :--- | :--- | :--- |
+ | `playwright` | 网页截图、导航、交互 | Docker (`mcr.microsoft.com/playwright/mcp`) |
+ | `memory` | 长期记忆 (Knowledge Graph) | Local (`npx @modelcontextprotocol/server-memory`) |
+ 
+ #### 依赖说明
+ - **Node.js & npm**: 必须安装，用于运行基于 Node.js 的 MCP Server (如 memory)。
+ - **Docker**: 用于运行 Python 环境及部分 MCP Server。
 
 #### 如何添加新的 MCP 服务？
 
