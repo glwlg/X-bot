@@ -3,12 +3,14 @@ FROM python:3.14-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
-
-# Install system dependencies required for yt-dlp, ffmpeg
+ENV PYTHONUNBUFFERED# 安装系统依赖
+# ffmpeg: 用于处理音视频
+# nodejs, npm: 用于运行 MCP Servers (如 memory, playwright)
+# docker-ce-cli: 用于 Docker-in-Docker (Playwright)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     nodejs \
+    npm \
     curl \
     ca-certificates \
     gnupg \

@@ -394,6 +394,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             current_msg_id = update.message.message_id
             await add_message(user_id, "user", user_message, message_id=current_msg_id)
             
+            # -----------------------------------------------------------------
             # 2. 构建上下文
             context_messages = []
             
@@ -402,13 +403,13 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 reply_id = reply_to.message_id
                 logger.info(f"User replied to message {reply_id}")
                 
-                # 直接使用 Telegram 消息对象的内容 (更高效，无需查库)
+                # 直接使用 Telegram 消息对象的内容
                 replied_content = reply_to.text or reply_to.caption
                 
                 if replied_content:
                     context_messages.append({
-                        "role": "model", # 默认将被回复的消息视为 model (上下文)
-                        "parts": [{"text": replied_content}] 
+                        "role": "user",  # 被回复的消息作为上一个 user message 或者 model message
+                        "parts": [{"text": f"【引用内容】\n{replied_content}"}] 
                     })
                 else:
                     logger.info("Replied message has no text content.")
@@ -417,47 +418,192 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             else:
                 context_messages = await get_user_context(user_id)
             
-            # 对于 Reply 模式，需手动 append current user message
-            if reply_to:
-                context_messages.append({
-                    "role": "user",
-                    "parts": [{"text": user_message}]
-                })
+            # append current user message
+            context_messages.append({
+                "role": "user",
+                "parts": [{"text": user_message}]
+            })
+
+            # -----------------------------------------------------------------
+            # 3. 准备工具 (MCP Memory)
+            from config import MCP_MEMORY_ENABLED
+            tools_config = None
             
-            # Direct 模式已在 get_user_context 前入库，不需要手动 append
+            if MCP_MEMORY_ENABLED:
+                try:
+                    from mcp_client import mcp_manager
+                    from mcp_client.tools_bridge import convert_mcp_tools_to_gemini
+                    from mcp_client.memory import register_memory_server
+                    
+                    # 确保 Memory Server 类已注册
+                    register_memory_server()
+                    
+                    # 获取该用户专属的 Memory Server 实例
+                    # mcp_manager.get_server 会为每个 user_id 创建/复用独立的实例
+                    # 实例 Key 如: memory_12345
+                    memory_server = await mcp_manager.get_server("memory", user_id=user_id)
+                    
+                    if memory_server and memory_server.session:
+                        # 主动列出工具
+                        mcp_tools_result = await memory_server.session.list_tools()
+                        gemini_funcs = convert_mcp_tools_to_gemini(mcp_tools_result.tools)
+                        
+                        # 按 Gemini 格式包装
+                        if gemini_funcs:
+                            tools_config = [{"function_declarations": gemini_funcs}]
+                            logger.info(f"Injected {len(gemini_funcs)} memory tools into Gemini for user {user_id}.")
+                except Exception as e:
+                    logger.error(f"Failed to setup memory tools: {e}")
 
-            response = gemini_client.models.generate_content_stream(
-                model=GEMINI_MODEL,
-                contents=context_messages,
-                config={
-                    "system_instruction": "你是一个友好的助手，可以帮助用户解答问题。请用中文回复。",
-                },
-            )
+            # -----------------------------------------------------------------
+            # 4. 生成回复 (支持 Function Calling 循环)
+            
+            # 定义最大循环次数防止死循环
+            MAX_TURNS = 5
+            turn_count = 0
+            final_text_response = ""
+            
+            while turn_count < MAX_TURNS:
+                turn_count += 1
+                
+                # 如果有 tools，首轮使用非流式以支持 Function Calling
+                # 如果 tools_config 为空，则回退到流式
+                if tools_config:
+                    response = gemini_client.models.generate_content(
+                        model=GEMINI_MODEL,
+                        contents=context_messages,
+                        config={
+                            "system_instruction": (
+                                "你是一个友好的助手。请用中文回复。\n\n"
+                                "【记忆管理指南】\n"
+                                "请遵循以下步骤进行交互：\n\n"
+                                "1. **身份识别**：\n"
+                                "   - 始终将当前交互用户视为实体 'User'。\n\n"
+                                "2. **记忆检索（Memory Retrieval）**：\n"
+                                "   - 在回答之前，积极使用 `open_nodes(names=['User'])` 检索关于 'User' 的所有上下文信息。\n"
+                                "   - 如果遇到特定话题，也可以通过关键词搜索相关节点。\n\n"
+                                "3. **记忆更新（Memory Update）**：\n"
+                                "   - 在对话中时刻关注以下类别的新信息：\n"
+                                "     a) **基本身份**：年龄、性别、居住地（Location）、职业等。\n"
+                                "     b) **行为习惯**、**偏好**、**目标**、**关系**等。\n\n"
+                                "   - 当捕获到新信息时：\n"
+                                "     a) 使用 `create_entities` 为重要的人、地点、组织创建实体。\n"
+                                "     b) 使用 `create_relations` 将它们连接到 'User'（例如：Relation('User', 'lives in', '无锡')）。\n"
+                                "     c) 使用 `add_observations` 存储具体的观察事实。\n"
+                            ),
+                            "tools": tools_config
+                        },
+                    )
+                    
+                    # 检查是否有 function call
+                    # Gemini Python SDK genai.types structure:
+                    # response.candidates[0].content.parts[0].function_call
+                    function_calls = []
+                    
+                    if response.candidates and response.candidates[0].content and response.candidates[0].content.parts:
+                        for part in response.candidates[0].content.parts:
+                            if part.function_call:
+                                function_calls.append(part.function_call)
+                    
+                    if function_calls:
+                        # 有工具调用请求
+                        logger.info(f"AI requested function calls: {[fc.name for fc in function_calls]}")
+                        
+                        # 1. 将模型回复（包含 function_call）加入历史
+                        context_messages.append(response.candidates[0].content)
+                        
+                        # 2. 执行所有工具
+                        for fc in function_calls:
+                            tool_name = fc.name
+                            tool_args = fc.args
+                            
+                            logger.info(f"Executing tool: {tool_name} args={tool_args}")
+                            
+                            tool_result_content = {}
+                            try:
+                                # 执行 MCP 工具
+                                # 注意: memory server 的 override 已经在 call_tool 内部处理好了 schema 校验问题
+                                
+                                # 使用 mcp_manager.call_tool 需要知道准确的 instance_key
+                                # 或者直接使用我们上面获取到的 memory_server 实例 (如果在 scope 内)
+                                # 之前我们在 scope 435行左右获取了 memory_server。
+                                # 但是该变量在 while 循环之外。
+                                # Python 变量作用域在函数内是可见的。
+                                
+                                # 但是，如果 multiple servers (e.g. playwright + memory), 需要区分。
+                                # Playwright 工具不是 memory 工具。
+                                # 简单判断：如果 tool_name 在 memory tools 中，则调 memory_server。
+                                # 目前 tools_config 只有 memory。
+                                
+                                # 为了健壮性，我们可以检查 tool_name 是否属于 memory_server 的 capabilities?
+                                # 或者简单地：当前场景我们只注入了 memory tools。
+                                
+                                if memory_server:
+                                     raw_result = await memory_server.call_tool(tool_name, tool_args)
+                                else:
+                                     # Fallback (unlikely)
+                                     raw_result = await mcp_manager.call_tool("memory", tool_name, tool_args)
+                                
+                                tool_result_content = {"result": raw_result}
+                            except Exception as e:
+                                logger.error(f"Tool execution failed: {e}")
+                                tool_result_content = {"error": str(e)}
+                                
+                            # 3. 将工具结果（FunctionResponse）加入历史
+                            context_messages.append({
+                                "role": "tool", # Gemini SDK 期望 role="tool"
+                                "parts": [{
+                                    "function_response": {
+                                        "name": tool_name,
+                                        "response": tool_result_content
+                                    }
+                                }]
+                            })
+                            
+                        # 继续下一轮循环，把工具结果发回给模型
+                        continue
+                        
+                    else:
+                        # 没有工具调用，这是最终回复
+                        # 提取文本
+                        if response.text:
+                            final_text_response = response.text
+                        else:
+                            final_text_response = "（无文本回复）"
+                        break
+                        
+                else:
+                    # 没有工具配置，走原来的流式逻辑
+                    response = gemini_client.models.generate_content_stream(
+                        model=GEMINI_MODEL,
+                        contents=context_messages,
+                        config={
+                            "system_instruction": "你是一个友好的助手，可以帮助用户解答问题。请用中文回复。",
+                        },
+                    )
+                    
+                    # 流式处理
+                    last_update_time = 0
+                    for chunk in response:
+                        if chunk.text:
+                            final_text_response += chunk.text
+                            # 每 0.8 秒更新一次消息 (流式模式下)
+                            now = time.time()
+                            if now - last_update_time > 0.8:
+                                await smart_edit_text(thinking_msg, final_text_response)
+                                last_update_time = now
+                    break
 
-            # 流式响应
-            full_response = ""
-            last_update_time = 0
-
-            for chunk in response:
-                if chunk.text:
-                    full_response += chunk.text
-
-                    # 每 0.5 秒更新一次消息
-                    now = time.time()
-                    if now - last_update_time > 0.5:
-                        # Use smart_edit_text for stream updates (handles errors implicitly)
-                        await smart_edit_text(thinking_msg, full_response)
-                        last_update_time = now
-
-            # 最终更新完整回复
-            if full_response:
+            # -----------------------------------------------------------------
+            # 5. 发送最终回复并入库
+            if final_text_response:
                 # smart_edit_text handles markdown formatting and errors
-                sent_msg = await smart_edit_text(thinking_msg, full_response)
+                sent_msg = await smart_edit_text(thinking_msg, final_text_response)
                 
                 if sent_msg:
-                    await add_message(user_id, "model", full_response, message_id=sent_msg.message_id)
+                    await add_message(user_id, "model", final_text_response, message_id=sent_msg.message_id)
                 else:
-                    await add_message(user_id, "model", full_response)
+                    await add_message(user_id, "model", final_text_response)
 
                 # 记录统计
                 await increment_stat(user_id, "ai_chats")

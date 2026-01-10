@@ -34,20 +34,28 @@ class MCPManager:
         self._server_classes[server_type] = server_class
         logger.info(f"[MCPManager] Registered server class: {server_type}")
     
-    async def get_server(self, server_type: str) -> MCPServerBase:
+    async def get_server(self, server_type: str, **kwargs) -> MCPServerBase:
         """
         获取指定类型的 MCP 服务实例
         
         如果服务尚未创建，会自动创建并连接。
+        对于像 memory 这样的服务，可以传递 user_id 参数来获取特定的实例。
+        例如: get_server("memory", user_id=123) 会创建/获取 'memory_123' 实例
         
         Args:
             server_type: 服务类型标识
+            **kwargs: 传递给服务构造函数的参数，也会用于生成唯一的实例 key
             
         Returns:
             MCPServerBase 实例
         """
-        if server_type in self._servers:
-            server = self._servers[server_type]
+        # 生成唯一的实例 key
+        instance_key = server_type
+        if "user_id" in kwargs:
+             instance_key = f"{server_type}_{kwargs['user_id']}"
+        
+        if instance_key in self._servers:
+            server = self._servers[instance_key]
             if server.is_connected:
                 return server
             # 如果断开了，尝试重新连接
@@ -59,9 +67,9 @@ class MCPManager:
         
         # 创建新实例
         server_class = self._server_classes[server_type]
-        server = server_class()
+        server = server_class(**kwargs) # 传递参数给构造函数
         await server.connect()
-        self._servers[server_type] = server
+        self._servers[instance_key] = server
         return server
     
     async def call_tool(self, server_type: str, tool_name: str, arguments: dict) -> Any:
