@@ -157,6 +157,57 @@ DOMAIN_HANDLERS = {
 }
 
 
+async def fetch_with_browser_snapshot(url: str) -> str | None:
+    """
+    使用 MCP Playwright 获取网页快照（回退机制）
+    
+    用于处理静态抓取失败或需要 JS 渲染的页面。
+    """
+    logger.info(f"Attempting to fetch {url} using MCP browser_snapshot...")
+    try:
+        # 动态导入避免循环引用
+        from mcp_client.manager import mcp_manager
+        from mcp_client.playwright import register_playwright_server
+        
+        # 确保服务已注册
+        register_playwright_server()
+        
+        # 步骤1：导航
+        logger.info(f"MCP: Navigating to {url}...")
+        await mcp_manager.call_tool("playwright", "browser_navigate", {"url": url})
+        
+        # 步骤2：等待加载
+        logger.info("MCP: Waiting for page load...")
+        try:
+            await mcp_manager.call_tool("playwright", "browser_wait_for", {"time": 3})
+        except Exception as e:
+            logger.warning(f"MCP wait failed: {e}")
+            
+        # 步骤3：获取快照
+        logger.info("MCP: Taking snapshot...")
+        result = await mcp_manager.call_tool("playwright", "browser_snapshot", {})
+        
+        # 解析结果
+        # browser_snapshot 通常返回 TextContent
+        content = ""
+        if isinstance(result, list):
+            for item in result:
+                if hasattr(item, 'text'):
+                    content += item.text + "\n"
+        elif hasattr(result, 'text'):
+            content = result.text
+            
+        if content:
+            logger.info(f"MCP snapshot successful, length: {len(content)}")
+            return f"【通过 Playwright 获取的页面快照】\n\n{content}"
+            
+        return None
+        
+    except Exception as e:
+        logger.error(f"MCP browser_snapshot failed: {e}")
+        return None
+
+
 async def fetch_webpage_content(url: str) -> str | None:
     """
     获取网页内容
@@ -248,16 +299,6 @@ async def fetch_webpage_content(url: str) -> str | None:
             # 增加网页有效性校验 (防止 AI 总结错误页面)
             # -----------------------------------------------------------------
             
-            # 1. 检查文本长度，太短通常视为无效
-            if len(text.strip()) < 50:
-                logger.warning(f"Extracted content too short ({len(text)} chars) for {url}. Final URL: {response.url}")
-                # 尝试 yt-dlp 兜底 (即使不是视频平台，yt-dlp 也能处理很多通用网页元数据)
-                logger.info(f"Falling back to yt-dlp for {url}")
-                video_content = await fetch_video_metadata(url)
-                if video_content:
-                    return f"【通过工具提取的元数据】\n{video_content}"
-                return None
-            
             # 2. 检查常见错误关键字 (JavaScript, Error page, etc)
             error_keywords = [
                 "JavaScript is disabled",
@@ -277,21 +318,48 @@ async def fetch_webpage_content(url: str) -> str | None:
             
             # 检查前 500 个字符即可 (通常错误提示在最前面)
             preview_text = text[:500].lower()
+            needs_fallback = False
+            
             for ignored in error_keywords:
                 if ignored.lower() in preview_text:
                     logger.warning(f"Detected invalid content ('{ignored}') for {url}")
-                    # 同样尝试 yt-dlp 兜底
-                    logger.info(f"Falling back to yt-dlp due to invalid content for {url}")
-                    video_content = await fetch_video_metadata(url)
-                    if video_content:
-                        return f"【通过工具提取的元数据】\n{video_content}"
-                    return None
+                    needs_fallback = True
+                    break
+            
+            # 1. 检查文本长度，太短也视为无效
+            if len(text.strip()) < 50:
+                logger.warning(f"Extracted content too short ({len(text)} chars) for {url}.")
+                needs_fallback = True
+
+            if needs_fallback:
+                # 策略升级：使用 MCP Browser Snapshot 进行回退
+                logger.info(f"Falling back to MCP browser_snapshot for {url}")
+                snapshot_content = await fetch_with_browser_snapshot(url)
+                if snapshot_content:
+                    return snapshot_content
+                
+                # 如果 MCP 也失败，尝试 yt-dlp 兜底
+                logger.info(f"MCP fallback failed, trying yt-dlp for {url}")
+                video_content = await fetch_video_metadata(url)
+                if video_content:
+                    return f"【通过工具提取的元数据】\n{video_content}"
+                return None
             
             return f"标题：{title}\n\n内容：\n{text}"
             
     except Exception as e:
         logger.error(f"Failed to fetch webpage: {e}")
-        # 出错时也尝试一次 yt-dlp 兜底 (比如 403/404 但 yt-dlp 可能有办法)
+        
+        # 出错时优先尝试 MCP Browser Snapshot
+        try:
+             logger.info(f"Exception occurred, trying MCP browser_snapshot for {url}")
+             snapshot_content = await fetch_with_browser_snapshot(url)
+             if snapshot_content:
+                 return snapshot_content
+        except Exception as mcp_e:
+             logger.error(f"MCP fallback also failed: {mcp_e}")
+
+        # 最后尝试 yt-dlp
         try:
              video_content = await fetch_video_metadata(url)
              if video_content:
