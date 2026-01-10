@@ -6,63 +6,9 @@
 
 ## 🏗️ 系统架构
 
-```mermaid
-graph TD
-    User([👤 User]) <-->|Telegram API| Bot([🤖 X-Bot Server])
-
-    subgraph "X-Bot Core (Docker Container)"
-        Dispatcher[📨 Dispatcher & Router]
-        
-        subgraph "Handlers Layer"
-            StartH[🏁 Start Handlers]
-            MediaH[📹 Media Handlers]
-            AIH[🧠 AI Handlers]
-            ServiceH[🛠️ Service Handlers]
-            AdminH[🛡️ Admin Handlers]
-        end
-        
-        subgraph "Service Layer"
-            Downloader[📥 yt-dlp Wrapper]
-            WebSum[🕸️ Web Scraper]
-            ImgGen[🎨 Image Gen]
-            Scheduler[⏰ APScheduler]
-        end
-        
-        subgraph "Data Layer"
-            DB[(🗄️ SQLite DB)]
-            Context[📝 User Context]
-            Cache[💾 File Cache]
-        end
-
-        Dispatcher --> StartH
-        Dispatcher --> MediaH
-        Dispatcher --> AIH
-        Dispatcher --> ServiceH
-        Dispatcher --> AdminH
-
-        MediaH --> Downloader
-        MediaH --> ImgGen
-        AIH --> WebSum
-        AIH --> Context
-        ServiceH --> Scheduler
-
-        Downloader --> Cache
-        Context --> DB
-        Scheduler --> DB
-    end
-
-    subgraph "External Services"
-        Gemini([✨ Google Gemini Pro])
-        Platforms([🌐 Video Platforms\nX, YouTube, TikTok...])
-        Web([🌍 World Wide Web])
-    end
-
-    AIH <--> Gemini
-    ImgGen <--> Gemini
-    WebSum <--> Gemini
-    WebSum <--> Web
-    Downloader <--> Platforms
-```
+> **开发者说明**：详细的系统架构图、模块说明及开发指南，请参阅独立的开发文档：
+> 
+> � **[X-Bot 开发手册 (DEVELOPMENT.md)](DEVELOPMENT.md)**
 
 ## ✨ 核心功能
 
@@ -165,11 +111,7 @@ docker-compose up --build -d
 -   **直接聊天**：发送文字、语音、图片、视频或文件，AI 自动响应。
 -   **下载视频**：点击菜单中的「下载视频」，选择格式后发送链接。
 
-## 🛠️ 技术栈
--   **语言**: Python 3.14
--   **框架**: python-telegram-bot, Google Gemini SDK
--   **数据库**: SQLite (aiosqlite)
--   **工具**: uv (依赖管理), yt-dlp (视频下载)
+---
 
 ---
 Enjoy X-Bot! 🚀
