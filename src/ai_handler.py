@@ -225,6 +225,36 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             file = await context.bot.get_file(photo.file_id)
             media_data = await file.download_as_bytearray()
     
+    # 3. 检查当前消息中是否有 URL (混合文本情况)
+    # 如果 extra_context 为空（说明没有 Reply URL），且 urls 不为空（说明当前消息有 URL）
+    if not extra_context and urls:
+        status_msg = await update.message.reply_text("📄 正在获取网页内容...")
+        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        
+        try:
+            from web_summary import fetch_webpage_content
+            # 获取第一个 URL 的内容
+            web_content = await fetch_webpage_content(urls[0])
+            
+            if web_content:
+                extra_context = f"【网页内容】\n{web_content}\n\n"
+            else:
+                # 即使失败，也最好提示一下，或者静默失败？
+                # 用户既然发了链接，可能期望 AI 读。
+                # 但静默失败可能体验更好，避免 AI 瞎编。
+                logger.warning(f"Failed to fetch content for mixed URL: {urls[0]}")
+                # 还是给 context 增加一点提示，防止 AI 瞎编
+                extra_context = "【系统提示】检测到链接，但无法读取其内容（可能是反爬虫限制）。请仅根据 URL 标题或从 URL 本身推测（如果可能），并告知用户无法读取详情。\n\n"
+            
+        except Exception as e:
+            logger.error(f"Error fetching mixed URL: {e}")
+        
+        # 无论成功失败，删除因为 fetch 而产生的提示消息
+        try:
+            await status_msg.delete()
+        except:
+            pass
+
     if not has_media:
         # 普通文本对话
         thinking_msg = await update.message.reply_text(THINKING_MESSAGE)
