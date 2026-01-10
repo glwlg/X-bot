@@ -35,7 +35,7 @@ async def get_user_stats_text(user_id: int) -> str:
     last_use = str(stats.get("last_use", "未知"))[:10]
     
     return (
-        "📊 <b>您的使用统计</b>\n\n"
+        "📊 **您的使用统计**\n\n"
         f"💬 AI 对话次数：{stats.get('ai_chats', 0)}\n"
         f"🎤 语音对话次数：{stats.get('voice_chats', 0)}\n"
         f"📄 文档分析次数：{stats.get('doc_analyses', 0)}\n"

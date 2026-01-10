@@ -13,6 +13,7 @@ from database import (
 )
 from stats import get_user_stats_text
 from .base_handlers import check_permission
+from utils import smart_edit_text, smart_reply_text
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,9 @@ async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     user_id = update.effective_user.id
     stats_text = await get_user_stats_text(user_id)
     
-    await update.message.reply_html(stats_text)
+    stats_text = await get_user_stats_text(user_id)
+    
+    await smart_reply_text(update, stats_text)
 
 
 # --- Reminder ---
@@ -43,16 +46,15 @@ async def remind_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return ConversationHandler.END
         
     # 没有参数，提示输入
-    await update.message.reply_text(
-        "⏰ <b>设置定时提醒</b>\n\n"
+    await smart_reply_text(update,
+        "⏰ **设置定时提醒**\n\n"
         "请发送您想要的提醒时间和内容。\n"
-        "格式：&lt;时间&gt; &lt;内容&gt;\n\n"
+        "格式：`&lt;时间&gt; &lt;内容&gt;`\n\n"
         "示例：\n"
         "• 10m 喝水\n"
         "• 1h30m 开会\n"
         "• 20s 测试一下\n\n"
-        "发送 /cancel 取消。",
-        parse_mode="HTML"
+        "发送 /cancel 取消。"
     )
     return WAITING_FOR_REMIND_INPUT
 
@@ -90,7 +92,8 @@ async def process_remind(update: Update, context: ContextTypes.DEFAULT_TYPE, tim
     matches = re.findall(r"(\d+)([smhd])", time_str.lower())
     
     if not matches:
-        await update.message.reply_text("❌ 时间格式错误。请使用如 10m, 1h, 30s 等格式。")
+        await smart_reply_text(update, "❌ 时间格式错误。请使用如 10m, 1h, 30s 等格式。")
+        return False
         return False
         
     delta_seconds = 0
@@ -106,7 +109,7 @@ async def process_remind(update: Update, context: ContextTypes.DEFAULT_TYPE, tim
             delta_seconds += value * 86400
             
     if delta_seconds <= 0:
-        await update.message.reply_text("❌ 时间必须大于 0。")
+        await smart_reply_text(update, "❌ 时间必须大于 0。")
         return False
         
     trigger_time = datetime.datetime.now().astimezone() + datetime.timedelta(seconds=delta_seconds)
@@ -124,7 +127,7 @@ async def process_remind(update: Update, context: ContextTypes.DEFAULT_TYPE, tim
     if delta_seconds > 86400:
         display_time = trigger_time.strftime("%Y-%m-%d %H:%M:%S")
         
-    await update.message.reply_text(
+    await smart_reply_text(update,
         f"👌 已设置提醒：{message}\n"
         f"⏰ 将在 {display_time} 提醒你。"
     )
@@ -151,7 +154,7 @@ async def toggle_translation_command(update: Update, context: ContextTypes.DEFAU
     await set_translation_mode(user_id, new_status)
     
     if new_status:
-        await update.message.reply_text(
+        await smart_reply_text(update,
             "🌍 **沉浸式翻译模式：已开启**\n\n"
             "现在发送任何文本消息，我都会为您自动翻译。\n"
             "• 外语 -> 中文\n"
@@ -159,7 +162,7 @@ async def toggle_translation_command(update: Update, context: ContextTypes.DEFAU
             "再次输入 /translate 可关闭。"
         )
     else:
-        await update.message.reply_text(
+        await smart_reply_text(update,
             "🚫 **沉浸式翻译模式：已关闭**\n\n"
             "已恢复正常 AI 助手模式。"
         )
@@ -177,14 +180,14 @@ async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return ConversationHandler.END
         
     # 无参数，提示输入
-    await update.message.reply_text(
-        "📢 <b>订阅 RSS 源</b>\n\n"
+    # 无参数，提示输入
+    await smart_reply_text(update,
+        "📢 **订阅 RSS 源**\n\n"
         "请发送您想订阅的 RSS 链接。\n"
         "Bot 将每 30 分钟检查更新。\n\n"
         "示例：\n"
         "https://feeds.feedburner.com/PythonInsider\n\n"
-        "发送 /cancel 取消。",
-        parse_mode="HTML"
+        "发送 /cancel 取消。"
     )
     return WAITING_FOR_SUBSCRIBE_URL
 
@@ -209,20 +212,20 @@ async def process_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     
     # 简单的 URL 校验
     if not url.startswith("http"):
-        await update.message.reply_text("❌ 请输入有效的 HTTP/HTTPS 链接。")
+        await smart_reply_text(update, "❌ 请输入有效的 HTTP/HTTPS 链接。")
         return False
 
     # 限制每人最多 5 个
     current_subs = await get_user_subscriptions(user_id)
     if len(current_subs) >= 5:
-        await update.message.reply_text("❌ 订阅数量已达上限 (5个)。请先取消一些订阅。")
+        await smart_reply_text(update, "❌ 订阅数量已达上限 (5个)。请先取消一些订阅。")
         return False
         
     # 尝试解析 RSS 验证有效性
     import feedparser
     # 简单的验证，不阻塞太久
     try:
-        msg = await update.message.reply_text("🔍 正在验证 RSS 源...")
+        msg = await smart_reply_text(update, "🔍 正在验证 RSS 源...")
         # 异步运行 feedparser
         feed = feedparser.parse(url)
         
@@ -235,8 +238,7 @@ async def process_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, 
         # 入库
         try:
             await add_subscription(user_id, url, title)
-            await msg.edit_text(f"✅ **订阅成功！**\n\n源：{title}\nBot 将每 30 分钟检查一次更新。")
-            
+            await smart_edit_text(msg, f"✅ **订阅成功！**\n\n源：{title}\nBot 将每 30 分钟检查一次更新。")
             # 统计
             from stats import increment_stat
             await increment_stat(user_id, "subscriptions_added")
@@ -244,15 +246,17 @@ async def process_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, 
             return True
         except Exception as e:
             if "UNIQUE constraint failed" in str(e):
-                await msg.edit_text("⚠️ 您已经订阅过这个源了。")
+                await smart_edit_text(msg, "⚠️ 您已经订阅过这个源了。")
                 return True # 算作成功
             else:
-                 await msg.edit_text(f"❌ 订阅失败: {e}")
+                 await smart_edit_text(msg, f"❌ 订阅失败: {e}")
                  return False
                  
     except Exception as e:
         logger.error(f"Subscribe error: {e}")
-        await msg.edit_text("❌ 无法访问该 RSS 源。")
+    except Exception as e:
+        logger.error(f"Subscribe error: {e}")
+        await smart_edit_text(msg, "❌ 无法访问该 RSS 源。")
         return False
 
 
@@ -265,7 +269,7 @@ async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     # 如果没参数，显示列表按钮（简化起见，让用户复制 URL）
     args = context.args
     if not args:
-         await update.message.reply_text("⚠️ 用法：/unsubscribe <RSS链接>\n请使用 /list_subs 查看您的订阅链接。")
+         await smart_reply_text(update, "⚠️ 用法：`/unsubscribe <RSS链接>`\n请使用 /list_subs 查看您的订阅链接。")
          return
          
     url = args[0]
@@ -273,7 +277,7 @@ async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     await delete_subscription(user_id, url)
     
-    await update.message.reply_text(f"🗑️ 已取消订阅：{url}")
+    await smart_reply_text(update, f"🗑️ 已取消订阅：`{url}`")
 
 
 async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -288,15 +292,15 @@ async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return ConversationHandler.END
         
     # 无参数，提示输入
-    await update.message.reply_text(
-        "🔍 <b>监控关键词</b>\n\n"
+    # 无参数，提示输入
+    await smart_reply_text(update,
+        "🔍 **监控关键词**\n\n"
         "请发送您想监控的关键词。\n"
         "Bot 将通过 Google News 监控并在有新内容时通知您。\n\n"
         "示例：\n"
         "• Python 教程\n"
         "• 人工智能\n\n"
-        "发送 /cancel 取消。",
-        parse_mode="HTML"
+        "发送 /cancel 取消。"
     )
     return WAITING_FOR_MONITOR_KEYWORD
 
@@ -323,7 +327,7 @@ async def process_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE, ke
     # 限制每人最多 5 个 (与普通订阅共享额度)
     current_subs = await get_user_subscriptions(user_id)
     if len(current_subs) >= 5:
-        await update.message.reply_text("❌ 订阅数量已达上限 (5个)。请先取消一些订阅。")
+        await smart_reply_text(update, "❌ 订阅数量已达上限 (5个)。请先取消一些订阅。")
         return False
 
     # 构造 Google News RSS URL
@@ -331,7 +335,11 @@ async def process_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE, ke
     encoded_keyword = urllib.parse.quote(keyword)
     rss_url = f"https://news.google.com/rss/search?q={encoded_keyword}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
     
-    msg = await update.message.reply_text(f"🔍 正在为关键词 '{keyword}' 配置监控...")
+    import urllib.parse
+    encoded_keyword = urllib.parse.quote(keyword)
+    rss_url = f"https://news.google.com/rss/search?q={encoded_keyword}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+    
+    msg = await smart_reply_text(update, f"🔍 正在为关键词 '{keyword}' 配置监控...")
     
     try:
         # 验证一下 RSS (虽然 Google News 通常没问题)
@@ -342,7 +350,7 @@ async def process_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE, ke
         title = f"监控: {keyword}"
         
         await add_subscription(user_id, rss_url, title)
-        await msg.edit_text(
+        await smart_edit_text(msg,
             f"✅ **监控已设置！**\n\n"
             f"关键词：{keyword}\n"
             f"来源：Google News\n"
@@ -352,11 +360,11 @@ async def process_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE, ke
             
     except Exception as e:
         if "UNIQUE constraint failed" in str(e):
-             await msg.edit_text("⚠️ 您已经监控过这个关键词了。")
+             await smart_edit_text(msg, "⚠️ 您已经监控过这个关键词了。")
              return True # 算作成功结束，不再 retry
         else:
              logger.error(f"Monitor error: {e}")
-             await msg.edit_text(f"❌ 设置失败: {e}")
+             await smart_edit_text(msg, f"❌ 设置失败: {e}")
              return False
 
 
@@ -370,7 +378,7 @@ async def list_subs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     subs = await get_user_subscriptions(user_id)
     
     if not subs:
-        await update.message.reply_text("📭 您当前没有订阅任何 RSS 源。")
+        await smart_reply_text(update, "📭 您当前没有订阅任何 RSS 源。")
         return
         
     msg = "📋 **您的订阅列表**：\n\n"
@@ -381,4 +389,4 @@ async def list_subs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         
     msg += "发送 `/unsubscribe <链接>` 可取消订阅。"
     
-    await update.message.reply_text(msg, parse_mode="Markdown")
+    await smart_reply_text(update, msg)
