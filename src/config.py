@@ -94,6 +94,11 @@ WAITING_FOR_REMIND_INPUT = 3
 WAITING_FOR_MONITOR_KEYWORD = 4
 WAITING_FOR_SUBSCRIBE_URL = 5
 
+# MCP 配置
+MCP_ENABLED = os.getenv("MCP_ENABLED", "true").lower() == "true"
+MCP_PLAYWRIGHT_IMAGE = os.getenv("MCP_PLAYWRIGHT_IMAGE", "mcr.microsoft.com/playwright/mcp")
+MCP_TIMEOUT_SECONDS = int(os.getenv("MCP_TIMEOUT_SECONDS", "60"))
+
 # 确保目录存在
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)

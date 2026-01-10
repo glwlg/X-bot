@@ -79,6 +79,52 @@ graph TD
 | **`downloader.py`** | 封装 `yt-dlp`，负责具体的视频下载和文件处理。 |
 | **`web_summary.py`** | 网页抓取与摘要生成模块。 |
 | **`scheduler.py`** | `APScheduler` 定时任务管理。 |
+| **`mcp/`** | **MCP 模块**。Model Context Protocol 客户端，支持调用外部 MCP 服务。 |
+| ├── `base.py` | MCP 服务抽象基类 `MCPServerBase`。 |
+| ├── `manager.py` | MCP 服务管理器 `MCPManager`（单例）。 |
+| └── `playwright.py` | Playwright 浏览器自动化 MCP 实现。 |
+
+---
+
+### 🌐 MCP (Model Context Protocol) 扩展
+
+MCP 模块允许 X-Bot 调用外部 MCP 服务（如 Playwright 浏览器自动化）。
+
+#### 当前支持的 MCP 服务
+
+| 服务类型 | 功能 | Docker 镜像 |
+| :--- | :--- | :--- |
+| `playwright` | 网页截图、导航、交互 | `mcr.microsoft.com/playwright/mcp` |
+
+#### 如何添加新的 MCP 服务？
+
+1. **创建服务类**: 在 `src/mcp/` 下创建新文件，继承 `MCPServerBase`：
+   ```python
+   from mcp.base import MCPServerBase
+   from mcp import StdioServerParameters
+   
+   class MyMCPServer(MCPServerBase):
+       @property
+       def server_name(self) -> str:
+           return "my_service"
+       
+       def get_server_params(self) -> StdioServerParameters:
+           return StdioServerParameters(
+               command="docker",
+               args=["run", "-i", "--rm", "my-mcp-image"]
+           )
+   ```
+
+2. **注册服务**: 创建注册函数并在 Handler 中调用：
+   ```python
+   def register_my_server():
+       from mcp.manager import mcp_manager
+       mcp_manager.register_server_class("my_service", MyMCPServer)
+   ```
+
+3. **添加意图路由**: 在 `intent_router.py` 中添加对应意图和规则。
+
+4. **创建 Handler**: 在 `handlers/mcp_handlers.py` 中添加处理函数。
 
 ---
 

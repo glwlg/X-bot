@@ -181,6 +181,13 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
              await process_monitor(update, context, keyword)
              return
 
+    elif intent == UserIntent.BROWSER_ACTION:
+        from .mcp_handlers import handle_browser_action
+        handled = await handle_browser_action(update, context, params)
+        if handled:
+            return
+        # 如果未处理（如 MCP 禁用），回退到普通对话
+
     # ----------------------------
 
     # 检查是否引用了包含媒体的消息

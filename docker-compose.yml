@@ -14,3 +14,4 @@ services:
       - ./data:/app/data
       - ./cookies.txt:/app/cookies.txt
       - /mnt/d/media/dlp:/app/media
+      - /var/run/docker.sock:/var/run/docker.sock  # MCP: 允许启动 MCP 服务容器

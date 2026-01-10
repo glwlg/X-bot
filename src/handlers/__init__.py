@@ -12,3 +12,4 @@ from .service_handlers import (
     unsubscribe_command, monitor_command, handle_monitor_input, list_subs_command
 )
 from .ai_handlers import handle_ai_chat, handle_ai_photo, handle_ai_video
+from .mcp_handlers import handle_browser_action

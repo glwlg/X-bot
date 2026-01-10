@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 class UserIntent(Enum):
     DOWNLOAD_VIDEO = "download_video"
     GENERATE_IMAGE = "generate_image"
+    BROWSER_ACTION = "browser_action"  # 截图、网页操作等
     SET_REMINDER = "set_reminder"
     RSS_SUBSCRIBE = "rss_subscribe"
     MONITOR_KEYWORD = "monitor_keyword"
@@ -37,6 +38,7 @@ async def analyze_intent(text: str) -> Dict[str, Any]:
             "X-Bot can do many things. Some map to specific intents, others fall back to general chat.\n"
             "- **Video/Audio Download**: `download_video`\n"
             "- **AI Image Generation**: `generate_image`\n"
+            "- **Browser Actions (Screenshot)**: `browser_action`\n"
             "- **Reminders**: `set_reminder`\n"
             "- **RSS Subscription**: `rss_subscribe`\n"
             "- **Keyword Monitor**: `monitor_keyword`\n"
@@ -55,26 +57,32 @@ async def analyze_intent(text: str) -> Dict[str, Any]:
             "Params: `prompt` (description)\n"
             "Example: '画一只猫' -> { 'intent': 'generate_image', 'params': { 'prompt': '一只猫' } }\n\n"
 
-            "### C. set_reminder\n"
+            "### C. browser_action\n"
+            "Trigger: User wants to screenshot or interact with a webpage.\n"
+            "Keywords: screenshot, capture, 截图, 抓取页面, 网页截图.\n"
+            "Params: `url` (target URL), `action` (default: 'screenshot')\n"
+            "Example: '截图 https://example.com' -> { 'intent': 'browser_action', 'params': { 'url': 'https://example.com', 'action': 'screenshot' } }\n\n"
+
+            "### D. set_reminder\n"
             "Trigger: User wants to set a timer or reminder.\n"
             "Keywords: remind, timer, alarm, 提醒, 定时.\n"
             "Params: `time` (e.g. '10m', '1h', '30s'), `content` (what to remind).\n"
             "Example: '10分钟后提醒我喝水' -> { 'intent': 'set_reminder', 'params': { 'time': '10m', 'content': '喝水' } }\n"
             "Example: 'remind me to sleep in 1h' -> { 'intent': 'set_reminder', 'params': { 'time': '1h', 'content': 'sleep' } }\n\n"
 
-            "### D. rss_subscribe\n"
+            "### E. rss_subscribe\n"
             "Trigger: User wants to subscribe to an RSS feed.\n"
             "Keywords: subscribe, rss, 订阅.\n"
             "Params: `url` (RSS feed URL)\n"
             "Example: '订阅这个RSS https://...' -> { 'intent': 'rss_subscribe', 'params': { 'url': 'https://...' } }\n\n"
 
-            "### E. monitor_keyword\n"
+            "### F. monitor_keyword\n"
             "Trigger: User wants to monitor a keyword for news.\n"
             "Keywords: monitor, track, keyword, 监控, 监听.\n"
             "Params: `keyword` (text to monitor)\n"
             "Example: '监控关键词 AI News' -> { 'intent': 'monitor_keyword', 'params': { 'keyword': 'AI News' } }\n\n"
             
-            "### F. general_chat (Default)\n"
+            "### G. general_chat (Default)\n"
             "Everything else falls here: Questions, small talk, summaries, commands like /start.\n"
             "Example: '这个视频讲了什么 https://...' -> { 'intent': 'general_chat' }\n\n"
             
