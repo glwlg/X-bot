@@ -1,5 +1,5 @@
 version: '3.8'
-
+name: x-bot
 services:
   x-bot:
     build: .

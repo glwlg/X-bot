@@ -41,12 +41,12 @@ def get_main_menu_keyboard():
             InlineKeyboardButton("⏰ 提醒", callback_data="remind_help"),
         ],
         [
-            InlineKeyboardButton("ℹ️ 帮助", callback_data="help"),
-            InlineKeyboardButton("⚙️ 设置", callback_data="settings"),
-        ],
-        [
             InlineKeyboardButton("📊 支持的平台", callback_data="platforms"),
             InlineKeyboardButton("📈 使用统计", callback_data="stats"),
+        ],
+        [
+            InlineKeyboardButton("ℹ️ 帮助", callback_data="help"),
+            # InlineKeyboardButton("⚙️ 设置", callback_data="settings"),
         ],
     ]
 
