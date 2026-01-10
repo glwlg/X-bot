@@ -70,9 +70,10 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         summary = await summarize_webpage(url)
         try:
-            await thinking_msg.edit_text(summary, parse_mode="Markdown")
+            from utils import smart_edit_text
+            await smart_edit_text(thinking_msg, summary)
         except BadRequest as e:
-            # Fallback to plain text if Markdown parsing fails
+            # Fallback to plain text if Markdown parsing fails (handled inside smart_edit_text too, but just in case)
             logger.warning(f"Markdown parsing failed for web summary: {e}, falling back to plain text.")
             await thinking_msg.edit_text(summary, parse_mode=None)
         
@@ -104,7 +105,8 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 },
             )
             if response.text:
-                await thinking_msg.edit_text(f"🌍 **译文**\n\n{response.text}", parse_mode="Markdown")
+                from utils import smart_edit_text
+                await smart_edit_text(thinking_msg, f"🌍 **译文**\n\n{response.text}")
                 # 统计
                 from stats import increment_stat
                 await increment_stat(user_id, "translations_count")
@@ -290,7 +292,8 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 },
             )
             if response.text:
-                await thinking_msg.edit_text(response.text)
+                from utils import smart_edit_text
+                await smart_edit_text(thinking_msg, response.text)
             else:
                 await thinking_msg.edit_text("抱歉，我无法分析这个内容。")
         else:
@@ -369,7 +372,9 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if full_response:
                 try:
                     # 保存 AI 回复到上下文
-                    sent_msg = await thinking_msg.edit_text(full_response)
+                    from utils import smart_edit_text
+                    sent_msg = await smart_edit_text(thinking_msg, full_response)
+                    
                     if sent_msg:
                         await add_message(user_id, "model", full_response, message_id=sent_msg.message_id)
                     else:
@@ -450,7 +455,8 @@ async def handle_ai_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         
         if response.text:
-            await thinking_msg.edit_text(response.text)
+            from utils import smart_edit_text
+            await smart_edit_text(thinking_msg, response.text)
             # 记录统计
             from stats import increment_stat
             await increment_stat(user_id, "photo_analyses")
@@ -534,7 +540,8 @@ async def handle_ai_video(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         
         if response.text:
-            await thinking_msg.edit_text(response.text)
+            from utils import smart_edit_text
+            await smart_edit_text(thinking_msg, response.text)
             # 记录统计
             from stats import increment_stat
             await increment_stat(user_id, "video_analyses")
