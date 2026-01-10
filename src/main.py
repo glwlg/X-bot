@@ -48,8 +48,10 @@ from handlers import (
     handle_monitor_input,
     handle_video_actions,
     stats_command,
+    handle_ai_chat, 
+    handle_ai_photo, 
+    handle_ai_video
 )
-from ai_handler import handle_ai_chat, handle_ai_photo, handle_ai_video
 from voice_handler import handle_voice_message
 from document_handler import handle_document
 
@@ -107,7 +109,7 @@ def main() -> None:
     """启动 Bot"""
     logger.info("Starting DLP Bot...")
 
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    application = Application.builder().token(TELEGRAM_BOT_TOKEN).read_timeout(60).write_timeout(120).build()
 
     # 设置 Bot 初始化 (加载数据库和菜单)
     application.post_init = initialize_data

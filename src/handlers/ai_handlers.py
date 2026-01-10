@@ -1,6 +1,3 @@
-"""
-AI 对话处理模块 - 使用 Gemini API，支持文本、图片和视频
-"""
 import time
 import logging
 import base64
@@ -9,6 +6,11 @@ from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 
 from config import gemini_client, GEMINI_MODEL
+from web_summary import extract_urls, summarize_webpage, is_video_platform, fetch_webpage_content
+from user_context import get_user_context, add_message
+from database import get_chat_message, get_user_settings, get_video_cache
+from utils import smart_edit_text
+from stats import increment_stat
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +40,6 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # 检查消息中是否包含 URL（自动生成网页摘要）
-    from web_summary import extract_urls, summarize_webpage, is_video_platform
     urls = extract_urls(user_message)
     
     # 如果只是一个 URL 且没有其他内容
@@ -70,7 +71,6 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         summary = await summarize_webpage(url)
         try:
-            from utils import smart_edit_text
             await smart_edit_text(thinking_msg, summary)
         except BadRequest as e:
             # Fallback to plain text if Markdown parsing fails (handled inside smart_edit_text too, but just in case)
@@ -78,12 +78,10 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await thinking_msg.edit_text(summary, parse_mode=None)
         
         # 记录统计
-        from stats import increment_stat
         await increment_stat(user_id, "ai_chats")
         return
 
     # 检查是否开启了沉浸式翻译
-    from database import get_user_settings
     settings = await get_user_settings(user_id)
     if settings.get("auto_translate", 0):
         # 翻译模式开启
@@ -105,10 +103,8 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 },
             )
             if response.text:
-                from utils import smart_edit_text
                 await smart_edit_text(thinking_msg, f"🌍 **译文**\n\n{response.text}")
                 # 统计
-                from stats import increment_stat
                 await increment_stat(user_id, "translations_count")
             else:
                 await thinking_msg.edit_text("❌ 无法翻译。")
@@ -147,7 +143,6 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         # B. 从文本正则提取 (兜底，防止实体未解析)
         if not reply_urls:
             reply_text = reply_to.text or reply_to.caption or ""
-            from web_summary import extract_urls
             found = extract_urls(reply_text)
             logger.info(f"Regex found URLs: {found}")
             reply_urls = found
@@ -156,8 +151,6 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         reply_urls = list(set(reply_urls))
         logger.info(f"Final detected reply_urls: {reply_urls}")
 
-        from web_summary import fetch_webpage_content
-        
         if reply_urls:
             # 发现 URL，尝试获取内容
             # 先发送一个提示，避免用户以为卡死
@@ -192,7 +185,6 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             mime_type = video.mime_type or "video/mp4"
             
             # 优先检查本地缓存
-            from database import get_video_cache
             cache_path = await get_video_cache(file_id)
             
             if cache_path:
@@ -226,6 +218,30 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             thinking_msg = await update.message.reply_text("🔍 正在分析图片...")
             file = await context.bot.get_file(photo.file_id)
             media_data = await file.download_as_bytearray()
+
+        elif reply_to.audio or reply_to.voice:
+            has_media = True
+            if reply_to.audio:
+                file_id = reply_to.audio.file_id
+                mime_type = reply_to.audio.mime_type or "audio/mpeg"
+                file_size = reply_to.audio.file_size
+                label = "音频"
+            else:
+                file_id = reply_to.voice.file_id
+                mime_type = reply_to.voice.mime_type or "audio/ogg"
+                file_size = reply_to.voice.file_size
+                label = "语音"
+
+            # Check size limit (20MB)
+            if file_size and file_size > 20 * 1024 * 1024:
+                await update.message.reply_text(
+                    f"⚠️ 引用的{label}文件过大（超过 20MB），无法通过 Telegram 下载分析。"
+                )
+                return
+
+            thinking_msg = await update.message.reply_text(f"🎧 正在分析{label}...")
+            file = await context.bot.get_file(file_id)
+            media_data = await file.download_as_bytearray()
     
     # 3. 检查当前消息中是否有 URL (混合文本情况)
     # 如果 extra_context 为空（说明没有 Reply URL），且 urls 不为空（说明当前消息有 URL）
@@ -234,18 +250,13 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         
         try:
-            from web_summary import fetch_webpage_content
             # 获取第一个 URL 的内容
             web_content = await fetch_webpage_content(urls[0])
             
             if web_content:
                 extra_context = f"【网页内容】\n{web_content}\n\n"
             else:
-                # 即使失败，也最好提示一下，或者静默失败？
-                # 用户既然发了链接，可能期望 AI 读。
-                # 但静默失败可能体验更好，避免 AI 瞎编。
                 logger.warning(f"Failed to fetch content for mixed URL: {urls[0]}")
-                # 还是给 context 增加一点提示，防止 AI 瞎编
                 extra_context = "【系统提示】检测到链接，但无法读取其内容（可能是反爬虫限制）。请仅根据 URL 标题或从 URL 本身推测（如果可能），并告知用户无法读取详情。\n\n"
             
         except Exception as e:
@@ -292,14 +303,11 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 },
             )
             if response.text:
-                from utils import smart_edit_text
                 await smart_edit_text(thinking_msg, response.text)
             else:
                 await thinking_msg.edit_text("抱歉，我无法分析这个内容。")
         else:
             # 纯文本对话（流式响应 + 多轮上下文）
-            from user_context import get_user_context, add_message
-            from database import get_chat_message
             
             # 1. 保存当前用户消息
             current_msg_id = update.message.message_id
@@ -322,26 +330,20 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                         "parts": [{"text": replied_content}] 
                     })
                 else:
-                    # 如果是纯图片/视频且无配文，可能拿不到文本。
-                    # 也可以尝试查库作为兜底，但既然用户要求简化，且通常 meaningful reply 都有文本
                     logger.info("Replied message has no text content.")
             
             # B. 如果不是回复 --> 使用最近的历史记录
             else:
                 context_messages = await get_user_context(user_id)
             
-            # 对于 Reply 模式，我们手动构建了 context_messages (只有被回复的那条)，
-            # BUT we MUST also include the CURRENT message as the last item for the model to respond to it!
+            # 对于 Reply 模式，需手动 append current user message
             if reply_to:
-                # Append current user message
                 context_messages.append({
                     "role": "user",
                     "parts": [{"text": user_message}]
                 })
             
-            # 修正：如果是 Direct 模式，`get_user_context` 已经包含了当前消息吗？
-            # 是的，因为我们在上面 `await add_message(...)` 了。
-            # 所以 Direct 模式下不用手动 append。
+            # Direct 模式已在 get_user_context 前入库，不需要手动 append
 
             response = gemini_client.models.generate_content_stream(
                 model=GEMINI_MODEL,
@@ -372,17 +374,14 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             if full_response:
                 try:
                     # 保存 AI 回复到上下文
-                    from utils import smart_edit_text
                     sent_msg = await smart_edit_text(thinking_msg, full_response)
                     
                     if sent_msg:
                         await add_message(user_id, "model", full_response, message_id=sent_msg.message_id)
                     else:
-                        # Fallback if edit_text doesn't return (should return though)
                         await add_message(user_id, "model", full_response)
 
                     # 记录统计
-                    from stats import increment_stat
                     await increment_stat(user_id, "ai_chats")
                 except BadRequest:
                     pass
@@ -455,10 +454,8 @@ async def handle_ai_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         
         if response.text:
-            from utils import smart_edit_text
             await smart_edit_text(thinking_msg, response.text)
             # 记录统计
-            from stats import increment_stat
             await increment_stat(user_id, "photo_analyses")
         else:
             await thinking_msg.edit_text("抱歉，我无法分析这张图片。请稍后再试。")
@@ -540,10 +537,8 @@ async def handle_ai_video(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         
         if response.text:
-            from utils import smart_edit_text
             await smart_edit_text(thinking_msg, response.text)
             # 记录统计
-            from stats import increment_stat
             await increment_stat(user_id, "video_analyses")
         else:
             await thinking_msg.edit_text("抱歉，我无法分析这个视频。请稍后再试。")
