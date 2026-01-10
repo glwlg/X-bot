@@ -266,18 +266,55 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         else:
             # 纯文本对话（流式响应 + 多轮上下文）
             from user_context import get_user_context, add_message
+            from database import get_chat_message
             
-            # 添加用户消息到上下文
-            await add_message(user_id, "user", user_message)
+            # 1. 保存当前用户消息
+            current_msg_id = update.message.message_id
+            await add_message(user_id, "user", user_message, message_id=current_msg_id)
             
-            # 获取对话历史
-            context_messages = await get_user_context(user_id)
+            # 2. 构建上下文
+            context_messages = []
             
+            # A. 如果是回复某个消息 --> 仅使用该消息 + 当前消息
+            if reply_to:
+                reply_id = reply_to.message_id
+                logger.info(f"User replied to message {reply_id}")
+                
+                # 直接使用 Telegram 消息对象的内容 (更高效，无需查库)
+                replied_content = reply_to.text or reply_to.caption
+                
+                if replied_content:
+                    context_messages.append({
+                        "role": "model", # 默认将被回复的消息视为 model (上下文)
+                        "parts": [{"text": replied_content}] 
+                    })
+                else:
+                    # 如果是纯图片/视频且无配文，可能拿不到文本。
+                    # 也可以尝试查库作为兜底，但既然用户要求简化，且通常 meaningful reply 都有文本
+                    logger.info("Replied message has no text content.")
+            
+            # B. 如果不是回复 --> 使用最近的历史记录
+            else:
+                context_messages = await get_user_context(user_id)
+            
+            # 对于 Reply 模式，我们手动构建了 context_messages (只有被回复的那条)，
+            # BUT we MUST also include the CURRENT message as the last item for the model to respond to it!
+            if reply_to:
+                # Append current user message
+                context_messages.append({
+                    "role": "user",
+                    "parts": [{"text": user_message}]
+                })
+            
+            # 修正：如果是 Direct 模式，`get_user_context` 已经包含了当前消息吗？
+            # 是的，因为我们在上面 `await add_message(...)` 了。
+            # 所以 Direct 模式下不用手动 append。
+
             response = gemini_client.models.generate_content_stream(
                 model=GEMINI_MODEL,
                 contents=context_messages,
                 config={
-                    "system_instruction": "你是一个友好的助手，可以帮助用户解答问题。请用中文回复。记住之前的对话内容。",
+                    "system_instruction": "你是一个友好的助手，可以帮助用户解答问题。请用中文回复。",
                 },
             )
 
@@ -301,9 +338,14 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # 最终更新完整回复
             if full_response:
                 try:
-                    await thinking_msg.edit_text(full_response)
                     # 保存 AI 回复到上下文
-                    await add_message(user_id, "model", full_response)
+                    sent_msg = await thinking_msg.edit_text(full_response)
+                    if sent_msg:
+                        await add_message(user_id, "model", full_response, message_id=sent_msg.message_id)
+                    else:
+                        # Fallback if edit_text doesn't return (should return though)
+                        await add_message(user_id, "model", full_response)
+
                     # 记录统计
                     from stats import increment_stat
                     await increment_stat(user_id, "ai_chats")

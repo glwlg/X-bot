@@ -23,7 +23,7 @@ async def get_user_context(user_id: int) -> list[dict]:
     return await get_chat_history(user_id, limit=MAX_CONTEXT_MESSAGES)
 
 
-async def add_message(user_id: int, role: Literal["user", "model"], content: str) -> None:
+async def add_message(user_id: int, role: Literal["user", "model"], content: str, message_id: int = None) -> None:
     """
     添加一条消息到用户上下文
     
@@ -31,8 +31,9 @@ async def add_message(user_id: int, role: Literal["user", "model"], content: str
         user_id: 用户 ID
         role: 消息角色，"user" 或 "model"
         content: 消息内容
+        message_id: Telegram 消息 ID
     """
-    await add_chat_message(user_id, role, content)
+    await add_chat_message(user_id, role, content, message_id)
 
 
 async def clear_context(user_id: int) -> None:
