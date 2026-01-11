@@ -1,4 +1,4 @@
-from .start_handlers import start, button_callback, back_to_main_and_cancel
+from .start_handlers import start, button_callback, back_to_main_and_cancel, handle_new_command
 from .admin_handlers import adduser_command, deluser_command
 from .base_handlers import check_permission, cancel
 from .media_handlers import (

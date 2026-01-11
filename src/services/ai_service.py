@@ -189,13 +189,17 @@ class AiService:
         
         return final_text
     
-    async def generate_response_stream(self, user_id: int, context_messages: list):
+    async def generate_response_stream(self, user_id: int, context_messages: list, enable_memory: bool = False):
         """
         Generator for streaming responses.
         Handles function calling internally (non-yielded) until final text is produced.
         """
         # 1. Setup Tools
-        tools_config, memory_server = await self.get_memory_tools(user_id)
+        tools_config = None
+        memory_server = None
+        
+        if enable_memory:
+            tools_config, memory_server = await self.get_memory_tools(user_id)
         
         if tools_config:
             from prompts import MEMORY_MANAGEMENT_GUIDE
@@ -204,8 +208,8 @@ class AiService:
             from prompts import DEFAULT_SYSTEM_PROMPT
             system_instruction = DEFAULT_SYSTEM_PROMPT
 
-        MAX_TURNS = 5
-        turn_count = 0
+        MAX_TURNS = 5 
+        turn_count = 0 
         message_history = context_messages.copy()
         
         try:

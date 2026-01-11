@@ -208,6 +208,13 @@ async def get_chat_history(user_id: int, limit: int = 10) -> list[dict]:
             return history
 
 
+async def clear_chat_history(user_id: int):
+    """清除用户的聊天历史"""
+    async with await get_db() as db:
+        await db.execute("DELETE FROM chat_history WHERE user_id = ?", (user_id,))
+        await db.commit()
+
+
 # --- 用户统计操作 ---
 
 async def increment_stat(user_id: int, stat_name: str, count: int = 1):

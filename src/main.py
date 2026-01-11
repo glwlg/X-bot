@@ -24,6 +24,7 @@ from config import (
 )
 from handlers import (
     start,
+    handle_new_command,
     adduser_command,
     deluser_command,
     button_callback,
@@ -202,6 +203,7 @@ def main() -> None:
 
     # 4. 注册核心功能处理器
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("new", handle_new_command))
     application.add_handler(CommandHandler("adduser", adduser_command))
     application.add_handler(CommandHandler("deluser", deluser_command))
     application.add_handler(remind_conv_handler)

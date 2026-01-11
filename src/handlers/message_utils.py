@@ -3,7 +3,9 @@ import base64
 from telegram import Update, Message
 from telegram.ext import ContextTypes
 
-from utils import extract_urls, smart_reply_text, get_video_cache
+from utils import smart_reply_text
+from web_summary import extract_urls
+from database import get_video_cache
 from web_summary import fetch_webpage_content
 
 logger = logging.getLogger(__name__)
@@ -147,3 +149,93 @@ async def process_reply_message(update: Update, context: ContextTypes.DEFAULT_TY
         media_data = await file.download_as_bytearray()
         
     return has_media, extra_context, media_data, mime_type
+
+
+import re
+import os
+import aiofiles
+from telegram import Update
+from telegram.constants import ParseMode
+
+async def process_and_send_code_files(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> str:
+    """
+    1. Scan text for code blocks.
+    2. If blocks are significant (long), save as file and send to user.
+    3. Replace the code block in the original text with a placeholder.
+    4. Return the modified text for display.
+    """
+    if not text:
+        return ""
+
+    # Regex to find code blocks: ```language code ```
+    code_block_regex = re.compile(r"```(\w+)?\n([\s\S]*?)```")
+    matches = list(code_block_regex.finditer(text))
+
+    if not matches:
+        return text
+
+    sent_count = 0
+    temp_dir = "data/temp_code"
+    os.makedirs(temp_dir, exist_ok=True)
+    
+    # We will rebuild the text with replacements
+    final_text = text
+    # Reverse iteration to avoiding index shifting when replacing
+    for i, match in enumerate(reversed(matches)):
+        # Calculate original index (since we are reversing)
+        original_index = len(matches) - 1 - i
+        
+        start_pos, end_pos = match.span()
+        language = match.group(1).lower().strip() if match.group(1) else "txt"
+        code_content = match.group(2).strip()
+        
+        if not code_content:
+            continue
+            
+        # Determine extension
+        ext_map = {
+            "html": "html", "css": "css", "js": "js", "javascript": "js",
+            "ts": "ts", "typescript": "ts", "json": "json", "python": "py",
+            "py": "py", "sh": "sh", "bash": "sh", "sql": "sql",
+            "xml": "xml", "yaml": "yaml", "yml": "yaml",
+            "md": "md", "markdown": "md", "txt": "txt", "text": "txt",
+            "vue": "vue", "jsx": "jsx", "tsx": "tsx"
+        }
+        ext = ext_map.get(language, "txt")
+        
+        # Criteria to send as file AND collapse
+        lines = code_content.splitlines()
+        # If it's JSON -> always send (usually data)
+        # If > 10 lines -> send and collapse
+        # If > 300 chars -> send and collapse
+        should_process = (language == "json") or (len(lines) > 5) or (len(code_content) > 200)
+
+        if not should_process:
+            continue
+
+        filename = f"code_snippet_{original_index+1}.{ext}"
+        filepath = os.path.join(temp_dir, filename)
+
+        try:
+            async with aiofiles.open(filepath, "w", encoding="utf-8") as f:
+                await f.write(code_content)
+            
+            # Send document
+            chat_id = update.effective_chat.id
+            await context.bot.send_document(
+                chat_id=chat_id,
+                document=open(filepath, "rb"),
+                filename=filename,
+                caption=f"📝 {language} 代码片段",
+                reply_to_message_id=update.message.message_id
+            )
+            sent_count += 1
+            
+            # Replace in text with placeholder
+            placeholder = f"\n\n(⬇️ {language} 代码已保存为文件: {filename})\n\n"
+            final_text = final_text[:start_pos] + placeholder + final_text[end_pos:]
+            
+        except Exception as e:
+            logger.error(f"Failed to send code file {filename}: {e}")
+            
+    return final_text

@@ -65,6 +65,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         reply_markup=reply_markup,
     )
 
+async def handle_new_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理 /new 命令，清空聊天上下文"""
+    if not await check_permission(update):
+        return
+
+    user_id = update.effective_user.id
+    from database import clear_chat_history
+    await clear_chat_history(user_id)
+    
+    await smart_reply_text(update, 
+        "🧹 **已开启新对话**\n\n"
+        "之前的短期对话上下文已清空。\n"
+        "不用担心，重要的长期记忆仍然保留！🧠"
+    )
+
 async def back_to_main_and_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     """返回主菜单并取消当前操作（用于在对话状态中）"""
     query = update.callback_query
@@ -129,6 +144,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "• **沉浸式翻译**：输入 /translate 开启\n\n"
                 "**命令列表：**\n"
                 "/stats - 使用统计\n"
+                "/new - 开启新对话 (清空上下文)\n"
                 "/start - 主菜单\n"
                 "/cancel - 取消\n\n"
                 "遇到问题？直接问我！",

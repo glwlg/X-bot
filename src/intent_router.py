@@ -16,6 +16,7 @@ class UserIntent(Enum):
     RSS_SUBSCRIBE = "rss_subscribe"
     MONITOR_KEYWORD = "monitor_keyword"
     GENERAL_CHAT = "general_chat"
+    MEMORY_RECALL = "memory_recall" # Explicit memory query
     UNKNOWN = "unknown"
 
 async def analyze_intent(text: str) -> Dict[str, Any]:
@@ -42,6 +43,8 @@ async def analyze_intent(text: str) -> Dict[str, Any]:
             "- **Reminders**: `set_reminder`\n"
             "- **RSS Subscription**: `rss_subscribe`\n"
             "- **Keyword Monitor**: `monitor_keyword`\n"
+            "- **Keyword Monitor**: `monitor_keyword`\n"
+            "- **Memory Recall**: `memory_recall`\n"
             "- **AI Chat/Translation**: `general_chat`\n\n"
 
             "## 2. Intent Rules\n"
@@ -80,9 +83,14 @@ async def analyze_intent(text: str) -> Dict[str, Any]:
             "Trigger: User wants to monitor a keyword for news.\n"
             "Keywords: monitor, track, keyword, 监控, 监听.\n"
             "Params: `keyword` (text to monitor)\n"
-            "Example: '监控关键词 AI News' -> { 'intent': 'monitor_keyword', 'params': { 'keyword': 'AI News' } }\n\n"
-            
-            "### G. general_chat (Default)\n"
+            "### G. memory_recall\n"
+            "Trigger: User asks about personal information, past conversations, or facts stored in memory.\n"
+            "Keywords: remember, recall, what did I say, my name, where do I live, 记得, 回忆, 我是谁, 我住哪.\n"
+            "Params: `query` (the question)\n"
+            "Example: '我上周说了什么？' -> { 'intent': 'memory_recall', 'params': { 'query': '...' } }\n"
+            "Example: '记得我住在哪里吗？' -> { 'intent': 'memory_recall', 'params': { 'query': '...' } }\n\n"
+
+            "### H. general_chat (Default)\n"
             "Everything else falls here: Questions, small talk, summaries, commands like /start.\n"
             "Example: '这个视频讲了什么 https://...' -> { 'intent': 'general_chat' }\n\n"
             

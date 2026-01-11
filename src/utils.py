@@ -99,17 +99,20 @@ async def smart_edit_text(message, text: str, reply_markup=None):
             disable_web_page_preview=True 
         )
     except Exception as e:
-        # Avoid logging 'Message is not modified' errors which are common
         if "Message is not modified" not in str(e):
              # Try plain text fallback
              try:
+                 # Also truncate plain text to avoid length errors
+                 safe_text = text[:4000] + "...(truncated)" if len(text) > 4000 else text
                  return await message.edit_text(
-                    text, 
+                    safe_text, 
                     parse_mode=None, 
                     reply_markup=reply_markup
                  )
              except Exception as inner_e:
-                 # If even plain text fails (e.g. connection error), log it
+                 # Log the error if fallback fails
+                 import logging
+                 logging.getLogger(__name__).error(f"smart_edit_text fallback failed: {inner_e}")
                  pass
         return None
 

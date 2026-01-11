@@ -114,6 +114,9 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # --- Smart Intent Routing ---
+    # Save the user message to history immediately (important for context)
+    await add_message(user_id, "user", user_message)
+
     from intent_router import analyze_intent, UserIntent
     
     # Analyze intent
@@ -192,8 +195,9 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # ----------------------------
     # 检查是否引用了包含媒体的消息
-    from .message_utils import process_reply_message
+    from .message_utils import process_reply_message, process_and_send_code_files
     
+    extra_context = "" 
     has_media, reply_extra_context, media_data, mime_type = await process_reply_message(update, context)
     
     # process_reply_message returns False if size limit exceeded or no media/reply
@@ -292,6 +296,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             context_messages = []
             
             # A. 如果是回复某个消息 --> 仅使用该消息 + 当前消息
+            reply_to = update.message.reply_to_message
             if reply_to:
                 reply_id = reply_to.message_id
                 logger.info(f"User replied to message {reply_id}")
@@ -322,10 +327,21 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             from services.ai_service import AiService
             ai_service = AiService()
             
+            # Determine if memory tools should be enabled
+            # Only enable memory for explicit MEMORY_RECALL intent or naturally broad conversations?
+            # User request: "先判断是否需要调取记忆"
+            # For now, strict: only MEMORY_RECALL enables memory tools.
+            # This avoids "always talking about Wuxi".
+            # Note: intent variable is available from earlier scope
+            
+            enable_memory = (intent == UserIntent.MEMORY_RECALL)
+            if enable_memory:
+                 logger.info(f"Memory tools enabled for intent: {intent}")
+            
             final_text_response = ""
             last_update_time = 0
             
-            async for chunk_text in ai_service.generate_response_stream(user_id, context_messages):
+            async for chunk_text in ai_service.generate_response_stream(user_id, context_messages, enable_memory=enable_memory):
                 final_text_response += chunk_text
                 
                 # Update typing status / message
@@ -344,14 +360,19 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     await add_message(user_id, "model", final_text_response, message_id=sent_msg.message_id)
                 else:
                     await add_message(user_id, "model", final_text_response)
+                
+                # Try to extract code blocks, send as files, and get truncated text
+                final_display_text = await process_and_send_code_files(update, context, final_text_response)
+                
+                # Update the message with cleaned display text
+                if sent_msg:
+                     await smart_edit_text(sent_msg, final_display_text)
 
                 # 记录统计
                 await increment_stat(user_id, "ai_chats")
             else:
                 await smart_edit_text(thinking_msg, "抱歉，我无法生成回复。请稍后再试。")
 
-    except Exception as e:
-        logger.error(f"AI chat error: {e}")
     except Exception as e:
         logger.error(f"AI chat error: {e}")
         await smart_edit_text(thinking_msg,
@@ -369,8 +390,7 @@ async def handle_ai_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     # 检查用户权限
     from config import is_user_allowed
-    from config import is_user_allowed
-    if not is_user_allowed(user_id):
+    if not await is_user_allowed(user_id):
         await smart_reply_text(update,
             "⛔ 抱歉，您没有使用 AI 功能的权限。"
         )
@@ -379,6 +399,9 @@ async def handle_ai_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # 获取图片（选择最大分辨率）
     photo = update.message.photo[-1]
     caption = update.message.caption or "请描述这张图片"
+
+    # Save to history immediately
+    await add_message(user_id, "user", f"【用户发送了一张图片】 {caption}")
     
     # 立即发送"正在分析"提示
     thinking_msg = await smart_reply_text(update, "🔍 正在分析图片...")
@@ -416,18 +439,22 @@ async def handle_ai_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         
         if response.text:
-            await smart_edit_text(thinking_msg, response.text)
+            # Try to extract code blocks, send files, and get cleaned text
+            from .message_utils import process_and_send_code_files
+            display_text = await process_and_send_code_files(update, context, response.text)
+            
+            # 更新消息
+            await smart_edit_text(thinking_msg, display_text)
+            
+            # Save model response to history
+            await add_message(user_id, "model", response.text)
+            
             # 记录统计
             await increment_stat(user_id, "photo_analyses")
-        if response.text:
-            await smart_edit_text(thinking_msg, response.text)
-            # 记录统计
-            await increment_stat(user_id, "photo_analyses")
+
         else:
             await smart_edit_text(thinking_msg, "抱歉，我无法分析这张图片。请稍后再试。")
         
-    except Exception as e:
-        logger.error(f"AI photo analysis error: {e}")
     except Exception as e:
         logger.error(f"AI photo analysis error: {e}")
         await smart_edit_text(thinking_msg, "❌ 图片分析失败，请稍后再试。")
@@ -441,7 +468,6 @@ async def handle_ai_video(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_id = update.message.from_user.id
     
     # 检查用户权限
-    from config import is_user_allowed
     from config import is_user_allowed
     if not await is_user_allowed(user_id):
         await smart_reply_text(update,
@@ -505,14 +531,18 @@ async def handle_ai_video(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         
         if response.text:
-            await smart_edit_text(thinking_msg, response.text)
+            # Try to extract code blocks, send files, and get cleaned text
+            from .message_utils import process_and_send_code_files
+            display_text = await process_and_send_code_files(update, context, response.text)
+            
+            # Update the thinking message with the cleaned text
+            await smart_edit_text(thinking_msg, display_text)
+            
             # 记录统计
             await increment_stat(user_id, "video_analyses")
         else:
             await smart_edit_text(thinking_msg, "抱歉，我无法分析这个视频。请稍后再试。")
         
-    except Exception as e:
-        logger.error(f"AI video analysis error: {e}")
     except Exception as e:
         logger.error(f"AI video analysis error: {e}")
         await smart_edit_text(thinking_msg,
