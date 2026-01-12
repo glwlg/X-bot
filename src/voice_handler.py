@@ -55,13 +55,79 @@ async def transcribe_voice(voice_bytes: bytes, mime_type: str) -> str | None:
         return None
 
 
+async def transcribe_and_translate_voice(voice_bytes: bytes, mime_type: str) -> dict | None:
+    """
+    转写语音并翻译为双语对照
+    
+    Returns:
+        {"original": "原文", "original_lang": "语言", "translated": "译文"} 或 None
+    """
+    try:
+        prompt = (
+            "请完成以下任务：\n"
+            "1. 将语音转写为文字\n"
+            "2. 识别语音的语言\n"
+            "3. 如果是中文，翻译为英文；如果是其他语言，翻译为中文\n\n"
+            "请严格按以下格式输出（不要添加其他内容）：\n"
+            "原文语言：[语言名称]\n"
+            "原文：[转写的原文]\n"
+            "译文：[翻译后的文字]"
+        )
+        
+        contents = [
+            {
+                "parts": [
+                    {"text": prompt},
+                    {
+                        "inline_data": {
+                            "mime_type": mime_type,
+                            "data": base64.b64encode(bytes(voice_bytes)).decode("utf-8"),
+                        }
+                    },
+                ]
+            }
+        ]
+        
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=contents,
+        )
+        
+        if not response.text:
+            return None
+        
+        # 解析结果
+        text = response.text.strip()
+        result = {}
+        
+        for line in text.split('\n'):
+            if line.startswith('原文语言：'):
+                result['original_lang'] = line.replace('原文语言：', '').strip()
+            elif line.startswith('原文：'):
+                result['original'] = line.replace('原文：', '').strip()
+            elif line.startswith('译文：'):
+                result['translated'] = line.replace('译文：', '').strip()
+        
+        if result.get('original') and result.get('translated'):
+            return result
+        return None
+        
+    except Exception as e:
+        logger.error(f"Voice translation error: {e}")
+        return None
+
+
 async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     处理语音消息
     
-    短语音: 转文字 → 智能路由 → 像文本消息一样处理
-    长语音: 直接转写输出
+    翻译模式开启: 转写 + 翻译 → 双语对照输出
+    正常模式:
+        短语音: 转文字 → 智能路由
+        长语音: 直接转写输出
     """
+    from database import get_user_settings
+    
     chat_id = update.message.chat_id
     user_id = update.message.from_user.id
     
@@ -75,8 +141,15 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     if not voice:
         return
     
+    # 检查是否开启翻译模式
+    settings = await get_user_settings(user_id)
+    translate_mode = settings.get("auto_translate", 0)
+    
     # 发送处理中提示
-    thinking_msg = await smart_reply_text(update, "🎤 正在识别语音内容...")
+    if translate_mode:
+        thinking_msg = await smart_reply_text(update, "🌍 正在翻译语音内容...")
+    else:
+        thinking_msg = await smart_reply_text(update, "🎤 正在识别语音内容...")
     
     # 发送"正在输入"状态
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
@@ -87,7 +160,34 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         voice_bytes = await file.download_as_bytearray()
         mime_type = voice.mime_type or "audio/ogg"
         
-        # 转写语音
+        # 翻译模式：双语对照输出
+        if translate_mode:
+            result = await transcribe_and_translate_voice(voice_bytes, mime_type)
+            
+            if not result:
+                await smart_edit_text(thinking_msg, "❌ 无法识别或翻译语音内容，请重试。")
+                return
+            
+            original_lang = result.get('original_lang', '未知')
+            original = result.get('original', '')
+            translated = result.get('translated', '')
+            
+            output = (
+                f"🎤 **语音翻译**\n\n"
+                f"📝 **原文** ({original_lang}):\n"
+                f"「{original}」\n\n"
+                f"🌐 **译文**:\n"
+                f"「{translated}」"
+            )
+            
+            await smart_edit_text(thinking_msg, output)
+            
+            # 记录统计
+            from stats import increment_stat
+            await increment_stat(user_id, "translations_count")
+            return
+        
+        # 正常模式：转写语音
         transcribed_text = await transcribe_voice(voice_bytes, mime_type)
         
         if not transcribed_text:

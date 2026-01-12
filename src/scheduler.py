@@ -122,6 +122,33 @@ async def load_jobs_from_db(job_queue: JobQueue):
     logger.info(f"Loaded {count} pending reminders.")
 
 
+async def generate_entry_summary(title: str, content: str, link: str) -> str:
+    """使用 AI 生成 RSS 条目摘要"""
+    from config import gemini_client, GEMINI_MODEL
+    
+    # 截断过长内容
+    if len(content) > 2000:
+        content = content[:2000] + "..."
+    
+    prompt = (
+        "请为以下新闻/文章生成一段简洁的中文摘要（100-150字），"
+        "突出核心信息和要点。直接输出摘要内容，不要加任何前缀。\n\n"
+        f"**标题**：{title}\n\n"
+        f"**内容**：{content}"
+    )
+    
+    try:
+        response = await gemini_client.aio.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+        )
+        return response.text.strip()
+    except Exception as e:
+        logger.error(f"AI summary generation failed: {e}")
+        # 失败时返回原始内容的截断版本
+        return content[:200] + "..." if len(content) > 200 else content
+
+
 async def check_rss_updates_job(context: ContextTypes.DEFAULT_TYPE):
     """检查 RSS 更新的任务"""
     logger.info("Checking for RSS updates...")
@@ -142,16 +169,6 @@ async def check_rss_updates_job(context: ContextTypes.DEFAULT_TYPE):
         
     for url, subs in feed_map.items():
         try:
-            # 只要有一个订阅了这个 URL 需要检查，就请求一次
-            # 使用第一个订阅的 etag/modified 作为参考 (通常同一 URL 对不同用户是一样的)
-            # 不过为了准确，还是只传 None，全面拉取，然后通过 id/link 比对
-            # 为了节省流量，可以使用 etag。这里简单起见，不使用 conditional get (容易出错)
-            # feedparser 会自动处理 etag 如果传入
-            
-            # 使用第一个 sub 的缓存头
-            # first_sub = subs[0]
-            # feed = feedparser.parse(url, etag=first_sub["last_etag"], modified=first_sub["last_modified"])
-            
             # 简单实现：全量拉取，只检查 ID/Link
             feed = feedparser.parse(url)
             
@@ -175,12 +192,37 @@ async def check_rss_updates_job(context: ContextTypes.DEFAULT_TYPE):
                 
                 # 如果是新的
                 if entry_id != last_hash:
-                    # 发送通知
+                    # 提取内容用于生成摘要
                     title = latest_entry.get("title", "无标题")
                     link = latest_entry.get("link", url)
                     feed_title = feed.feed.get("title", "RSS 订阅")
                     
-                    msg = f"📢 **{feed_title}** 更新了！\n\n[{title}]({link})"
+                    # 提取文章内容
+                    content = ""
+                    if hasattr(latest_entry, "summary"):
+                        content = latest_entry.summary
+                    elif hasattr(latest_entry, "content") and latest_entry.content:
+                        content = latest_entry.content[0].get("value", "")
+                    elif hasattr(latest_entry, "description"):
+                        content = latest_entry.description
+                    
+                    # 清理 HTML 标签
+                    import re
+                    content = re.sub(r'<[^>]+>', '', content)
+                    content = content.strip()
+                    
+                    # 生成 AI 摘要
+                    if content:
+                        summary = await generate_entry_summary(title, content, link)
+                    else:
+                        summary = "暂无摘要"
+                    
+                    msg = (
+                        f"📢 **{feed_title}** 更新了！\n\n"
+                        f"**{title}**\n\n"
+                        f"📝 {summary}\n\n"
+                        f"🔗 [阅读全文]({link})"
+                    )
                     
                     try:
                         await context.bot.send_message(
@@ -192,8 +234,6 @@ async def check_rss_updates_job(context: ContextTypes.DEFAULT_TYPE):
                         logger.error(f"Failed to send RSS update to {sub['user_id']}: {e}")
                     
                     # 更新数据库状态
-                    # 注意：如果多个用户订阅同一个，这里会多次更新同一个 sub id
-                    # 但逻辑正确。
                     await update_subscription_status(
                         sub["id"], 
                         entry_id, 

@@ -273,6 +273,17 @@ async def delete_subscription(user_id: int, feed_url: str):
         await db.commit()
 
 
+async def delete_subscription_by_id(sub_id: int, user_id: int) -> bool:
+    """根据订阅 ID 删除订阅（需验证用户归属）"""
+    async with await get_db() as db:
+        cursor = await db.execute(
+            "DELETE FROM subscriptions WHERE id = ? AND user_id = ?",
+            (sub_id, user_id)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def get_user_subscriptions(user_id: int) -> list[dict]:
     """获取用户的订阅列表"""
     async with await get_db() as db:

@@ -8,7 +8,7 @@
 
 > **开发者说明**：详细的系统架构图、模块说明及开发指南，请参阅独立的开发文档：
 > 
-> � **[X-Bot 开发手册 (DEVELOPMENT.md)](DEVELOPMENT.md)**
+> 📚 **[X-Bot 开发手册 (DEVELOPMENT.md)](DEVELOPMENT.md)**
 
 ## ✨ 核心功能
 

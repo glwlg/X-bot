@@ -214,12 +214,6 @@ async def process_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     if not url.startswith("http"):
         await smart_reply_text(update, "❌ 请输入有效的 HTTP/HTTPS 链接。")
         return False
-
-    # 限制每人最多 5 个
-    current_subs = await get_user_subscriptions(user_id)
-    if len(current_subs) >= 5:
-        await smart_reply_text(update, "❌ 订阅数量已达上限 (5个)。请先取消一些订阅。")
-        return False
         
     # 尝试解析 RSS 验证有效性
     import feedparser
@@ -265,19 +259,68 @@ async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not await check_permission(update):
         return
 
-    # 如果有参数，直接取消该 URL
-    # 如果没参数，显示列表按钮（简化起见，让用户复制 URL）
+    user_id = update.effective_user.id
     args = context.args
-    if not args:
-         await smart_reply_text(update, "⚠️ 用法：`/unsubscribe <RSS链接>`\n请使用 /list_subs 查看您的订阅链接。")
-         return
-         
-    url = args[0]
+    
+    # 如果有参数，直接取消该 URL
+    if args:
+        url = args[0]
+        await delete_subscription(user_id, url)
+        await smart_reply_text(update, f"🗑️ 已取消订阅：`{url}`")
+        return
+    
+    # 无参数：显示订阅列表让用户选择
+    subs = await get_user_subscriptions(user_id)
+    
+    if not subs:
+        await smart_reply_text(update, "📭 您当前没有订阅任何内容。")
+        return
+    
+    # 构建按钮列表
+    keyboard = []
+    for sub in subs:
+        title = sub["title"] or sub["feed_url"][:30]
+        # 回调数据格式: unsub_<id>
+        keyboard.append([InlineKeyboardButton(f"❌ {title}", callback_data=f"unsub_{sub['id']}")])
+    
+    keyboard.append([InlineKeyboardButton("🚫 取消", callback_data="unsub_cancel")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await smart_reply_text(
+        update,
+        "📋 **请选择要取消的订阅**：",
+        reply_markup=reply_markup
+    )
+
+
+async def handle_unsubscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理取消订阅按钮回调"""
+    from database import delete_subscription_by_id
+    
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
     user_id = update.effective_user.id
     
-    await delete_subscription(user_id, url)
+    if data == "unsub_cancel":
+        await query.edit_message_text("👌 已取消操作。")
+        return
     
-    await smart_reply_text(update, f"🗑️ 已取消订阅：`{url}`")
+    # 解析订阅 ID
+    try:
+        sub_id = int(data.replace("unsub_", ""))
+    except ValueError:
+        await query.edit_message_text("❌ 无效的操作。")
+        return
+    
+    # 删除订阅
+    success = await delete_subscription_by_id(sub_id, user_id)
+    
+    if success:
+        await query.edit_message_text("✅ 订阅已取消。")
+    else:
+        await query.edit_message_text("❌ 取消失败，订阅可能已不存在。")
 
 
 async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -321,51 +364,59 @@ async def handle_monitor_input(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def process_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE, keyword: str) -> bool:
-    """实际处理监控逻辑"""
+    """实际处理监控逻辑，支持多关键词（用顿号、逗号分隔）"""
+    import re
+    import urllib.parse
+    import feedparser
+    
     user_id = update.effective_user.id
     
-    # 限制每人最多 5 个 (与普通订阅共享额度)
-    current_subs = await get_user_subscriptions(user_id)
-    if len(current_subs) >= 5:
-        await smart_reply_text(update, "❌ 订阅数量已达上限 (5个)。请先取消一些订阅。")
+    # 拆分多个关键词（支持顿号、中英文逗号）
+    keywords = re.split(r'[、,，]+', keyword.strip())
+    keywords = [k.strip() for k in keywords if k.strip()]
+    
+    if not keywords:
+        await smart_reply_text(update, "❌ 请输入有效的关键词。")
         return False
-
-    # 构造 Google News RSS URL
-    import urllib.parse
-    encoded_keyword = urllib.parse.quote(keyword)
-    rss_url = f"https://news.google.com/rss/search?q={encoded_keyword}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
     
-    import urllib.parse
-    encoded_keyword = urllib.parse.quote(keyword)
-    rss_url = f"https://news.google.com/rss/search?q={encoded_keyword}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+    msg = await smart_reply_text(update, f"🔍 正在配置 {len(keywords)} 个关键词监控...")
     
-    msg = await smart_reply_text(update, f"🔍 正在为关键词 '{keyword}' 配置监控...")
+    success_list = []
+    failed_list = []
+    existed_list = []
     
-    try:
-        # 验证一下 RSS (虽然 Google News 通常没问题)
-        import feedparser
-        feed = feedparser.parse(rss_url)
+    for kw in keywords:
+        encoded_keyword = urllib.parse.quote(kw)
+        rss_url = f"https://news.google.com/rss/search?q={encoded_keyword}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
+        title = f"监控: {kw}"
         
-        # Google News RSS title通常是 "Google News - keyword"
-        title = f"监控: {keyword}"
-        
-        await add_subscription(user_id, rss_url, title)
-        await smart_edit_text(msg,
-            f"✅ **监控已设置！**\n\n"
-            f"关键词：{keyword}\n"
-            f"来源：Google News\n"
-            f"Bot 将每 30 分钟推送相关新闻。"
-        )
-        return True
-            
-    except Exception as e:
-        if "UNIQUE constraint failed" in str(e):
-             await smart_edit_text(msg, "⚠️ 您已经监控过这个关键词了。")
-             return True # 算作成功结束，不再 retry
-        else:
-             logger.error(f"Monitor error: {e}")
-             await smart_edit_text(msg, f"❌ 设置失败: {e}")
-             return False
+        try:
+            await add_subscription(user_id, rss_url, title)
+            success_list.append(kw)
+        except Exception as e:
+            if "UNIQUE constraint failed" in str(e):
+                existed_list.append(kw)
+            else:
+                logger.error(f"Monitor error for '{kw}': {e}")
+                failed_list.append(kw)
+    
+    # 构建结果消息
+    result_parts = []
+    if success_list:
+        result_parts.append(f"✅ 已添加监控：{', '.join(success_list)}")
+    if existed_list:
+        result_parts.append(f"⚠️ 已存在：{', '.join(existed_list)}")
+    if failed_list:
+        result_parts.append(f"❌ 添加失败：{', '.join(failed_list)}")
+    
+    result_msg = (
+        "**监控设置完成！**\n\n" +
+        "\n".join(result_parts) +
+        "\n\n来源：Google News\nBot 将每 30 分钟推送相关新闻。"
+    )
+    
+    await smart_edit_text(msg, result_msg)
+    return len(success_list) > 0 or len(existed_list) > 0
 
 
 async def list_subs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -390,3 +441,186 @@ async def list_subs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     msg += "发送 `/unsubscribe <链接>` 可取消订阅。"
     
     await smart_reply_text(update, msg)
+
+
+# --- Feature Request ---
+
+FEATURE_STATE_KEY = "feature_request"
+
+async def feature_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """处理 /feature 命令，收集功能需求"""
+    from config import WAITING_FOR_FEATURE_INPUT
+    
+    if not await check_permission(update):
+        return ConversationHandler.END
+
+    # 清除之前的状态
+    context.user_data.pop(FEATURE_STATE_KEY, None)
+    
+    args = context.args
+    if args:
+        # 有参数，直接处理
+        return await process_feature_request(update, context, " ".join(args))
+        
+    # 无参数，提示输入
+    await smart_reply_text(update,
+        "💡 **提交功能需求**\n\n"
+        "请描述您希望 Bot 拥有的新功能。\n\n"
+        "发送 /cancel 取消。"
+    )
+    return WAITING_FOR_FEATURE_INPUT
+
+
+async def handle_feature_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """处理需求的交互式输入（支持多轮补充）"""
+    from config import WAITING_FOR_FEATURE_INPUT
+    
+    text = update.message.text
+    if not text:
+        await update.message.reply_text("请发送有效文本。")
+        return WAITING_FOR_FEATURE_INPUT
+    
+    # 检查是否已有需求文档
+    state = context.user_data.get(FEATURE_STATE_KEY)
+    if state and state.get("filepath"):
+        # 追加补充信息到已有文档
+        return await append_feature_supplement(update, context, text)
+    else:
+        # 新需求
+        return await process_feature_request(update, context, text)
+
+
+async def save_feature_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    """保存需求并结束对话"""
+    state = context.user_data.pop(FEATURE_STATE_KEY, None)
+    
+    if state and state.get("filename"):
+        await smart_reply_text(update, f"✅ 需求 `{state['filename']}` 已保存！")
+    else:
+        await smart_reply_text(update, "✅ 需求收集已结束。")
+    
+    return ConversationHandler.END
+
+
+async def process_feature_request(update: Update, context: ContextTypes.DEFAULT_TYPE, description: str) -> int:
+    """整理用户需求并保存"""
+    import os
+    import datetime
+    import re
+    from config import gemini_client, GEMINI_MODEL, DATA_DIR, WAITING_FOR_FEATURE_INPUT
+    
+    msg = await smart_reply_text(update, "🤔 正在整理您的需求...")
+    
+    # 简洁的 prompt
+    prompt = f'''用户提出了一个功能需求，请整理成简洁的需求描述。
+
+用户原话：{description}
+
+请按以下格式输出（Markdown），保持简洁：
+
+# [2-6个字的标题]
+
+## 需求描述
+1-2 句话描述用户想要什么
+
+## 功能要点
+- 要点1
+- 要点2（如有）
+'''
+
+    try:
+        response = await gemini_client.aio.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=prompt,
+        )
+        doc_content = response.text.strip()
+        
+        # 提取标题
+        title_match = re.search(r'^#\s*(.+)$', doc_content, re.MULTILINE)
+        title = title_match.group(1).strip()[:15] if title_match else "需求"
+        title_safe = re.sub(r'[\\/*?:"<>|]', '', title).replace(' ', '_')
+        
+        # 添加元信息
+        timestamp = datetime.datetime.now()
+        meta = f"\n\n---\n*提交时间：{timestamp.strftime('%Y-%m-%d %H:%M')} | 用户：{update.effective_user.id}*"
+        doc_content += meta
+        
+        # 保存文件
+        feature_dir = os.path.join(DATA_DIR, "feature_requests")
+        os.makedirs(feature_dir, exist_ok=True)
+        
+        date_str = timestamp.strftime("%Y%m%d")
+        existing = [f for f in os.listdir(feature_dir) if f.startswith(date_str)]
+        seq = len(existing) + 1
+        filename = f"{date_str}_{seq:02d}_{title_safe}.md"
+        filepath = os.path.join(feature_dir, filename)
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(doc_content)
+        
+        # 保存状态，等待用户补充或确认
+        context.user_data[FEATURE_STATE_KEY] = {
+            "filepath": filepath,
+            "filename": filename,
+        }
+        
+        await smart_edit_text(msg,
+            f"📝 **需求已记录**\n\n"
+            f"📄 `{filename}`\n\n"
+            f"{doc_content}\n\n"
+            "---\n继续补充说明，或点击 /save_feature 保存结束。"
+        )
+        return WAITING_FOR_FEATURE_INPUT
+        
+    except Exception as e:
+        logger.error(f"Feature request error: {e}")
+        await smart_edit_text(msg, f"❌ 处理失败：{e}")
+        return ConversationHandler.END
+
+
+async def append_feature_supplement(update: Update, context: ContextTypes.DEFAULT_TYPE, supplement: str) -> int:
+    """追加用户补充信息到需求文档"""
+    import datetime
+    from config import WAITING_FOR_FEATURE_INPUT
+    
+    state = context.user_data.get(FEATURE_STATE_KEY, {})
+    filepath = state.get("filepath")
+    filename = state.get("filename")
+    
+    if not filepath:
+        return ConversationHandler.END
+    
+    msg = await smart_reply_text(update, "📝 正在更新需求...")
+    
+    try:
+        # 读取现有内容
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # 追加补充信息
+        timestamp = datetime.datetime.now().strftime('%H:%M')
+        supplement_section = f"\n\n## 补充说明 ({timestamp})\n{supplement}"
+        
+        # 插入到元信息之前
+        if "---\n*提交时间" in content:
+            parts = content.rsplit("---\n*提交时间", 1)
+            content = parts[0].rstrip() + supplement_section + "\n\n---\n*提交时间" + parts[1]
+        else:
+            content += supplement_section
+        
+        # 保存
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(content)
+        
+        await smart_edit_text(msg,
+            f"✅ **补充已添加**\n\n"
+            f"📄 `{filename}`\n\n"
+            "继续补充说明，或点击 /save_feature 保存结束。"
+        )
+        return WAITING_FOR_FEATURE_INPUT
+        
+    except Exception as e:
+        logger.error(f"Append feature error: {e}")
+        await smart_edit_text(msg, f"❌ 更新失败：{e}")
+        return ConversationHandler.END
+

@@ -9,7 +9,9 @@ from .media_handlers import (
 from .service_handlers import (
     stats_command, remind_command, handle_remind_input,
     toggle_translation_command, subscribe_command, handle_subscribe_input,
-    unsubscribe_command, monitor_command, handle_monitor_input, list_subs_command
+    unsubscribe_command, handle_unsubscribe_callback,
+    monitor_command, handle_monitor_input, list_subs_command,
+    feature_command, handle_feature_input, save_feature_command
 )
 from .ai_handlers import handle_ai_chat, handle_ai_photo, handle_ai_video
 from .mcp_handlers import handle_browser_action

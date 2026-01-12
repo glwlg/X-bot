@@ -21,6 +21,7 @@ from config import (
     WAITING_FOR_REMIND_INPUT,
     WAITING_FOR_MONITOR_KEYWORD,
     WAITING_FOR_SUBSCRIBE_URL,
+    WAITING_FOR_FEATURE_INPUT,
 )
 from handlers import (
     start,
@@ -44,6 +45,7 @@ from handlers import (
     subscribe_command,
     handle_subscribe_input,
     unsubscribe_command,
+    handle_unsubscribe_callback,
     list_subs_command,
     monitor_command,
     handle_monitor_input,
@@ -51,7 +53,10 @@ from handlers import (
     stats_command,
     handle_ai_chat, 
     handle_ai_photo, 
-    handle_ai_video
+    handle_ai_video,
+    feature_command,
+    handle_feature_input,
+    save_feature_command,
 )
 from voice_handler import handle_voice_message
 from document_handler import handle_document
@@ -89,6 +94,7 @@ async def initialize_data(application: Application) -> None:
             ("list_subs", "查看订阅"),
             ("unsubscribe", "取消订阅"),
             ("image", "AI 画图"),
+            ("feature", "提交需求"),
             ("stats", "使用统计"),
             ("help", "使用帮助"),
             ("cancel", "取消当前操作"),
@@ -140,7 +146,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_large_file_action, pattern="^large_file_"))
     
     # 1.2 通用菜单按钮
-    common_pattern = "^(?!download_video$|generate_image$|back_to_main_cancel$|dl_format_|large_file_|action_).*$"
+    common_pattern = "^(?!download_video$|generate_image$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_).*$"
     application.add_handler(CallbackQueryHandler(button_callback, pattern=common_pattern))
 
     # 2. 视频下载对话处理器
@@ -211,6 +217,18 @@ def main() -> None:
         fallbacks=[CommandHandler("cancel", cancel)],
     )
 
+    # 3.4 需求收集对话处理器
+    feature_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("feature", feature_command)],
+        states={
+            WAITING_FOR_FEATURE_INPUT: [
+                CommandHandler("save_feature", save_feature_command),
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_feature_input)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("save_feature", save_feature_command)],
+    )
+
     # 4. 注册核心功能处理器
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("new", handle_new_command))
@@ -222,7 +240,9 @@ def main() -> None:
     application.add_handler(subscribe_conv_handler)
     application.add_handler(monitor_conv_handler)
     application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
+    application.add_handler(CallbackQueryHandler(handle_unsubscribe_callback, pattern="^unsub_"))
     application.add_handler(CommandHandler("list_subs", list_subs_command))
+    application.add_handler(feature_conv_handler)
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(video_conv_handler)
     application.add_handler(image_conv_handler)

@@ -179,6 +179,11 @@ MCP 模块允许 X-Bot 调用外部 MCP 服务（如 Playwright 浏览器自动�
 2.  **错误处理**: Bot 需要长期运行，**严禁** 在 Handler 中抛出未捕获异常导致进程崩溃。请使用 `try...except` 并记录 `logger.error`。
 3.  **权限控制**: 任何敏感或消耗资源的操作，都必须先检查 `check_permission`。
 4.  **数据库变更**: 如果修改了数据库结构，请确保 `database.py` 中的 `init_db` 能正确处理（目前项目较为简单，未引入类似 Alembic 的迁移工具，改表结构建议直接兼容或手动处理）。
+5.  **新增 CallbackQueryHandler**: 如果添加了新的回调处理器（如 `unsub_`、`action_` 等自定义前缀），**必须**同时更新 `main.py` 中的 `common_pattern` 正则表达式，将新前缀加入排除列表，否则回调会被通用的 `button_callback` 拦截导致无法触发专用处理器。
+    ```python
+    # 示例：排除 unsub_ 开头的回调
+    common_pattern = "^(?!download_video$|...|unsub_).*$"
+    ```
 
 ---
 
