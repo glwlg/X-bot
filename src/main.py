@@ -9,7 +9,7 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     ConversationHandler,
-    ConversationHandler,
+    PicklePersistence,
     filters,
 )
 from telegram import Update
@@ -110,7 +110,17 @@ def main() -> None:
     """启动 Bot"""
     logger.info("Starting DLP Bot...")
 
-    application = Application.builder().token(TELEGRAM_BOT_TOKEN).read_timeout(60).write_timeout(120).build()
+    # 配置持久化存储
+    persistence = PicklePersistence(filepath="data/bot_persistence.pickle")
+
+    application = (
+        Application.builder()
+        .token(TELEGRAM_BOT_TOKEN)
+        .persistence(persistence)
+        .read_timeout(60)
+        .write_timeout(120)
+        .build()
+    )
 
     # 设置 Bot 初始化 (加载数据库和菜单)
     application.post_init = initialize_data

@@ -70,9 +70,8 @@ async def handle_new_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if not await check_permission(update):
         return
 
-    user_id = update.effective_user.id
-    from database import clear_chat_history
-    await clear_chat_history(user_id)
+    from user_context import clear_context
+    clear_context(context)
     
     await smart_reply_text(update, 
         "🧹 **已开启新对话**\n\n"

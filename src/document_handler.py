@@ -8,6 +8,7 @@ from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 
 from config import gemini_client, GEMINI_MODEL, is_user_allowed
+from user_context import add_message
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +88,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # 发送处理中提示
     thinking_msg = await update.message.reply_text("📄 正在读取文档内容...")
     
+    # 记录用户文档消息到上下文
+    add_message(context, "user", f"【用户发送了文档：{document.file_name}】{caption}")
+    
     # 发送"正在输入"状态
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
     
@@ -137,6 +141,8 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         
         if response.text:
             await thinking_msg.edit_text(response.text)
+            # 记录模型回复到上下文
+            add_message(context, "model", response.text)
             # 记录统计
             from stats import increment_stat
             await increment_stat(user_id, "doc_analyses")

@@ -8,7 +8,7 @@ from telegram.error import BadRequest
 from config import gemini_client, GEMINI_MODEL
 from web_summary import extract_urls, summarize_webpage, is_video_platform, fetch_webpage_content
 from user_context import get_user_context, add_message
-from database import get_chat_message, get_user_settings, get_video_cache
+from database import get_user_settings, get_video_cache
 from utils import smart_edit_text, smart_reply_text
 from stats import increment_stat
 
@@ -115,7 +115,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     # --- Smart Intent Routing ---
     # Save the user message to history immediately (important for context)
-    await add_message(user_id, "user", user_message)
+    add_message(context, "user", user_message)
 
     from intent_router import analyze_intent, UserIntent
     
@@ -287,9 +287,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         else:
             # 纯文本对话（流式响应 + 多轮上下文）
             
-            # 1. 保存当前用户消息
-            current_msg_id = update.message.message_id
-            await add_message(user_id, "user", user_message, message_id=current_msg_id)
+            # 1. 用户消息已在 intent routing 入口处保存，此处不再重复保存
             
             # -----------------------------------------------------------------
             # 2. 构建上下文
@@ -314,7 +312,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             
             # B. 如果不是回复 --> 使用最近的历史记录
             else:
-                context_messages = await get_user_context(user_id)
+                context_messages = get_user_context(context)
             
             # append current user message
             context_messages.append({
@@ -356,10 +354,8 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 # smart_edit_text handles markdown formatting and errors
                 sent_msg = await smart_edit_text(thinking_msg, final_text_response)
                 
-                if sent_msg:
-                    await add_message(user_id, "model", final_text_response, message_id=sent_msg.message_id)
-                else:
-                    await add_message(user_id, "model", final_text_response)
+                # 记录模型回复到上下文
+                add_message(context, "model", final_text_response)
                 
                 # Try to extract code blocks, send as files, and get truncated text
                 final_display_text = await process_and_send_code_files(update, context, final_text_response)
@@ -401,7 +397,7 @@ async def handle_ai_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     caption = update.message.caption or "请描述这张图片"
 
     # Save to history immediately
-    await add_message(user_id, "user", f"【用户发送了一张图片】 {caption}")
+    add_message(context, "user", f"【用户发送了一张图片】 {caption}")
     
     # 立即发送"正在分析"提示
     thinking_msg = await smart_reply_text(update, "🔍 正在分析图片...")
@@ -447,7 +443,7 @@ async def handle_ai_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await smart_edit_text(thinking_msg, display_text)
             
             # Save model response to history
-            await add_message(user_id, "model", response.text)
+            add_message(context, "model", response.text)
             
             # 记录统计
             await increment_stat(user_id, "photo_analyses")

@@ -25,28 +25,6 @@ async def init_db():
             )
         """)
         
-        # 聊天记录表
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS chat_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT NOT NULL,
-                message_id INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # 迁移：chat_history 添加 message_id
-        try:
-            async with db.execute("PRAGMA table_info(chat_history)") as cursor:
-                columns = [row[1] for row in await cursor.fetchall()]
-            if "message_id" not in columns:
-                await db.execute("ALTER TABLE chat_history ADD COLUMN message_id INTEGER")
-                logger.info("Added column message_id to chat_history")
-        except Exception as e:
-            logger.error(f"Migration error (chat_history): {e}")
-        
         # 用户统计表
         await db.execute("""
             CREATE TABLE IF NOT EXISTS user_stats (
@@ -162,57 +140,6 @@ async def get_video_cache(file_id: str) -> str | None:
         async with db.execute("SELECT file_path FROM video_cache WHERE file_id = ?", (file_id,)) as cursor:
             row = await cursor.fetchone()
             return row[0] if row else None
-
-
-# --- 聊天记录操作 ---
-
-async def add_chat_message(user_id: int, role: str, content: str, message_id: int = None):
-    async with await get_db() as db:
-        await db.execute(
-            "INSERT INTO chat_history (user_id, role, content, message_id) VALUES (?, ?, ?, ?)",
-            (user_id, role, content, message_id)
-        )
-        await db.commit()
-        
-        # 仅保留最近 20 条（或者按需保留）
-        # 这里可以选择不删除，或者定期清理。简单起见，这里不每次都清理。
-
-
-async def get_chat_message(message_id: int) -> str | None:
-    """根据 message_id 获取消息内容"""
-    if not message_id:
-        return None
-    async with await get_db() as db:
-        async with db.execute(
-            "SELECT content FROM chat_history WHERE message_id = ?", 
-            (message_id,)
-        ) as cursor:
-            row = await cursor.fetchone()
-            return row[0] if row else None
-
-
-async def get_chat_history(user_id: int, limit: int = 10) -> list[dict]:
-    async with await get_db() as db:
-        async with db.execute(
-            """
-            SELECT role, content FROM chat_history 
-            WHERE user_id = ? 
-            ORDER BY created_at DESC 
-            LIMIT ?
-            """,
-            (user_id, limit)
-        ) as cursor:
-            rows = await cursor.fetchall()
-            # 数据库取出来是倒序，需要反转回正序
-            history = [{"role": row[0], "parts": [{"text": row[1]}]} for row in reversed(rows)]
-            return history
-
-
-async def clear_chat_history(user_id: int):
-    """清除用户的聊天历史"""
-    async with await get_db() as db:
-        await db.execute("DELETE FROM chat_history WHERE user_id = ?", (user_id,))
-        await db.commit()
 
 
 # --- 用户统计操作 ---
