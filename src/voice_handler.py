@@ -119,7 +119,7 @@ async def transcribe_and_translate_voice(voice_bytes: bytes, mime_type: str) -> 
 
 async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
-    处理语音消息
+    处理语音消息（包括 voice 和 audio 类型）
     
     翻译模式开启: 转写 + 翻译 → 双语对照输出
     正常模式:
@@ -136,10 +136,15 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         await smart_reply_text(update, "⛔ 抱歉，您没有使用 AI 功能的权限。")
         return
     
-    # 获取语音消息
+    # 获取语音/音频消息（优先 voice，其次 audio）
     voice = update.message.voice
-    if not voice:
+    audio = update.message.audio
+    
+    if not voice and not audio:
         return
+    
+    # 统一处理：voice 或 audio
+    media = voice or audio
     
     # 检查是否开启翻译模式
     settings = await get_user_settings(user_id)
@@ -156,9 +161,12 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     
     try:
         # 下载语音文件
-        file = await context.bot.get_file(voice.file_id)
+        file = await context.bot.get_file(media.file_id)
         voice_bytes = await file.download_as_bytearray()
-        mime_type = voice.mime_type or "audio/ogg"
+        mime_type = media.mime_type or "audio/ogg"
+        
+        # 检查是否包含用户指令（Caption）
+        user_instruction = update.message.caption
         
         # 翻译模式：双语对照输出
         if translate_mode:
@@ -196,8 +204,18 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         
         logger.info(f"Voice transcribed: {transcribed_text[:50]}...")
         
-        # 根据语音时长决定处理策略
-        if voice.duration <= SHORT_VOICE_THRESHOLD:
+        # 如果用户附带了文字说明（Caption），将其作为指令追加到内容前
+        final_text = transcribed_text
+        if user_instruction:
+            final_text = f"{user_instruction}\n\n【语音内容】：\n{transcribed_text}"
+            # 有指令时，视为短语音逻辑处理（走智能路由）
+            await smart_edit_text(thinking_msg, f"🎤 已识别语音内容，正在执行指令: **\"{user_instruction}\"**...")
+            await process_as_text_message(update, context, final_text, thinking_msg)
+            return
+
+        # 根据语音时长决定处理策略（若无 duration 属性则默认为长语音）
+        duration = getattr(media, 'duration', SHORT_VOICE_THRESHOLD + 1)
+        if duration <= SHORT_VOICE_THRESHOLD:
             # 短语音：走智能路由（与文本消息一致）
             await smart_edit_text(thinking_msg, f"🎤 语音转写内容为: **\"{transcribed_text}\"**\n\n🤔 正在思考中...")
             
@@ -214,6 +232,19 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
             from stats import increment_stat
             await increment_stat(user_id, "voice_chats")
         
+    except BadRequest as e:
+        if "File is too big" in str(e):
+            await smart_edit_text(thinking_msg, 
+                "⚠️ **音频文件过大**\n\n"
+                "抱歉，Telegram 限制 Bot 只能下载 **20MB** 以内的文件，我无法获取这段音频。\n\n"
+                "💡 **建议方案**：\n"
+                "1. 使用音频压缩软件减小体积后重发\n"
+                "2. 这是一个 Telegram 官方限制，无法在服务端切割（因为根本下载不到）"
+            )
+        else:
+            logger.error(f"Voice processing BadRequest: {e}")
+            await smart_edit_text(thinking_msg, "❌ 处理失败：文件格式或内容受限。")
+            
     except Exception as e:
         logger.error(f"Voice processing error: {e}")
         try:

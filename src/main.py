@@ -267,9 +267,9 @@ def main() -> None:
         MessageHandler(filters.VIDEO, handle_ai_video)
     )
     
-    # 7. 语音消息处理器
+    # 7. 语音/音频消息处理器（包括 voice 和 audio）
     application.add_handler(
-        MessageHandler(filters.VOICE, handle_voice_message)
+        MessageHandler(filters.VOICE | filters.AUDIO, handle_voice_message)
     )
     
     # 8. 文档消息处理器（PDF、DOCX）

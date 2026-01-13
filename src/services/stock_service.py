@@ -103,6 +103,9 @@ async def search_stock_by_name(keyword: str) -> list[dict]:
     
     Returns:
         [{"code": "sh603733", "name": "仙鹤股份", "market": "沪A"}, ...]
+    
+    新浪API返回格式: "名称,市场类型,纯代码,完整代码,名称,..."
+    例如: "仙鹤股份,11,603733,sh603733,仙鹤股份,,仙鹤股份,99,1,,,"
     """
     if not keyword:
         return []
@@ -119,7 +122,7 @@ async def search_stock_by_name(keyword: str) -> list[dict]:
             
             content = response.content.decode("gbk", errors="ignore")
             
-            # 格式: var suggestvalue="代码,简称,拼音,市场,类型,...;..."
+            # 格式: var suggestvalue="名称,市场类型,纯代码,完整代码,名称,...;..."
             match = re.search(r'var suggestvalue="(.*)";?', content)
             if not match:
                 return []
@@ -133,22 +136,16 @@ async def search_stock_by_name(keyword: str) -> list[dict]:
                 if len(parts) < 4:
                     continue
                 
-                stock_code = parts[0]
-                stock_name = parts[4] if len(parts) > 4 else parts[1]
-                market = parts[1]
+                # parts[0] = 名称, parts[1] = 市场类型, parts[2] = 纯代码, parts[3] = 完整代码
+                stock_name = parts[0]
+                market_type = parts[1]
+                full_code = parts[3]  # 使用 parts[3] 获取完整代码如 sh603733
                 
                 # 只保留 A 股（11=沪A, 12=深A）
-                market_type = parts[1] if len(parts) > 1 else ""
                 if market_type not in ("11", "12"):
                     continue
                 
-                # 构建完整代码
-                if market_type == "11":
-                    full_code = f"sh{stock_code}"
-                    market_name = "沪A"
-                else:
-                    full_code = f"sz{stock_code}"
-                    market_name = "深A"
+                market_name = "沪A" if market_type == "11" else "深A"
                 
                 results.append({
                     "code": full_code,
