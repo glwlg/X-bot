@@ -15,6 +15,7 @@ class UserIntent(Enum):
     SET_REMINDER = "set_reminder"
     RSS_SUBSCRIBE = "rss_subscribe"
     MONITOR_KEYWORD = "monitor_keyword"
+    STOCK_WATCH = "stock_watch"  # 自选股管理
     GENERAL_CHAT = "general_chat"
     MEMORY_RECALL = "memory_recall" # Explicit memory query
     UNKNOWN = "unknown"
@@ -43,7 +44,7 @@ async def analyze_intent(text: str) -> Dict[str, Any]:
             "- **Reminders**: `set_reminder`\n"
             "- **RSS Subscription**: `rss_subscribe`\n"
             "- **Keyword Monitor**: `monitor_keyword`\n"
-            "- **Keyword Monitor**: `monitor_keyword`\n"
+            "- **Stock Watchlist**: `stock_watch`\n"
             "- **Memory Recall**: `memory_recall`\n"
             "- **AI Chat/Translation**: `general_chat`\n\n"
 
@@ -90,7 +91,15 @@ async def analyze_intent(text: str) -> Dict[str, Any]:
             "Example: '我上周说了什么？' -> { 'intent': 'memory_recall', 'params': { 'query': '...' } }\n"
             "Example: '记得我住在哪里吗？' -> { 'intent': 'memory_recall', 'params': { 'query': '...' } }\n\n"
 
-            "### H. general_chat (Default)\n"
+            "### H. stock_watch\n"
+            "Trigger: User wants to add/remove/view stocks from watchlist.\n"
+            "Keywords: 关注, 自选股, 盯盘, 添加股票, 删除股票, 取消关注, watch, stock.\n"
+            "Params: `action` (add/remove/list), `stock_name` (股票名称)\n"
+            "Example: '帮我关注仙鹤股份' -> { 'intent': 'stock_watch', 'params': { 'action': 'add', 'stock_name': '仙鹤股份' } }\n"
+            "Example: '取消关注大秦铁路' -> { 'intent': 'stock_watch', 'params': { 'action': 'remove', 'stock_name': '大秦铁路' } }\n"
+            "Example: '查看我的自选股' -> { 'intent': 'stock_watch', 'params': { 'action': 'list' } }\n\n"
+
+            "### I. general_chat (Default)\n"
             "Everything else falls here: Questions, small talk, summaries, commands like /start.\n"
             "Example: '这个视频讲了什么 https://...' -> { 'intent': 'general_chat' }\n\n"
             

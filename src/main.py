@@ -26,6 +26,7 @@ from config import (
 from handlers import (
     start,
     handle_new_command,
+    help_command,
     adduser_command,
     deluser_command,
     button_callback,
@@ -57,6 +58,8 @@ from handlers import (
     feature_command,
     handle_feature_input,
     save_feature_command,
+    watchlist_command,
+    handle_stock_select_callback,
 )
 from voice_handler import handle_voice_message
 from document_handler import handle_document
@@ -77,11 +80,14 @@ async def initialize_data(application: Application) -> None:
     
     # 加载待执行的提醒任务
     # 加载待执行的提醒任务
-    from scheduler import load_jobs_from_db, start_rss_scheduler
+    from scheduler import load_jobs_from_db, start_rss_scheduler, start_stock_scheduler
     await load_jobs_from_db(application.job_queue)
     
     # 启动 RSS 检查
     start_rss_scheduler(application.job_queue)
+    
+    # 启动股票盯盘推送
+    start_stock_scheduler(application.job_queue)
 
     await application.bot.set_my_commands(
         [
@@ -93,6 +99,7 @@ async def initialize_data(application: Application) -> None:
             ("subscribe", "订阅 RSS"),
             ("list_subs", "查看订阅"),
             ("unsubscribe", "取消订阅"),
+            ("watchlist", "查看自选股"),
             ("image", "AI 画图"),
             ("feature", "提交需求"),
             ("stats", "使用统计"),
@@ -146,7 +153,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_large_file_action, pattern="^large_file_"))
     
     # 1.2 通用菜单按钮
-    common_pattern = "^(?!download_video$|generate_image$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_).*$"
+    common_pattern = "^(?!download_video$|generate_image$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_).*$"
     application.add_handler(CallbackQueryHandler(button_callback, pattern=common_pattern))
 
     # 2. 视频下载对话处理器
@@ -231,6 +238,7 @@ def main() -> None:
 
     # 4. 注册核心功能处理器
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("new", handle_new_command))
     application.add_handler(CommandHandler("adduser", adduser_command))
     application.add_handler(CommandHandler("deluser", deluser_command))
@@ -244,6 +252,8 @@ def main() -> None:
     application.add_handler(CommandHandler("list_subs", list_subs_command))
     application.add_handler(feature_conv_handler)
     application.add_handler(CommandHandler("stats", stats_command))
+    application.add_handler(CommandHandler("watchlist", watchlist_command))
+    application.add_handler(CallbackQueryHandler(handle_stock_select_callback, pattern="^stock_"))
     application.add_handler(video_conv_handler)
     application.add_handler(image_conv_handler)
     

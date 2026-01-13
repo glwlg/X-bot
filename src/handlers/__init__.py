@@ -1,4 +1,4 @@
-from .start_handlers import start, button_callback, back_to_main_and_cancel, handle_new_command
+from .start_handlers import start, button_callback, back_to_main_and_cancel, handle_new_command, help_command
 from .admin_handlers import adduser_command, deluser_command
 from .base_handlers import check_permission, cancel
 from .media_handlers import (
@@ -11,7 +11,8 @@ from .service_handlers import (
     toggle_translation_command, subscribe_command, handle_subscribe_input,
     unsubscribe_command, handle_unsubscribe_callback,
     monitor_command, handle_monitor_input, list_subs_command,
-    feature_command, handle_feature_input, save_feature_command
+    feature_command, handle_feature_input, save_feature_command,
+    watchlist_command, process_stock_watch, handle_stock_select_callback,
 )
 from .ai_handlers import handle_ai_chat, handle_ai_photo, handle_ai_video
 from .mcp_handlers import handle_browser_action

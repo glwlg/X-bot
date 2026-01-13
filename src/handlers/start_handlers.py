@@ -11,21 +11,12 @@ WELCOME_MESSAGE = (
     "👋 **欢迎使用 X-Bot！**\n\n"
     "我不仅仅是一个机器人，更是您的智能 AI 伙伴。🧠\n"
     "**现在支持自然语言指令与长期记忆！试着对我发：**\n\n"
-    "📥 **下载**\n"
-    "• \"帮我下载这个视频 https://...\"\n"
-    "• \"保存这段音频 https://...\"\n\n"
-    "🧠 **记忆**\n"
-    "• \"记住我住在北京市朝阳区\"\n"
-    "• \"我上次跟你提到的那个电影叫什么？\"\n\n"
-    "🎨 **创作**\n"
-    "• \"画一只在太空的猫\"\n\n"
-    "⏰ **生活**\n"
-    "• \"10分钟后提醒我喝水\"\n"
-    "• \"订阅这个RSS源 https://...\"\n"
-    "• \"监控关键词 AI News\"\n\n"
-    "💬 **对话**\n"
-    "• 直接聊天、语音对话、图片分析、网页摘要\n"
-    "• \"翻译一下模式\" (/translate)\n\n"
+    "📥 **下载** - \"帮我下载这个视频 https://...\"\n"
+    "📈 **股票** - \"帮我关注仙鹤股份\" 或 /watchlist\n"
+    "📢 **订阅** - \"订阅RSS https://...\" 或 \"监控关键词 AI\"\n"
+    "⏰ **提醒** - \"10分钟后提醒我喝水\"\n"
+    "🎨 **画图** - \"画一只在太空的猫\"\n"
+    "🧠 **记忆** - \"记住我住在北京\"\n\n"
     "当然，您也可以使用下方菜单操作 👇"
 )
 
@@ -37,19 +28,18 @@ def get_main_menu_keyboard():
         ],
         [
             InlineKeyboardButton("🎨 AI 画图", callback_data="generate_image"),
-            InlineKeyboardButton("📢 订阅", callback_data="list_subs"),
+            InlineKeyboardButton("📈 自选股", callback_data="watchlist"),
         ],
         [
-            InlineKeyboardButton("🌍 翻译(开关)", callback_data="toggle_translation"),
+            InlineKeyboardButton("📢 订阅", callback_data="list_subs"),
             InlineKeyboardButton("⏰ 提醒", callback_data="remind_help"),
         ],
         [
-            InlineKeyboardButton("📊 支持的平台", callback_data="platforms"),
-            InlineKeyboardButton("📈 使用统计", callback_data="stats"),
+            InlineKeyboardButton("🌍 翻译", callback_data="toggle_translation"),
+            InlineKeyboardButton("📊 统计", callback_data="stats"),
         ],
         [
             InlineKeyboardButton("ℹ️ 帮助", callback_data="help"),
-            # InlineKeyboardButton("⚙️ 设置", callback_data="settings"),
         ],
     ]
 
@@ -77,6 +67,32 @@ async def handle_new_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
         "🧹 **已开启新对话**\n\n"
         "之前的短期对话上下文已清空。\n"
         "不用担心，重要的长期记忆仍然保留！🧠"
+    )
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """处理 /help 命令"""
+    if not await check_permission(update):
+        return
+    
+    await smart_reply_text(update,
+        "ℹ️ **使用帮助**\n\n"
+        "🚀 **自然语言指令** - 直接说话即可！\n"
+        "• \"下载视频 https://...\"\n"
+        "• \"画一张赛博朋克风格的图\"\n"
+        "• \"1小时后提醒我开会\"\n\n"
+        "📈 **股票盯盘**\n"
+        "• \"帮我关注仙鹤股份\"（支持多只）\n"
+        "• /watchlist 查看自选股\n"
+        "• 交易时段每 10 分钟推送\n\n"
+        "📢 **订阅功能**\n"
+        "• /subscribe `<URL>` 订阅 RSS\n"
+        "• /monitor `<关键词>` 监控新闻\n"
+        "• /list_subs 查看订阅\n\n"
+        "🧠 **长期记忆** - 我会记住你的偏好\n"
+        "🌍 **翻译** - /translate 开关\n\n"
+        "**命令列表：**\n"
+        "/watchlist - 自选股 | /subscribe - 订阅\n"
+        "/stats - 统计 | /new - 新对话 | /start - 主菜单"
     )
 
 async def back_to_main_and_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -126,27 +142,23 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             reply_markup = InlineKeyboardMarkup(keyboard)
             await smart_edit_text(query.message,
                 "ℹ️ **使用帮助**\n\n"
-                "🚀 **新功能：自然语言指令**\n"
-                "无需死记硬背命令，直接对我说话即可！\n"
+                "🚀 **自然语言指令** - 直接说话即可！\n"
                 "• \"下载视频 https://...\"\n"
                 "• \"画一张赛博朋克风格的图\"\n"
-                "• \"1小时后提醒我开会\"\n"
-                "• \"监控关键词 DeepSeek\"\n\n"
-                "🧠 **核心能力：长期记忆**\n"
-                "我会记住你的偏好和重要信息。\n"
-                "• \"记住我的名字叫 Luwei\"\n"
-                "• \"我喜欢什么类型的电影？\"\n\n"
-                "**🤖 AI 智能对话**\n"
-                "• **语音/多轮对话**：像朋友一样聊天\n"
-                "• **图片/视频分析**：发送媒体文件并提问\n"
-                "• **网页摘要**：直接发送链接\n"
-                "• **沉浸式翻译**：输入 /translate 开启\n\n"
+                "• \"1小时后提醒我开会\"\n\n"
+                "📈 **股票盯盘**\n"
+                "• \"帮我关注仙鹤股份\"（支持多只）\n"
+                "• /watchlist 查看自选股\n"
+                "• 交易时段每 10 分钟推送\n\n"
+                "📢 **订阅功能**\n"
+                "• /subscribe `<URL>` 订阅 RSS\n"
+                "• /monitor `<关键词>` 监控新闻\n"
+                "• /list_subs 查看订阅\n\n"
+                "🧠 **长期记忆** - 我会记住你的偏好\n"
+                "🌍 **翻译** - /translate 开关\n\n"
                 "**命令列表：**\n"
-                "/stats - 使用统计\n"
-                "/new - 开启新对话 (清空上下文)\n"
-                "/start - 主菜单\n"
-                "/cancel - 取消\n\n"
-                "遇到问题？直接问我！",
+                "/watchlist - 自选股 | /subscribe - 订阅\n"
+                "/stats - 统计 | /new - 新对话 | /start - 主菜单",
                 reply_markup=reply_markup,
             )
             return ConversationHandler.END
@@ -199,6 +211,42 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 stats_text,
                 reply_markup=reply_markup,
             )
+            return ConversationHandler.END
+        
+        elif data == "watchlist":
+            keyboard = [[InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            user_id = query.from_user.id
+            from database import get_user_watchlist
+            from services.stock_service import fetch_stock_quotes, format_stock_message
+            
+            watchlist = await get_user_watchlist(user_id)
+            
+            if not watchlist:
+                text = (
+                    "📈 **我的自选股**\n\n"
+                    "您还没有添加自选股。\n\n"
+                    "**使用方法：**\n"
+                    "• 发送「帮我关注仙鹤股份」添加\n"
+                    "• 支持多只：「关注红太阳和联环药业」\n"
+                    "• /watchlist 查看列表"
+                )
+            else:
+                stock_codes = [item["stock_code"] for item in watchlist]
+                quotes = await fetch_stock_quotes(stock_codes)
+                
+                if quotes:
+                    text = format_stock_message(quotes)
+                else:
+                    lines = ["📈 **我的自选股**\n"]
+                    for item in watchlist:
+                        lines.append(f"• {item['stock_name']} ({item['stock_code']})")
+                    text = "\n".join(lines)
+                
+                text += "\n\n发送「取消关注 XX」可删除"
+            
+            await smart_edit_text(query.message, text, reply_markup=reply_markup)
             return ConversationHandler.END
         
         elif data == "list_subs":

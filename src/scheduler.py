@@ -12,7 +12,9 @@ from database import (
     delete_reminder, 
     get_pending_reminders,
     get_all_subscriptions, 
-    update_subscription_status
+    update_subscription_status,
+    get_user_watchlist,
+    get_all_watchlist_users,
 )
 
 logger = logging.getLogger(__name__)
@@ -259,3 +261,97 @@ def start_rss_scheduler(job_queue: JobQueue):
         name="rss_check"
     )
     logger.info(f"RSS scheduler started, interval={interval}s")
+
+
+# --- 股票盯盘推送 ---
+
+def is_trading_time() -> bool:
+    """
+    判断当前是否为 A 股交易时段
+    - 周一至周五
+    - 上午 9:30-11:30，下午 13:00-15:00
+    """
+    now = datetime.datetime.now()
+    
+    # 周末不交易 (0=周一, 6=周日)
+    if now.weekday() >= 5:
+        return False
+    
+    current_time = now.time()
+    
+    # 上午交易时段: 9:30 - 11:30
+    morning_start = datetime.time(9, 30)
+    morning_end = datetime.time(11, 30)
+    
+    # 下午交易时段: 13:00 - 15:00
+    afternoon_start = datetime.time(13, 0)
+    afternoon_end = datetime.time(15, 0)
+    
+    return (morning_start <= current_time <= morning_end or 
+            afternoon_start <= current_time <= afternoon_end)
+
+
+async def stock_push_job(context: ContextTypes.DEFAULT_TYPE):
+    """每 10 分钟推送股票行情"""
+    if not is_trading_time():
+        logger.debug("Not trading time, skipping stock push")
+        return
+    
+    logger.info("Starting stock push job...")
+    
+    # 延迟导入避免循环引用
+    from services.stock_service import fetch_stock_quotes, format_stock_message
+    
+    try:
+        # 获取所有有自选股的用户
+        user_ids = await get_all_watchlist_users()
+        
+        if not user_ids:
+            logger.info("No users with watchlist, skipping")
+            return
+        
+        for user_id in user_ids:
+            try:
+                # 获取用户自选股
+                watchlist = await get_user_watchlist(user_id)
+                if not watchlist:
+                    continue
+                
+                # 提取股票代码
+                stock_codes = [item["stock_code"] for item in watchlist]
+                
+                # 批量获取行情
+                quotes = await fetch_stock_quotes(stock_codes)
+                
+                if not quotes:
+                    continue
+                
+                # 格式化消息
+                message = format_stock_message(quotes)
+                
+                # 推送给用户
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=message,
+                    parse_mode="Markdown"
+                )
+                logger.info(f"Sent stock quotes to user {user_id}")
+                
+            except Exception as e:
+                logger.error(f"Failed to send stock quotes to {user_id}: {e}")
+                
+    except Exception as e:
+        logger.error(f"Stock push job error: {e}")
+
+
+def start_stock_scheduler(job_queue: JobQueue):
+    """启动股票推送定时任务"""
+    interval = 10 * 60  # 10 分钟
+    
+    job_queue.run_repeating(
+        stock_push_job,
+        interval=interval,
+        first=30,  # 启动 30 秒后第一次运行
+        name="stock_push"
+    )
+    logger.info(f"Stock scheduler started, interval={interval}s")

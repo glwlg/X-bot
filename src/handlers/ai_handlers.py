@@ -191,6 +191,13 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
         # 如果未处理（如 MCP 禁用），回退到普通对话
 
+    elif intent == UserIntent.STOCK_WATCH:
+        action = params.get("action", "add")
+        stock_name = params.get("stock_name", "")
+        from .service_handlers import process_stock_watch
+        await process_stock_watch(update, context, action, stock_name)
+        return
+
     # ----------------------------
 
     # ----------------------------
