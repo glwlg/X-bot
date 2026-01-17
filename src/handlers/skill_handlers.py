@@ -137,13 +137,6 @@ async def handle_skill_callback(update: Update, context: ContextTypes.DEFAULT_TY
         filepath = os.path.join(skills_dir, f"{skill_name}.py")
         
         if os.path.exists(filepath):
-            with open(filepath, "r", encoding="utf-8") as f:
-                code = f.read()
-            
-            # 分段发送（Telegram 消息限制）
-            if len(code) > 3500:
-                code = code[:3500] + "\n\n... (已截断)"
-            
             keyboard = [
                 [
                     InlineKeyboardButton("✅ 启用", callback_data=f"skill_approve_{skill_name}"),
@@ -152,11 +145,20 @@ async def handle_skill_callback(update: Update, context: ContextTypes.DEFAULT_TY
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await query.edit_message_text(
-                f"📄 **{skill_name}.py**\n\n```python\n{code}\n```",
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
-            )
+            # 发送代码文件
+            try:
+                await query.message.reply_document(
+                    document=open(filepath, "rb"),
+                    filename=f"{skill_name}.py",
+                    caption=f"📄 **{skill_name}.py**\n\n审核后点击下方按钮确认。",
+                    reply_markup=reply_markup
+                )
+                await query.edit_message_text(
+                    f"📄 代码已发送为文件，请查看上方文档。"
+                )
+            except Exception as e:
+                logger.error(f"Failed to send code file: {e}")
+                await query.edit_message_text(f"❌ 发送文件失败：{e}")
         else:
             await query.edit_message_text("❌ 代码文件不存在")
 
