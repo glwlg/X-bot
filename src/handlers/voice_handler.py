@@ -10,7 +10,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 
-from config import gemini_client, GEMINI_MODEL, is_user_allowed
+from core.config import gemini_client, GEMINI_MODEL, is_user_allowed
 from user_context import add_message, get_user_context
 from utils import smart_edit_text, smart_reply_text
 
@@ -126,7 +126,7 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         短语音: 转文字 → 智能路由
         长语音: 直接转写输出
     """
-    from database import get_user_settings
+    from repositories import get_user_settings
     
     chat_id = update.message.chat_id
     user_id = update.message.from_user.id
@@ -269,7 +269,7 @@ async def process_as_text_message(
     将转写后的文本按普通文本消息逻辑处理（智能路由）
     """
     import time
-    from intent_router import analyze_intent, UserIntent
+    from services.intent_router import analyze_intent, UserIntent
     from handlers.ai_handlers import handle_ai_chat
     from stats import increment_stat
     
@@ -288,7 +288,7 @@ async def process_as_text_message(
     
     # 处理特殊意图
     if intent == UserIntent.DOWNLOAD_VIDEO:
-        from web_summary import extract_urls
+        from services.web_summary_service import extract_urls
         from handlers.media_handlers import process_video_download
         
         target_url = params.get("url")

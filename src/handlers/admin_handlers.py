@@ -2,8 +2,8 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from config import is_user_admin
-from database import add_allowed_user, remove_allowed_user
+from core.config import is_user_admin
+from repositories import add_allowed_user, remove_allowed_user
 from .base_handlers import check_permission
 
 logger = logging.getLogger(__name__)

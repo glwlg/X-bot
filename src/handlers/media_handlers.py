@@ -4,9 +4,9 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
-from config import WAITING_FOR_VIDEO_URL, WAITING_FOR_IMAGE_PROMPT
+from core.config import WAITING_FOR_VIDEO_URL, WAITING_FOR_IMAGE_PROMPT
 from utils import extract_video_url, smart_edit_text, smart_reply_text
-from downloader import download_video
+from services.download_service import download_video
 from .base_handlers import check_permission
 
 logger = logging.getLogger(__name__)
@@ -198,7 +198,7 @@ async def process_video_download(update: Update, context: ContextTypes.DEFAULT_T
                 
                 # 记录视频文件路径以供 AI 分析
                 if sent_message.video:
-                    from database import save_video_cache
+                    from repositories import save_video_cache
                     
                     file_id = sent_message.video.file_id
                     # 直接存储当前路径（已经在 DOWNLOAD_DIR 中）
@@ -290,7 +290,7 @@ async def handle_video_actions(update: Update, context: ContextTypes.DEFAULT_TYP
                 
                 # 缓存
                 if sent_message.video:
-                    from database import save_video_cache
+                    from repositories import save_video_cache
                     file_id = sent_message.video.file_id
                     await save_video_cache(file_id, file_path)
                 
@@ -312,7 +312,7 @@ async def handle_video_actions(update: Update, context: ContextTypes.DEFAULT_TYP
         await smart_edit_text(query.message, "📄 正在获取网页内容并生成摘要...")
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         
-        from web_summary import summarize_webpage
+        from services.web_summary_service import summarize_webpage
         summary = await summarize_webpage(url)
         
         await smart_edit_text(query.message, summary)
@@ -423,7 +423,7 @@ async def handle_large_file_action(update: Update, context: ContextTypes.DEFAULT
             await smart_edit_text(query.message, "📝 音频处理完成，正在通过 AI 生成摘要...")
 
             # 构造 inline data 请求
-            from config import gemini_client, GEMINI_MODEL
+            from core.config import gemini_client, GEMINI_MODEL
             
             contents = [
                 {

@@ -58,7 +58,7 @@ async def is_user_allowed(user_id: int) -> bool:
     # Let's assume strict mode if Admin is set.
     
     # 检查数据库
-    from database import check_user_allowed_in_db
+    from repositories import check_user_allowed_in_db
     try:
         if await check_user_allowed_in_db(user_id):
             return True

@@ -14,7 +14,7 @@ from telegram.ext import (
 )
 from telegram import Update
 
-from config import (
+from core.config import (
     TELEGRAM_BOT_TOKEN,
     WAITING_FOR_VIDEO_URL,
     WAITING_FOR_IMAGE_PROMPT,
@@ -61,8 +61,8 @@ from handlers import (
     watchlist_command,
     handle_stock_select_callback,
 )
-from voice_handler import handle_voice_message
-from document_handler import handle_document
+from handlers.voice_handler import handle_voice_message
+from handlers.document_handler import handle_document
 
 # 日志配置
 logging.basicConfig(
@@ -74,13 +74,13 @@ logger = logging.getLogger(__name__)
 
 async def initialize_data(application: Application) -> None:
     """初始化数据（数据库等）和设置菜单"""
-    from database import init_db
+    from repositories import init_db
     await init_db()
     
     
     # 加载待执行的提醒任务
     # 加载待执行的提醒任务
-    from scheduler import load_jobs_from_db, start_rss_scheduler, start_stock_scheduler
+    from core.scheduler import load_jobs_from_db, start_rss_scheduler, start_stock_scheduler
     await load_jobs_from_db(application.job_queue)
     
     # 启动 RSS 检查

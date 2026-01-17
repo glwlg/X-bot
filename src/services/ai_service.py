@@ -1,6 +1,6 @@
 import logging
 import time
-from config import gemini_client, GEMINI_MODEL, MCP_MEMORY_ENABLED
+from core.config import gemini_client, GEMINI_MODEL, MCP_MEMORY_ENABLED
 
 logger = logging.getLogger(__name__)
 
@@ -74,10 +74,10 @@ class AiService:
         
         # Adjust system instruction if tools are present
         if tools_config and not system_instruction:
-            from prompts import MEMORY_MANAGEMENT_GUIDE
+            from core.prompts import MEMORY_MANAGEMENT_GUIDE
             system_instruction = MEMORY_MANAGEMENT_GUIDE
         elif not system_instruction:
-            from prompts import DEFAULT_SYSTEM_PROMPT
+            from core.prompts import DEFAULT_SYSTEM_PROMPT
             system_instruction = DEFAULT_SYSTEM_PROMPT
 
         # 2. Function Calling Loop
@@ -202,10 +202,10 @@ class AiService:
             tools_config, memory_server = await self.get_memory_tools(user_id)
         
         if tools_config:
-            from prompts import MEMORY_MANAGEMENT_GUIDE
+            from core.prompts import MEMORY_MANAGEMENT_GUIDE
             system_instruction = MEMORY_MANAGEMENT_GUIDE
         else:
-            from prompts import DEFAULT_SYSTEM_PROMPT
+            from core.prompts import DEFAULT_SYSTEM_PROMPT
             system_instruction = DEFAULT_SYSTEM_PROMPT
 
         MAX_TURNS = 5 

@@ -8,7 +8,7 @@ import logging
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from config import MCP_ENABLED
+from core.config import MCP_ENABLED
 from utils import smart_reply_text, smart_edit_text
 
 logger = logging.getLogger(__name__)

@@ -17,41 +17,49 @@ graph TD
             StartH[🏁 Start Handlers]
             MediaH[📹 Media Handlers]
             AIH[🧠 AI Handlers]
-            ServiceH[🛠️ Service Handlers]
+            ReminderH[⏰ Reminder Handlers]
+            SubH[📢 Subscription Handlers]
+            StockH[📈 Stock Handlers]
             AdminH[🛡️ Admin Handlers]
         end
         
-        subgraph "Logic Layer (src/)"
-            Intent[🧠 Smart Router]
-            Downloader[📥 yt-dlp Wrapper]
-            WebSum[🕸️ Web Scraper]
-            ImgGen[🎨 Image Gen]
-            Scheduler[⏰ APScheduler]
+        subgraph "Services Layer (src/services/)"
+            Intent[🧠 Intent Router]
+            Downloader[📥 Download Service]
+            WebSum[🕸️ Web Summary Service]
+            StockSvc[📊 Stock Service]
+            AISvc[✨ AI Service]
         end
         
-        subgraph "Data Layer (data/)"
-            DB[(🗄️ SQLite Bot Data)]
-            Downloads[file_folder Downloads]
+        subgraph "Core Layer (src/core/)"
+            Config[⚙️ Config]
+            Scheduler[⏰ Scheduler]
+            Prompts[📝 Prompts]
+        end
+        
+        subgraph "Repository Layer (src/repositories/)"
+            DB[(🗄️ SQLite Repositories)]
+        end
+        
+        subgraph "Data (data/)"
+            Downloads[📁 Downloads]
         end
 
         Dispatcher --> Intent
-        Intent -->|Check Intent| Handlers Layer
+        Intent -->|Route Intent| Handlers Layer
         
-        StartH --> DB
+        Handlers Layer --> Services Layer
+        Services Layer --> Repository Layer
+        Repository Layer --> DB
         MediaH --> Downloader --> Downloads
-        AIH --> WebSum
-        AIH --> ImgGen
-        ServiceH --> Scheduler --> DB
-        AdminH --> DB
     end
 
     subgraph "External Services"
-        Gemini([✨ Google Gemini Pro])
+        Gemini([✨ Google Gemini])
         Platforms([🌐 Video Platforms])
     end
 
-    Intent <--> Gemini
-    AIH <--> Gemini
+    AISvc <--> Gemini
     Downloader <--> Platforms
 ```
 
@@ -63,78 +71,74 @@ graph TD
 
 ### 🗂️ 目录结构 (`src/`)
 
-| 文件/目录 | 说明 |
-| :--- | :--- |
-| **`main.py`** | **入口文件**。负责初始化 Bot、加载环境变量、注册 Handlers、启动 Scheduler 和 Polling。 |
-| **`config.py`** | **配置中心**。管理所有环境变量、API Key、以及各种全局常量配置。 |
-| **`intent_router.py`** | **智能路由**。负责分析用户自然语言意图，分发给不同的 Handler (新增功能核心)。|
-| **`database.py`** | **数据库层**。封装了 `aiosqlite`，提供用户白名单、上下文、统计、订阅等数据的增删改查。 |
-| **`handlers/`** | **消息处理器包**。包含所有具体业务逻辑的 Handler。 |
-| ├── `base_handlers.py` | 基础工具，如 `check_permission` 权限检查装饰器。 |
-| ├── `start_handlers.py` | 处理 `/start`, `/help` 及主菜单回调。 |
-| ├── `ai_handlers.py` | 处理文本对话、语音、图片/文档分析。**包含路由分发逻辑**。 |
-| ├── `media_handlers.py` | 处理视频下载逻辑（解析 URL、调用 yt-dlp）。 |
-| ├── `service_handlers.py` | 处理提醒、订阅、监控、统计等工具类服务。 |
-| ├── `admin_handlers.py` | 处理 `/adduser`, `/deluser` 等管理员命令。 |
-| **`downloader.py`** | 封装 `yt-dlp`，负责具体的视频下载和文件处理。 |
-| **`web_summary.py`** | 网页抓取与摘要生成模块。 |
-| **`scheduler.py`** | `APScheduler` 定时任务管理。 |
-| **`message_utils.py`** | **消息处理工具**。提取回复消息中的上下文、媒体等公共逻辑。 |
-| **`prompts.py`** | **提示词中心**。统一管理所有系统提示词 (System Prompts)。 |
-| **`services/`** | **服务层**。封装核心业务逻辑，解耦 Handler。 |
-| ├── `ai_service.py` | 封装 Gemini AI 交互、MCP 工具调用与 Function Calling 循环。 |
-| **`mcp_client/`** | **MCP 客户端模块**。Model Context Protocol 客户端实现。 |
-| ├── `base.py` | MCP 服务抽象基类 `MCPServerBase`。 |
-| ├── `manager.py` | MCP 服务管理器 `MCPManager`。 |
-| ├── `memory.py` | **长期记忆服务**。基于 Knowledge Graph 的记忆存储实现 (Local npx)。 |
-| └── `playwright.py` | Playwright 浏览器自动化 MCP 实现。 |
+```
+src/
+├── main.py                     # 入口文件
+├── core/                       # 核心配置与调度
+│   ├── config.py               # 配置中心（环境变量、API Key）
+│   ├── prompts.py              # 系统提示词
+│   └── scheduler.py            # 定时任务管理
+├── handlers/                   # 消息处理器
+│   ├── base_handlers.py        # 基础工具（权限检查）
+│   ├── start_handlers.py       # /start, /help, 主菜单
+│   ├── ai_handlers.py          # AI 对话、图片/视频分析
+│   ├── media_handlers.py       # 视频下载
+│   ├── reminder_handlers.py    # 提醒功能
+│   ├── subscription_handlers.py # RSS 订阅/监控
+│   ├── feature_handlers.py     # 需求收集
+│   ├── stock_handlers.py       # 自选股
+│   ├── voice_handler.py        # 语音处理
+│   ├── document_handler.py     # 文档处理
+│   ├── admin_handlers.py       # 管理员命令
+│   └── mcp_handlers.py         # MCP 工具调用
+├── services/                   # 业务服务层
+│   ├── ai_service.py           # Gemini AI 交互
+│   ├── intent_router.py        # 自然语言意图路由
+│   ├── download_service.py     # yt-dlp 视频下载
+│   ├── web_summary_service.py  # 网页抓取与摘要
+│   └── stock_service.py        # 股票行情服务
+├── repositories/               # 数据访问层
+│   ├── base.py                 # 数据库连接与初始化
+│   ├── cache_repo.py           # 视频缓存
+│   ├── user_stats_repo.py      # 用户统计
+│   ├── reminder_repo.py        # 提醒任务
+│   ├── subscription_repo.py    # RSS 订阅
+│   ├── user_settings_repo.py   # 用户设置
+│   ├── allowed_users_repo.py   # 白名单
+│   └── watchlist_repo.py       # 自选股
+├── mcp_client/                 # MCP 客户端模块
+│   ├── base.py                 # MCP 服务抽象基类
+│   ├── manager.py              # MCP 服务管理器
+│   ├── memory.py               # 长期记忆服务
+│   └── playwright.py           # Playwright 浏览器自动化
+├── stats.py                    # 统计模块
+├── utils.py                    # 通用工具函数
+└── user_context.py             # 用户对话上下文
+```
+
+---
+
+### 🏛️ 分层架构
+
+| 层级 | 目录 | 职责 |
+| :--- | :--- | :--- |
+| **Handlers** | `handlers/` | 接收 Telegram 消息，调用 Services 处理业务 |
+| **Services** | `services/` | 封装业务逻辑，与外部 API 交互 |
+| **Repositories** | `repositories/` | 数据持久化，所有数据库操作 |
+| **Core** | `core/` | 配置、调度、提示词等基础设施 |
 
 ---
 
 ### 🌐 MCP (Model Context Protocol) 扩展
 
-MCP 模块允许 X-Bot 调用外部 MCP 服务（如 Playwright 浏览器自动化）。
+MCP 模块允许 X-Bot 调用外部 MCP 服务。
 
 #### 当前支持的 MCP 服务
  
  | 服务类型 | 功能 | 运行方式 |
  | :--- | :--- | :--- |
- | `playwright` | 网页截图、导航、交互 | Docker (`mcr.microsoft.com/playwright/mcp`) |
- | `memory` | 长期记忆 (Knowledge Graph) | Local (`npx @modelcontextprotocol/server-memory`) |
- 
- #### 依赖说明
- - **Node.js & npm**: 必须安装，用于运行基于 Node.js 的 MCP Server (如 memory)。
- - **Docker**: 用于运行 Python 环境及部分 MCP Server。
-
-#### 如何添加新的 MCP 服务？
-
-1. **创建服务类**: 在 `src/mcp/` 下创建新文件，继承 `MCPServerBase`：
-   ```python
-   from mcp.base import MCPServerBase
-   from mcp import StdioServerParameters
-   
-   class MyMCPServer(MCPServerBase):
-       @property
-       def server_name(self) -> str:
-           return "my_service"
-       
-       def get_server_params(self) -> StdioServerParameters:
-           return StdioServerParameters(
-               command="docker",
-               args=["run", "-i", "--rm", "my-mcp-image"]
-           )
-   ```
-
-2. **注册服务**: 创建注册函数并在 Handler 中调用：
-   ```python
-   def register_my_server():
-       from mcp.manager import mcp_manager
-       mcp_manager.register_server_class("my_service", MyMCPServer)
-   ```
-
-3. **添加意图路由**: 在 `intent_router.py` 中添加对应意图和规则。
-
-4. **创建 Handler**: 在 `handlers/mcp_handlers.py` 中添加处理函数。
+ | `playwright` | 网页截图、导航、交互 | Docker |
+ | `memory` | 长期记忆 (Knowledge Graph) | Local npx |
 
 ---
 
@@ -142,48 +146,56 @@ MCP 模块允许 X-Bot 调用外部 MCP 服务（如 Playwright 浏览器自动�
 
 ### 🛠️ 环境搭建
 
-推荐使用 [uv](https://github.com/astral-sh/uv) 进行现代化的 Python 依赖管理。
+推荐使用 [uv](https://github.com/astral-sh/uv) 进行 Python 依赖管理。
 
-1.  **安装 uv**:
-    ```bash
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    ```
-2.  **安装依赖**:
-    ```bash
-    uv sync
-    ```
-3.  **本地运行**:
-    *   复制 `.env.example` 为 `.env` 并填入 Key。
-    *   运行：`uv run src/main.py`
+```bash
+# 安装 uv
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# 安装依赖
+uv sync
+
+# 本地运行
+cp .env.example .env  # 填入 API Key
+uv run src/main.py
+```
+
+### 🧪 运行测试
+
+```bash
+uv run pytest tests/ -v
+```
+
+---
 
 ### 📝 如何添加新功能？
 
 #### 场景 A: 添加一个新的命令 (e.g., `/weather`)
-1.  在 `src/handlers/service_handlers.py` 中编写 `weather_command` 函数。
-2.  在 `src/main.py` 的 `main()` 函数中注册 `CommandHandler("weather", weather_command)`。
-3.  不要忘记在函数开头添加 `if not await check_permission(update): return`。
+
+1. 在 `src/handlers/` 下创建 `weather_handlers.py`
+2. 在 `src/main.py` 中注册 `CommandHandler("weather", weather_command)`
+3. 添加权限检查 `if not await check_permission(update): return`
 
 #### 场景 B: 扩展自然语言路由 (e.g., "帮我查天气")
-1.  **修改路由规则**: 打开 `src/intent_router.py`。
-    *   在 `UserIntent` Enum 中添加 `CHECK_WEATHER`。
-    *   在 `analyze_intent` 的 Prompt 中添加规则（触发词、参数提取）。
-2.  **处理路由分发**: 打开 `src/handlers/ai_handlers.py`。
-    *   在 `handle_ai_chat` 函数中找到 `Smart Intent Routing` 区域。
-    *   添加 `elif intent == UserIntent.CHECK_WEATHER:` 分支，调用你的 `weather_command` 或相关逻辑。
+
+1. **修改意图枚举**: 在 `src/services/intent_router.py` 的 `UserIntent` 中添加 `CHECK_WEATHER`
+2. **添加路由分发**: 在 `src/handlers/ai_handlers.py` 的 `handle_ai_chat` 中添加处理分支
+
+#### 场景 C: 添加新的数据存储
+
+1. 在 `src/repositories/` 下创建 `weather_repo.py`
+2. 在 `repositories/__init__.py` 中导出新函数
+3. 在 Handler 中 `from repositories import save_weather_data`
 
 ---
 
 ## 4. 注意事项
 
-1.  **异步编程**: 所有涉及 I/O (网络、数据库、文件) 的操作 **必须** 使用 `await`。
-2.  **错误处理**: Bot 需要长期运行，**严禁** 在 Handler 中抛出未捕获异常导致进程崩溃。请使用 `try...except` 并记录 `logger.error`。
-3.  **权限控制**: 任何敏感或消耗资源的操作，都必须先检查 `check_permission`。
-4.  **数据库变更**: 如果修改了数据库结构，请确保 `database.py` 中的 `init_db` 能正确处理（目前项目较为简单，未引入类似 Alembic 的迁移工具，改表结构建议直接兼容或手动处理）。
-5.  **新增 CallbackQueryHandler**: 如果添加了新的回调处理器（如 `unsub_`、`action_` 等自定义前缀），**必须**同时更新 `main.py` 中的 `common_pattern` 正则表达式，将新前缀加入排除列表，否则回调会被通用的 `button_callback` 拦截导致无法触发专用处理器。
-    ```python
-    # 示例：排除 unsub_ 开头的回调
-    common_pattern = "^(?!download_video$|...|unsub_).*$"
-    ```
+1. **异步编程**: 所有 I/O 操作 **必须** 使用 `await`
+2. **错误处理**: 严禁未捕获异常，使用 `try...except` 并记录日志
+3. **权限控制**: 敏感操作必须检查 `check_permission`
+4. **数据库变更**: 修改表结构需更新 `repositories/base.py` 的 `init_db`
+5. **CallbackQuery**: 新增回调前缀需更新 `main.py` 的 `common_pattern` 正则
 
 ---
 

@@ -5,10 +5,10 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 
-from config import gemini_client, GEMINI_MODEL
-from web_summary import extract_urls, summarize_webpage, is_video_platform, fetch_webpage_content
+from core.config import gemini_client, GEMINI_MODEL
+from services.web_summary_service import extract_urls, summarize_webpage, is_video_platform, fetch_webpage_content
 from user_context import get_user_context, add_message
-from database import get_user_settings, get_video_cache
+from repositories import get_user_settings, get_video_cache
 from utils import smart_edit_text, smart_reply_text
 from stats import increment_stat
 
@@ -31,7 +31,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # 检查用户权限
-    from config import is_user_allowed
+    from core.config import is_user_allowed
     if not await is_user_allowed(user_id):
         await smart_reply_text(update,
             "⛔ 抱歉，您没有使用 AI 对话功能的权限。\n\n"
@@ -117,7 +117,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # Save the user message to history immediately (important for context)
     add_message(context, "user", user_message)
 
-    from intent_router import analyze_intent, UserIntent
+    from services.intent_router import analyze_intent, UserIntent
     
     # Analyze intent
     # We pass the user message. The router uses a fast model to determine intent.
@@ -392,7 +392,7 @@ async def handle_ai_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_id = update.message.from_user.id
     
     # 检查用户权限
-    from config import is_user_allowed
+    from core.config import is_user_allowed
     if not await is_user_allowed(user_id):
         await smart_reply_text(update,
             "⛔ 抱歉，您没有使用 AI 功能的权限。"
@@ -471,7 +471,7 @@ async def handle_ai_video(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     user_id = update.message.from_user.id
     
     # 检查用户权限
-    from config import is_user_allowed
+    from core.config import is_user_allowed
     if not await is_user_allowed(user_id):
         await smart_reply_text(update,
             "⛔ 抱歉，您没有使用 AI 功能的权限。"

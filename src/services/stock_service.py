@@ -163,7 +163,7 @@ async def search_stock_by_name(keyword: str) -> list[dict]:
 
 def format_stock_message(stocks: list[dict]) -> str:
     """
-    格式化股票行情消息
+    格式化股票行情消息 (双列排版)
     
     Args:
         stocks: fetch_stock_quotes 返回的股票列表
@@ -175,6 +175,7 @@ def format_stock_message(stocks: list[dict]) -> str:
         return "暂无股票数据"
     
     lines = ["📈 **自选股行情**\n"]
+    formatted_items = []
     
     for stock in stocks:
         # 涨跌符号和颜色提示
@@ -187,11 +188,30 @@ def format_stock_message(stocks: list[dict]) -> str:
         else:
             emoji = "⚪"
             sign = ""
+            
+        # 格式: 🔴 股票名称 现价 幅度%
+        # 截断过长名称
+        name = stock["name"]
+        if len(name) > 4:
+            name = name[:4]
+            
+        item_str = f"{emoji} {name} {stock['price']} {sign}{stock['percent']}%"
         
-        lines.append(
-            f"{emoji} **{stock['name']}** ({stock['code']})\n"
-            f"   现价: {stock['price']:.2f}  "
-            f"{sign}{stock['change']:.2f} ({sign}{stock['percent']:.2f}%)"
-        )
+        # 涨跌幅超过 1% 加粗
+        if abs(stock["percent"]) > 1.0:
+            item_str = f"*{item_str}*"
+            
+        formatted_items.append(item_str)
+    
+    # 双列排版
+    for i in range(0, len(formatted_items), 2):
+        left = formatted_items[i]
+        if i + 1 < len(formatted_items):
+            right = formatted_items[i+1]
+            # 补齐空格让右侧对齐？Telegram Markdown 不支持固定宽度，
+            # 只能简单拼接。中间加几个空格。
+            lines.append(f"{left}    {right}")
+        else:
+            lines.append(left)
     
     return "\n".join(lines)

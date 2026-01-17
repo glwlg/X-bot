@@ -7,7 +7,7 @@ import dateutil.parser
 import feedparser
 from telegram.ext import ContextTypes, JobQueue
 
-from database import (
+from repositories import (
     add_reminder, 
     delete_reminder, 
     get_pending_reminders,
@@ -126,7 +126,7 @@ async def load_jobs_from_db(job_queue: JobQueue):
 
 async def generate_entry_summary(title: str, content: str, link: str) -> str:
     """使用 AI 生成 RSS 条目摘要"""
-    from config import gemini_client, GEMINI_MODEL
+    from core.config import gemini_client, GEMINI_MODEL
     
     # 截断过长内容
     if len(content) > 2000:

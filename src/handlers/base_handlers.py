@@ -2,7 +2,7 @@ import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
 
-from config import is_user_allowed
+from core.config import is_user_allowed
 
 logger = logging.getLogger(__name__)
 

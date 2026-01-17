@@ -4,9 +4,9 @@ from telegram import Update, Message
 from telegram.ext import ContextTypes
 
 from utils import smart_reply_text
-from web_summary import extract_urls
-from database import get_video_cache
-from web_summary import fetch_webpage_content
+from services.web_summary_service import extract_urls
+from repositories import get_video_cache
+from services.web_summary_service import fetch_webpage_content
 
 logger = logging.getLogger(__name__)
 

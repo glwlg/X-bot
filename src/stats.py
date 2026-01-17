@@ -7,7 +7,7 @@
 记录和展示用户使用情况
 """
 import logging
-from database import increment_stat as db_increment_stat, get_user_stats as db_get_user_stats
+from repositories import increment_stat as db_increment_stat, get_user_stats as db_get_user_stats
 
 logger = logging.getLogger(__name__)
 

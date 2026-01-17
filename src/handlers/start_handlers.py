@@ -218,7 +218,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             user_id = query.from_user.id
-            from database import get_user_watchlist
+            from repositories import get_user_watchlist
             from services.stock_service import fetch_stock_quotes, format_stock_message
             
             watchlist = await get_user_watchlist(user_id)
@@ -254,7 +254,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             user_id = query.from_user.id
-            from database import get_user_subscriptions
+            from repositories import get_user_subscriptions
             subs = await get_user_subscriptions(user_id)
             
             if not subs:
@@ -285,7 +285,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             user_id = query.from_user.id
-            from database import get_user_settings, set_translation_mode
+            from repositories import get_user_settings, set_translation_mode
             
             settings = await get_user_settings(user_id)
             current_status = settings.get("auto_translate", 0)

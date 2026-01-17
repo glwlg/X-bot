@@ -4,7 +4,7 @@ import json
 from enum import Enum
 from typing import Optional, Dict, Any
 
-from config import gemini_client, ROUTING_MODEL
+from core.config import gemini_client, ROUTING_MODEL
 
 logger = logging.getLogger(__name__)
 

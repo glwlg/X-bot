@@ -9,7 +9,7 @@ import os
 import httpx
 from bs4 import BeautifulSoup
 
-from config import gemini_client, GEMINI_MODEL, COOKIES_FILE
+from core.config import gemini_client, GEMINI_MODEL, COOKIES_FILE
 
 logger = logging.getLogger(__name__)
 

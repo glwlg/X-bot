@@ -7,7 +7,7 @@ import io
 from telegram import Update
 from telegram.ext import ContextTypes
 
-from config import gemini_client, GEMINI_MODEL, IMAGE_MODEL
+from core.config import gemini_client, GEMINI_MODEL, IMAGE_MODEL
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,7 @@ async def handle_image_generation(
     user_id = update.message.from_user.id
     
     # 检查用户权限
-    from config import is_user_allowed
+    from core.config import is_user_allowed
     if not is_user_allowed(user_id):
         await update.message.reply_text(
             "⛔ 抱歉，您没有使用 AI 画图功能的权限。"

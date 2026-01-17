@@ -13,7 +13,7 @@ from typing import Optional
 from telegram import Message
 from telegram.error import BadRequest
 
-from config import (
+from core.config import (
     DOWNLOAD_DIR,
     PERMANENT_STORAGE_DIR,
     UPDATE_INTERVAL_SECONDS,

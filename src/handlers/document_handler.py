@@ -7,7 +7,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 
-from config import gemini_client, GEMINI_MODEL, is_user_allowed
+from core.config import gemini_client, GEMINI_MODEL, is_user_allowed
 from user_context import add_message
 
 logger = logging.getLogger(__name__)
