@@ -277,6 +277,9 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not has_media:
         # 普通文本对话
         thinking_msg = await smart_reply_text(update, THINKING_MESSAGE)
+    else:
+        # 带媒体的对话 (引用了图片或视频)
+        thinking_msg = await smart_reply_text(update, "🤔 正在分析引用内容...")
     
     # 将网页上下文合并到用户消息中
     if extra_context:
