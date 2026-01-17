@@ -9,37 +9,26 @@ logger = logging.getLogger(__name__)
 
 WELCOME_MESSAGE = (
     "👋 **欢迎使用 X-Bot！**\n\n"
-    "我不仅仅是一个机器人，更是您的智能 AI 伙伴。🧠\n"
-    "**支持自然语言指令、长期记忆与能力学习！**\n\n"
-    "📥 **下载** - \"帮我下载这个视频 https://...\"\n"
-    "📈 **股票** - \"帮我关注仙鹤股份\" 或 /watchlist\n"
-    "📢 **订阅** - \"订阅RSS https://...\" 或 \"监控关键词 AI\"\n"
-    "⏰ **提醒** - \"10分钟后提醒我喝水\"\n"
-    "🎨 **画图** - \"画一只在太空的猫\"\n"
-    "🧠 **记忆** - \"记住我住在北京\"\n\n"
-    "💡 **教我新能力** - /teach 教我学会新技能\n"
-    "当然，您也可以使用下方菜单操作 👇"
+    "我是您的智能 AI 伙伴，支持自然语言指令！🧠\n\n"
+    "**直接告诉我您想做什么：**\n"
+    "• \"下载这个视频 https://...\"\n"
+    "• \"帮我关注仙鹤股份\"\n"
+    "• \"10分钟后提醒我喝水\"\n"
+    "• \"画一只在太空的猫\"\n"
+    "• \"订阅 RSS https://...\"\n"
+    "• \"开启翻译模式\"\n\n"
+    "💡 /teach - 教我学会新技能\n"
+    "📋 /skills - 查看所有能力"
 )
 
 def get_main_menu_keyboard():
     return [
         [
-            InlineKeyboardButton("📹 下载视频", callback_data="download_video"),
             InlineKeyboardButton("💬 AI 对话", callback_data="ai_chat"),
-        ],
-        [
             InlineKeyboardButton("🎨 AI 画图", callback_data="generate_image"),
-            InlineKeyboardButton("📈 自选股", callback_data="watchlist"),
         ],
         [
-            InlineKeyboardButton("📢 订阅", callback_data="list_subs"),
-            InlineKeyboardButton("⏰ 提醒", callback_data="remind_help"),
-        ],
-        [
-            InlineKeyboardButton("🌍 翻译", callback_data="toggle_translation"),
             InlineKeyboardButton("📊 统计", callback_data="stats"),
-        ],
-        [
             InlineKeyboardButton("ℹ️ 帮助", callback_data="help"),
         ],
     ]
@@ -79,21 +68,18 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "ℹ️ **使用帮助**\n\n"
         "🚀 **自然语言指令** - 直接说话即可！\n"
         "• \"下载视频 https://...\"\n"
+        "• \"帮我关注仙鹤股份\"\n"
+        "• \"1小时后提醒我开会\"\n"
         "• \"画一张赛博朋克风格的图\"\n"
-        "• \"1小时后提醒我开会\"\n\n"
-        "📈 **股票盯盘**\n"
-        "• \"帮我关注仙鹤股份\"（支持多只）\n"
-        "• /watchlist 查看自选股\n"
-        "• 交易时段每 10 分钟推送\n\n"
-        "📢 **订阅功能**\n"
-        "• /subscribe `<URL>` 订阅 RSS\n"
-        "• /monitor `<关键词>` 监控新闻\n"
-        "• /list_subs 查看订阅\n\n"
-        "🧠 **长期记忆** - 我会记住你的偏好\n"
-        "🌍 **翻译** - /translate 开关\n\n"
-        "**命令列表：**\n"
-        "/watchlist - 自选股 | /subscribe - 订阅\n"
-        "/stats - 统计 | /new - 新对话 | /start - 主菜单"
+        "• \"订阅 RSS https://...\"\n"
+        "• \"监控关键词 AI\"\n"
+        "• \"开启/关闭翻译\"\n\n"
+        "💡 **Skill 系统** - 教我新能力\n"
+        "• /teach - 教我学会新技能\n"
+        "• /skills - 查看所有可用技能\n\n"
+        "🧠 **长期记忆** - 我会记住你的偏好\n\n"
+        "**常用命令：**\n"
+        "/start 主菜单 | /new 新对话 | /stats 统计"
     )
 
 async def back_to_main_and_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -145,20 +131,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "ℹ️ **使用帮助**\n\n"
                 "🚀 **自然语言指令** - 直接说话即可！\n"
                 "• \"下载视频 https://...\"\n"
+                "• \"帮我关注仙鹤股份\"\n"
+                "• \"1小时后提醒我开会\"\n"
                 "• \"画一张赛博朋克风格的图\"\n"
-                "• \"1小时后提醒我开会\"\n\n"
-                "📈 **股票盯盘**\n"
-                "• \"帮我关注仙鹤股份\"（支持多只）\n"
-                "• /watchlist 查看自选股\n\n"
+                "• \"订阅 RSS https://...\"\n"
+                "• \"开启/关闭翻译\"\n\n"
                 "💡 **Skill 系统** - 教我新能力\n"
                 "• /teach - 教我学会新技能\n"
-                "• /skills - 查看所有可用技能\n"
-                "• /reload_skills - 重新加载（管理员）\n\n"
-                "🧠 **长期记忆** - 我会记住你的偏好\n"
-                "🌍 **翻译** - /translate 开关\n\n"
+                "• /skills - 查看所有可用技能\n\n"
+                "🧠 **长期记忆** - 我会记住你的偏好\n\n"
                 "**常用命令：**\n"
-                "/watchlist 自选股 | /skills 技能\n"
-                "/stats 统计 | /new 新对话 | /start 主菜单",
+                "/start 主菜单 | /new 新对话 | /stats 统计",
                 reply_markup=reply_markup,
             )
             return ConversationHandler.END

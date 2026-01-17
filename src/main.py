@@ -42,13 +42,7 @@ from handlers import (
     handle_large_file_action,
     remind_command,
     handle_remind_input,
-    toggle_translation_command,
-    subscribe_command,
-    handle_subscribe_input,
-    unsubscribe_command,
     handle_unsubscribe_callback,
-    list_subs_command,
-    monitor_command,
     handle_monitor_input,
     handle_video_actions,
     stats_command,
@@ -58,7 +52,6 @@ from handlers import (
     feature_command,
     handle_feature_input,
     save_feature_command,
-    watchlist_command,
     handle_stock_select_callback,
 )
 from handlers.voice_handler import handle_voice_message
@@ -105,14 +98,7 @@ async def initialize_data(application: Application) -> None:
     await application.bot.set_my_commands(
         [
             ("start", "主菜单"),
-            ("download", "下载视频"),
-            ("remind", "设置提醒"),
-            ("translate", "沉浸式翻译(开关)"),
-            ("monitor", "监控关键词"),
-            ("subscribe", "订阅 RSS"),
-            ("list_subs", "查看订阅"),
-            ("unsubscribe", "取消订阅"),
-            ("watchlist", "查看自选股"),
+            ("new", "开启新对话"),
             ("image", "AI 画图"),
             ("teach", "教我新能力"),
             ("skills", "查看 Skills"),
@@ -209,39 +195,6 @@ def main() -> None:
         allow_reentry=True,
     )
 
-    # 3.1 提醒功能对话处理器
-    remind_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("remind", remind_command)],
-        states={
-            WAITING_FOR_REMIND_INPUT: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_remind_input)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-
-    # 3.2 监控功能对话处理器
-    monitor_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("monitor", monitor_command)],
-        states={
-            WAITING_FOR_MONITOR_KEYWORD: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_monitor_input)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-
-    # 3.3 订阅功能对话处理器
-    subscribe_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("subscribe", subscribe_command)],
-        states={
-            WAITING_FOR_SUBSCRIBE_URL: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_subscribe_input)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-
     # 3.4 需求收集对话处理器
     feature_conv_handler = ConversationHandler(
         entry_points=[CommandHandler("feature", feature_command)],
@@ -260,18 +213,17 @@ def main() -> None:
     application.add_handler(CommandHandler("new", handle_new_command))
     application.add_handler(CommandHandler("adduser", adduser_command))
     application.add_handler(CommandHandler("deluser", deluser_command))
-    application.add_handler(remind_conv_handler)
-    application.add_handler(CommandHandler("translate", toggle_translation_command))
-    application.add_handler(CommandHandler("fanyi", toggle_translation_command))
-    application.add_handler(subscribe_conv_handler)
-    application.add_handler(monitor_conv_handler)
-    application.add_handler(CommandHandler("unsubscribe", unsubscribe_command))
+    
+    # 移除独立命令注册 (已迁移至 Skill)
+    # remind, translate, subscribe, monitor, watchlist
+    
+    # 4.1 核心后台回调 (Skill 可能触发)
     application.add_handler(CallbackQueryHandler(handle_unsubscribe_callback, pattern="^unsub_"))
-    application.add_handler(CommandHandler("list_subs", list_subs_command))
+    application.add_handler(CallbackQueryHandler(handle_stock_select_callback, pattern="^stock_"))
+    
+    # 4.2 特色功能
     application.add_handler(feature_conv_handler)
     application.add_handler(CommandHandler("stats", stats_command))
-    application.add_handler(CommandHandler("watchlist", watchlist_command))
-    application.add_handler(CallbackQueryHandler(handle_stock_select_callback, pattern="^stock_"))
     application.add_handler(video_conv_handler)
     application.add_handler(image_conv_handler)
     
