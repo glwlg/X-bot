@@ -63,6 +63,14 @@ from handlers import (
 )
 from handlers.voice_handler import handle_voice_message
 from handlers.document_handler import handle_document
+from handlers.skill_handlers import (
+    teach_command,
+    handle_teach_input,
+    handle_skill_callback,
+    skills_command,
+    reload_skills_command,
+    WAITING_FOR_SKILL_DESC,
+)
 
 # 日志配置
 logging.basicConfig(
@@ -88,6 +96,11 @@ async def initialize_data(application: Application) -> None:
     
     # 启动股票盯盘推送
     start_stock_scheduler(application.job_queue)
+    
+    # 初始化 Skill 索引
+    from core.skill_loader import skill_loader
+    skill_loader.scan_skills()
+    logger.info(f"Loaded {len(skill_loader.get_skill_index())} skills")
 
     await application.bot.set_my_commands(
         [
@@ -101,6 +114,8 @@ async def initialize_data(application: Application) -> None:
             ("unsubscribe", "取消订阅"),
             ("watchlist", "查看自选股"),
             ("image", "AI 画图"),
+            ("teach", "教我新能力"),
+            ("skills", "查看 Skills"),
             ("feature", "提交需求"),
             ("stats", "使用统计"),
             ("help", "使用帮助"),
@@ -153,8 +168,11 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_large_file_action, pattern="^large_file_"))
     
     # 1.2 通用菜单按钮
-    common_pattern = "^(?!download_video$|generate_image$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_).*$"
+    common_pattern = "^(?!download_video$|generate_image$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_|skill_).*$"
     application.add_handler(CallbackQueryHandler(button_callback, pattern=common_pattern))
+    
+    # 1.3 Skill 审核按钮
+    application.add_handler(CallbackQueryHandler(handle_skill_callback, pattern="^skill_"))
 
     # 2. 视频下载对话处理器
     back_handler = CallbackQueryHandler(back_to_main_and_cancel, pattern="^back_to_main_cancel$")
@@ -256,6 +274,20 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_stock_select_callback, pattern="^stock_"))
     application.add_handler(video_conv_handler)
     application.add_handler(image_conv_handler)
+    
+    # 4.1 Skill 管理命令
+    teach_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("teach", teach_command)],
+        states={
+            WAITING_FOR_SKILL_DESC: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_teach_input)
+            ],
+        },
+        fallbacks=[CommandHandler("cancel", cancel)],
+    )
+    application.add_handler(teach_conv_handler)
+    application.add_handler(CommandHandler("skills", skills_command))
+    application.add_handler(CommandHandler("reload_skills", reload_skills_command))
     
     # 5. 图片消息处理器（AI 图片分析）
     application.add_handler(

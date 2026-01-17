@@ -68,6 +68,12 @@
     -   发送 "画一只猫" -> 自动调用 AI 绘图
     -   发送 "订阅这个RSS https://..." -> 自动添加订阅
 
+### 💡 Skill 系统 (New)
+-   **能力学习**：使用 `/teach` 教 Bot 学会新技能。
+-   **热加载**：新 Skill 无需重启即可生效。
+-   **安全审核**：生成的 Skill 需要用户确认后才会启用。
+-   **持久化**：学习到的 Skill 保存在 `skills/learned/` 目录，重启不丢失。
+
 ## 🚀 快速部署
 
 ### 1. 准备环境
@@ -118,6 +124,8 @@ docker-compose up --build -d
 -   `/list_subs` - 查看所有监控和订阅
 -   `/unsubscribe` - 取消订阅
 -   `/watchlist` - 管理股票自选列表
+-   `/teach` - 教 Bot 新能力
+-   `/skills` - 查看可用 Skills
 -   `/feature` - 提交新功能需求
 -   `/stats` - 查看我的使用统计
 -   `/help` - 查看帮助信息

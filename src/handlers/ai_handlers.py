@@ -113,7 +113,27 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await smart_edit_text(thinking_msg, "❌ 翻译服务出错。")
         return
 
-    # --- Smart Intent Routing ---
+    # --- Skill Router (优先匹配用户自定义 Skill) ---
+    from core.skill_loader import skill_loader
+    
+    skill_name, skill_params = await skill_router.route(user_message)
+    
+    if skill_name:
+        logger.info(f"Skill Matched: {skill_name} | params={skill_params}")
+        
+        # 加载并执行 Skill
+        skill_module = skill_loader.load_skill(skill_name)
+        if skill_module and hasattr(skill_module, 'execute'):
+            try:
+                await skill_module.execute(update, context, skill_params)
+                await increment_stat(user_id, "ai_chats")
+                return
+            except Exception as e:
+                logger.error(f"Skill execution error: {e}")
+                await smart_reply_text(update, f"❌ Skill 执行失败：{e}")
+                return
+    
+    # --- Smart Intent Routing (Fallback to built-in intents) ---
     # Save the user message to history immediately (important for context)
     add_message(context, "user", user_message)
 
