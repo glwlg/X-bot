@@ -114,6 +114,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
 
     # --- Skill Router (优先匹配用户自定义 Skill) ---
+    from core.skill_router import skill_router
     from core.skill_loader import skill_loader
     
     skill_name, skill_params = await skill_router.route(user_message)
