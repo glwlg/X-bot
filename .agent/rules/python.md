@@ -32,3 +32,6 @@ description: X-Bot 项目开发规范与注意事项
 
 ## 4. Git 规范
 - **忽略文件**：`.env`, `data/`, `downloads/` 必须被 gitignore。
+
+## 5. 开发规范
+- **消息发送**：一律使用smart_edit_text和smart_reply_text来编辑或发送文本消息，而非直接调用sdk的接口

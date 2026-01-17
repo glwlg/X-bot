@@ -119,10 +119,24 @@ async def smart_edit_text(message, text: str, reply_markup=None):
 async def smart_reply_text(update, text: str, reply_markup=None):
     """
     智能回复消息函数 (类似 smart_edit_text)
+    支持普通消息和 callback_query
     """
     html_text = markdown_to_telegram_html(text)
+    
+    # 获取回复目标：优先使用 message，否则使用 callback_query.message
+    target_message = None
+    if update.message:
+        target_message = update.message
+    elif update.callback_query and update.callback_query.message:
+        target_message = update.callback_query.message
+    
+    if not target_message:
+        import logging
+        logging.getLogger(__name__).error("smart_reply_text: no message to reply to")
+        return None
+    
     try:
-        return await update.message.reply_text(
+        return await target_message.reply_text(
             html_text, 
             parse_mode="HTML", 
             reply_markup=reply_markup,
@@ -131,11 +145,12 @@ async def smart_reply_text(update, text: str, reply_markup=None):
     except Exception as e:
         # Fallback to plain text
         try:
-             return await update.message.reply_text(
+             return await target_message.reply_text(
                 text, 
                 parse_mode=None, 
                 reply_markup=reply_markup
             )
-        except:
-            pass
+        except Exception as inner_e:
+            import logging
+            logging.getLogger(__name__).error(f"smart_reply_text fallback failed: {inner_e}")
         return None

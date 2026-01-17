@@ -51,7 +51,7 @@ async def handle_teach_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     """处理教学输入"""
     text = update.message.text
     if not text:
-        await update.message.reply_text("请发送有效描述。")
+        await smart_reply_text(update, "请发送有效描述。")
         return WAITING_FOR_SKILL_DESC
     
     return await process_teach(update, context, text)
@@ -110,23 +110,23 @@ async def handle_skill_callback(update: Update, context: ContextTypes.DEFAULT_TY
         skill_name = data.replace("skill_approve_", "")
         result = await approve_skill(skill_name)
         
-        if result["success"]:
-            await query.edit_message_text(
-                f"✅ 新能力 `{skill_name}` 已启用！\n\n"
-                f"现在您可以通过触发词使用它了。"
-            )
-        else:
-            await query.edit_message_text(f"❌ 启用失败：{result.get('error', '未知错误')}")
+        msg_text = (
+            f"✅ 新能力 `{skill_name}` 已启用！\n\n"
+            f"现在您可以通过触发词使用它了。"
+        ) if result["success"] else f"❌ 启用失败：{result.get('error', '未知错误')}"
+        
+        # 直接发送新消息，避免编辑文档消息失败
+        await smart_reply_text(update, msg_text)
         return
     
     if data.startswith("skill_reject_"):
         skill_name = data.replace("skill_reject_", "")
         result = await reject_skill(skill_name)
         
-        if result["success"]:
-            await query.edit_message_text(f"🗑️ 已取消创建 `{skill_name}`")
-        else:
-            await query.edit_message_text(f"❌ 取消失败：{result.get('error', '未知错误')}")
+        msg_text = f"🗑️ 已取消创建 `{skill_name}`" if result["success"] else f"❌ 取消失败：{result.get('error', '未知错误')}"
+        
+        # 直接发送新消息
+        await smart_reply_text(update, msg_text)
         return
     
     if data.startswith("skill_view_"):
@@ -153,14 +153,12 @@ async def handle_skill_callback(update: Update, context: ContextTypes.DEFAULT_TY
                     caption=f"📄 **{skill_name}.py**\n\n审核后点击下方按钮确认。",
                     reply_markup=reply_markup
                 )
-                await query.edit_message_text(
-                    f"📄 代码已发送为文件，请查看上方文档。"
-                )
+                await smart_edit_text(query.message, f"📄 代码已发送为文件，请查看上方文档。")
             except Exception as e:
                 logger.error(f"Failed to send code file: {e}")
-                await query.edit_message_text(f"❌ 发送文件失败：{e}")
+                await smart_edit_text(query.message, f"❌ 发送文件失败：{e}")
         else:
-            await query.edit_message_text("❌ 代码文件不存在")
+            await smart_edit_text(query.message, "❌ 代码文件不存在")
 
 
 async def skills_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
