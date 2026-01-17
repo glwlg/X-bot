@@ -58,6 +58,12 @@ GENERATION_PROMPT = '''你是一个 X-Bot Skill 生成器。根据用户需求�
 2. 禁止修改文件系统 (除了 data/ 目录)
 3. 禁止访问其他用户数据 (必须使用 user_id 隔离)
 
+## 代码质量规则
+1. URL 中的用户输入必须使用 urllib.parse.quote 编码
+2. URL 字符串中不要包含换行符 \\n，使用空格或 + 分隔
+3. HTTP 请求必须设置 timeout
+4. 异常必须捕获并返回友好的错误消息
+
 ## 输出格式
 只返回纯 Python 代码，不要 markdown 代码块。
 
