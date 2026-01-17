@@ -18,9 +18,20 @@ class SkillLoader:
     
     def __init__(self, skills_dir: str = None):
         if skills_dir is None:
-            # 默认在 src/skills 目录
-            skills_dir = os.path.join(os.path.dirname(__file__), "..", "skills")
+            # 自动探测 skills 目录
+            # 1. 尝试 Docker 环境路径 (/app/core -> /app/skills)
+            base_dir = os.path.dirname(__file__)
+            docker_path = os.path.join(base_dir, "..", "skills")
+            # 2. 尝试本地开发路径 (src/core -> src -> root -> skills)
+            local_path = os.path.join(base_dir, "..", "..", "skills")
+            
+            if os.path.exists(local_path) and os.path.isdir(local_path):
+                skills_dir = local_path
+            else:
+                skills_dir = docker_path
+        
         self.skills_dir = os.path.abspath(skills_dir)
+        logger.info(f"Using skills directory: {self.skills_dir}")
         
         # 已加载的 Skill 模块缓存
         self._loaded_modules: dict[str, Any] = {}

@@ -118,33 +118,57 @@ src/
 
 ---
 
+6.  **skills/**                     # Skill 插件目录
+    ├── builtin/                # 内置 Skill (可直接调用 Handlers)
+    └── learned/                # /teach 学习到的 Skill (独立沙箱运行)
+
 ### 🏛️ 分层架构
 
 | 层级 | 目录 | 职责 |
 | :--- | :--- | :--- |
-| **Handlers** | `handlers/` | 接收 Telegram 消息，调用 Services 处理业务 |
-| **Services** | `services/` | 封装业务逻辑，与外部 API 交互 |
-| **Repositories** | `repositories/` | 数据持久化，所有数据库操作 |
-| **Core** | `core/` | 配置、调度、提示词等基础设施 |
+| **Skill Layer** | `skills/` | 定义功能接口、触发词，将自然语言意图转换为函数调用 |
+| **Handlers** | `handlers/` | 接收 Skill 或命令调用，执行具体的 Telegram 交互 |
+| **Services** | `services/` | 封装业务逻辑 (下载、AI、股票等) |
+| **Repositories** | `repositories/` | 数据持久化 |
 
 ---
 
-### 🌐 MCP (Model Context Protocol) 扩展
+### 📝 如何添加新功能？
 
-MCP 模块允许 X-Bot 调用外部 MCP 服务。
+现在，我们强烈建议通过 **Skill** 的方式添加新功能，而不是传统的 CommandHandler。
 
-#### 当前支持的 MCP 服务
- 
- | 服务类型 | 功能 | 运行方式 |
- | :--- | :--- | :--- |
- | `playwright` | 网页截图、导航、交互 | Docker |
- | `memory` | 长期记忆 (Knowledge Graph) | Local npx |
+#### 场景 A: 添加一个新的 Skill (e.g., 查汇率)
+
+1. **自动生成**：直接对 Bot 说 "/teach 教你查汇率..."，Bot 会使用 AI 自动生成代码。
+2. **手动开发**：
+   - 在 `skills/builtin/` 下创建 `exchange_rate.py`
+   - 定义 `SKILL_META` (名称、触发词、参数)
+   - 实现 `execute(update, context, params)` 函数
+   - 无需重启，Skill Loader 会自动热加载。
+
+#### 场景 B: 开发复杂的后台功能 (需 Handler 支持)
+
+如果 Skill 逻辑很复杂（涉及对话状态、复杂业务），建议分层：
+
+1. **Service 层**：在 `src/services/` 实现核心逻辑
+2. **Handler 层**（可选）：如果需要复用的交互逻辑，放在 `src/handlers/`
+3. **Skill 层**：在 `skills/builtin/` 创建入口，调用 Service 或 Handler
+
+#### 场景 C: 扩展 MCP 工具
+
+1. 在 `src/mcp_client/` 集成新的 MCP Server
+2. 在 `skills/builtin/` 创建一个 Skill 来调用该 MCP 工具
+
+#### 场景 D: 添加新的数据存储
+1. 在 `src/repositories/` 下创建 `weather_repo.py`
+2. 在 `repositories/__init__.py` 中导出新函数
+3. 在 Handler 中 `from repositories import save_weather_data`
 
 ---
 
-## 3. 开发指引
+## 3. 环境搭建指南
 
-### 🛠️ 环境搭建
+### 🛠️ 环境准备
 
 推荐使用 [uv](https://github.com/astral-sh/uv) 进行 Python 依赖管理。
 
@@ -168,28 +192,20 @@ uv run pytest tests/ -v
 
 ---
 
-### 📝 如何添加新功能？
+## 4. MCP (Model Context Protocol) 扩展
 
-#### 场景 A: 添加一个新的命令 (e.g., `/weather`)
+MCP 模块允许 X-Bot 调用外部 MCP 服务。
 
-1. 在 `src/handlers/` 下创建 `weather_handlers.py`
-2. 在 `src/main.py` 中注册 `CommandHandler("weather", weather_command)`
-3. 添加权限检查 `if not await check_permission(update): return`
+### 当前支持的 MCP 服务
 
-#### 场景 B: 扩展自然语言路由 (e.g., "帮我查天气")
-
-1. **修改意图枚举**: 在 `src/services/intent_router.py` 的 `UserIntent` 中添加 `CHECK_WEATHER`
-2. **添加路由分发**: 在 `src/handlers/ai_handlers.py` 的 `handle_ai_chat` 中添加处理分支
-
-#### 场景 C: 添加新的数据存储
-
-1. 在 `src/repositories/` 下创建 `weather_repo.py`
-2. 在 `repositories/__init__.py` 中导出新函数
-3. 在 Handler 中 `from repositories import save_weather_data`
+ | 服务类型 | 功能 | 运行方式 |
+ | :--- | :--- | :--- |
+ | `playwright` | 网页截图、导航、交互 | Docker |
+ | `memory` | 长期记忆 (Knowledge Graph) | Local npx |
 
 ---
 
-## 4. 注意事项
+## 5. 注意事项
 
 1. **异步编程**: 所有 I/O 操作 **必须** 使用 `await`
 2. **错误处理**: 严禁未捕获异常，使用 `try...except` 并记录日志
