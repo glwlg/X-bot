@@ -13,72 +13,55 @@ graph TD
     subgraph "X-Bot Core (Docker Container)"
         Dispatcher["📨 Dispatcher & Entry Handlers"]
         
-        subgraph "Routing Layer"
-            AR["🧠 Autonomic Router"]
-            IR["🎯 Intent Router"]
-            SR["📚 Skill Router"]
-        end
-
-        subgraph "Execution Layer"
-            Executor["⚙️ Skill Executor"]
-            LegacyExec["🔮 Legacy Executor"]
-            NativeH["🛠️ Native Handlers"]
-            Discovery["🔍 Skill Discovery"]
-            GeminiChat["💬 AI Chat Service"]
+        subgraph "Agentic Brain"
+            AO["🧠 Agent Orchestrator"]
+            TR["🧰 Tool Registry"]
+            AI["✨ AiService (Gemini Agent)"]
         end
         
-        subgraph "Skill Storage"
-            Builtin["📂 Builtin Skills"]
-            Learned["📂 Learned Skills"]
+        subgraph "Tools & Skills"
+            NativeTools["🛠️ Native Tools\n(Download, Reminder, RSS)"]
+            BuiltinSkills["📂 Builtin Skills"]
+            LearnedSkills["📂 Learned Skills"]
+            MCP["🔌 MCP Tools\n(Memory, Browser)"]
         end
 
-        Dispatcher -->|Text/Voice| AR
+        Dispatcher -->|Text/Voice| AO
         
-        AR -->|Standard Skill| Executor
-        AR -->|Legacy Skill| LegacyExec
-        AR -->|Native Intent| NativeH
-        AR -->|Unknown Function| Discovery
-        AR -->|General Chat| GeminiChat
-
-        Executor --> Learned
-        LegacyExec --> Builtin
+        AO <--> AI
+        AO -->|Execute| TR
         
-        Discovery -->|Search & Install| Learned
-        Discovery -->|Re-route| Executor
+        TR --> NativeTools
+        TR --> BuiltinSkills
+        TR --> LearnedSkills
+        TR --> MCP
     end
 
     subgraph "External Services"
-        Gemini(["✨ Google Gemini"])
+        Gemini(["✨ Google Gemini API"])
         Market(["🛒 Skill Market"])
     end
 
-    AR <--> Gemini
-    GeminiChat <--> Gemini
-    Discovery <--> Market
+    AI <--> Gemini
+    TR -.->|Install| Market
 ```
 
-### 🧠 消息路由流程 (Autonomic Routing)
+### 🧠 智能体架构 (Agentic Core)
 
-X-Bot 的核心是一个智能的自主路由系统 (`src/core/autonomic_router.py`)，它决定了如何处理用户的每一条消息。
+X-Bot 已完成从"规则路由"到"智能体核心"的进化。现在，所有的决策都由 **Agent Orchestrator** 统一管理。
 
-1.  **Skill Router (First Priority)**
-    *   检查消息是否匹配本地已安装的 Skill（包括标准协议 Skill 和旧版 Python Skill）。
-    *   如果是标准 Skill，提取元数据并交给 `SkillExecutor`。
-    *   如果是旧版 Skill，提取参数并交给 `LegacyExecutor` (直接调用模块)。
+1.  **Agent Orchestrator (`src/core/agent_orchestrator.py`)**
+    *   **统一入口**：接收所有文本、语音和多模态消息。
+    *   **动态工具集**：根据当前上下文，动态组装可用工具（Native Tools, Skills, MCP Tools）。
+    *   **ReAct 循环**：驱动 Gemini 模型进行 "思考-行动-观察" 的循环，直到完成任务。
 
-2.  **Intent Router (Native Capabilities)**
-    *   如果本地 Skill 未命中，使用 LLM 分析用户意图 (`src/services/intent_router.py`)。
-    *   识别原生核心能力，如：下载视频 (`DOWNLOAD_VIDEO`)、设置提醒 (`SET_REMINDER`)、RSS 订阅 (`RSS_SUBSCRIBE`) 等。
-    *   路由到对应的 `src/handlers/`。
+2.  **Tool Registry (`src/core/tool_registry.py`)**
+    *   **统一接口**：将系统原有的零散功能（如 `download_video`, `add_reminder`）和插件化的 Skills 统一封装为标准 Agent 工具。
+    *   **技能桥接**：将 `skills/` 目录下的 Python 脚本自动转换为 Function Calling 定义。
 
-3.  **Skill Discovery (Expansion)**
-    *   如果既不是本地 Skill 也不是原生意图，系统会判断："这是一个功能性需求吗？"
-    *   如果是（例如 "查天气"、"计算 MD5"），自动从 Skill Market 搜索并尝试安装新能力。
-    *   **Fail-Fast 机制**：安装后立即校验，如果可用则立即**直接执行**，无需用户再次输入。
-
-4.  **General Chat (Fallback)**
-    *   如果以上都未命中，作为普通对话处理。
-    *   支持上下文记忆、图片/视频分析多模态交互。
+3.  **AiService (`src/services/ai_service.py`)**
+    *   **Agent Engine**：封装了 Gemini API 的 Function Calling 逻辑。
+    *   **流式响应**：支持工具调用的实时流式反馈。
 
 ---
 

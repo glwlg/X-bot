@@ -113,389 +113,124 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await smart_edit_text(thinking_msg, "❌ 翻译服务出错。")
         return
 
-    # --- Autonomic Routing ---
-    from core.autonomic_router import autonomic_router
-    from services.intent_router import UserIntent
-
-    # Routing decision
-    route_type, result, msg = await autonomic_router.route(user_message)
+    # --- Agent Orchestration ---
+    from core.agent_orchestrator import agent_orchestrator
     
-    if route_type == "skill_standard":
-        # Standard Protocol Skill (SKILL.md based)
-        skill_name = result["skill_name"]
-        logger.info(f"Autonomic Route -> Standard Skill: {skill_name}")
-        
-        from services.skill_executor import skill_executor
-        
-        # Send initial message
-        thinking_msg = await smart_reply_text(update, f"📚 正在执行技能 **{skill_name}**...")
-        
-        # Execute with streaming updates
-        full_response = ""
-        async for chunk, output_files in skill_executor.execute_skill(skill_name, user_message):
-            full_response = chunk
-            try:
-                await smart_edit_text(thinking_msg, chunk)
-            except:
-                pass  # Ignore edit errors for rapid updates
-            
-            # Check for output files in the stream
-            if output_files:
-                for filename, content in output_files.items():
-                    # Send files to user
-                    import io
-                    file_obj = io.BytesIO(content)
-                    file_obj.name = filename
-                    await update.message.reply_document(document=file_obj, filename=filename)
-        
-        await increment_stat(user_id, "ai_chats")
-        return
-    
-    elif route_type == "skill_legacy":
-        # Legacy .py Skill
-        skill_name = result["skill_name"]
-        skill_params = result["params"]
-        logger.info(f"Autonomic Route -> Legacy Skill: {skill_name}")
-        
-        from core.skill_loader import skill_loader
-        skill_module = skill_loader.load_legacy_skill(skill_name)
-        if skill_module and hasattr(skill_module, 'execute'):
-            try:
-                await skill_module.execute(update, context, skill_params)
-                await increment_stat(user_id, "ai_chats")
-                return
-            except Exception as e:
-                logger.error(f"Legacy skill execution error: {e}")
-                await smart_reply_text(update, f"❌ Skill 执行失败：{e}")
-                return
-        else:
-            # Skill loading failed, fallback to general chat
-            logger.warning(f"Failed to load legacy skill: {skill_name}, falling back to chat")
-            await smart_reply_text(update, f"⚠️ 技能 '{skill_name}' 加载失败，正在使用 AI 对话回复...")
-            intent = UserIntent.GENERAL_CHAT
-            params = {}
-
-    elif route_type == "discovery_wait":
-        # Need discovery (Search & Install)
-        query = result.get("query")
-        thinking_msg = await smart_reply_text(update, f"🔍 正在探索是否有新技能可以处理此请求 (关键词: {query})...")
-        
-        async def status_callback(text):
-            await smart_edit_text(thinking_msg, text)
-            
-        success, skill_or_msg = await autonomic_router.perform_discovery_and_install(query, status_callback)
-        
-        if success:
-            new_skill_name = skill_or_msg
-            await smart_edit_text(thinking_msg, f"✅ 成功安装技能 '{new_skill_name}'，正在执行...")
-            
-            # Determine skill type directly to avoid routing race conditions
-            from core.skill_loader import skill_loader
-            skill_info = skill_loader.get_skill(new_skill_name)
-            
-            if not skill_info:
-                 await smart_edit_text(thinking_msg, "⚠️ 技能安装成功但加载失败 (Metadata invalid)，请重试。")
-                 return
-            
-            skill_type = skill_info.get("skill_type", "standard")
-            
-            if skill_type == "standard":
-                # Execute standard skill directly
-                from services.skill_executor import skill_executor
-                async for chunk, output_files in skill_executor.execute_skill(new_skill_name, user_message):
-                    try:
-                        await smart_edit_text(thinking_msg, chunk)
-                    except:
-                        pass
-                    
-                    if output_files:
-                        for filename, content in output_files.items():
-                            import io
-                            file_obj = io.BytesIO(content)
-                            file_obj.name = filename
-                            await update.message.reply_document(document=file_obj, filename=filename)
-                
-                await increment_stat(user_id, "ai_chats")
-                return
-                
-            elif skill_type == "legacy":
-                # For legacy skills, we still need to extract params
-                # We can try to use the router's helper or just fallback to routing if necessary
-                # But to be safe, let's try to extract since we know the skill
-                from core.skill_router import skill_router
-                params = await skill_router._extract_legacy_params(new_skill_name, user_message, skill_info)
-                
-                skill_module = skill_loader.load_legacy_skill(new_skill_name)
-                if skill_module:
-                    try:
-                        await skill_module.execute(update, context, params)
-                        await increment_stat(user_id, "ai_chats")
-                        return
-                    except Exception as e:
-                        await smart_edit_text(thinking_msg, f"❌ 新技能执行出错: {e}")
-                        return
-            
-            await smart_edit_text(thinking_msg, "⚠️ 技能安装成功但类型未知，请重试。")
-            return
-        else:
-            await smart_edit_text(thinking_msg, f"❌ 技能探索失败: {skill_or_msg}\n\n正在转接通用 AI 对话...")
-            # Fall through to general chat
-            intent = UserIntent.GENERAL_CHAT
-            params = {}
-
-    elif route_type == "intent":
-        intent = result.get("intent")
-        params = result.get("params", {})
-        logger.info(f"Autonomic Route -> Intent: {intent}")
-    
-    else:
-        # Fallback
-        intent = UserIntent.GENERAL_CHAT
-        params = {}
-
-    # --- Native Intent Handling ---
-    
-    if intent == UserIntent.DOWNLOAD_VIDEO:
-        # 尝试从 params 获取 URL，或者回退到 extract_urls
-        target_url = params.get("url")
-        if not target_url:
-             # Fallback extraction
-            found_urls = extract_urls(user_message)
-            if found_urls:
-                target_url = found_urls[0]
-        
-        if target_url:
-            from .media_handlers import process_video_download
-            await process_video_download(update, context, target_url, audio_only=False)
-            return
-        else:
-             pass
-
-
-    elif intent == UserIntent.SET_REMINDER:
-        time_str = params.get("time")
-        content = params.get("content")
-        
-        if time_str and content:
-            from .service_handlers import process_remind
-            await process_remind(update, context, time_str, content)
-            return
-        else:
-             pass
-
-    elif intent == UserIntent.RSS_SUBSCRIBE:
-        url = params.get("url")
-        if url:
-             from .service_handlers import process_subscribe
-             await process_subscribe(update, context, url)
-             return
-
-    elif intent == UserIntent.MONITOR_KEYWORD:
-        keyword = params.get("keyword")
-        if keyword:
-             from .service_handlers import process_monitor
-             await process_monitor(update, context, keyword)
-             return
-
-    elif intent == UserIntent.BROWSER_ACTION:
-        from .mcp_handlers import handle_browser_action
-        handled = await handle_browser_action(update, context, params)
-        if handled:
-            return
-
-    elif intent == UserIntent.STOCK_WATCH:
-        action = params.get("action", "add")
-        stock_name = params.get("stock_name", "")
-        from .service_handlers import process_stock_watch
-        await process_stock_watch(update, context, action, stock_name)
-        return
-
-    # ----------------------------
-
-    # ----------------------------
-    # 检查是否引用了包含媒体的消息
+    # 1. 检查是否引用了消息 (Reply Context)
     from .message_utils import process_reply_message, process_and_send_code_files
     
     extra_context = "" 
     has_media, reply_extra_context, media_data, mime_type = await process_reply_message(update, context)
     
-    # process_reply_message returns False if size limit exceeded or no media/reply
-    # If returned False but we had a reply with media that was too big, we should probably stop?
-    # Actually process_reply_message sends the warning itself.
-    # However, if it returns False, it might mean "no reply" OR "failed".
-    # We need to distinguish. 
-    # But for now, if has_media is False and extra_context is empty, it means nothing happened.
-    
     if reply_extra_context:
         extra_context += reply_extra_context
     
-    # Need to handle the case where process_reply_message aborted (e.g. file too big)
-    # Since we can't easily signal "abort" vs "nothing found" with current signature without checking logs or changing sign.
-    # But wait, if process_reply_message sends a message "File too big", we should probably return here.
-    # Check if update.message.reply_to_message exists but has_media is False and we expected it?
-    # Simple check: If reply_to had video/audio but has_media is False, then we aborted.
+    # Check if we should abort (e.g. file too big)
     if update.message.reply_to_message:
          r = update.message.reply_to_message
          if (r.video or r.audio or r.voice) and not has_media:
-             # Likely aborted due to size limit
              return
     
-    # 3. 检查当前消息中是否有 URL (混合文本情况)
-    # 如果 extra_context 为空（说明没有 Reply URL），且 urls 不为空（说明当前消息有 URL）
+    # 2. 检查当前消息中是否有 URL (混合文本情况)
+    # 如果 extra_context 为空，且 urls 不为空，说明可能是 "Look at this https://..."
     if not extra_context and urls:
         status_msg = await smart_reply_text(update, "📄 正在获取网页内容...")
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         
         try:
-            # 获取第一个 URL 的内容
             web_content = await fetch_webpage_content(urls[0])
-            
             if web_content:
                 extra_context = f"【网页内容】\n{web_content}\n\n"
             else:
-                logger.warning(f"Failed to fetch content for mixed URL: {urls[0]}")
-                extra_context = "【系统提示】检测到链接，但无法读取其内容（可能是反爬虫限制）。请仅根据 URL 标题或从 URL 本身推测（如果可能），并告知用户无法读取详情。\n\n"
+                extra_context = "【系统提示】检测到链接，无法读取详情。\n\n"
             
         except Exception as e:
             logger.error(f"Error fetching mixed URL: {e}")
         
-        # 无论成功失败，删除因为 fetch 而产生的提示消息
         try:
             await status_msg.delete()
         except:
             pass
 
     if not has_media:
-        # 普通文本对话
         thinking_msg = await smart_reply_text(update, THINKING_MESSAGE)
     else:
-        # 带媒体的对话 (引用了图片或视频)
         thinking_msg = await smart_reply_text(update, "🤔 正在分析引用内容...")
     
+    # 3. 构建消息上下文 (History)
     # 将网页上下文合并到用户消息中
+    final_user_message = user_message
     if extra_context:
-        user_message = extra_context + "用户请求：" + user_message
+        final_user_message = extra_context + "用户请求：" + user_message
 
     # 发送"正在输入"状态
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
     try:
+        # A. 带媒体的请求 (Gemini Vision) - 暂时不走 Agent Loop (Vision model function calling support is limited/tricky)
+        # 或者我们把 Vision 也做成 Agent 的输入？
+        # 目前 Gemini 2.0 Flash 支持多模态 + Tools。
+        # 让我们尝试把 Media 放入 history 传给 Agent！
+        
+        message_history = []
+        
+        # 构建当前消息
+        current_msg_parts = []
+        current_msg_parts.append({"text": final_user_message})
+        
         if has_media and media_data:
-            # 带媒体的请求
-            contents = [
-                {
-                    "parts": [
-                        {"text": user_message},
-                        {
-                            "inline_data": {
-                                "mime_type": mime_type,
-                                "data": base64.b64encode(bytes(media_data)).decode("utf-8"),
-                            }
-                        },
-                    ]
+             current_msg_parts.append({
+                "inline_data": {
+                    "mime_type": mime_type,
+                    "data": base64.b64encode(bytes(media_data)).decode("utf-8"),
                 }
-            ]
-            response = gemini_client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=contents,
-                config={
-                    "system_instruction": "你是一个友好的助手，可以分析图片和视频内容并回答问题。请用中文回复。",
-                },
-            )
-            if response.text:
-                await smart_edit_text(thinking_msg, response.text)
-            else:
-                await smart_edit_text(thinking_msg, "抱歉，我无法分析这个内容。")
-        else:
-            # 纯文本对话（流式响应 + 多轮上下文）
-            
-            # 1. 用户消息已在 intent routing 入口处保存，此处不再重复保存
-            
-            # -----------------------------------------------------------------
-            # 2. 构建上下文
-            context_messages = []
-            
-            # A. 如果是回复某个消息 --> 仅使用该消息 + 当前消息
-            reply_to = update.message.reply_to_message
-            if reply_to:
-                reply_id = reply_to.message_id
-                logger.info(f"User replied to message {reply_id}")
-                
-                # 直接使用 Telegram 消息对象的内容
-                replied_content = reply_to.text or reply_to.caption
-                
-                if replied_content:
-                    context_messages.append({
-                        "role": "user",  # 被回复的消息作为上一个 user message 或者 model message
-                        "parts": [{"text": f"【引用内容】\n{replied_content}"}] 
-                    })
-                else:
-                    logger.info("Replied message has no text content.")
-            
-            # B. 如果不是回复 --> 使用最近的历史记录
-            else:
-                context_messages = get_user_context(context)
-            
-            # append current user message
-            context_messages.append({
-                "role": "user",
-                "parts": [{"text": user_message}]
             })
+            
+        # 获取历史上下文
+        history = get_user_context(context) # Returns list of dicts
+        
+        # 拼接: History + Current
+        message_history.extend(history)
+        message_history.append({
+            "role": "user",
+            "parts": current_msg_parts
+        })
+        
+        # B. 调用 Agent Orchestrator
+        final_text_response = ""
+        last_update_time = 0
+        
+        async for chunk_text in agent_orchestrator.handle_message(update, context, message_history):
+            final_text_response += chunk_text
+            
+            # Update UI
+            now = time.time()
+            if now - last_update_time > 0.8:
+                await smart_edit_text(thinking_msg, final_text_response)
+                last_update_time = now
 
-            # -----------------------------------------------------------------
-            # 4. 生成回复 (Delegated to AiService)
-            from services.ai_service import AiService
-            ai_service = AiService()
+        # 5. 发送最终回复并入库
+        if final_text_response:
+            sent_msg = await smart_edit_text(thinking_msg, final_text_response)
             
-            # Determine if memory tools should be enabled
-            # Only enable memory for explicit MEMORY_RECALL intent or naturally broad conversations?
-            # User request: "先判断是否需要调取记忆"
-            # For now, strict: only MEMORY_RECALL enables memory tools.
-            # This avoids "always talking about Wuxi".
-            # Note: intent variable is available from earlier scope
+            # 记录模型回复到上下文
+            add_message(context, "model", final_text_response)
             
-            enable_memory = (intent == UserIntent.MEMORY_RECALL)
-            if enable_memory:
-                 logger.info(f"Memory tools enabled for intent: {intent}")
+            # Try to extract code blocks
+            final_display_text = await process_and_send_code_files(update, context, final_text_response)
             
-            final_text_response = ""
-            last_update_time = 0
-            
-            async for chunk_text in ai_service.generate_response_stream(user_id, context_messages, enable_memory=enable_memory):
-                final_text_response += chunk_text
-                
-                # Update typing status / message
-                now = time.time()
-                if now - last_update_time > 0.8:
-                    await smart_edit_text(thinking_msg, final_text_response)
-                    last_update_time = now
+            if sent_msg and final_display_text != final_text_response:
+                 await smart_edit_text(sent_msg, final_display_text)
 
-            # -----------------------------------------------------------------
-            # 5. 发送最终回复并入库
-            if final_text_response:
-                # smart_edit_text handles markdown formatting and errors
-                sent_msg = await smart_edit_text(thinking_msg, final_text_response)
-                
-                # 记录模型回复到上下文
-                add_message(context, "model", final_text_response)
-                
-                # Try to extract code blocks, send as files, and get truncated text
-                final_display_text = await process_and_send_code_files(update, context, final_text_response)
-                
-                # Update the message with cleaned display text
-                if sent_msg:
-                     await smart_edit_text(sent_msg, final_display_text)
-
-                # 记录统计
-                await increment_stat(user_id, "ai_chats")
-            else:
-                await smart_edit_text(thinking_msg, "抱歉，我无法生成回复。请稍后再试。")
+            # 记录统计
+            await increment_stat(user_id, "ai_chats")
+        else:
+            await smart_edit_text(thinking_msg, "抱歉，我无法生成回复 (无输出)。")
 
     except Exception as e:
-        logger.error(f"AI chat error: {e}")
+        logger.error(f"Agent error: {e}", exc_info=True)
         await smart_edit_text(thinking_msg,
-            "❌ AI 服务出现错误，请稍后再试。\n\n"
-            "如需下载视频，请点击 /download 进入下载模式。"
+            f"❌ Agent 运行出错：{e}\n\n请尝试 /new 重置对话。"
         )
 
 

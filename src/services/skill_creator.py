@@ -226,10 +226,7 @@ async def approve_skill(skill_name: str) -> dict:
     
     # 刷新加载器索引
     from core.skill_loader import skill_loader
-    from core.skill_router import skill_router
-    
     skill_loader.scan_skills()
-    skill_router.invalidate_cache()
     
     logger.info(f"Approved skill: {skill_name}")
     return {"success": True, "filepath": learned_path}
