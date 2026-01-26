@@ -4,6 +4,7 @@ import base64
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
+import random
 
 from core.config import gemini_client, GEMINI_MODEL
 from services.web_summary_service import extract_urls, summarize_webpage, is_video_platform, fetch_webpage_content
@@ -151,8 +152,19 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         except:
             pass
 
+    # 随机选择一种"消息已收到"的提示
+    RECEIVED_PHRASES = [
+        "📨 收到！大脑正在飞速运转...",
+        "⚡ 信号接收完毕，正在解析...",
+        "🍪 Bip Bip! 消息已送达核心...",
+        "📡 正在建立神经连接...",
+        "💭 正在调取相关记忆...",
+        "🐌 这里有点堵车，马上就好...",
+        "✨ 收到指令，正在施法...",
+    ]
+    
     if not has_media:
-        thinking_msg = await smart_reply_text(update, THINKING_MESSAGE)
+        thinking_msg = await smart_reply_text(update, random.choice(RECEIVED_PHRASES))
     else:
         thinking_msg = await smart_reply_text(update, "🤔 正在分析引用内容...")
     
@@ -165,7 +177,6 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
     import asyncio
-    import random
 
     # 动态加载词库
     LOADING_PHRASES = [

@@ -1,3 +1,4 @@
+
 import logging
 import json
 from telegram import Update
@@ -21,6 +22,7 @@ class AgentOrchestrator:
 
     def __init__(self):
         self.ai_service = AiService()
+        self._memory_tools_cache = None  # Cache for tool definitions
 
     async def handle_message(
         self, 
@@ -37,20 +39,10 @@ class AgentOrchestrator:
         # 1. Gather Tools
         tools = tool_registry.get_all_tools()
         
-        # 2. Add Memory Tools (if enabled)
-        memory_server = None
+        # 2. Add Memory Tools (Lazy Load Definitions)
         if MCP_MEMORY_ENABLED:
-            memory_tools, memory_server = await self._get_memory_tools(user_id)
+            memory_tools = await self._get_memory_tool_definitions(user_id)
             if memory_tools:
-                # Retrieve function declarations from the nested structure
-                # The memory tool helper returns [{'function_declarations': [...]}]
-                # We need to flatten it or pass correctly.
-                # Gemini SDK expects list of FunctionDeclaration objects in `tools`.
-                # Let's see how _get_memory_tools returns it.
-                
-                # Check implementation below.
-                # Actually, typically SDK expects `tools=[Declaration1, Declaration2]`.
-                # If _get_memory_tools returns the old structure, we adjust.
                 tools.extend(memory_tools)
 
         # 3. Define Tool Executor (Closure with Context)
@@ -60,32 +52,11 @@ class AgentOrchestrator:
                 # Dispatch to specific handlers
                 if name == "download_video":
                     from services.download_service import download_video
-                    # Download service typically sends progress messages. 
-                    # We might want to pass a dummy message object or handle it gracefully.
-                    # For agent, we want it to be silent or minimal until done?
-                    # But download tasks are long.
-                    # Ideally, we send a "Starting download..." message from here or let the service do it.
-                    # The service expects a `message` object to edit.
                     status_msg = await update.message.reply_text("⏳ Agent: Starting download...")
                     
-                    # We need to adapt the service to not require a message object if possible, 
-                    # or pass this status_msg.
                     result = await download_video(args["url"], update.effective_chat.id, status_msg, audio_only=args.get("audio_only", False))
                     
                     if result.success:
-                        # Video is sent by download_service?
-                        # Check download_service logic. If it returns file_path, we need to send it.
-                        # Wait, download_service usually returns a result object.
-                        # We need to handle the sending part if the service doesn't.
-                        # Actually, looking at media_handlers, `process_video_download` handles the sending.
-                        # `download_video` function ONLY downloads.
-                        
-                        # So we should reuse `media_handlers` logic if possible, 
-                        # OR reimplement sending logic here.
-                        # Reusing `process_video_download` is hard because it expects routing flow.
-                        # Let's implement basic sending here.
-                        
-                        # Send file
                         if args.get("audio_only", False):
                             await context.bot.send_audio(update.effective_chat.id, open(result.file_path, "rb"))
                         else:
@@ -96,10 +67,6 @@ class AgentOrchestrator:
                         return f"Error: Download failed. {result.error_message}"
 
                 elif name == "set_reminder":
-                    from services.service_handlers import process_remind
-                    # We can reuse process_remind logic if we adapt parameters?
-                    # process_remind parses text. Here we have structured args.
-                    # Better to call reminder_repo directly.
                     from repositories import add_reminder_task
                     from utils import parse_time_input
                     
@@ -114,7 +81,6 @@ class AgentOrchestrator:
 
                 elif name == "rss_subscribe":
                     from repositories import add_subscription
-                    # We need to fetch title?
                     from services.web_summary_service import fetch_page_title
                     title = await fetch_page_title(args["url"]) or "New Feed"
                     await add_subscription(user_id, args["url"], title)
@@ -124,27 +90,18 @@ class AgentOrchestrator:
                     from repositories import add_subscription
                     
                     keyword = args["keyword"]
-                    # Use Google News RSS for keyword monitoring
                     from urllib.parse import quote
                     rss_url = f"https://news.google.com/rss/search?q={quote(keyword)}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
-                    title = f"📢 监控: {keyword}"
+                    title = f"监控: {keyword}"
                     
                     await add_subscription(user_id, rss_url, title)
                     return f"Success: Now monitoring keyword '{keyword}' via Google News."
 
                 elif name == "call_skill":
                     from services.skill_executor import skill_executor
-                    # Execute skill
-                    # This yields chunks! But tool_executor expects a return string.
-                    # We need to consume the skill output and return a summary?
-                    # OR, we allow the skill to interact with the user via `update` 
-                    # and return a "Task Completed" message to Gemini.
                     
                     full_output = ""
                     async for chunk, files in skill_executor.execute_skill(args["skill_name"], args["instruction"]):
-                        # Send intermediate updates to user?
-                        # Maybe too noisy. 
-                        # Only send if it's significant?
                         full_output += chunk
                         if files:
                              for filename, content in files.items():
@@ -165,11 +122,10 @@ class AgentOrchestrator:
                     if not skills:
                         return "Error: No matching skills found in marketplace."
                         
-                    # Auto install first match (Fail-Fast)
                     best_match = skills[0]
                     await context.bot.edit_message_text(f"⬇️ Installing: {best_match['name']}...", chat_id=update.effective_chat.id, message_id=status_msg.message_id)
                     
-                    success = await skill_registry.install_skill(best_match["repo"], best_match["name"])
+                    success = await skill_registry.install_skill(best_match['repo'], best_match['name'])
                     if success:
                         skill_loader.scan_skills()
                         return f"Success: Installed skill '{best_match['name']}'. You can now call it using `call_skill`."
@@ -179,52 +135,71 @@ class AgentOrchestrator:
                 elif name == "list_subscriptions":
                     from repositories.subscription_repo import get_user_subscriptions
                     from repositories.watchlist_repo import get_user_watchlist
+                    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+                    from utils import smart_reply_text
                     
-                    sub_type = args.get("type", "all")
-                    result_lines = []
+                    # user_id is already available from outer scope
                     
-                    if sub_type in ["rss", "all"]:
-                        rss_subs = await get_user_subscriptions(user_id)
-                        if rss_subs:
-                            result_lines.append(f"📢 **RSS Subscriptions** ({len(rss_subs)}):")
-                            for sub in rss_subs:
-                                result_lines.append(f"- [{sub['title']}]({sub['feed_url']})")
-                        else:
-                            if sub_type == "rss":
-                                result_lines.append("📢 No RSS subscriptions found.")
+                    rss_subs = await get_user_subscriptions(user_id)
+                    stocks = await get_user_watchlist(user_id)
+                    
+                    if not rss_subs and not stocks:
+                        return "用户当前没有任何订阅。"
 
-                    if sub_type in ["stock", "all"]:
-                        stocks = await get_user_watchlist(user_id)
-                        if stocks:
-                            result_lines.append(f"\n📈 **Stock Watchlist** ({len(stocks)}):")
-                            for s in stocks:
-                                result_lines.append(f"- {s['stock_name']} (`{s['stock_code']}`)")
-                        else:
-                             if sub_type == "stock":
-                                result_lines.append("📈 No stocks in watchlist.")
+                    text_lines = ["📋 **您的订阅列表 (支持点击删除)**\n"]
+                    keyboard = []
                     
-                    if not result_lines:
-                         return "No subscriptions found."
+                    if rss_subs:
+                        text_lines.append(f"\n📢 **RSS 订阅 ({len(rss_subs)})**")
+                        temp_row = []
+                        for sub in rss_subs:
+                            text_lines.append(f"- [{sub['title']}]({sub['feed_url']})")
+                            short_title = sub['title'][:8] + ".." if len(sub['title']) > 8 else sub['title']
+                            btn = InlineKeyboardButton(f"❌ {short_title}", callback_data=f"del_rss_{sub['id']}")
+                            
+                            temp_row.append(btn)
+                            if len(temp_row) == 2:
+                                keyboard.append(temp_row)
+                                temp_row = []
+                        if temp_row:
+                            keyboard.append(temp_row)
+                            
+                    if stocks:
+                        text_lines.append(f"\n📈 **自选股 ({len(stocks)})**")
+                        temp_row = []
+                        for s in stocks:
+                            text_lines.append(f"- {s['stock_name']} (`{s['stock_code']}`)")
+                            
+                            short_name = s['stock_name'][:8] + ".." if len(s['stock_name']) > 8 else s['stock_name']
+                            btn = InlineKeyboardButton(f"❌ {short_name}", callback_data=f"del_stock_{s['stock_code']}")
+                            
+                            temp_row.append(btn)
+                            if len(temp_row) == 2:
+                                keyboard.append(temp_row)
+                                temp_row = []
+                        if temp_row:
+                            keyboard.append(temp_row)
+                            
+                    final_text = "\n".join(text_lines)
+                    reply_markup = InlineKeyboardMarkup(keyboard)
                     
-                    return "\n".join(result_lines)
+                    await smart_reply_text(update, final_text, reply_markup=reply_markup)
+                    
+                    return "[System Hint] The subscription list has been sent to the user as a separate message with DELETE buttons. Do NOT repeat the list in your response. Just confirm you've shown it."
 
                 elif name == "refresh_rss":
                     from handlers.subscription_handlers import refresh_user_subscriptions
-                    # Since refresh_user_subscriptions is an async handler that takes update and context,
-                    # and returns a string message (because we designed it that way in last step).
-                    # We can call it directly.
-                    from handlers.subscription_handlers import refresh_user_subscriptions
-                    # The handler sends the actual digest messages to the user.
-                    # It returns a system hint string for the Agent to generate a final confirmation.
                     return await refresh_user_subscriptions(update, context)
 
-
-                # Memory Tools
-                elif memory_server:
-                     # Dispatch undefined tools to memory server if available
-                     return await memory_server.call_tool(name, args)
-                
+                # Memory Tools (Lazy Connect)
                 else:
+                    # Try to see if it's a memory tool
+                    if self._is_memory_tool(name):
+                         logger.info(f"Connecting to Memory Server for tool execution: {name}")
+                         memory_server = await self._get_active_memory_server(user_id)
+                         if memory_server:
+                             return await memory_server.call_tool(name, args)
+                    
                     return f"Error: Unknown tool '{name}'"
 
             except Exception as e:
@@ -232,9 +207,16 @@ class AgentOrchestrator:
                 return f"System Error: {str(e)}"
 
         # 4. Generate Response
+        import datetime
+        current_time_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
+        
         system_instruction = DEFAULT_SYSTEM_PROMPT
-        if memory_server:
+        if MCP_MEMORY_ENABLED:
+             # Use memory guide if enabled, but we avoid eager connection
             system_instruction = MEMORY_MANAGEMENT_GUIDE
+            
+        # Append dynamic time context
+        system_instruction += f"\n\n【当前系统时间】: {current_time_str}"
 
         async for chunk in self.ai_service.generate_response_stream(
             message_history, 
@@ -244,23 +226,57 @@ class AgentOrchestrator:
         ):
             yield chunk
 
-    async def _get_memory_tools(self, user_id: int):
-        """Helper to get memory tools declarations and server instance"""
+    async def _get_memory_tool_definitions(self, user_id: int):
+        """
+        Get memory tool definitions (schemas).
+        Uses caching to avoid connecting on every request.
+        """
+        if self._memory_tools_cache:
+            return self._memory_tools_cache
+
         try:
+            # First time: Need to connect and fetch
+            logger.info("Fetching Memory Tool Definitions (One-time init)...")
             from mcp_client import mcp_manager
             from mcp_client.tools_bridge import convert_mcp_tools_to_gemini
             from mcp_client.memory import register_memory_server
 
             register_memory_server()
+            # We start server just to get tools, then we can let it be (manager handles process)
             memory_server = await mcp_manager.get_server("memory", user_id=user_id)
 
             if memory_server and memory_server.session:
                 mcp_tools_result = await memory_server.session.list_tools()
-                # convert_mcp_tools_to_gemini returns a list of FunctionDeclaration
                 gemini_funcs = convert_mcp_tools_to_gemini(mcp_tools_result.tools)
-                return gemini_funcs, memory_server
-        except Exception:
+                
+                self._memory_tools_cache = gemini_funcs
+                return gemini_funcs
+        except Exception as e:
+            logger.error(f"Failed to fetch memory tools: {e}")
             pass
-        return None, None
+        return None
+
+    async def _get_active_memory_server(self, user_id: int):
+        """
+        Get an active connection to the memory server for EXECUTION.
+        """
+        try:
+            from mcp_client import mcp_manager
+            from mcp_client.memory import register_memory_server
+            
+            register_memory_server()
+            return await mcp_manager.get_server("memory", user_id=user_id)
+        except Exception:
+            return None
+
+    def _is_memory_tool(self, name: str) -> bool:
+        """Check if tool name belongs to memory tools"""
+        if not self._memory_tools_cache:
+            return False
+        # Check against cached definitions
+        for tool in self._memory_tools_cache:
+            if tool.get("name") == name:
+                return True
+        return False
 
 agent_orchestrator = AgentOrchestrator()

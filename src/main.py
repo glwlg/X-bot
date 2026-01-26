@@ -1,5 +1,5 @@
 """
-DLP Bot - X-Bot: 多平台媒体助手 + AI 智能伙伴
+X-Bot: 多平台媒体助手 + AI 智能伙伴
 主程序入口
 """
 import logging
@@ -61,6 +61,7 @@ from handlers.skill_handlers import (
     reload_skills_command,
     WAITING_FOR_SKILL_DESC,
 )
+from handlers.callback_handlers import handle_subscription_callback
 
 # 日志配置
 logging.basicConfig(
@@ -77,7 +78,7 @@ async def initialize_data(application: Application) -> None:
     
     
     # 加载待执行的提醒任务
-    # 加载待执行的提醒任务
+    from handlers.subscription_handlers import refresh_user_subscriptions
     from core.scheduler import load_jobs_from_db, start_rss_scheduler, start_stock_scheduler
     await load_jobs_from_db(application.job_queue)
     
@@ -119,7 +120,7 @@ async def log_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main() -> None:
     """启动 Bot"""
-    logger.info("Starting DLP Bot...")
+    logger.info("Starting X - Bot...")
 
     # 配置持久化存储
     persistence = PicklePersistence(filepath="data/bot_persistence.pickle")
@@ -151,13 +152,16 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_large_file_action, pattern="^large_file_"))
     
     # 1.2 通用菜单按钮
-    common_pattern = "^(?!download_video$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_|skill_).*$"
+    common_pattern = "^(?!download_video$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_|skill_|del_rss_|del_stock_).*$"
     application.add_handler(CallbackQueryHandler(button_callback, pattern=common_pattern))
     
     # 1.3 Skill 审核按钮
     application.add_handler(CallbackQueryHandler(handle_skill_callback, pattern="^skill_"))
+    
+    # Handler for subscription management (delete)
+    application.add_handler(CallbackQueryHandler(handle_subscription_callback, pattern="^(del_rss_|del_stock_)"))
 
-    # 2. 视频下载对话处理器
+    # AI Chat Handler (Text)
     back_handler = CallbackQueryHandler(back_to_main_and_cancel, pattern="^back_to_main_cancel$")
     format_handler = CallbackQueryHandler(handle_download_format, pattern="^dl_format_")
     video_conv_handler = ConversationHandler(
@@ -206,7 +210,6 @@ def main() -> None:
     # 4.2 特色功能
     application.add_handler(feature_conv_handler)
     application.add_handler(CommandHandler("stats", stats_command))
-    application.add_handler(video_conv_handler)
     application.add_handler(video_conv_handler)
     
     # 4.1 Skill 管理命令

@@ -179,7 +179,9 @@ async def skills_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     learned = []
     
     for name, info in index.items():
-        triggers = ", ".join(info["meta"]["triggers"][:3])
+        meta = info.get("meta", {})
+        triggers_list = meta.get("triggers", [])
+        triggers = ", ".join(triggers_list[:3]) if triggers_list else "No triggers"
         line = f"• **{name}**: {triggers}"
         
         if info["source"] == "builtin":
