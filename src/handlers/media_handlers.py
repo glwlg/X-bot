@@ -4,7 +4,7 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 
-from core.config import WAITING_FOR_VIDEO_URL, WAITING_FOR_IMAGE_PROMPT
+from core.config import WAITING_FOR_VIDEO_URL
 from utils import extract_video_url, smart_edit_text, smart_reply_text
 from services.download_service import download_video
 from .base_handlers import check_permission
@@ -462,62 +462,3 @@ async def handle_large_file_action(update: Update, context: ContextTypes.DEFAULT
         await query.message.reply_text(f"❌ 操作失败: {str(e)}")
 
 
-# --- Image Generation ---
-
-async def start_generate_image(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """进入 AI 画图模式的入口"""
-    query = update.callback_query
-    await query.answer()
-    
-    logger.info("Entering image generation mode")
-    keyboard = [[InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main_cancel")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    try:
-        await smart_edit_text(query.message,
-            "🎨 **AI 画图模式**\n\n"
-            "请发送您想要生成的图片描述。\n\n"
-            "💡 提示：\n"
-            "• 描述越详细，生成效果越好\n"
-            "• 可以包含风格、颜色、氛围等元素\n"
-            "• AI 会自动优化您的提示词\n\n"
-            "示例：一只可爱的橘猫在樱花树下\n\n"
-            "发送 /cancel 取消操作。",
-            reply_markup=reply_markup
-        )
-    except Exception as e:
-        logger.error(f"Error editing message in start_generate_image: {e}")
-        
-    return WAITING_FOR_IMAGE_PROMPT
-
-async def image_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
-    """处理 /image 命令，进入画图模式"""
-    if not await check_permission(update):
-        return ConversationHandler.END
-
-    await smart_reply_text(update,
-        "🎨 **AI 画图模式**\n\n"
-        "请发送您想要生成的图片描述。\n\n"
-        "💡 提示：\n"
-        "• 描述越详细，生成效果越好\n"
-        "• 可以包含风格、颜色、氛围等元素\n"
-        "• AI 会自动优化您的提示词\n\n"
-        "示例：一只可爱的橘猫在樱花树下\n\n"
-        "发送 /cancel 取消操作。"
-    )
-    return WAITING_FOR_IMAGE_PROMPT
-
-async def handle_image_prompt(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
-) -> int:
-    """处理画图提示词输入"""
-    user_prompt = update.message.text
-    if not user_prompt:
-        await smart_reply_text(update, "请发送有效的图片描述。")
-        return WAITING_FOR_IMAGE_PROMPT
-    
-    # 调用画图处理函数
-    from image_generator import handle_image_generation
-    await handle_image_generation(update, context, user_prompt)
-    
-    return ConversationHandler.END

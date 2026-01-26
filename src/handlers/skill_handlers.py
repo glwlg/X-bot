@@ -7,7 +7,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 
 from core.config import is_user_admin
 from core.skill_loader import skill_loader
-from core.skill_router import skill_router
+from core.skill_loader import skill_loader
 from services.skill_creator import (
     create_skill, 
     approve_skill, 
@@ -213,7 +213,7 @@ async def reload_skills_command(update: Update, context: ContextTypes.DEFAULT_TY
         return
     
     skill_loader.scan_skills()
-    skill_router.invalidate_cache()
+    skill_loader.reload_skills()
     
     count = len(skill_loader.get_skill_index())
     await smart_reply_text(update, f"🔄 已重新加载 {count} 个 Skills")

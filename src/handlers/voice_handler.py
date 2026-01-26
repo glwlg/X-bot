@@ -266,76 +266,16 @@ async def process_as_text_message(
     thinking_msg
 ) -> None:
     """
-    将转写后的文本按普通文本消息逻辑处理（智能路由）
+    将转写后的文本按普通文本消息逻辑处理（代理给 Agent Orchestrator）
     """
     import time
-    from services.intent_router import analyze_intent, UserIntent
-    from handlers.ai_handlers import handle_ai_chat
+    from core.agent_orchestrator import agent_orchestrator
     from stats import increment_stat
     
     user_id = update.message.from_user.id
-    chat_id = update.message.chat_id
     
     # 记录用户消息到上下文
     add_message(context, "user", text)
-    
-    # 分析意图
-    intent_result = await analyze_intent(text)
-    intent = intent_result.get("intent")
-    params = intent_result.get("params", {})
-    
-    logger.info(f"Voice Smart Routing: {intent} | params={params}")
-    
-    # 处理特殊意图
-    if intent == UserIntent.DOWNLOAD_VIDEO:
-        from services.web_summary_service import extract_urls
-        from handlers.media_handlers import process_video_download
-        
-        target_url = params.get("url")
-        if not target_url:
-            found_urls = extract_urls(text)
-            if found_urls:
-                target_url = found_urls[0]
-        
-        if target_url:
-            await smart_edit_text(thinking_msg, f"🚀 识别到下载意图，正在处理链接...")
-            await process_video_download(update, context, target_url, audio_only=False)
-            return
-    
-    elif intent == UserIntent.GENERATE_IMAGE:
-        prompt = params.get("prompt") or text
-        await smart_edit_text(thinking_msg, f"🎨 识别到画图意图，正在生成...")
-        from image_generator import handle_image_generation
-        await handle_image_generation(update, context, prompt)
-        return
-    
-    elif intent == UserIntent.SET_REMINDER:
-        time_str = params.get("time")
-        content = params.get("content")
-        if time_str and content:
-            from handlers.service_handlers import process_remind
-            await smart_edit_text(thinking_msg, f"⏰ 识别到提醒意图，正在设置...")
-            await process_remind(update, context, time_str, content)
-            return
-    
-    elif intent == UserIntent.RSS_SUBSCRIBE:
-        url = params.get("url")
-        if url:
-            from handlers.service_handlers import process_subscribe
-            await smart_edit_text(thinking_msg, f"📢 识别到订阅意图，正在处理...")
-            await process_subscribe(update, context, url)
-            return
-    
-    elif intent == UserIntent.MONITOR_KEYWORD:
-        keyword = params.get("keyword")
-        if keyword:
-            from handlers.service_handlers import process_monitor
-            await smart_edit_text(thinking_msg, f"🔍 识别到监控意图，正在处理...")
-            await process_monitor(update, context, keyword)
-            return
-    
-    # 普通对话：走 AI 生成流程
-    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
     
     # 构建上下文
     context_messages = get_user_context(context)
@@ -344,29 +284,27 @@ async def process_as_text_message(
         "parts": [{"text": text}]
     })
     
-    # 生成回复
-    from services.ai_service import AiService
-    ai_service = AiService()
-    
-    enable_memory = (intent == UserIntent.MEMORY_RECALL)
-    if enable_memory:
-        logger.info(f"Memory tools enabled for voice intent: {intent}")
-    
-    final_text_response = ""
-    last_update_time = 0
-    
-    async for chunk_text in ai_service.generate_response_stream(user_id, context_messages, enable_memory=enable_memory):
-        final_text_response += chunk_text
+    # 代理给 Agent Orchestrator
+    try:
+        final_text_response = ""
+        last_update_time = 0
         
-        now = time.time()
-        if now - last_update_time > 0.8:
+        async for chunk_text in agent_orchestrator.handle_message(update, context, context_messages):
+            final_text_response += chunk_text
+            
+            now = time.time()
+            if now - last_update_time > 0.8:
+                await smart_edit_text(thinking_msg, final_text_response)
+                last_update_time = now
+        
+        # 发送最终回复
+        if final_text_response:
             await smart_edit_text(thinking_msg, final_text_response)
-            last_update_time = now
-    
-    # 发送最终回复
-    if final_text_response:
-        await smart_edit_text(thinking_msg, final_text_response)
-        add_message(context, "model", final_text_response)
-        await increment_stat(user_id, "voice_chats")
-    else:
-        await smart_edit_text(thinking_msg, "抱歉，我无法生成回复。请稍后再试。")
+            add_message(context, "model", final_text_response)
+            await increment_stat(user_id, "voice_chats")
+        else:
+            await smart_edit_text(thinking_msg, "抱歉，我无法生成回复。")
+            
+    except Exception as e:
+        logger.error(f"Voice Agent error: {e}")
+        await smart_edit_text(thinking_msg, f"❌ Agent 运行出错：{e}")

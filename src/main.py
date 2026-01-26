@@ -17,7 +17,6 @@ from telegram import Update
 from core.config import (
     TELEGRAM_BOT_TOKEN,
     WAITING_FOR_VIDEO_URL,
-    WAITING_FOR_IMAGE_PROMPT,
     WAITING_FOR_REMIND_INPUT,
     WAITING_FOR_MONITOR_KEYWORD,
     WAITING_FOR_SUBSCRIBE_URL,
@@ -31,13 +30,11 @@ from handlers import (
     deluser_command,
     button_callback,
     start_download_video,
-    start_generate_image,
+    start_download_video,
     back_to_main_and_cancel,
     handle_download_format,
     download_command,
     handle_video_download,
-    image_command,
-    handle_image_prompt,
     cancel,
     handle_large_file_action,
     remind_command,
@@ -99,8 +96,8 @@ async def initialize_data(application: Application) -> None:
         [
             ("start", "主菜单"),
             ("new", "开启新对话"),
-            ("image", "AI 画图"),
-            ("teach", "教我新能力"),
+            ("new", "开启新对话"),
+            ("teach", "教我新能力"),            ("teach", "教我新能力"),
             ("skills", "查看 Skills"),
             ("feature", "提交需求"),
             ("stats", "使用统计"),
@@ -154,7 +151,7 @@ def main() -> None:
     application.add_handler(CallbackQueryHandler(handle_large_file_action, pattern="^large_file_"))
     
     # 1.2 通用菜单按钮
-    common_pattern = "^(?!download_video$|generate_image$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_|skill_).*$"
+    common_pattern = "^(?!download_video$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_|skill_).*$"
     application.add_handler(CallbackQueryHandler(button_callback, pattern=common_pattern))
     
     # 1.3 Skill 审核按钮
@@ -179,21 +176,6 @@ def main() -> None:
         allow_reentry=True,
     )
     
-    # 3. 画图对话处理器
-    image_conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(start_generate_image, pattern="^generate_image$"),
-            CommandHandler("image", image_command),
-        ],
-        states={
-            WAITING_FOR_IMAGE_PROMPT: [
-                back_handler,
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_image_prompt),
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel), back_handler],
-        allow_reentry=True,
-    )
 
     # 3.4 需求收集对话处理器
     feature_conv_handler = ConversationHandler(
@@ -225,7 +207,7 @@ def main() -> None:
     application.add_handler(feature_conv_handler)
     application.add_handler(CommandHandler("stats", stats_command))
     application.add_handler(video_conv_handler)
-    application.add_handler(image_conv_handler)
+    application.add_handler(video_conv_handler)
     
     # 4.1 Skill 管理命令
     teach_conv_handler = ConversationHandler(

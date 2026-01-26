@@ -8,60 +8,60 @@ X-Bot 采用模块化分层设计，基于 `python-telegram-bot` 和异步 I/O �
 
 ```mermaid
 graph TD
-    User([👤 User]) <-->|Telegram API| Bot([🤖 X-Bot Server])
+    User(["👤 User"]) <-->|Telegram API| Bot(["🤖 X-Bot Server"])
 
     subgraph "X-Bot Core (Docker Container)"
-        Dispatcher[📨 Dispatcher & Router]
+        Dispatcher["📨 Dispatcher & Entry Handlers"]
         
-        subgraph "Handlers Layer (src/handlers/)"
-            StartH[🏁 Start Handlers]
-            MediaH[📹 Media Handlers]
-            AIH[🧠 AI Handlers]
-            ReminderH[⏰ Reminder Handlers]
-            SubH[📢 Subscription Handlers]
-            StockH[📈 Stock Handlers]
-            AdminH[🛡️ Admin Handlers]
+        subgraph "Agentic Brain"
+            AO["🧠 Agent Orchestrator"]
+            TR["🧰 Tool Registry"]
+            AI["✨ AiService (Gemini Agent)"]
         end
         
-        subgraph "Services Layer (src/services/)"
-            Intent[🧠 Intent Router]
-            Downloader[📥 Download Service]
-            WebSum[🕸️ Web Summary Service]
-            StockSvc[📊 Stock Service]
-            AISvc[✨ AI Service]
-        end
-        
-        subgraph "Core Layer (src/core/)"
-            Config[⚙️ Config]
-            Scheduler[⏰ Scheduler]
-            Prompts[📝 Prompts]
-        end
-        
-        subgraph "Repository Layer (src/repositories/)"
-            DB[(🗄️ SQLite Repositories)]
-        end
-        
-        subgraph "Data (data/)"
-            Downloads[📁 Downloads]
+        subgraph "Tools & Skills"
+            NativeTools["🛠️ Native Tools\n(Download, Reminder, RSS)"]
+            BuiltinSkills["📂 Builtin Skills"]
+            LearnedSkills["📂 Learned Skills"]
+            MCP["🔌 MCP Tools\n(Memory, Browser)"]
         end
 
-        Dispatcher --> Intent
-        Intent -->|Route Intent| Handlers Layer
+        Dispatcher -->|Text/Voice| AO
         
-        Handlers Layer --> Services Layer
-        Services Layer --> Repository Layer
-        Repository Layer --> DB
-        MediaH --> Downloader --> Downloads
+        AO <--> AI
+        AO -->|Execute| TR
+        
+        TR --> NativeTools
+        TR --> BuiltinSkills
+        TR --> LearnedSkills
+        TR --> MCP
     end
 
     subgraph "External Services"
-        Gemini([✨ Google Gemini])
-        Platforms([🌐 Video Platforms])
+        Gemini(["✨ Google Gemini API"])
+        Market(["🛒 Skill Market"])
     end
 
-    AISvc <--> Gemini
-    Downloader <--> Platforms
+    AI <--> Gemini
+    TR -.->|Install| Market
 ```
+
+### 🧠 智能体架构 (Agentic Core)
+
+X-Bot 已完成从"规则路由"到"智能体核心"的进化。现在，所有的决策都由 **Agent Orchestrator** 统一管理。
+
+1.  **Agent Orchestrator (`src/core/agent_orchestrator.py`)**
+    *   **统一入口**：接收所有文本、语音和多模态消息。
+    *   **动态工具集**：根据当前上下文，动态组装可用工具（Native Tools, Skills, MCP Tools）。
+    *   **ReAct 循环**：驱动 Gemini 模型进行 "思考-行动-观察" 的循环，直到完成任务。
+
+2.  **Tool Registry (`src/core/tool_registry.py`)**
+    *   **统一接口**：将系统原有的零散功能（如 `download_video`, `add_reminder`）和插件化的 Skills 统一封装为标准 Agent 工具。
+    *   **技能桥接**：将 `skills/` 目录下的 Python 脚本自动转换为 Function Calling 定义。
+
+3.  **AiService (`src/services/ai_service.py`)**
+    *   **Agent Engine**：封装了 Gemini API 的 Function Calling 逻辑。
+    *   **流式响应**：支持工具调用的实时流式反馈。
 
 ---
 
@@ -130,6 +130,20 @@ src/
 | **Handlers** | `handlers/` | 接收 Skill 或命令调用，执行具体的 Telegram 交互 |
 | **Services** | `services/` | 封装业务逻辑 (下载、AI、股票等) |
 | **Repositories** | `repositories/` | 数据持久化 |
+
+### 🛠️ 关键机制
+
+#### 1. Skill Fail-Fast Discovery (Autonomic Router)
+当 Bot 尝试从市场安装 Skill 时，采用 **Fail-Fast** 策略：
+- 按相关性排序候选 Skill (Top 3)。
+- 逐个尝试安装并立即**验证加载**。
+- 如遇到语法错误或加载失败，**自动卸载**并尝试下一个。
+- 若所有候选均失败，自动记录 **Feature Request**。
+
+#### 2. Skill Universal Adapter (Skill Executor)
+`SkillExecutor` 实现了通用适配器模式：
+- **流式响应**：实时流式传输 AI 的思考过程。
+- **文件自动交付**：自动捕获沙箱中生成的任何新文件，并将其作为 Telegram Document 发送给用户，无需 Skill 开发者编写特定发送逻辑。
 
 ---
 

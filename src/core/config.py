@@ -19,7 +19,7 @@ GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googl
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 ROUTING_MODEL = os.getenv("ROUTING_MODEL", "gemini-2.0-flash")
-IMAGE_MODEL = os.getenv("IMAGE_MODEL", "imagen-3.0-generate-002")
+ROUTING_MODEL = os.getenv("ROUTING_MODEL", "gemini-2.0-flash")
 # 代码生成模型（用于 Skill 创建，建议使用更强力的模型）
 CREATOR_MODEL = os.getenv("CREATOR_MODEL", "gemini-2.5-pro-preview-05-06")
 
@@ -91,7 +91,6 @@ COOKIES_FILE = "cookies.txt"  # yt-dlp cookies file path
 
 # 会话状态常量
 WAITING_FOR_VIDEO_URL = 1
-WAITING_FOR_IMAGE_PROMPT = 2
 WAITING_FOR_REMIND_INPUT = 3
 WAITING_FOR_MONITOR_KEYWORD = 4
 WAITING_FOR_SUBSCRIBE_URL = 5
