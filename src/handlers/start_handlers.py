@@ -14,7 +14,7 @@ WELCOME_MESSAGE = (
     "• \"下载这个视频 https://...\"\n"
     "• \"帮我关注仙鹤股份\"\n"
     "• \"10分钟后提醒我喝水\"\n"
-    "• \"画一只在太空的猫\"\n"
+
     "• \"订阅 RSS https://...\"\n"
     "• \"开启翻译模式\"\n\n"
     "💡 /teach - 教我学会新技能\n"
@@ -25,7 +25,6 @@ def get_main_menu_keyboard():
     return [
         [
             InlineKeyboardButton("💬 AI 对话", callback_data="ai_chat"),
-            InlineKeyboardButton("🎨 AI 画图", callback_data="generate_image"),
         ],
         [
             InlineKeyboardButton("📊 统计", callback_data="stats"),
@@ -70,7 +69,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "• \"下载视频 https://...\"\n"
         "• \"帮我关注仙鹤股份\"\n"
         "• \"1小时后提醒我开会\"\n"
-        "• \"画一张赛博朋克风格的图\"\n"
+
         "• \"订阅 RSS https://...\"\n"
         "• \"监控关键词 AI\"\n"
         "• \"开启/关闭翻译\"\n\n"
@@ -133,7 +132,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "• \"下载视频 https://...\"\n"
                 "• \"帮我关注仙鹤股份\"\n"
                 "• \"1小时后提醒我开会\"\n"
-                "• \"画一张赛博朋克风格的图\"\n"
+
                 "• \"订阅 RSS https://...\"\n"
                 "• \"开启/关闭翻译\"\n\n"
                 "💡 **Skill 系统** - 教我新能力\n"
@@ -153,13 +152,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # 安全获取环境变量
             openai_model = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
             gemini_model = os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
-            image_model = os.getenv('IMAGE_MODEL', 'imagen-3.0-generate-002')
             
             await smart_edit_text(query.message,
                 "⚙️ **设置**\n\n"
                 "当前配置：\n"
                 f"• Gemini 模型：{gemini_model}\n"
-                f"• 画图模型：{image_model}\n"
                 "• 视频质量：最高\n"
                 "• 文件大小限制：49 MB\n\n"
                 "更多设置功能即将推出...",

@@ -8,60 +8,77 @@ X-Bot 采用模块化分层设计，基于 `python-telegram-bot` 和异步 I/O �
 
 ```mermaid
 graph TD
-    User([👤 User]) <-->|Telegram API| Bot([🤖 X-Bot Server])
+    User(["👤 User"]) <-->|Telegram API| Bot(["🤖 X-Bot Server"])
 
     subgraph "X-Bot Core (Docker Container)"
-        Dispatcher[📨 Dispatcher & Router]
+        Dispatcher["📨 Dispatcher & Entry Handlers"]
         
-        subgraph "Handlers Layer (src/handlers/)"
-            StartH[🏁 Start Handlers]
-            MediaH[📹 Media Handlers]
-            AIH[🧠 AI Handlers]
-            ReminderH[⏰ Reminder Handlers]
-            SubH[📢 Subscription Handlers]
-            StockH[📈 Stock Handlers]
-            AdminH[🛡️ Admin Handlers]
-        end
-        
-        subgraph "Services Layer (src/services/)"
-            Intent[🧠 Intent Router]
-            Downloader[📥 Download Service]
-            WebSum[🕸️ Web Summary Service]
-            StockSvc[📊 Stock Service]
-            AISvc[✨ AI Service]
-        end
-        
-        subgraph "Core Layer (src/core/)"
-            Config[⚙️ Config]
-            Scheduler[⏰ Scheduler]
-            Prompts[📝 Prompts]
-        end
-        
-        subgraph "Repository Layer (src/repositories/)"
-            DB[(🗄️ SQLite Repositories)]
-        end
-        
-        subgraph "Data (data/)"
-            Downloads[📁 Downloads]
+        subgraph "Routing Layer"
+            AR["🧠 Autonomic Router"]
+            IR["🎯 Intent Router"]
+            SR["📚 Skill Router"]
         end
 
-        Dispatcher --> Intent
-        Intent -->|Route Intent| Handlers Layer
+        subgraph "Execution Layer"
+            Executor["⚙️ Skill Executor"]
+            LegacyExec["🔮 Legacy Executor"]
+            NativeH["🛠️ Native Handlers"]
+            Discovery["🔍 Skill Discovery"]
+            GeminiChat["💬 AI Chat Service"]
+        end
         
-        Handlers Layer --> Services Layer
-        Services Layer --> Repository Layer
-        Repository Layer --> DB
-        MediaH --> Downloader --> Downloads
+        subgraph "Skill Storage"
+            Builtin["📂 Builtin Skills"]
+            Learned["📂 Learned Skills"]
+        end
+
+        Dispatcher -->|Text/Voice| AR
+        
+        AR -->|Standard Skill| Executor
+        AR -->|Legacy Skill| LegacyExec
+        AR -->|Native Intent| NativeH
+        AR -->|Unknown Function| Discovery
+        AR -->|General Chat| GeminiChat
+
+        Executor --> Learned
+        LegacyExec --> Builtin
+        
+        Discovery -->|Search & Install| Learned
+        Discovery -->|Re-route| Executor
     end
 
     subgraph "External Services"
-        Gemini([✨ Google Gemini])
-        Platforms([🌐 Video Platforms])
+        Gemini(["✨ Google Gemini"])
+        Market(["🛒 Skill Market"])
     end
 
-    AISvc <--> Gemini
-    Downloader <--> Platforms
+    AR <--> Gemini
+    GeminiChat <--> Gemini
+    Discovery <--> Market
 ```
+
+### 🧠 消息路由流程 (Autonomic Routing)
+
+X-Bot 的核心是一个智能的自主路由系统 (`src/core/autonomic_router.py`)，它决定了如何处理用户的每一条消息。
+
+1.  **Skill Router (First Priority)**
+    *   检查消息是否匹配本地已安装的 Skill（包括标准协议 Skill 和旧版 Python Skill）。
+    *   如果是标准 Skill，提取元数据并交给 `SkillExecutor`。
+    *   如果是旧版 Skill，提取参数并交给 `LegacyExecutor` (直接调用模块)。
+
+2.  **Intent Router (Native Capabilities)**
+    *   如果本地 Skill 未命中，使用 LLM 分析用户意图 (`src/services/intent_router.py`)。
+    *   识别原生核心能力，如：下载视频 (`DOWNLOAD_VIDEO`)、设置提醒 (`SET_REMINDER`)、RSS 订阅 (`RSS_SUBSCRIBE`) 等。
+    *   路由到对应的 `src/handlers/`。
+
+3.  **Skill Discovery (Expansion)**
+    *   如果既不是本地 Skill 也不是原生意图，系统会判断："这是一个功能性需求吗？"
+    *   如果是（例如 "查天气"、"计算 MD5"），自动从 Skill Market 搜索并尝试安装新能力。
+    *   **Fail-Fast 机制**：安装后立即校验，如果可用则立即**直接执行**，无需用户再次输入。
+
+4.  **General Chat (Fallback)**
+    *   如果以上都未命中，作为普通对话处理。
+    *   支持上下文记忆、图片/视频分析多模态交互。
 
 ---
 
@@ -130,6 +147,20 @@ src/
 | **Handlers** | `handlers/` | 接收 Skill 或命令调用，执行具体的 Telegram 交互 |
 | **Services** | `services/` | 封装业务逻辑 (下载、AI、股票等) |
 | **Repositories** | `repositories/` | 数据持久化 |
+
+### 🛠️ 关键机制
+
+#### 1. Skill Fail-Fast Discovery (Autonomic Router)
+当 Bot 尝试从市场安装 Skill 时，采用 **Fail-Fast** 策略：
+- 按相关性排序候选 Skill (Top 3)。
+- 逐个尝试安装并立即**验证加载**。
+- 如遇到语法错误或加载失败，**自动卸载**并尝试下一个。
+- 若所有候选均失败，自动记录 **Feature Request**。
+
+#### 2. Skill Universal Adapter (Skill Executor)
+`SkillExecutor` 实现了通用适配器模式：
+- **流式响应**：实时流式传输 AI 的思考过程。
+- **文件自动交付**：自动捕获沙箱中生成的任何新文件，并将其作为 Telegram Document 发送给用户，无需 Skill 开发者编写特定发送逻辑。
 
 ---
 

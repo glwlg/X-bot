@@ -1,8 +1,10 @@
 """
-Skill 路由器 - 两阶段路由，按需加载
+Skill 路由器 - 支持标准协议和旧版协议
 """
 import logging
-from typing import Any, Optional
+import json
+import re
+from typing import Any, Optional, Dict, Tuple
 
 from core.config import gemini_client, ROUTING_MODEL
 from .skill_loader import skill_loader
@@ -12,60 +14,67 @@ logger = logging.getLogger(__name__)
 
 class SkillRouter:
     """
-    两阶段 Skill 路由器
+    智能 Skill 路由器
     
-    Phase 1: 快速匹配 - 使用关键词 + 轻量 LLM 调用
-    Phase 2: 精确路由 - 加载匹配 Skill，提取参数
+    支持两种 Skill 类型：
+    1. 标准协议 (SKILL.md): 通过语义匹配 description
+    2. 旧版协议 (.py): 通过 triggers 关键词匹配
     """
     
     def __init__(self):
-        self._triggers_cache: Optional[list[dict]] = None
+        self._skills_cache: Optional[list[dict]] = None
     
-    def _get_triggers(self) -> list[dict]:
-        """获取触发词摘要（带缓存）"""
-        if self._triggers_cache is None:
-            self._triggers_cache = skill_loader.get_triggers_summary()
-        return self._triggers_cache
+    def _get_skills_summary(self) -> list[dict]:
+        """获取所有 Skill 摘要（带缓存）"""
+        if self._skills_cache is None:
+            self._skills_cache = skill_loader.get_skills_summary()
+        return self._skills_cache
     
     def invalidate_cache(self):
         """清除缓存（添加新 Skill 后调用）"""
-        self._triggers_cache = None
-        skill_loader.scan_skills()
+        self._skills_cache = None
+        skill_loader.reload_skills()
     
-    async def route(self, text: str) -> tuple[Optional[str], dict[str, Any]]:
+    async def route(self, text: str) -> Tuple[Optional[str], Dict[str, Any], str]:
         """
         路由用户消息到 Skill
         
         Returns:
-            (skill_name, params) 或 (None, {}) 表示无匹配
+            (skill_name, params, skill_type) 或 (None, {}, "") 表示无匹配
         """
         if not text:
-            return None, {}
+            return None, {}, ""
         
-        triggers = self._get_triggers()
+        skills = self._get_skills_summary()
         
-        if not triggers:
-            return None, {}
+        if not skills:
+            return None, {}, ""
         
-        # Phase 1: 快速匹配
-        # 构建轻量 prompt，只包含 name + triggers
-        skills_desc = "\n".join([
-            f"- {s['name']}: triggers={s['triggers']}"
-            for s in triggers
-        ])
+        # 构建路由 prompt
+        skills_desc = []
+        for s in skills:
+            if s.get("skill_type") == "legacy":
+                # 旧版 skill 显示 triggers
+                skills_desc.append(f"- {s['name']} [LEGACY]: triggers={s.get('triggers', [])}, desc={s.get('description', '')[:50]}")
+            else:
+                # 标准 skill 只显示 description
+                skills_desc.append(f"- {s['name']} [STANDARD]: {s.get('description', '')[:100]}")
+        
+        skills_str = "\n".join(skills_desc)
         
         routing_prompt = f'''用户消息: "{text}"
 
 可用 Skills:
-{skills_desc}
+{skills_str}
 
-任务: 判断用户消息匹配哪个 Skill。
+任务: 判断用户消息应该由哪个 Skill 处理。
 
 规则:
-1. 如果消息明确匹配某个 Skill 的触发词或意图，返回该 Skill
-2. 如果不匹配任何 Skill，返回 null
+1. [LEGACY] Skill: 如果消息包含该 Skill 的 triggers 关键词，优先匹配
+2. [STANDARD] Skill: 根据 description 语义判断是否匹配用户意图
+3. 如果不匹配任何 Skill，返回 null
 
-返回 JSON 格式: {{"skill": "skill_name"}} 或 {{"skill": null}}'''
+返回 JSON: {{"skill": "skill_name"}} 或 {{"skill": null}}'''
 
         try:
             response = gemini_client.models.generate_content(
@@ -76,14 +85,11 @@ class SkillRouter:
                 },
             )
             
-            import json
-            import re
-            
             text_response = response.text
             if not text_response:
-                return None, {}
+                return None, {}, ""
             
-            # 清理并解析
+            # 解析 JSON
             clean_text = re.sub(r"```json|```", "", text_response).strip()
             match = re.search(r"\{.*\}", clean_text, re.DOTALL)
             if match:
@@ -93,30 +99,43 @@ class SkillRouter:
             skill_name = result.get("skill")
             
             if not skill_name:
-                return None, {}
+                return None, {}, ""
             
-            # Phase 2: 加载 Skill 并提取参数
-            return await self._extract_params(skill_name, text)
+            # 获取 skill 信息
+            skill_info = skill_loader.get_skill(skill_name)
+            if not skill_info:
+                logger.warning(f"Routed to unknown skill: {skill_name}")
+                return None, {}, ""
+            
+            skill_type = skill_info.get("skill_type", "standard")
+            
+            # 对于旧版 skill，提取参数
+            if skill_type == "legacy":
+                params = await self._extract_legacy_params(skill_name, text, skill_info)
+                logger.info(f"Routed to legacy skill: {skill_name} with params: {params}")
+                return skill_name, params, "legacy"
+            else:
+                # 标准 skill 不需要预提取参数，由 SkillExecutor 处理
+                logger.info(f"Routed to standard skill: {skill_name}")
+                return skill_name, {}, "standard"
             
         except Exception as e:
             logger.error(f"Skill routing error: {e}")
-            return None, {}
+            return None, {}, ""
     
-    async def _extract_params(self, skill_name: str, text: str) -> tuple[str, dict[str, Any]]:
+    async def _extract_legacy_params(
+        self, 
+        skill_name: str, 
+        text: str, 
+        skill_info: dict
+    ) -> Dict[str, Any]:
         """
-        Phase 2: 加载 Skill 并提取参数
+        为旧版 Skill 提取参数
         """
-        module = skill_loader.load_skill(skill_name)
-        
-        if not module:
-            return None, {}
-        
-        meta = module.SKILL_META
-        params_schema = meta.get("params", {})
+        params_schema = skill_info.get("params", {})
         
         if not params_schema:
-            # 无参数 Skill
-            return skill_name, {}
+            return {}
         
         # 构建参数提取 prompt
         params_desc = "\n".join([
@@ -143,12 +162,9 @@ class SkillRouter:
                 },
             )
             
-            import json
-            import re
-            
             text_response = response.text
             if not text_response:
-                return skill_name, {}
+                return {}
             
             clean_text = re.sub(r"```json|```", "", text_response).strip()
             match = re.search(r"\{.*\}", clean_text, re.DOTALL)
@@ -158,14 +174,11 @@ class SkillRouter:
             params = json.loads(clean_text)
             
             # 过滤 null 值
-            params = {k: v for k, v in params.items() if v is not None}
-            
-            logger.info(f"Routed to skill: {skill_name} with params: {params}")
-            return skill_name, params
+            return {k: v for k, v in params.items() if v is not None}
             
         except Exception as e:
             logger.error(f"Param extraction error: {e}")
-            return skill_name, {}
+            return {}
 
 
 # 全局单例

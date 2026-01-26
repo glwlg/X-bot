@@ -113,41 +113,148 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await smart_edit_text(thinking_msg, "❌ 翻译服务出错。")
         return
 
-    # --- Skill Router (优先匹配用户自定义 Skill) ---
-    from core.skill_router import skill_router
-    from core.skill_loader import skill_loader
+    # --- Autonomic Routing ---
+    from core.autonomic_router import autonomic_router
+    from services.intent_router import UserIntent
+
+    # Routing decision
+    route_type, result, msg = await autonomic_router.route(user_message)
     
-    skill_name, skill_params = await skill_router.route(user_message)
-    
-    if skill_name:
-        logger.info(f"Skill Matched: {skill_name} | params={skill_params}")
+    if route_type == "skill_standard":
+        # Standard Protocol Skill (SKILL.md based)
+        skill_name = result["skill_name"]
+        logger.info(f"Autonomic Route -> Standard Skill: {skill_name}")
         
-        # 加载并执行 Skill
-        skill_module = skill_loader.load_skill(skill_name)
+        from services.skill_executor import skill_executor
+        
+        # Send initial message
+        thinking_msg = await smart_reply_text(update, f"📚 正在执行技能 **{skill_name}**...")
+        
+        # Execute with streaming updates
+        full_response = ""
+        async for chunk, output_files in skill_executor.execute_skill(skill_name, user_message):
+            full_response = chunk
+            try:
+                await smart_edit_text(thinking_msg, chunk)
+            except:
+                pass  # Ignore edit errors for rapid updates
+            
+            # Check for output files in the stream
+            if output_files:
+                for filename, content in output_files.items():
+                    # Send files to user
+                    import io
+                    file_obj = io.BytesIO(content)
+                    file_obj.name = filename
+                    await update.message.reply_document(document=file_obj, filename=filename)
+        
+        await increment_stat(user_id, "ai_chats")
+        return
+    
+    elif route_type == "skill_legacy":
+        # Legacy .py Skill
+        skill_name = result["skill_name"]
+        skill_params = result["params"]
+        logger.info(f"Autonomic Route -> Legacy Skill: {skill_name}")
+        
+        from core.skill_loader import skill_loader
+        skill_module = skill_loader.load_legacy_skill(skill_name)
         if skill_module and hasattr(skill_module, 'execute'):
             try:
                 await skill_module.execute(update, context, skill_params)
                 await increment_stat(user_id, "ai_chats")
                 return
             except Exception as e:
-                logger.error(f"Skill execution error: {e}")
+                logger.error(f"Legacy skill execution error: {e}")
                 await smart_reply_text(update, f"❌ Skill 执行失败：{e}")
                 return
-    
-    # --- Smart Intent Routing (Fallback to built-in intents) ---
-    # Save the user message to history immediately (important for context)
-    add_message(context, "user", user_message)
+        else:
+            # Skill loading failed, fallback to general chat
+            logger.warning(f"Failed to load legacy skill: {skill_name}, falling back to chat")
+            await smart_reply_text(update, f"⚠️ 技能 '{skill_name}' 加载失败，正在使用 AI 对话回复...")
+            intent = UserIntent.GENERAL_CHAT
+            params = {}
 
-    from services.intent_router import analyze_intent, UserIntent
-    
-    # Analyze intent
-    # We pass the user message. The router uses a fast model to determine intent.
-    intent_result = await analyze_intent(user_message)
-    intent = intent_result.get("intent")
-    params = intent_result.get("params", {})
-    
-    logger.info(f"Smart Routing: {intent} | params={params}")
+    elif route_type == "discovery_wait":
+        # Need discovery (Search & Install)
+        query = result.get("query")
+        thinking_msg = await smart_reply_text(update, f"🔍 正在探索是否有新技能可以处理此请求 (关键词: {query})...")
+        
+        async def status_callback(text):
+            await smart_edit_text(thinking_msg, text)
+            
+        success, skill_or_msg = await autonomic_router.perform_discovery_and_install(query, status_callback)
+        
+        if success:
+            new_skill_name = skill_or_msg
+            await smart_edit_text(thinking_msg, f"✅ 成功安装技能 '{new_skill_name}'，正在执行...")
+            
+            # Determine skill type directly to avoid routing race conditions
+            from core.skill_loader import skill_loader
+            skill_info = skill_loader.get_skill(new_skill_name)
+            
+            if not skill_info:
+                 await smart_edit_text(thinking_msg, "⚠️ 技能安装成功但加载失败 (Metadata invalid)，请重试。")
+                 return
+            
+            skill_type = skill_info.get("skill_type", "standard")
+            
+            if skill_type == "standard":
+                # Execute standard skill directly
+                from services.skill_executor import skill_executor
+                async for chunk, output_files in skill_executor.execute_skill(new_skill_name, user_message):
+                    try:
+                        await smart_edit_text(thinking_msg, chunk)
+                    except:
+                        pass
+                    
+                    if output_files:
+                        for filename, content in output_files.items():
+                            import io
+                            file_obj = io.BytesIO(content)
+                            file_obj.name = filename
+                            await update.message.reply_document(document=file_obj, filename=filename)
+                
+                await increment_stat(user_id, "ai_chats")
+                return
+                
+            elif skill_type == "legacy":
+                # For legacy skills, we still need to extract params
+                # We can try to use the router's helper or just fallback to routing if necessary
+                # But to be safe, let's try to extract since we know the skill
+                from core.skill_router import skill_router
+                params = await skill_router._extract_legacy_params(new_skill_name, user_message, skill_info)
+                
+                skill_module = skill_loader.load_legacy_skill(new_skill_name)
+                if skill_module:
+                    try:
+                        await skill_module.execute(update, context, params)
+                        await increment_stat(user_id, "ai_chats")
+                        return
+                    except Exception as e:
+                        await smart_edit_text(thinking_msg, f"❌ 新技能执行出错: {e}")
+                        return
+            
+            await smart_edit_text(thinking_msg, "⚠️ 技能安装成功但类型未知，请重试。")
+            return
+        else:
+            await smart_edit_text(thinking_msg, f"❌ 技能探索失败: {skill_or_msg}\n\n正在转接通用 AI 对话...")
+            # Fall through to general chat
+            intent = UserIntent.GENERAL_CHAT
+            params = {}
 
+    elif route_type == "intent":
+        intent = result.get("intent")
+        params = result.get("params", {})
+        logger.info(f"Autonomic Route -> Intent: {intent}")
+    
+    else:
+        # Fallback
+        intent = UserIntent.GENERAL_CHAT
+        params = {}
+
+    # --- Native Intent Handling ---
+    
     if intent == UserIntent.DOWNLOAD_VIDEO:
         # 尝试从 params 获取 URL，或者回退到 extract_urls
         target_url = params.get("url")
@@ -158,26 +265,12 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 target_url = found_urls[0]
         
         if target_url:
-            # await update.message.reply_text(f"🚀 识别到下载意图，正在处理链接：{target_url}")
             from .media_handlers import process_video_download
-            # Force non-audio-only (default) unless specified (could extend router to detect audio only)
-            # For now, default to video.
             await process_video_download(update, context, target_url, audio_only=False)
             return
         else:
-             # 如果意图是下载但没找到 URL，可能用户只说了"下载视频"但没给连接。
-             # 此时让其进入常规对话，或者由 Gemini 回复询问。
              pass
 
-    elif intent == UserIntent.GENERATE_IMAGE:
-        prompt = params.get("prompt")
-        if not prompt:
-            prompt = user_message # Fallback to full message
-            
-        # await update.message.reply_text(f"🎨 识别到画图意图，正在生成：{prompt}")
-        from image_generator import handle_image_generation
-        await handle_image_generation(update, context, prompt)
-        return
 
     elif intent == UserIntent.SET_REMINDER:
         time_str = params.get("time")
@@ -188,7 +281,6 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await process_remind(update, context, time_str, content)
             return
         else:
-             # Missing params, fallback to Chat or ask user
              pass
 
     elif intent == UserIntent.RSS_SUBSCRIBE:
@@ -210,7 +302,6 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         handled = await handle_browser_action(update, context, params)
         if handled:
             return
-        # 如果未处理（如 MCP 禁用），回退到普通对话
 
     elif intent == UserIntent.STOCK_WATCH:
         action = params.get("action", "add")

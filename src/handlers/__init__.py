@@ -3,8 +3,7 @@ from .admin_handlers import adduser_command, deluser_command
 from .base_handlers import check_permission, cancel
 from .media_handlers import (
     download_command, start_download_video, handle_download_format, 
-    handle_video_download, handle_video_actions, handle_large_file_action,
-    image_command, start_generate_image, handle_image_prompt
+    handle_video_download, handle_video_actions, handle_large_file_action
 )
 from .service_handlers import (
     stats_command, remind_command, handle_remind_input,

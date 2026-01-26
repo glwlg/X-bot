@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 class UserIntent(Enum):
     DOWNLOAD_VIDEO = "download_video"
-    GENERATE_IMAGE = "generate_image"
     BROWSER_ACTION = "browser_action"  # 截图、网页操作等
     SET_REMINDER = "set_reminder"
     RSS_SUBSCRIBE = "rss_subscribe"
@@ -39,8 +38,8 @@ async def analyze_intent(text: str) -> Dict[str, Any]:
             "## 1. X-Bot Capabilities (For Context Only)\n"
             "X-Bot can do many things. Some map to specific intents, others fall back to general chat.\n"
             "- **Video/Audio Download**: `download_video`\n"
-            "- **AI Image Generation**: `generate_image`\n"
-            "- **Browser Actions (Screenshot)**: `browser_action`\n"
+            "- **Video/Audio Download**: `download_video`\n"
+            "- **Browser Actions (Screenshot)**: `browser_action`\n"            "- **Browser Actions (Screenshot)**: `browser_action`\n"
             "- **Reminders**: `set_reminder`\n"
             "- **RSS Subscription**: `rss_subscribe`\n"
             "- **Keyword Monitor**: `monitor_keyword`\n"
@@ -55,11 +54,7 @@ async def analyze_intent(text: str) -> Dict[str, Any]:
             "Params: `url` (valid URL)\n"
             "Example: '下载这个 https://...' -> { 'intent': 'download_video', 'params': { 'url': '...' } }\n\n"
 
-            "### B. generate_image\n"
-            "Trigger: User wants to draw/generate an image.\n"
-            "Keywords: draw, generate image, 画, 生成图片.\n"
-            "Params: `prompt` (description)\n"
-            "Example: '画一只猫' -> { 'intent': 'generate_image', 'params': { 'prompt': '一只猫' } }\n\n"
+            "Example: '下载这个 https://...' -> { 'intent': 'download_video', 'params': { 'url': '...' } }\n\n"
 
             "### C. browser_action\n"
             "Trigger: User wants to screenshot or interact with a webpage.\n"

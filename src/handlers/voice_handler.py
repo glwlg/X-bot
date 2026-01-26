@@ -302,12 +302,6 @@ async def process_as_text_message(
             await process_video_download(update, context, target_url, audio_only=False)
             return
     
-    elif intent == UserIntent.GENERATE_IMAGE:
-        prompt = params.get("prompt") or text
-        await smart_edit_text(thinking_msg, f"🎨 识别到画图意图，正在生成...")
-        from image_generator import handle_image_generation
-        await handle_image_generation(update, context, prompt)
-        return
     
     elif intent == UserIntent.SET_REMINDER:
         time_str = params.get("time")
