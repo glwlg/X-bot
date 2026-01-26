@@ -208,6 +208,17 @@ class AgentOrchestrator:
                     
                     return "\n".join(result_lines)
 
+                elif name == "refresh_rss":
+                    from handlers.subscription_handlers import refresh_user_subscriptions
+                    # Since refresh_user_subscriptions is an async handler that takes update and context,
+                    # and returns a string message (because we designed it that way in last step).
+                    # We can call it directly.
+                    from handlers.subscription_handlers import refresh_user_subscriptions
+                    # The handler sends the actual digest messages to the user.
+                    # It returns a system hint string for the Agent to generate a final confirmation.
+                    return await refresh_user_subscriptions(update, context)
+
+
                 # Memory Tools
                 elif memory_server:
                      # Dispatch undefined tools to memory server if available

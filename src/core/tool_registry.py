@@ -101,6 +101,14 @@ class ToolRegistry:
                     required=["type"]
                 )
             ),
+            types.FunctionDeclaration(
+                name="refresh_rss",
+                description="Manually checks for new updates from all subscribed RSS feeds immediately.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={}, 
+                )
+            ),
         ]
 
     def _get_skill_tool(self) -> types.FunctionDeclaration:

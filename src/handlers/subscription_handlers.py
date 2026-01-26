@@ -255,3 +255,23 @@ async def list_subs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     msg += "发送 `/unsubscribe <链接>` 可取消订阅。"
     
     await smart_reply_text(update, msg)
+
+
+async def refresh_user_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    """
+    [Tool] 手动刷新当前用户的订阅
+    """
+    user_id = update.effective_user.id
+    
+    # 防止频繁调用 (简单防刷，这里可选)
+    # 比如检查 timer
+    
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    
+    from core.scheduler import trigger_manual_rss_check
+    result_text = await trigger_manual_rss_check(context, user_id)
+    
+    if result_text:
+        return result_text
+    else:
+        return "✅ 检查完成，您订阅的内容暂时没有更新。"

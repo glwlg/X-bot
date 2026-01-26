@@ -132,7 +132,6 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
              return
     
     # 2. 检查当前消息中是否有 URL (混合文本情况)
-    # 如果 extra_context 为空，且 urls 不为空，说明可能是 "Look at this https://..."
     if not extra_context and urls:
         status_msg = await smart_reply_text(update, "📄 正在获取网页内容...")
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
@@ -158,7 +157,6 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         thinking_msg = await smart_reply_text(update, "🤔 正在分析引用内容...")
     
     # 3. 构建消息上下文 (History)
-    # 将网页上下文合并到用户消息中
     final_user_message = user_message
     if extra_context:
         final_user_message = extra_context + "用户请求：" + user_message
@@ -166,12 +164,69 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # 发送"正在输入"状态
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
 
+    import asyncio
+    import random
+
+    # 动态加载词库
+    LOADING_PHRASES = [
+        "🤖 正在调用赛博算力...",
+        "💭 让我好好想一想...",
+        "🛁 正在清洗数据管道...",
+        "📡 正在连接火星通讯...",
+        "🍪 正在给 AI 喂饼干...",
+        "🐌 这里有点堵车，稍等...",
+        "📚 正在翻阅百科全书...",
+        "🔨 正在敲代码实现你的需求...",
+        "🌌 正在穿越虫洞寻找答案...",
+        "🧹 正在打扫内存碎片...",
+        "🔌 正在检查网线有没有松...",
+        "🎨 正在绘制思维导图...",
+        "🍕 正在吃口披萨补充能量...",
+        "🧘 正在进行数字冥想...",
+        "🏃 正在全力冲刺..."
+    ]
+
+    # 共享状态
+    state = {
+        "last_update_time": time.time(),
+        "final_text": "",
+        "running": True
+    }
+
+    async def loading_animation():
+        """
+        后台动画任务：每隔几秒检查是否有新内容。
+        如果卡住了（比如在调用 Tools），通过修改消息来“卖萌”。
+        """
+        while state["running"]:
+            await asyncio.sleep(4) # Check every 4s
+            if not state["running"]:
+                break
+                
+            now = time.time()
+            # 如果超过 5 秒没有更新文本（说明卡在 Tool 或者生成慢）
+            if now - state["last_update_time"] > 5:
+                phrase = random.choice(LOADING_PHRASES)
+                
+                # 如果已经有一部分文本了，附在后面；如果是空的，直接显示
+                display_text = state["final_text"]
+                if display_text:
+                    display_text += f"\n\n⏳ {phrase}"
+                else:
+                    display_text = phrase
+                
+                try:
+                    await smart_edit_text(thinking_msg, display_text)
+                except Exception as e:
+                    logger.debug(f"Animation edit failed: {e}")
+                
+                # Update time to avoid spamming edits (waiting another cycle)
+                state["last_update_time"] = time.time()
+
+    # 启动动画任务
+    animation_task = asyncio.create_task(loading_animation())
+
     try:
-        # A. 带媒体的请求 (Gemini Vision) - 暂时不走 Agent Loop (Vision model function calling support is limited/tricky)
-        # 或者我们把 Vision 也做成 Agent 的输入？
-        # 目前 Gemini 2.0 Flash 支持多模态 + Tools。
-        # 让我们尝试把 Media 放入 history 传给 Agent！
-        
         message_history = []
         
         # 构建当前消息
@@ -198,19 +253,26 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         
         # B. 调用 Agent Orchestrator
         final_text_response = ""
-        last_update_time = 0
+        last_stream_update = 0
         
         async for chunk_text in agent_orchestrator.handle_message(update, context, message_history):
             final_text_response += chunk_text
+            state["final_text"] = final_text_response
+            state["last_update_time"] = time.time()
             
-            # Update UI
+            # Update UI (Standard Stream)
             now = time.time()
-            if now - last_update_time > 0.8:
+            if now - last_stream_update > 1.0: # Reduce frequency slightly
                 await smart_edit_text(thinking_msg, final_text_response)
-                last_update_time = now
+                last_stream_update = now
+        
+        # 停止动画
+        state["running"] = False
+        animation_task.cancel() # Ensure it stops immediately
 
         # 5. 发送最终回复并入库
         if final_text_response:
+            # 确保最终文本被渲染
             sent_msg = await smart_edit_text(thinking_msg, final_text_response)
             
             # 记录模型回复到上下文
@@ -228,6 +290,8 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             await smart_edit_text(thinking_msg, "抱歉，我无法生成回复 (无输出)。")
 
     except Exception as e:
+        state["running"] = False
+        animation_task.cancel()
         logger.error(f"Agent error: {e}", exc_info=True)
         await smart_edit_text(thinking_msg,
             f"❌ Agent 运行出错：{e}\n\n请尝试 /new 重置对话。"
