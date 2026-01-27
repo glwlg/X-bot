@@ -121,6 +121,8 @@ class AgentOrchestrator:
                                 file_obj.name = filename
                                 await update.message.reply_document(document=file_obj, filename=filename)
                     
+                    if not full_output.strip():
+                        return None
                     return f"Skill Execution Output:\n{full_output}"
 
                 elif name == "search_skill":

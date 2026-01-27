@@ -61,13 +61,13 @@ class DockerDeploymentService:
                 return False, "❌ 未找到 docker-compose.yml, Dockerfile 或 README.md，无法自动部署。"
 
             # 3. Generate Plan via AI
-            if update_callback: await update_callback("🤖 AI 正在生成部署计划...")
+            if update_callback: await update_callback("🤖 正在生成部署计划...")
             
             # Additional prompt instructions could be added here if needed, 
             # but we rely on conflict handling below.
             plan = await self._generate_plan(repo_name, context, working_dir=config_dir)
             if not plan:
-                return False, "❌ AI 无法生成有效的部署计划。"
+                return False, "❌ 无法生成有效的部署计划。"
                 
             logger.info(f"Deployment Plan for {repo_name}: {plan}")
 

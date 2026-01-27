@@ -10,37 +10,21 @@ logger = logging.getLogger(__name__)
 
 class SkillRegistryService:
     """
-    Service to interact with the specialized skill registry using `npx ctx7 skills`.
+    Service to interact with the skill registry using `npx skills`.
     """
     
     def __init__(self):
-        # We'll valid if npx is available
-        self.cmd_prefix = ["npx", "-y", "ctx7", "skills"]
-        # Install skills to a temporary location first or directly to skills/external?
-        # The tool prompts for location. We need to control this.
-        # Based on help, `install` takes options. Let's check if we can suppress prompt.
-        # If not, we might need a wrapper or assume we can't fully automate without user interaction in CLI?
-        # But for the bot, we need non-interactive.
-        # We will assume "yes" to prompts if possible or ignore if it fails silently?
-        # Actually, `npx -y` handles the npx part. `ctx7 skills install` might have flags.
-        # The user test showed it asks for path.
-        pass
+        self.cmd_prefix = ["npx", "-y", "skills"]
 
     async def search_skills(self, query: str) -> List[Dict[str, Any]]:
         """
         Search for skills in the registry.
-        Returns a list of skill info dicts.
         """
         if not query:
             return []
             
         try:
-            # Run search command
-            # Use --json if available? The help didn't show it, but let's try to parse text.
-            # Output format:
-            # ◯ skill_name  (repo)  Description...
-            
-            cmd = self.cmd_prefix + ["search", query]
+            cmd = self.cmd_prefix + ["find", query]
             
             process = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -63,98 +47,79 @@ class SkillRegistryService:
 
     def _parse_search_output(self, output: str) -> List[Dict[str, Any]]:
         """
-        Parse the CLI output from `ctx7 skills search`.
+        Parse output from `npx skills find`.
+        Expected format:
+        owner/repo@skill-name
+        └ https://skills.sh/...
         """
         skills = []
         import re
         
-        # Step 1: Strip ANSI escape codes
+        # Strip ANSI
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
         output = ansi_escape.sub('', output)
         
-        # Step 2: Remove all non-ASCII characters (bullets, special symbols)
-        # Keep only printable ASCII + common punctuation
-        clean_output = ""
-        for char in output:
-            if 32 <= ord(char) <= 126 or char in '\n\r\t':
-                clean_output += char
-            else:
-                clean_output += " "  # Replace with space
+        lines = output.splitlines()
         
-        # Step 3: Parse lines
-        # After cleaning, lines should look like:
-        #   weather                   (/steipete/clawdis) Get current weather...
-        # Pattern: skill_name followed by (repo) followed by description
-        
-        pattern = re.compile(r'^\s*([\w][\w-]*)\s+\((/[^)]+)\)\s*(.*)')
-        
-        lines = clean_output.splitlines()
         for line in lines:
             line = line.strip()
-            if not line:
+            if not line or line.startswith('└') or line.startswith('http'):
                 continue
             
-            # Skip obvious non-skill lines
-            skip_keywords = ['select', 'navigate', 'searching', 'found', 'install', 
-                            'submit', 'space', 'invert', 'cancelled']
-            if any(kw in line.lower() for kw in skip_keywords):
-                continue
-            if line.startswith('?') or line.startswith('-'):
+            # Skip help message
+            if "npx skills add" in line:
                 continue
                 
-            match = pattern.match(line)
-            if match:
-                name = match.group(1).strip()
-                repo = match.group(2).strip()
-                desc = match.group(3).strip()
-                
-                # Filter out obvious headers or bad matches
-                if name.lower() in ["loading", "searching", "found", "select", "install"]:
-                    continue
-
-                skills.append({
-                    "name": name,
-                    "repo": repo,
-                    "description": desc,
-                    "install_args": [repo, name]
-                })
-                
-                logger.debug(f"Parsed skill: name={name}, repo={repo}")
+            # Assume line is an ID: owner/repo@skill or similar
+            # Example: ypares/agent-skills@searxng-search
+            if '@' in line and '/' in line:
+                parts = line.split('@')
+                if len(parts) >= 2:
+                    repo_full = parts[0] # owner/repo
+                    skill_name = parts[1] # skill-name
+                    
+                    skills.append({
+                        "name": skill_name,
+                        "repo": repo_full,
+                        # Description isn't provided in the list view of npx skills find currently
+                        # We use a placeholder
+                        "description": f"Skill from {repo_full} (Description not available in preview)",
+                        "install_args": [repo_full, skill_name]
+                    })
         
-        logger.info(f"Parsed {len(skills)} skills from search output")
         return skills
 
     async def install_skill(self, repo: str, skill_name: str) -> bool:
         """
-        Install a skill from the registry.
+        Install a skill using `npx skills add`.
+        Constructs ID as repo@skill_name.
         """
         try:
-            # We want to install to skills/external (learned)
-            # Use --antigravity flag to force install to .agent/skills (relative to CWD)
+            # ID format: owner/repo@skill
+            skill_id = f"{repo}@{skill_name}"
             
             # Target dir for our bot
             target_dir = os.path.abspath("skills/learned") 
             if not os.path.exists(target_dir):
                 os.makedirs(target_dir, exist_ok=True)
 
-            cmd = self.cmd_prefix + ["install", repo, skill_name, "--antigravity"]
-            
-            # Note: Even with the flag, it might prompt for confirmation if the file implies overwriting?
-            # Or if it detects multiple agents. But --antigravity should target specifically.
+            cmd = self.cmd_prefix + ["add", skill_id]
             
             logger.info(f"Running install command: {' '.join(cmd)}")
             
+            # npx skills add might prompt or just install. 
+            # We assume it installs to .agent/skills or similar relative path.
+            
             process = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdin=asyncio.subprocess.PIPE,
+                stdin=asyncio.subprocess.PIPE, 
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=os.getcwd() # Run in root
+                cwd=os.getcwd()
             )
             
-            # Send 'y\n' just in case it asks to initiate/confirm
+            # Send 'y\n' (yes) just in case it asks to initiate/confirm
             try:
-                # Wait for longer time as network might be slow
                 stdout, stderr = await asyncio.wait_for(process.communicate(input=b"y\n"), timeout=120)
             except asyncio.TimeoutError:
                 process.kill()
@@ -162,26 +127,29 @@ class SkillRegistryService:
                 return False
 
             if process.returncode != 0:
-                logger.error(f"Skill install failed code={process.returncode}: {stderr.decode()} | OUT: {stdout.decode()}")
+                logger.error(f"Skill install failed: {stderr.decode()} | OUT: {stdout.decode()}")
                 return False
             
             logger.info(f"Install stdout: {stdout.decode()}")
             
-            # Check where it went: .agent/skills
-            source_dir = os.path.join(os.getcwd(), ".agent", "skills")
+            # Post-install: Locate and move
+            # Check likely locations
+            # 1. .agent/skills/<skill_name>
+            # 2. <skill_name> in root
+            source_patterns = [
+                os.path.join(os.getcwd(), ".agent", "skills", f"{skill_name}.py"),
+                os.path.join(os.getcwd(), ".agent", "skills", skill_name),
+                os.path.join(os.getcwd(), f"{skill_name}.py"),
+                os.path.join(os.getcwd(), skill_name)
+            ]
+            
             installed_path = None
-            
-            # It could be a file or a folder
-            potential_file = os.path.join(source_dir, f"{skill_name}.py")
-            potential_dir = os.path.join(source_dir, skill_name)
-            
-            if os.path.exists(potential_file):
-                installed_path = potential_file
-            elif os.path.exists(potential_dir):
-                installed_path = potential_dir
+            for p in source_patterns:
+                if os.path.exists(p):
+                    installed_path = p
+                    break
             
             if installed_path:
-                # Move to skills/learned
                 dest_path = os.path.join(target_dir, os.path.basename(installed_path))
                 if os.path.exists(dest_path):
                      if os.path.isdir(dest_path):
@@ -190,10 +158,12 @@ class SkillRegistryService:
                          os.remove(dest_path)
                 
                 shutil.move(installed_path, dest_path)
-                logger.info(f"Moved installed skill from {installed_path} to {dest_path}")
+                logger.info(f"Moved installed skill to {dest_path}")
                 return True
             else:
-                logger.error(f"Could not find installed skill file in {source_dir}")
+                logger.warning(f"Install successful but could not locate file to move from {source_patterns}")
+                # If we assume success based on exit code 0, we return True, 
+                # but better to return False if we can't manage the file, unless it installed in-place in skills/learned (unlikely).
                 return False
 
         except Exception as e:

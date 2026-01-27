@@ -93,7 +93,11 @@ async def execute(update, context, params):
             progress_callback=agent_progress_callback
         )
         
-        # Final result as new message
+        # Final result
+        # If silent=True (called by Manager), just return result string and skip user notification
+        if params.get("silent", False):
+            return result
+            
         final_msg = f"✅ 部署成功!\n\n{result}" if success else f"❌ Deploy Failed:\n{result}"
         await smart_reply_text(update, final_msg)
         return "Deployment finished."
@@ -103,9 +107,11 @@ async def execute(update, context, params):
         if not command:
             return "❌ Missing parameter: 'command' is required."
         
-        # Security check: Only allow docker commands
-        if not command.strip().startswith("docker"):
-            return "❌ Only 'docker' commands are allowed."
+        # Security check: Allow specific safe commands
+        cmd_start = command.strip().split()[0]
+        allowed_cmds = ["docker", "curl", "netstat", "ss", "grep", "cat", "ls", "pwd", "sed", "awk"]
+        if cmd_start not in allowed_cmds:
+            return f"❌ Security Restriction: Command '{cmd_start}' is not allowed. Allowed: {', '.join(allowed_cmds)}"
             
         import asyncio
         try:

@@ -63,6 +63,11 @@ X-Bot 已完成从"规则路由"到"智能体核心"的进化。现在，所有�
     *   **Agent Engine**：封装了 Gemini API 的 Function Calling 逻辑。
     *   **流式响应**：支持工具调用的实时流式反馈。
 
+4.  **Smart Deployment Manager (`skills/builtin/deployment_manager.py`)**
+    *   **Autonomous Agent**: 独立的 ReAct 智能体，专用于 Docker 部署。
+    *   **Policy Enforcer**: 强制执行端口 (>20000) 和配置规范。
+    *   **Silence Execution**: 具备自主思考能力，仅汇报最终结果。
+
 ---
 
 ## 2. 核心模块说明
