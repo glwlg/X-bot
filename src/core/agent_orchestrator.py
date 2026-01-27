@@ -100,6 +100,11 @@ class AgentOrchestrator:
                 elif name == "call_skill":
                     from services.skill_executor import skill_executor
                     
+                    # Notify user about skill invocation (ephemeral, not saved)
+                    skill_name = args["skill_name"]
+                    instruction_preview = args["instruction"][:50] + "..." if len(args["instruction"]) > 50 else args["instruction"]
+                    await update.message.reply_text(f"🔧 正在调用技能: `{skill_name}`\n📝 指令: {instruction_preview}", parse_mode="Markdown")
+                    
                     full_output = ""
                     # Pass update and context for legacy skills
                     async for chunk, files in skill_executor.execute_skill(
@@ -118,25 +123,37 @@ class AgentOrchestrator:
                     
                     return f"Skill Execution Output:\n{full_output}"
 
-                elif name == "search_and_install_skill":
+                elif name == "search_skill":
                     from services.skill_registry_service import skill_registry
-                    from core.skill_loader import skill_loader
                     
-                    status_msg = await update.message.reply_text(f"🔍 Searching for skill: {args['query']}...")
+                    status_msg = await update.message.reply_text(f"🔍 Searching for skills: '{args['query']}'...")
                     skills = await skill_registry.search_skills(args["query"])
                     
                     if not skills:
-                        return "Error: No matching skills found in marketplace."
-                        
-                    best_match = skills[0]
-                    await context.bot.edit_message_text(f"⬇️ Installing: {best_match['name']}...", chat_id=update.effective_chat.id, message_id=status_msg.message_id)
+                        return "No matching skills found."
                     
-                    success = await skill_registry.install_skill(best_match['repo'], best_match['name'])
+                    results = []
+                    for i, s in enumerate(skills[:3]):
+                        results.append(f"{i+1}. **{s['name']}** (`{s['repo']}`)\n   {s['description'][:200]}...")
+                    
+                    response_text = "Found the following skills:\n\n" + "\n\n".join(results) + "\n\nTo install, reply: `Install <Skill Name>` or I can call `install_skill` if you confirm."
+                    return response_text
+
+                elif name == "install_skill":
+                    from services.skill_registry_service import skill_registry
+                    from core.skill_loader import skill_loader
+                    
+                    skill_name = args["skill_name"]
+                    repo_name = args["repo_name"]
+                    
+                    status_msg = await update.message.reply_text(f"⬇️ Installing skill: {skill_name} from {repo_name}...")
+                    
+                    success = await skill_registry.install_skill(repo_name, skill_name)
                     if success:
                         skill_loader.scan_skills()
-                        return f"Success: Installed skill '{best_match['name']}'. You can now call it using `call_skill`."
+                        return f"Success: Installed skill '{skill_name}'. It is now ready to use."
                     else:
-                        return "Error: Installation failed."
+                        return f"Error: Failed to install skill '{skill_name}'."
 
                 elif name == "list_subscriptions":
                     from repositories.subscription_repo import get_user_subscriptions

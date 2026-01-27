@@ -59,24 +59,45 @@ async def deploy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             pass
 
-    # Better implementation of progress_callback with state
-    log_buffer = ["...日志开始..."]
+    # Pagination Log Strategy
+    current_log_lines = []
     
     async def progress_callback_impl(chunk: str):
-        nonlocal log_message
+        nonlocal log_message, current_log_lines
         try:
-            # Add new lines to buffer
+            # Append new lines
             lines = chunk.splitlines()
-            log_buffer.extend(lines)
+            current_log_lines.extend(lines)
             
-            # Keep last 30 lines to fit in message (approx 2000 chars)
-            display_lines = log_buffer[-30:]
-            display_text = "📋 **执行日志:**\n\n<pre>" + "\n".join(display_lines) + "</pre>"
+            # Construct content
+            # Keep only the last 30 lines for the ACTIVE log message to simulate scrolling
+            # Trying to keep the full history in one message is what causes "message too long" or weird edits.
+            # If the user wants full history, we should send it as a file at the end.
+            # But the requirement is "full execution history in chat".
+            # So calls to edit must be careful.
+            
+            display_lines = current_log_lines
+            
+            # If total lines > 80, we split to a new message to avoid hitting limits
+            if len(current_log_lines) > 60:
+                # 1. Archive current message
+                if log_message:
+                     pass # Leave it as is
+                
+                # 2. Start new message with the overflow
+                log_message = await smart_reply_text(update, "📋 **接上页日志...**")
+                current_log_lines = [] # Reset buffer for new message
+                display_lines = lines # New lines go to new message
+
+            # Construct display text
+            content_str = "\n".join(display_lines)
+            display_text = f"📋 **执行日志:**\n\n```\n{content_str}\n```"
             
             if not log_message:
                 log_message = await smart_reply_text(update, display_text)
             else:
                 await smart_edit_text(log_message, display_text)
+                
         except Exception:
              pass
 

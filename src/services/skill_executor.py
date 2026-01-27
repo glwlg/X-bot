@@ -90,6 +90,7 @@ class SkillExecutor:
         user_request: str,
         extra_context: str = "",
         input_files: Dict[str, bytes] = None,
+        **kwargs
     ) -> AsyncGenerator[Tuple[str, Optional[Dict[str, bytes]]], None]:
         """
         执行标准 Skill
@@ -256,11 +257,18 @@ class SkillExecutor:
                         }
                     )
                     import json
-                    params = json.loads(response.text)
+                    response_text = response.text.strip() if response.text else ""
+                    if response_text:
+                        params = json.loads(response_text)
+                    else:
+                        logger.warning("AI returned empty response for param extraction")
+                        params = {"instruction": user_request}
                     yield f"✅ 解析参数: {params}", None
                 except Exception as e:
                     logger.error(f"Param extraction failed: {e}")
-                    yield f"⚠️ 参数解析失败，尝试直接执行.", None
+                    # Fallback: pass the raw instruction as a param
+                    params = {"instruction": user_request}
+                    yield f"⚠️ 参数解析失败，使用原始指令继续执行.", None
             
             yield f"⚙️ 正在执行 {skill_name}...", None
             

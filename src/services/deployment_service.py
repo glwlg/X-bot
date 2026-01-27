@@ -7,7 +7,7 @@ import tempfile
 from typing import Tuple, List, Optional
 from pathlib import Path
 
-from core.config import gemini_client, GEMINI_MODEL, DOWNLOAD_DIR
+from core.config import gemini_client, GEMINI_MODEL, DOWNLOAD_DIR, DATA_DIR
 from google.genai import types
 
 logger = logging.getLogger(__name__)
@@ -18,7 +18,9 @@ class DockerDeploymentService:
     """
     
     def __init__(self):
-        self.work_base = Path(DOWNLOAD_DIR) / "deployment_staging"
+        # Use absolute path that matches Host path to ensure volume mounting works
+        # User confirmed: /DATA/x-box/data/deployment_staging is mapped to same path inside container
+        self.work_base = Path("/DATA/x-box/data/deployment_staging")
         self.work_base.mkdir(parents=True, exist_ok=True)
 
     async def deploy_repository(self, repo_url: str, update_callback=None, progress_callback=None) -> Tuple[bool, str]:
@@ -68,6 +70,12 @@ class DockerDeploymentService:
                 return False, "❌ AI 无法生成有效的部署计划。"
                 
             logger.info(f"Deployment Plan for {repo_name}: {plan}")
+
+            # 3.5 Patch Volumes for Docker-in-Docker (or Socket binding)
+            # The user specified `/DATA/x-box/data` as a mount base.
+            # We assume the internal `/app` maps to `/DATA/x-box` on host.
+            if update_callback: await update_callback("🔧 正在修正 Docker 挂载路径...")
+            self._patch_volumes_for_host(config_dir, repo_name)
 
             # 4. Execute Deployment with Retry for Port Conflicts
             if update_callback: await update_callback(f"🚀 开始执行部署命令...\nCommands:\n" + "\n".join(plan['commands']))
@@ -141,16 +149,52 @@ class DockerDeploymentService:
             return False
 
     def _find_free_port(self) -> int:
-        """Find a free port on the host (randomly selected from 10000-60000)."""
-        import random, socket
-        while True:
-            port = random.randint(10000, 60000)
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            # Check if port is in use
-            result = sock.connect_ex(('127.0.0.1', port))
-            sock.close()
-            if result != 0: # 0 means connected (open), so != 0 means closed (free)
-                return port
+        """
+        Find a free port on the HOST using netstat/ss.
+        Range: 20000-60000 (User requirement).
+        """
+        import random
+        import subprocess
+        
+        # 1. Get all used ports via netstat or ss
+        used_ports = set()
+        try:
+            # Try netstat first (available via net-tools)
+            # -t (tcp) -u (udp) -l (listening) -n (numeric)
+            cmd = "netstat -tuln"
+            result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            output = result.stdout
+            
+            if result.returncode != 0:
+                 # Fallback to ss (iproute2)
+                 cmd = "ss -tuln"
+                 result = subprocess.run(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                 output = result.stdout
+
+            # Parse output
+            # Example: tcp        0      0 0.0.0.0:8080            0.0.0.0:*               LISTEN
+            for line in output.splitlines():
+                parts = line.split()
+                if len(parts) > 3:
+                     # address is usually 4th col (index 3)
+                     addr = parts[3]
+                     if ":" in addr:
+                         port_str = addr.split(":")[-1]
+                         if port_str.isdigit():
+                             used_ports.add(int(port_str))
+        except Exception as e:
+            logger.error(f"Failed to check ports via netstat: {e}")
+            # Fallback to empty set, rely on try/bind check below
+            pass
+
+        # 2. Find a random free port in range
+        for _ in range(100):
+            port = random.randint(20000, 60000)
+            if port not in used_ports:
+                 return port
+                 
+        # If crowded, just return a random one
+        return random.randint(20000, 60000)
     
     def _patch_docker_compose_port(self, config_dir: Path, old_port: str, new_port: str) -> bool:
         """Replace host port in docker-compose.yml."""
@@ -190,7 +234,90 @@ class DockerDeploymentService:
         except Exception as e:
             logger.error(f"Failed to patch docker-compose: {e}")
             return False
-
+    def _patch_volumes_for_host(self, config_dir: Path, repo_name: str) -> bool:
+        """
+        Patch docker-compose.yml to use absolute HOST paths for volumes.
+        Assumes internal `/app` maps to host `/DATA/x-box`.
+        """
+        try:
+            candidates = ["docker-compose.yml", "docker-compose.yaml"]
+            target = None
+            for fname in candidates:
+                if (config_dir / fname).exists():
+                    target = config_dir / fname
+                    break
+            
+            if not target: return False
+            
+            content = target.read_text(encoding="utf-8")
+            
+            # Determine Host Path
+            # Internal: /DATA/x-box/data/deployment_staging/...
+            # Host:     /DATA/x-box/data/deployment_staging/... (Identity Mapping)
+            
+            internal_path = str(config_dir.resolve())
+            host_base = internal_path
+                
+            logger.info(f"Patching volumes. Internal: {internal_path} -> Host: {host_base}")
+            
+            import yaml
+            try:
+                data = yaml.safe_load(content)
+            except:
+                return False
+                
+            if not data or "services" not in data:
+                return False
+                
+            modified = False
+            for svc_name, svc in data["services"].items():
+                if "volumes" in svc:
+                    new_volumes = []
+                    for vol in svc["volumes"]:
+                        if isinstance(vol, str):
+                            parts = vol.split(":")
+                            if len(parts) >= 2:
+                                host_part = parts[0]
+                                container_part = parts[1]
+                                options = parts[2] if len(parts) > 2 else ""
+                                
+                                # Check if it's a relative path
+                                if host_part.startswith(".") or not host_part.startswith("/"):
+                                    # Convert to absolute path on HOST
+                                    # ./caddy -> host_base/caddy
+                                    # Normalize ./
+                                    if host_part.startswith("./"):
+                                        clean_host_part = host_part[2:]
+                                    else:
+                                        clean_host_part = host_part
+                                        
+                                    abs_host_path = f"{host_base}/{clean_host_part}"
+                                    # Reconstruct
+                                    new_vol = f"{abs_host_path}:{container_part}"
+                                    if options:
+                                        new_vol += f":{options}"
+                                    new_volumes.append(new_vol)
+                                    modified = True
+                                else:
+                                    new_volumes.append(vol) # Keep absolute or named volumes
+                            else:
+                                new_volumes.append(vol)
+                        else:
+                            # Long syntax (dict) is harder to patch simply, stick to strings for now
+                            new_volumes.append(vol)
+                    
+                    if modified:
+                        svc["volumes"] = new_volumes
+            
+            if modified:
+                with open(target, "w", encoding="utf-8") as f:
+                    yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+                return True
+                
+            return False
+        except Exception as e:
+            logger.error(f"Failed to patch volumes: {e}")
+            return False
 
 
     def _analyze_context(self, local_path: Path) -> Tuple[str, Optional[Path]]:
@@ -269,6 +396,12 @@ Output a JSON object ONLY, with this structure:
   "commands": ["command1", "command2"],
   "main_service_name": "name of the main service in docker-compose or container name",
   "reasoning": "explanation"
+6. **PORT ALLOCATION**:
+   - The user requires using high ports **(20000-60000)** for all exposed services to avoid conflicts.
+   - If the `docker-compose.yml` uses common ports (80, 443, 8080, 3000, 5000, etc.), you **MUST** map them to a high port on the host.
+   - Example rule: `"8080:80"` -> Change to `"20080:80"` (or similar).
+   - Example rule: `"5000:5000"` -> Change to `"25000:5000"`.
+   - **Reasoning**: Explain which ports you remapped.
 }}
 
 Rules:

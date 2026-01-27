@@ -25,7 +25,7 @@ class ToolRegistry:
         tools.append(self._get_skill_tool())
         
         # 3. Discovery Tool
-        tools.append(self._get_discovery_tool())
+        tools.extend(self._get_discovery_tools())
         
         return tools
 
@@ -140,17 +140,33 @@ class ToolRegistry:
             )
         )
 
-    def _get_discovery_tool(self) -> types.FunctionDeclaration:
-        return types.FunctionDeclaration(
-            name="search_and_install_skill",
-            description="Search and install a new skill/tool from the marketplace when the user asks for a capability NOT currently supported.",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "query": types.Schema(type=types.Type.STRING, description="Search query for the needed functionality"),
-                },
-                required=["query"]
+
+
+    def _get_discovery_tools(self) -> List[types.FunctionDeclaration]:
+        return [
+            types.FunctionDeclaration(
+                name="search_skill",
+                description="Search for a skill/tool in the marketplace when you lack a capability. Returns a list of candidates. DO NOT install automatically.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "query": types.Schema(type=types.Type.STRING, description="Search query"),
+                    },
+                    required=["query"]
+                )
+            ),
+            types.FunctionDeclaration(
+                name="install_skill",
+                description="Install a specific skill. ONLY call this if the user has explicitly confirmed.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "repo_name": types.Schema(type=types.Type.STRING, description="The repository name (e.g. 'owner/repo')"),
+                        "skill_name": types.Schema(type=types.Type.STRING, description="The skill name"),
+                    },
+                    required=["repo_name", "skill_name"]
+                )
             )
-        )
+        ]
 
 tool_registry = ToolRegistry()

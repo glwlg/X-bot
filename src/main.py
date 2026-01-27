@@ -199,7 +199,9 @@ def main() -> None:
             ],
         },
         fallbacks=[CommandHandler("cancel", cancel), back_handler, format_handler],
+
         allow_reentry=True,
+        per_message=False,
     )
     
 
@@ -212,7 +214,9 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_feature_input)
             ],
         },
+
         fallbacks=[CommandHandler("cancel", cancel), CommandHandler("save_feature", save_feature_command)],
+        per_message=False,
     )
 
     # 4. 注册核心功能处理器
@@ -244,7 +248,9 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_teach_input)
             ],
         },
+
         fallbacks=[CommandHandler("cancel", cancel)],
+        per_message=False,
     )
     application.add_handler(teach_conv_handler)
     application.add_handler(CommandHandler("skills", skills_command))
