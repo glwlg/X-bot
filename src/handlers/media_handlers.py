@@ -7,7 +7,9 @@ from telegram.ext import ContextTypes, ConversationHandler
 from core.config import WAITING_FOR_VIDEO_URL
 from utils import extract_video_url, smart_edit_text, smart_reply_text
 from services.download_service import download_video
+from services.download_service import download_video
 from .base_handlers import check_permission
+from user_context import add_message
 
 logger = logging.getLogger(__name__)
 
@@ -317,6 +319,9 @@ async def handle_video_actions(update: Update, context: ContextTypes.DEFAULT_TYP
         
         await smart_edit_text(query.message, summary)
         
+        # Save summary to history
+        await add_message(context, user_id, "model", summary)
+        
         # 统计
         from stats import increment_stat
         await increment_stat(user_id, "video_summaries")
@@ -452,7 +457,9 @@ async def handle_large_file_action(update: Update, context: ContextTypes.DEFAULT
                 pass
             
             if response.text:
-                await smart_reply_text(update, f"📝 **视频内容摘要**\n\n{response.text}")
+                summary_text = f"📝 **视频内容摘要**\n\n{response.text}"
+                await smart_reply_text(update, summary_text)
+                await add_message(context, chat_id, "model", summary_text)
                 await query.delete_message()
             else:
                 await smart_edit_text(query.message, "❌ AI 无法生成摘要。")

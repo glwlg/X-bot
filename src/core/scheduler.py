@@ -16,8 +16,17 @@ from repositories import (
     get_user_watchlist,
     get_all_watchlist_users,
 )
+from repositories.chat_repo import save_message, get_latest_session_id
 
 logger = logging.getLogger(__name__)
+
+async def save_push_message_to_db(user_id: int, message: str):
+    """Utility to save pushed messages to chat history"""
+    try:
+        session_id = await get_latest_session_id(user_id)
+        await save_message(user_id, "model", message, session_id)
+    except Exception as e:
+        logger.error(f"Failed to save push message for {user_id}: {e}")
 
 
 async def send_reminder_job(context: ContextTypes.DEFAULT_TYPE):
@@ -311,6 +320,7 @@ async def check_and_send_rss_updates(context: ContextTypes.DEFAULT_TYPE, subscri
                 if len(msg_header) + len(msg_body) + len(item_text) > 4000:
                     try:
                         await context.bot.send_message(chat_id=uid, text=msg_header + msg_body, parse_mode="Markdown")
+                        await save_push_message_to_db(uid, msg_header + msg_body)
                         success_updates.extend(current_batch)
                         sent_count += 1
                     except Exception as e:
@@ -326,6 +336,7 @@ async def check_and_send_rss_updates(context: ContextTypes.DEFAULT_TYPE, subscri
             if msg_body:
                 try:
                     await context.bot.send_message(chat_id=uid, text=msg_header + msg_body, parse_mode="Markdown")
+                    await save_push_message_to_db(uid, msg_header + msg_body)
                     success_updates.extend(current_batch)
                     sent_count += 1
                 except Exception as e:
@@ -457,6 +468,7 @@ async def stock_push_job(context: ContextTypes.DEFAULT_TYPE):
                     text=message,
                     parse_mode="Markdown"
                 )
+                await save_push_message_to_db(user_id, message)
                 logger.info(f"Sent stock quotes to user {user_id}")
                 
             except Exception as e:

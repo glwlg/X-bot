@@ -94,6 +94,26 @@ async def initialize_data(application: Application) -> None:
     from core.skill_loader import skill_loader
     skill_loader.scan_skills()
     logger.info(f"Loaded {len(skill_loader.get_skill_index())} skills")
+    
+    # Pre-connect MCP Memory for Admin to reduce latency
+    from core.config import ADMIN_USER_IDS
+    from mcp_client.manager import mcp_manager
+    from mcp_client.memory import MemoryMCPServer
+    
+    # Register the memory server class
+    mcp_manager.register_server_class("memory", MemoryMCPServer)
+    
+    if ADMIN_USER_IDS:
+        admin_id = list(ADMIN_USER_IDS)[0]
+        logger.info(f"🚀 Pre-connecting MCP Memory for Admin: {admin_id}")
+        # Build logic in background to not block startup significantly? 
+        # Actually we want it ready.
+        try:
+            # We call get_server which auto-connects
+            await mcp_manager.get_server("memory", user_id=admin_id)
+            logger.info("✅ MCP Memory pre-connected.")
+        except Exception as e:
+            logger.error(f"⚠️ MCP Pre-connect failed: {e}")
 
     await application.bot.set_my_commands(
         [

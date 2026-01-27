@@ -31,6 +31,12 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not user_message:
         return
 
+    # 0. Save user message immediately to ensure persistence even if we return early
+    # Note: We save the raw user message here. 
+    # If using history later, we might want to avoid saving duplicates if we constructed a complex prmopt.
+    # But for "chat record", raw input is best.
+    await add_message(context, user_id, "user", user_message)
+
     # 检查用户权限
     from core.config import is_user_allowed
     if not await is_user_allowed(user_id):
@@ -67,12 +73,16 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             return
 
         # 普通网页，直接生成摘要
+        # 普通网页，直接生成摘要
         thinking_msg = await smart_reply_text(update, "📄 正在获取网页内容并生成摘要...")
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         
         summary = await summarize_webpage(url)
         # Use smart_edit_text which handles Markdown conversion and fallbacks
         await smart_edit_text(thinking_msg, summary)
+        
+        # Save summary to history
+        await add_message(context, user_id, "model", summary)
         
         # 记录统计
         await increment_stat(user_id, "ai_chats")
@@ -100,11 +110,9 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                 },
             )
             if response.text:
-                await smart_edit_text(thinking_msg, f"🌍 **译文**\n\n{response.text}")
-                # 统计
-                await increment_stat(user_id, "translations_count")
-            if response.text:
-                await smart_edit_text(thinking_msg, f"🌍 **译文**\n\n{response.text}")
+                translation_text = f"🌍 **译文**\n\n{response.text}"
+                await smart_edit_text(thinking_msg, translation_text)
+                await add_message(context, user_id, "model", translation_text)
                 # 统计
                 await increment_stat(user_id, "translations_count")
             else:
@@ -172,6 +180,9 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     final_user_message = user_message
     if extra_context:
         final_user_message = extra_context + "用户请求：" + user_message
+
+    # User message already saved at start of function.
+    # await add_message(context, user_id, "user", final_user_message)
 
     # 发送"正在输入"状态
     await context.bot.send_chat_action(chat_id=chat_id, action="typing")
@@ -253,7 +264,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             })
             
         # 获取历史上下文
-        history = get_user_context(context) # Returns list of dicts
+        history = await get_user_context(context, user_id) # Returns list of dicts
         
         # 拼接: History + Current
         message_history.extend(history)
@@ -286,8 +297,8 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # 确保最终文本被渲染
             sent_msg = await smart_edit_text(thinking_msg, final_text_response)
             
-            # 记录模型回复到上下文
-            add_message(context, "model", final_text_response)
+            # 记录模型回复到上下文 (Explicitly save final response)
+            await add_message(context, user_id, "model", final_text_response)
             
             # Try to extract code blocks
             final_display_text = await process_and_send_code_files(update, context, final_text_response)
@@ -329,7 +340,7 @@ async def handle_ai_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     caption = update.message.caption or "请描述这张图片"
 
     # Save to history immediately
-    add_message(context, "user", f"【用户发送了一张图片】 {caption}")
+    await add_message(context, user_id, "user", f"【用户发送了一张图片】 {caption}")
     
     # 立即发送"正在分析"提示
     thinking_msg = await smart_reply_text(update, "🔍 正在分析图片...")
@@ -375,7 +386,7 @@ async def handle_ai_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await smart_edit_text(thinking_msg, display_text)
             
             # Save model response to history
-            add_message(context, "model", response.text)
+            await add_message(context, user_id, "model", response.text)
             
             # 记录统计
             await increment_stat(user_id, "photo_analyses")
@@ -409,6 +420,9 @@ async def handle_ai_video(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     
     caption = update.message.caption or "请分析这个视频的内容"
+    
+    # Save to history immediately
+    await add_message(context, user_id, "user", f"【用户发送了一个视频】 {caption}")
     
     # 检查视频大小（Gemini 有限制）
     # 检查视频大小（Gemini 有限制）
@@ -465,6 +479,9 @@ async def handle_ai_video(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             
             # Update the thinking message with the cleaned text
             await smart_edit_text(thinking_msg, display_text)
+            
+            # Save model response to history
+            await add_message(context, user_id, "model", response.text)
             
             # 记录统计
             await increment_stat(user_id, "video_analyses")

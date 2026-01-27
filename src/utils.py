@@ -87,6 +87,7 @@ async def smart_edit_text(message, text: str, reply_markup=None):
     2. 失败则降级为纯文本
     """
     html_text = markdown_to_telegram_html(text)
+    
     try:
         if len(text) > 4000:
             # 简单的截断，避免超出 Telegram 限制
@@ -137,7 +138,7 @@ async def smart_reply_text(update, text: str, reply_markup=None):
         import logging
         logging.getLogger(__name__).error("smart_reply_text: no message to reply to")
         return None
-    
+        
     try:
         return await target_message.reply_text(
             html_text, 
