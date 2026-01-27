@@ -62,6 +62,8 @@ from handlers.skill_handlers import (
     WAITING_FOR_SKILL_DESC,
 )
 from handlers.callback_handlers import handle_subscription_callback
+from handlers.deployment_handlers import deploy_command
+
 
 # 日志配置
 logging.basicConfig(
@@ -199,6 +201,8 @@ def main() -> None:
     application.add_handler(CommandHandler("new", handle_new_command))
     application.add_handler(CommandHandler("adduser", adduser_command))
     application.add_handler(CommandHandler("deluser", deluser_command))
+    application.add_handler(CommandHandler("deploy", deploy_command))
+
     
     # 移除独立命令注册 (已迁移至 Skill)
     # remind, translate, subscribe, monitor, watchlist
