@@ -2,6 +2,7 @@
 Skill 执行器 - 协调 AI 理解和执行标准 Skill
 """
 import logging
+import asyncio
 from typing import Optional, Dict, Any, Tuple, AsyncGenerator
 
 from core.config import gemini_client, GEMINI_MODEL
@@ -202,9 +203,85 @@ class SkillExecutor:
         if skill_info.get("skill_type") == "standard":
             async for msg, files in self.execute_standard_skill(skill_name, user_request, **kwargs):
                 yield msg, files
+        elif skill_info.get("skill_type") == "legacy":
+            async for msg, files in self.execute_legacy_skill(skill_name, user_request, **kwargs):
+                yield msg, files
         else:
-            # 旧版 skill 不在这里处理，应该在 handler 层直接调用 module.execute()
-            yield f"⚠️ {skill_name} 是旧版技能，需要使用 legacy executor", None
+            yield f"❌ 未知技能类型: {skill_info.get('skill_type')}", None
+
+    async def execute_legacy_skill(
+        self,
+        skill_name: str,
+        user_request: str,
+        **kwargs
+    ) -> AsyncGenerator[Tuple[str, Optional[Dict[str, bytes]]], None]:
+        """
+        执行旧版 .py Skill (直接在进程内运行)
+        Legacy .py skills 必须包含 `execute(update, context, params)` 函数
+        """
+        try:
+            # 1. 加载模块
+            module = skill_loader.load_legacy_skill(skill_name)
+            if not module:
+                yield f"❌ 无法加载旧版技能: {skill_name}", None
+                return
+
+            # 2. 准备参数
+            # 旧版 skill 通常期望 execute(update, context, params)
+            update = kwargs.get("update")
+            context = kwargs.get("context")
+            
+            # 使用 AI 解析参数
+            params = kwargs.get("params", {})
+            skill_params_schema = skill_loader.get_skill(skill_name).get("params", {})
+            
+            if not params and skill_params_schema and user_request:
+                # Need to extract params from user_request based on schema
+                yield f"🤔 正在解析参数...", None
+                try:
+                    from google.genai import types
+                    # Construct simple extraction prompt
+                    prompt = (
+                        f"Extract parameters for function '{skill_name}' from the instruction.\n"
+                        f"Instruction: {user_request}\n"
+                        f"Parameters Schema: {skill_params_schema}\n"
+                        "Return ONLY a JSON object."
+                    )
+                    
+                    response = gemini_client.models.generate_content(
+                        model=GEMINI_MODEL,
+                        contents=prompt,
+                        config={
+                            "response_mime_type": "application/json",
+                        }
+                    )
+                    import json
+                    params = json.loads(response.text)
+                    yield f"✅ 解析参数: {params}", None
+                except Exception as e:
+                    logger.error(f"Param extraction failed: {e}")
+                    yield f"⚠️ 参数解析失败，尝试直接执行.", None
+            
+            yield f"⚙️ 正在执行 {skill_name}...", None
+            
+            # 3. 执行
+            if not asyncio.iscoroutinefunction(module.execute):
+                # 同步函数
+                result = module.execute(update, context, params)
+            else:
+                # 异步函数
+                result = await module.execute(update, context, params)
+            
+            # 4. 返回结果
+            # 旧版 execute 通常返回字符串 result
+            if isinstance(result, str):
+                yield result, None
+            else:
+                yield f"✅ 执行完成: {str(result)}", None
+                
+        except Exception as e:
+            logger.error(f"Error executing legacy skill {skill_name}: {e}", exc_info=True)
+            yield f"❌ 执行出错: {str(e)}", None
 
 
 # 全局单例

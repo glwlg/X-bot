@@ -101,7 +101,13 @@ class AgentOrchestrator:
                     from services.skill_executor import skill_executor
                     
                     full_output = ""
-                    async for chunk, files in skill_executor.execute_skill(args["skill_name"], args["instruction"]):
+                    # Pass update and context for legacy skills
+                    async for chunk, files in skill_executor.execute_skill(
+                        args["skill_name"], 
+                        args["instruction"],
+                        update=update,
+                        context=context
+                    ):
                         full_output += chunk
                         if files:
                              for filename, content in files.items():
@@ -190,6 +196,8 @@ class AgentOrchestrator:
                 elif name == "refresh_rss":
                     from handlers.subscription_handlers import refresh_user_subscriptions
                     return await refresh_user_subscriptions(update, context)
+
+
 
                 # Memory Tools (Lazy Connect)
                 else:

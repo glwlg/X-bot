@@ -82,6 +82,7 @@ src/
 │   ├── base_handlers.py        # 基础工具（权限检查）
 │   ├── start_handlers.py       # /start, /help, 主菜单
 │   ├── ai_handlers.py          # AI 对话、图片/视频分析
+│   ├── deployment_handlers.py  # 部署日志流式处理
 │   ├── media_handlers.py       # 视频下载
 │   ├── reminder_handlers.py    # 提醒功能
 │   ├── subscription_handlers.py # RSS 订阅/监控
@@ -94,6 +95,8 @@ src/
 ├── services/                   # 业务服务层
 │   ├── ai_service.py           # Gemini AI 交互
 │   ├── intent_router.py        # 自然语言意图路由
+│   ├── deployment_service.py   # Docker 部署服务
+│   ├── container_service.py    # 容器管理服务
 │   ├── download_service.py     # yt-dlp 视频下载
 │   ├── web_summary_service.py  # 网页抓取与摘要
 │   └── stock_service.py        # 股票行情服务
