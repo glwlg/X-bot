@@ -99,8 +99,13 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
                             break
                         # Future: handle function_call or text if multi-modal
                         
+                        if part.inline_data:
+                            image_bytes = part.inline_data.data
+                            break
+                        
         if not image_bytes:
-             await status_msg.edit_text("❌ 生成失败: API 未返回图片数据。")
+             logger.error(f"Image Gen Failed. Full Response Candidates: {response.candidates}")
+             await status_msg.edit_text("❌ 生成失败: API 未返回图片数据 (Candidates Empty or No Inline Data)。")
              return "❌ 生成失败: 无图片数据"
 
         # 发送图片
