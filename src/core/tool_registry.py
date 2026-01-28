@@ -25,99 +25,59 @@ class ToolRegistry:
         tools.append(self._get_skill_tool())
         
         # 3. Discovery Tool
-        tools.append(self._get_discovery_tool())
+        tools.extend(self._get_discovery_tools())
         
         return tools
 
     def _get_native_tools(self) -> List[types.FunctionDeclaration]:
         """Define native system capabilities"""
-        return [
-            types.FunctionDeclaration(
-                name="download_video",
-                description="Download a video or audio from a URL (YouTube, Twitter/X, TikTok, Instagram, Bilibili, etc).",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "url": types.Schema(type=types.Type.STRING, description="The video URL"),
-                        "audio_only": types.Schema(type=types.Type.BOOLEAN, description="Whether to extract audio only (default false)"),
-                    },
-                    required=["url"]
-                )
-            ),
-            types.FunctionDeclaration(
-                name="set_reminder",
-                description="Set a timer or reminder.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "time_expression": types.Schema(type=types.Type.STRING, description="Time expression (e.g., '10m', '1h', 'tomorrow 9am')"),
-                        "content": types.Schema(type=types.Type.STRING, description="What to remind about"),
-                    },
-                    required=["time_expression", "content"]
-                )
-            ),
-            types.FunctionDeclaration(
-                name="rss_subscribe",
-                description="Subscribe to an RSS feed URL.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "url": types.Schema(type=types.Type.STRING, description="The RSS feed URL"),
-                    },
-                    required=["url"]
-                )
-            ),
-            types.FunctionDeclaration(
-                name="monitor_keyword",
-                description="Monitor news for a specific keyword.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "keyword": types.Schema(type=types.Type.STRING, description="The keyword to monitor"),
-                    },
-                    required=["keyword"]
-                )
-            ),
-            types.FunctionDeclaration(
-                name="stock_watch",
-                description="Add or remove stock from watchlist.",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "stock_name": types.Schema(type=types.Type.STRING, description="Stock name or code"),
-                        "action": types.Schema(type=types.Type.STRING, description="Action: 'add' or 'remove'"),
-                    },
-                    required=["stock_name"]
-                )
-            ),
-            types.FunctionDeclaration(
-                name="list_subscriptions",
-                description="List current subscriptions (RSS feeds, Stocks, etc).",
-                parameters=types.Schema(
-                    type=types.Type.OBJECT,
-                    properties={
-                        "type": types.Schema(type=types.Type.STRING, description="Type to list: 'rss', 'stock', 'all'. Default is 'all'."),
-                    },
-                    required=["type"]
-                )
-            ),
-        ]
+        # All native capabilities have been migrated to Skills (e.g. rss_subscribe, stock_watch).
+        # We keep this method for future extension but return empty for now.
+        return []
+
 
     def _get_skill_tool(self) -> types.FunctionDeclaration:
         """
         Unified tool to call installed skills.
-        Dynamically builds description based on available skills.
+        Dynamically builds description based on available skills and configuration.
         """
-        skills = skill_loader.get_skills_summary()
+        from core.config import SKILL_INJECTION_MODE
         
-        if not skills:
-            skill_desc = "No skills installed."
+        mode = SKILL_INJECTION_MODE.lower()
+        
+        if mode == "search_first":
+            # 极简模式：不提供列表，强制 AI 搜索
+            skill_desc = (
+                "Call an installed skill (dynamic tool). "
+                "The system has many capabilities installed. "
+                "If you need to perform an action not covered by native tools, "
+                "FIRST use `search_skill` or `list_skills` (if available) to find the capability, "
+                "THEN use `call_skill` with the specific skill name."
+            )
+        
+        elif mode == "compact":
+            # 紧凑模式：只提供名称和简短触发词 (节省 Token)
+            skills = skill_loader.get_skills_summary()
+            if not skills:
+                skill_desc = "No skills installed."
+            else:
+                skill_list_str = "\n".join([
+                    f"- {s['name']}" 
+                    for s in skills
+                ])
+                skill_desc = f"Call an installed skill. Available skills:\n{skill_list_str}\n(Descriptions omitted for brevity. Infer usage from name or search.)"
+
         else:
-            skill_list_str = "\n".join([
-                f"- {s['name']}: {s['description'][:100]}" 
-                for s in skills
-            ])
-            skill_desc = f"Call an installed skill. Available skills:\n{skill_list_str}"
+            # 默认完整模式 (full)
+            skills = skill_loader.get_skills_summary()
+            if not skills:
+                skill_desc = "No skills installed."
+            else:
+                skill_list_str = "\n".join([
+                    f"- {s['name']}: {s['description'][:100]}" 
+                    for s in skills
+                ])
+                skill_desc = f"Call an installed skill. Available skills:\n{skill_list_str}"
             
         return types.FunctionDeclaration(
             name="call_skill",
@@ -132,17 +92,45 @@ class ToolRegistry:
             )
         )
 
-    def _get_discovery_tool(self) -> types.FunctionDeclaration:
-        return types.FunctionDeclaration(
-            name="search_and_install_skill",
-            description="Search and install a new skill/tool from the marketplace when the user asks for a capability NOT currently supported.",
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "query": types.Schema(type=types.Type.STRING, description="Search query for the needed functionality"),
-                },
-                required=["query"]
+
+
+    def _get_discovery_tools(self) -> List[types.FunctionDeclaration]:
+        return [
+            types.FunctionDeclaration(
+                name="search_skill",
+                description="Search for a skill/tool in the marketplace when you lack a capability. Returns a list of candidates. DO NOT install automatically.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "query": types.Schema(type=types.Type.STRING, description="Search query"),
+                    },
+                    required=["query"]
+                )
+            ),
+            types.FunctionDeclaration(
+                name="install_skill",
+                description="Install a specific skill. ONLY call this if the user has explicitly confirmed.",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "repo_name": types.Schema(type=types.Type.STRING, description="The repository name (e.g. 'owner/repo')"),
+                        "skill_name": types.Schema(type=types.Type.STRING, description="The skill name"),
+                    },
+                    required=["repo_name", "skill_name"]
+                )
+            ),
+            types.FunctionDeclaration(
+                name="modify_skill",
+                description="Modify an existing skill's code based on natural language instructions. Use this to fix bugs, add features, or change configuration (e.g. API URLs).",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "skill_name": types.Schema(type=types.Type.STRING, description="The name of the skill to modify"),
+                        "instruction": types.Schema(type=types.Type.STRING, description="Instructions for modification"),
+                    },
+                    required=["skill_name", "instruction"]
+                )
             )
-        )
+        ]
 
 tool_registry = ToolRegistry()

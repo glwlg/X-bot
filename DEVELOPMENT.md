@@ -63,6 +63,11 @@ X-Bot 已完成从"规则路由"到"智能体核心"的进化。现在，所有�
     *   **Agent Engine**：封装了 Gemini API 的 Function Calling 逻辑。
     *   **流式响应**：支持工具调用的实时流式反馈。
 
+4.  **Smart Deployment Manager (`skills/builtin/deployment_manager.py`)**
+    *   **Autonomous Agent**: 独立的 ReAct 智能体，专用于 Docker 部署。
+    *   **Policy Enforcer**: 强制执行端口 (>20000) 和配置规范。
+    *   **Silence Execution**: 具备自主思考能力，仅汇报最终结果。
+
 ---
 
 ## 2. 核心模块说明
@@ -82,6 +87,7 @@ src/
 │   ├── base_handlers.py        # 基础工具（权限检查）
 │   ├── start_handlers.py       # /start, /help, 主菜单
 │   ├── ai_handlers.py          # AI 对话、图片/视频分析
+│   ├── deployment_handlers.py  # 部署日志流式处理
 │   ├── media_handlers.py       # 视频下载
 │   ├── reminder_handlers.py    # 提醒功能
 │   ├── subscription_handlers.py # RSS 订阅/监控
@@ -94,6 +100,8 @@ src/
 ├── services/                   # 业务服务层
 │   ├── ai_service.py           # Gemini AI 交互
 │   ├── intent_router.py        # 自然语言意图路由
+│   ├── deployment_service.py   # Docker 部署服务
+│   ├── container_service.py    # 容器管理服务
 │   ├── download_service.py     # yt-dlp 视频下载
 │   ├── web_summary_service.py  # 网页抓取与摘要
 │   └── stock_service.py        # 股票行情服务
@@ -195,6 +203,8 @@ uv sync
 
 # 本地运行
 cp .env.example .env  # 填入 API Key
+# 推荐配置:
+# GEMINI_IMAGE_API_KEY=... (用于画图)
 uv run src/main.py
 ```
 

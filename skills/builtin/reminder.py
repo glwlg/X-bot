@@ -30,7 +30,7 @@ SKILL_META = {
 }
 
 
-async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> None:
+async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> str:
     """执行提醒设置"""
     time_str = params.get("time", "")
     content = params.get("content", "")
@@ -42,14 +42,14 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
             "• 10分钟后提醒我喝水\n"
             "• 1小时后提醒我开会"
         )
-        return
+        return "❌ 未提供时间或内容"
     
     # 解析时间
     matches = re.findall(r"(\d+)([smhd分秒时天])", time_str.lower())
     
     if not matches:
         await smart_reply_text(update, "❌ 时间格式错误。请使用如 10m, 1h, 30s 等格式。")
-        return
+        return "❌ 时间格式错误"
     
     delta_seconds = 0
     for value, unit in matches:
@@ -65,7 +65,7 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
     
     if delta_seconds <= 0:
         await smart_reply_text(update, "❌ 时间必须大于 0。")
-        return
+        return "❌ 时间必须大于0"
     
     trigger_time = datetime.datetime.now().astimezone() + datetime.timedelta(seconds=delta_seconds)
     
@@ -83,3 +83,4 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
         f"⏰ 将在 {display_time} 提醒你。"
     )
     await increment_stat(user_id, "reminders_set")
+    return f"✅ 提醒设置成功: {content} at {display_time}"

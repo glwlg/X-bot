@@ -1,3 +1,4 @@
+
 import logging
 import json
 from telegram import Update
@@ -21,6 +22,7 @@ class AgentOrchestrator:
 
     def __init__(self):
         self.ai_service = AiService()
+        self._memory_tools_cache = None  # Cache for tool definitions
 
     async def handle_message(
         self, 
@@ -37,20 +39,10 @@ class AgentOrchestrator:
         # 1. Gather Tools
         tools = tool_registry.get_all_tools()
         
-        # 2. Add Memory Tools (if enabled)
-        memory_server = None
+        # 2. Add Memory Tools (Lazy Load Definitions)
         if MCP_MEMORY_ENABLED:
-            memory_tools, memory_server = await self._get_memory_tools(user_id)
+            memory_tools = await self._get_memory_tool_definitions(user_id)
             if memory_tools:
-                # Retrieve function declarations from the nested structure
-                # The memory tool helper returns [{'function_declarations': [...]}]
-                # We need to flatten it or pass correctly.
-                # Gemini SDK expects list of FunctionDeclaration objects in `tools`.
-                # Let's see how _get_memory_tools returns it.
-                
-                # Check implementation below.
-                # Actually, typically SDK expects `tools=[Declaration1, Declaration2]`.
-                # If _get_memory_tools returns the old structure, we adjust.
                 tools.extend(memory_tools)
 
         # 3. Define Tool Executor (Closure with Context)
@@ -58,93 +50,22 @@ class AgentOrchestrator:
             logger.info(f"Agent invoking tool: {name} with {args}")
             try:
                 # Dispatch to specific handlers
-                if name == "download_video":
-                    from services.download_service import download_video
-                    # Download service typically sends progress messages. 
-                    # We might want to pass a dummy message object or handle it gracefully.
-                    # For agent, we want it to be silent or minimal until done?
-                    # But download tasks are long.
-                    # Ideally, we send a "Starting download..." message from here or let the service do it.
-                    # The service expects a `message` object to edit.
-                    status_msg = await update.message.reply_text("⏳ Agent: Starting download...")
-                    
-                    # We need to adapt the service to not require a message object if possible, 
-                    # or pass this status_msg.
-                    result = await download_video(args["url"], update.effective_chat.id, status_msg, audio_only=args.get("audio_only", False))
-                    
-                    if result.success:
-                        # Video is sent by download_service?
-                        # Check download_service logic. If it returns file_path, we need to send it.
-                        # Wait, download_service usually returns a result object.
-                        # We need to handle the sending part if the service doesn't.
-                        # Actually, looking at media_handlers, `process_video_download` handles the sending.
-                        # `download_video` function ONLY downloads.
-                        
-                        # So we should reuse `media_handlers` logic if possible, 
-                        # OR reimplement sending logic here.
-                        # Reusing `process_video_download` is hard because it expects routing flow.
-                        # Let's implement basic sending here.
-                        
-                        # Send file
-                        if args.get("audio_only", False):
-                            await context.bot.send_audio(update.effective_chat.id, open(result.file_path, "rb"))
-                        else:
-                            await context.bot.send_video(update.effective_chat.id, open(result.file_path, "rb"), supports_streaming=True)
-                        
-                        return f"Success: Video downloaded and sent to user."
-                    else:
-                        return f"Error: Download failed. {result.error_message}"
-
-                elif name == "set_reminder":
-                    from services.service_handlers import process_remind
-                    # We can reuse process_remind logic if we adapt parameters?
-                    # process_remind parses text. Here we have structured args.
-                    # Better to call reminder_repo directly.
-                    from repositories import add_reminder_task
-                    from utils import parse_time_input
-                    
-                    seconds = parse_time_input(args["time_expression"])
-                    if not seconds:
-                        return "Error: Invalid time format."
-                    
-                    await add_reminder_task(
-                        user_id, update.effective_chat.id, args["content"], seconds, update.message.message_id
-                    )
-                    return f"Success: Reminder set for '{args['content']}' in {args['time_expression']}."
-
-                elif name == "rss_subscribe":
-                    from repositories import add_subscription
-                    # We need to fetch title?
-                    from services.web_summary_service import fetch_page_title
-                    title = await fetch_page_title(args["url"]) or "New Feed"
-                    await add_subscription(user_id, args["url"], title)
-                    return f"Success: Subscribed to RSS feed: {title}"
-
-                elif name == "monitor_keyword":
-                    from repositories import add_subscription
-                    
-                    keyword = args["keyword"]
-                    # Use Google News RSS for keyword monitoring
-                    from urllib.parse import quote
-                    rss_url = f"https://news.google.com/rss/search?q={quote(keyword)}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
-                    title = f"📢 监控: {keyword}"
-                    
-                    await add_subscription(user_id, rss_url, title)
-                    return f"Success: Now monitoring keyword '{keyword}' via Google News."
-
-                elif name == "call_skill":
+                if name == "call_skill":
                     from services.skill_executor import skill_executor
-                    # Execute skill
-                    # This yields chunks! But tool_executor expects a return string.
-                    # We need to consume the skill output and return a summary?
-                    # OR, we allow the skill to interact with the user via `update` 
-                    # and return a "Task Completed" message to Gemini.
+                    
+                    # Notify user about skill invocation (ephemeral, not saved)
+                    skill_name = args["skill_name"]
+                    instruction_preview = args["instruction"][:50] + "..." if len(args["instruction"]) > 50 else args["instruction"]
+                    await update.message.reply_text(f"🔧 正在调用技能: `{skill_name}`\n📝 指令: {instruction_preview}", parse_mode="Markdown")
                     
                     full_output = ""
-                    async for chunk, files in skill_executor.execute_skill(args["skill_name"], args["instruction"]):
-                        # Send intermediate updates to user?
-                        # Maybe too noisy. 
-                        # Only send if it's significant?
+                    # Pass update and context for legacy skills
+                    async for chunk, files in skill_executor.execute_skill(
+                        args["skill_name"], 
+                        args["instruction"],
+                        update=update,
+                        context=context
+                    ):
                         full_output += chunk
                         if files:
                              for filename, content in files.items():
@@ -153,67 +74,104 @@ class AgentOrchestrator:
                                 file_obj.name = filename
                                 await update.message.reply_document(document=file_obj, filename=filename)
                     
+                    if not full_output.strip():
+                        logger.warning(f"Skill {skill_name} returned empty output!")
+                        return None
+                    
+                    logger.info(f"Skill {skill_name} output length: {len(full_output)}")
+                    logger.info(f"Skill output preview: {full_output[:200]}")
+                    
                     return f"Skill Execution Output:\n{full_output}"
 
-                elif name == "search_and_install_skill":
+                elif name == "search_skill":
                     from services.skill_registry_service import skill_registry
-                    from core.skill_loader import skill_loader
                     
-                    status_msg = await update.message.reply_text(f"🔍 Searching for skill: {args['query']}...")
+                    status_msg = await update.message.reply_text(f"🔍 Searching for skills: '{args['query']}'...")
                     skills = await skill_registry.search_skills(args["query"])
                     
                     if not skills:
-                        return "Error: No matching skills found in marketplace."
-                        
-                    # Auto install first match (Fail-Fast)
-                    best_match = skills[0]
-                    await context.bot.edit_message_text(f"⬇️ Installing: {best_match['name']}...", chat_id=update.effective_chat.id, message_id=status_msg.message_id)
+                        return "No matching skills found."
                     
-                    success = await skill_registry.install_skill(best_match["repo"], best_match["name"])
+                    results = []
+                    for i, s in enumerate(skills[:3]):
+                        results.append(f"{i+1}. **{s['name']}** (`{s['repo']}`)\n   {s['description'][:200]}...")
+                    
+                    response_text = "Found the following skills:\n\n" + "\n\n".join(results) + "\n\nTo install, reply: `Install <Skill Name>` or I can call `install_skill` if you confirm."
+                    return response_text
+
+                elif name == "install_skill":
+                    from services.skill_registry_service import skill_registry
+                    from core.skill_loader import skill_loader
+                    
+                    skill_name = args["skill_name"]
+                    repo_name = args["repo_name"]
+                    
+                    status_msg = await update.message.reply_text(f"⬇️ Installing skill: {skill_name} from {repo_name}...")
+                    
+                    success = await skill_registry.install_skill(repo_name, skill_name)
                     if success:
                         skill_loader.scan_skills()
-                        return f"Success: Installed skill '{best_match['name']}'. You can now call it using `call_skill`."
+                        return f"Success: Installed skill '{skill_name}'. It is now ready to use."
                     else:
-                        return "Error: Installation failed."
+                        return f"Error: Failed to install skill '{skill_name}'."
 
-                elif name == "list_subscriptions":
-                    from repositories.subscription_repo import get_user_subscriptions
-                    from repositories.watchlist_repo import get_user_watchlist
+                elif name == "modify_skill":
+                    from services.skill_creator import update_skill
+                    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+                    from utils import smart_edit_text
                     
-                    sub_type = args.get("type", "all")
-                    result_lines = []
+                    skill_name = args["skill_name"]
+                    instruction = args["instruction"]
                     
-                    if sub_type in ["rss", "all"]:
-                        rss_subs = await get_user_subscriptions(user_id)
-                        if rss_subs:
-                            result_lines.append(f"📢 **RSS Subscriptions** ({len(rss_subs)}):")
-                            for sub in rss_subs:
-                                result_lines.append(f"- [{sub['title']}]({sub['feed_url']})")
-                        else:
-                            if sub_type == "rss":
-                                result_lines.append("📢 No RSS subscriptions found.")
+                    status_msg = await update.message.reply_text(f"✍️ Generating modification for `{skill_name}`...")
+                    
+                    result = await update_skill(skill_name, instruction, user_id)
+                    
+                    if not result["success"]:
+                         return f"Error updating skill: {result.get('error', 'Unknown error')}"
+                    
+                    code = result["code"]
+                    filepath = result["filepath"]
+                    
+                    # Store for callback reference if needed (though callback relies on file existence in pending)
+                    context.user_data["pending_skill"] = skill_name
+                    
+                    code_preview = code[:500] + "..." if len(code) > 500 else code
+                    
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("✅ 启用修改", callback_data=f"skill_approve_{skill_name}"),
+                            InlineKeyboardButton("❌ 放弃", callback_data=f"skill_reject_{skill_name}")
+                        ],
+                        [InlineKeyboardButton("📝 查看完整代码", callback_data=f"skill_view_{skill_name}")]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    # Send UI (Agent will see execution success, User sees buttons)
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=(
+                            f"📝 **Skill 修改草稿**\n\n"
+                            f"**Target**: `{skill_name}`\n"
+                            f"**Instruction**: {instruction}\n\n"
+                            f"```python\n{code_preview}\n```\n\n"
+                            f"Please approve to apply changes."
+                        ),
+                        reply_markup=reply_markup,
+                        parse_mode="Markdown"
+                    )
+                    
+                    return f"Success: Generated modification for '{skill_name}'. User review required."
 
-                    if sub_type in ["stock", "all"]:
-                        stocks = await get_user_watchlist(user_id)
-                        if stocks:
-                            result_lines.append(f"\n📈 **Stock Watchlist** ({len(stocks)}):")
-                            for s in stocks:
-                                result_lines.append(f"- {s['stock_name']} (`{s['stock_code']}`)")
-                        else:
-                             if sub_type == "stock":
-                                result_lines.append("📈 No stocks in watchlist.")
-                    
-                    if not result_lines:
-                         return "No subscriptions found."
-                    
-                    return "\n".join(result_lines)
-
-                # Memory Tools
-                elif memory_server:
-                     # Dispatch undefined tools to memory server if available
-                     return await memory_server.call_tool(name, args)
-                
+                # Memory Tools (Lazy Connect)
                 else:
+                    # Try to see if it's a memory tool
+                    if self._is_memory_tool(name):
+                         logger.info(f"Connecting to Memory Server for tool execution: {name}")
+                         memory_server = await self._get_active_memory_server(user_id)
+                         if memory_server:
+                             return await memory_server.call_tool(name, args)
+                    
                     return f"Error: Unknown tool '{name}'"
 
             except Exception as e:
@@ -221,9 +179,16 @@ class AgentOrchestrator:
                 return f"System Error: {str(e)}"
 
         # 4. Generate Response
+        import datetime
+        current_time_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
+        
         system_instruction = DEFAULT_SYSTEM_PROMPT
-        if memory_server:
+        if MCP_MEMORY_ENABLED:
+             # Use memory guide if enabled, but we avoid eager connection
             system_instruction = MEMORY_MANAGEMENT_GUIDE
+            
+        # Append dynamic time context
+        system_instruction += f"\n\n【当前系统时间】: {current_time_str}"
 
         async for chunk in self.ai_service.generate_response_stream(
             message_history, 
@@ -233,23 +198,57 @@ class AgentOrchestrator:
         ):
             yield chunk
 
-    async def _get_memory_tools(self, user_id: int):
-        """Helper to get memory tools declarations and server instance"""
+    async def _get_memory_tool_definitions(self, user_id: int):
+        """
+        Get memory tool definitions (schemas).
+        Uses caching to avoid connecting on every request.
+        """
+        if self._memory_tools_cache:
+            return self._memory_tools_cache
+
         try:
+            # First time: Need to connect and fetch
+            logger.info("Fetching Memory Tool Definitions (One-time init)...")
             from mcp_client import mcp_manager
             from mcp_client.tools_bridge import convert_mcp_tools_to_gemini
             from mcp_client.memory import register_memory_server
 
             register_memory_server()
+            # We start server just to get tools, then we can let it be (manager handles process)
             memory_server = await mcp_manager.get_server("memory", user_id=user_id)
 
             if memory_server and memory_server.session:
                 mcp_tools_result = await memory_server.session.list_tools()
-                # convert_mcp_tools_to_gemini returns a list of FunctionDeclaration
                 gemini_funcs = convert_mcp_tools_to_gemini(mcp_tools_result.tools)
-                return gemini_funcs, memory_server
-        except Exception:
+                
+                self._memory_tools_cache = gemini_funcs
+                return gemini_funcs
+        except Exception as e:
+            logger.error(f"Failed to fetch memory tools: {e}")
             pass
-        return None, None
+        return None
+
+    async def _get_active_memory_server(self, user_id: int):
+        """
+        Get an active connection to the memory server for EXECUTION.
+        """
+        try:
+            from mcp_client import mcp_manager
+            from mcp_client.memory import register_memory_server
+            
+            register_memory_server()
+            return await mcp_manager.get_server("memory", user_id=user_id)
+        except Exception:
+            return None
+
+    def _is_memory_tool(self, name: str) -> bool:
+        """Check if tool name belongs to memory tools"""
+        if not self._memory_tools_cache:
+            return False
+        # Check against cached definitions
+        for tool in self._memory_tools_cache:
+            if tool.get("name") == name:
+                return True
+        return False
 
 agent_orchestrator = AgentOrchestrator()
