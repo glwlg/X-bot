@@ -16,8 +16,17 @@ from repositories import (
     get_user_watchlist,
     get_all_watchlist_users,
 )
+from repositories.chat_repo import save_message, get_latest_session_id
 
 logger = logging.getLogger(__name__)
+
+async def save_push_message_to_db(user_id: int, message: str):
+    """Utility to save pushed messages to chat history"""
+    try:
+        session_id = await get_latest_session_id(user_id)
+        await save_message(user_id, "model", message, session_id)
+    except Exception as e:
+        logger.error(f"Failed to save push message for {user_id}: {e}")
 
 
 async def send_reminder_job(context: ContextTypes.DEFAULT_TYPE):
@@ -151,17 +160,29 @@ async def generate_entry_summary(title: str, content: str, link: str) -> str:
         return content[:200] + "..." if len(content) > 200 else content
 
 
-async def check_rss_updates_job(context: ContextTypes.DEFAULT_TYPE):
-    """检查 RSS 更新的任务"""
-    logger.info("Checking for RSS updates...")
-    
-    subscriptions = await get_all_subscriptions()
-    if not subscriptions:
-        logger.info("No subscriptions found.")
-        return
+import asyncio
 
-    # 按 feed_url 分组，避免重复请求同一个 URL
-    # {url: [sub1, sub2, ...]}
+# 全局锁，防止定时任务和手动触发撞车
+_rss_check_lock = asyncio.Lock()
+
+
+async def fetch_formatted_rss_updates(user_id: int = None, subscriptions: list = None) -> tuple[str, list, dict]:
+    """
+    获取并格式化 RSS 更新，但不发送。
+    返回: (formatted_message, pending_updates_list, user_updates_map)
+    """
+    # 1. 获取订阅 (如果没有传入)
+    if not subscriptions:
+        if user_id:
+            from repositories import get_user_subscriptions
+            subscriptions = await get_user_subscriptions(user_id)
+        else:
+            subscriptions = await get_all_subscriptions()
+            
+    if not subscriptions:
+        return "", [], {}
+
+    # 2. 按 feed_url 分组
     feed_map = {}
     for sub in subscriptions:
         url = sub["feed_url"]
@@ -169,37 +190,32 @@ async def check_rss_updates_job(context: ContextTypes.DEFAULT_TYPE):
             feed_map[url] = []
         feed_map[url].append(sub)
         
+    user_updates = {} # user_id -> list of updates
+    all_pending_updates = []
+
+    # 3. 抓取逻辑
     for url, subs in feed_map.items():
         try:
-            # 简单实现：全量拉取，只检查 ID/Link
             feed = feedparser.parse(url)
-            
             if feed.bozo and feed.bozo_exception:
-                logger.warning(f"Error parsing feed {url}: {feed.bozo_exception}")
                 continue
-                
             if not feed.entries:
                 continue
-                
-            latest_entry = feed.entries[0]
-            # 生成 hash (用 link 或 id)
-            entry_id = getattr(latest_entry, "id", getattr(latest_entry, "link", None))
             
+            latest_entry = feed.entries[0]
+            entry_id = getattr(latest_entry, "id", getattr(latest_entry, "link", None))
             if not entry_id:
                 continue
-            
-            # 检查每个用户的订阅状态
+                
             for sub in subs:
                 last_hash = sub["last_entry_hash"]
-                
-                # 如果是新的
                 if entry_id != last_hash:
-                    # 提取内容用于生成摘要
+                    # Found new content
                     title = latest_entry.get("title", "无标题")
                     link = latest_entry.get("link", url)
                     feed_title = feed.feed.get("title", "RSS 订阅")
                     
-                    # 提取文章内容
+                    # Content summary logic...
                     content = ""
                     if hasattr(latest_entry, "summary"):
                         content = latest_entry.summary
@@ -208,43 +224,160 @@ async def check_rss_updates_job(context: ContextTypes.DEFAULT_TYPE):
                     elif hasattr(latest_entry, "description"):
                         content = latest_entry.description
                     
-                    # 清理 HTML 标签
                     import re
-                    content = re.sub(r'<[^>]+>', '', content)
-                    content = content.strip()
+                    content_clean = re.sub(r'<[^>]+>', '', content).strip()
                     
-                    # 生成 AI 摘要
-                    if content:
-                        summary = await generate_entry_summary(title, content, link)
+                    if content_clean:
+                        summary = await generate_entry_summary(title, content_clean, link)
                     else:
                         summary = "暂无摘要"
                     
-                    msg = (
-                        f"📢 **{feed_title}** 更新了！\n\n"
-                        f"**{title}**\n\n"
-                        f"📝 {summary}\n\n"
-                        f"🔗 [阅读全文]({link})"
-                    )
+                    uid = sub["user_id"]
+                    if uid not in user_updates:
+                        user_updates[uid] = []
                     
-                    try:
-                        await context.bot.send_message(
-                            chat_id=sub["user_id"],
-                            text=msg,
-                            parse_mode="Markdown"
-                        )
-                    except Exception as e:
-                        logger.error(f"Failed to send RSS update to {sub['user_id']}: {e}")
+                    update_item = {
+                        "feed_title": feed_title,
+                        "title": title,
+                        "summary": summary,
+                        "link": link,
+                        "sub_id": sub["id"],
+                        "entry_id": entry_id,
+                        "etag": getattr(feed, "etag", None),
+                        "modified": getattr(feed, "modified", None)
+                    }
                     
-                    # 更新数据库状态
-                    await update_subscription_status(
-                        sub["id"], 
-                        entry_id, 
-                        getattr(feed, "etag", None), 
-                        getattr(feed, "modified", None)
-                    )
+                    user_updates[uid].append(update_item)
+                    all_pending_updates.append(update_item)
                     
         except Exception as e:
             logger.error(f"Error checking feed {url}: {e}")
+
+    # 4. 格式化输出 (按用户汇总)
+    final_output = ""
+    # 如果是指定用户 (Tool 场景)，生成一个大的文本块
+    if user_id and user_id in user_updates:
+        updates = user_updates[user_id]
+        final_output = f"📢 **RSS 订阅日报 ({len(updates)} 条更新)**\n\n"
+        for update in updates:
+            final_output += (
+                f"🔹 **{update['feed_title']}**\n"
+                f"[{update['title']}]({update['link']})\n"
+                f"📝 {update['summary']}\n\n"
+            )
+
+    return final_output, all_pending_updates, user_updates
+
+
+async def mark_updates_as_read(pending_updates: list):
+    """更新数据库状态"""
+    for update in pending_updates:
+        try:
+            await update_subscription_status(
+                update["sub_id"], 
+                update["entry_id"], 
+                update["etag"], 
+                update["modified"]
+            )
+        except Exception as e:
+            logger.error(f"Failed to update subscription status for sub {update['sub_id']}: {e}")
+
+
+async def check_and_send_rss_updates(context: ContextTypes.DEFAULT_TYPE, subscriptions: list):
+    """
+    [定时任务逻辑] 检查并直接发送 RSS 更新 (带锁)
+    """
+    if _rss_check_lock.locked():
+        logger.info("RSS check already in progress, waiting for lock...")
+    
+    async with _rss_check_lock:
+        try:
+            _, _, user_updates_map = await fetch_formatted_rss_updates(subscriptions=subscriptions)
+        except Exception as e:
+             logger.error(f"Fetch updates failed: {e}")
+             return 0
+        
+        if not user_updates_map:
+            return 0
+        
+        sent_count = 0
+        success_updates = []
+
+        # 批量发送消息
+        for uid, updates in user_updates_map.items():
+            msg_header = f"📢 **RSS 订阅日报 ({len(updates)} 条更新)**\n\n"
+            msg_body = ""
+            current_batch = []
+            
+            for update in updates:
+                item_text = (
+                    f"🔹 **{update['feed_title']}**\n"
+                    f"[{update['title']}]({update['link']})\n"
+                    f"📝 {update['summary']}\n\n"
+                )
+                
+                # 长度检查 & 分批发送
+                if len(msg_header) + len(msg_body) + len(item_text) > 4000:
+                    try:
+                        await context.bot.send_message(chat_id=uid, text=msg_header + msg_body, parse_mode="Markdown")
+                        await save_push_message_to_db(uid, msg_header + msg_body)
+                        success_updates.extend(current_batch)
+                        sent_count += 1
+                    except Exception as e:
+                        logger.error(f"Failed to send batch to {uid}: {e}")
+                    
+                    msg_body = ""
+                    msg_header = "📢 **RSS 订阅日报 (续)**\n\n"
+                    current_batch = []
+                
+                msg_body += item_text
+                current_batch.append(update)
+                
+            if msg_body:
+                try:
+                    await context.bot.send_message(chat_id=uid, text=msg_header + msg_body, parse_mode="Markdown")
+                    await save_push_message_to_db(uid, msg_header + msg_body)
+                    success_updates.extend(current_batch)
+                    sent_count += 1
+                except Exception as e:
+                    logger.error(f"Failed to send final batch to {uid}: {e}")
+
+        # 统一更新数据库
+        await mark_updates_as_read(success_updates)
+            
+        return sent_count
+
+
+async def check_rss_updates_job(context: ContextTypes.DEFAULT_TYPE):
+    """检查 RSS 更新的任务 (定时调用)"""
+    logger.info("Checking for RSS updates...")
+    
+    subscriptions = await get_all_subscriptions()
+    if not subscriptions:
+        logger.info("No subscriptions found.")
+        return
+
+    await check_and_send_rss_updates(context, subscriptions)
+
+
+async def trigger_manual_rss_check(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
+    """
+    [Tool Logic] 手动触发特定用户的 RSS 检查
+    返回格式化后的更新内容文本，不直接发送。
+    """
+    # 获取锁
+    if _rss_check_lock.locked():
+        return "⚠️ 正在进行定时更新检查，请稍后再试。"
+        
+    async with _rss_check_lock:
+        formatted_text, all_pending, _ = await fetch_formatted_rss_updates(user_id=user_id)
+        
+        if all_pending:
+            # 标记为已读 (因为即将返回给 Agent 展示)
+            await mark_updates_as_read(all_pending)
+            return formatted_text
+        else:
+            return ""
 
 
 def start_rss_scheduler(job_queue: JobQueue):
@@ -335,6 +468,7 @@ async def stock_push_job(context: ContextTypes.DEFAULT_TYPE):
                     text=message,
                     parse_mode="Markdown"
                 )
+                await save_push_message_to_db(user_id, message)
                 logger.info(f"Sent stock quotes to user {user_id}")
                 
             except Exception as e:
@@ -342,6 +476,38 @@ async def stock_push_job(context: ContextTypes.DEFAULT_TYPE):
                 
     except Exception as e:
         logger.error(f"Stock push job error: {e}")
+
+
+async def trigger_manual_stock_check(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
+    """
+    [Tool Logic] 手动触发特定用户的自选股行情刷新
+    返回格式化后的行情文本
+    """
+    from services.stock_service import fetch_stock_quotes, format_stock_message
+    
+    try:
+        # 获取用户自选股
+        watchlist = await get_user_watchlist(user_id)
+        if not watchlist:
+            return "" # Empty watchlist
+        
+        # 提取股票代码
+        stock_codes = [item["stock_code"] for item in watchlist]
+        
+        # 批量获取行情
+        quotes = await fetch_stock_quotes(stock_codes)
+        
+        if not quotes:
+            return "❌ 无法获取行情数据，请稍后重试。"
+        
+        # 格式化消息
+        message = format_stock_message(quotes)
+        return message
+        
+    except Exception as e:
+        logger.error(f"Manual stock check error for {user_id}: {e}")
+        return f"❌ 刷新失败: {str(e)}"
+
 
 
 def start_stock_scheduler(job_queue: JobQueue):

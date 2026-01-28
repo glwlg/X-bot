@@ -23,6 +23,9 @@ ROUTING_MODEL = os.getenv("ROUTING_MODEL", "gemini-2.0-flash")
 # 代码生成模型（用于 Skill 创建，建议使用更强力的模型）
 CREATOR_MODEL = os.getenv("CREATOR_MODEL", "gemini-2.5-pro-preview-05-06")
 
+IMAGE_MODEL = os.getenv("IMAGE_MODEL", "imagen-3.0-generate-001")
+
+
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY environment variable not set!")
 
@@ -31,6 +34,18 @@ gemini_client = genai.Client(
     api_key=GEMINI_API_KEY,
     http_options={"api_version": "v1beta", "base_url": GEMINI_BASE_URL},
 )
+
+# 初始化画图专用客户端 (支持单独配置 Official API)
+GEMINI_IMAGE_API_KEY = os.getenv("GEMINI_IMAGE_API_KEY")
+
+if GEMINI_IMAGE_API_KEY:
+    image_gen_client = genai.Client(
+        vertexai=True,
+        api_key=GEMINI_IMAGE_API_KEY
+    )
+else:
+    # Fallback to main client if no specific image config
+    image_gen_client = gemini_client
 
 # 用户访问控制
 # 从环境变量加载管理员列表
@@ -101,6 +116,8 @@ MCP_ENABLED = os.getenv("MCP_ENABLED", "true").lower() == "true"
 MCP_PLAYWRIGHT_IMAGE = os.getenv("MCP_PLAYWRIGHT_IMAGE", "mcr.microsoft.com/playwright/mcp:1.51.0-noble")
 MCP_MEMORY_ENABLED = os.getenv("MCP_MEMORY_ENABLED", "true").lower() == "true"
 MCP_TIMEOUT_SECONDS = int(os.getenv("MCP_TIMEOUT_SECONDS", "60"))
+# Skill Context Injection Mode: 'full' (default), 'search_first', 'compact'
+SKILL_INJECTION_MODE = os.getenv("SKILL_INJECTION_MODE", "full")
 
 # 确保目录存在
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)

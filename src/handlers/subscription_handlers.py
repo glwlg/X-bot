@@ -250,8 +250,44 @@ async def list_subs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     for sub in subs:
         title = sub["title"]
         url = sub["feed_url"]
-        msg += f"• [{title}]({url})\n  `{url}`\n\n"
-        
-    msg += "发送 `/unsubscribe <链接>` 可取消订阅。"
+        msg += f"• [{title}]({url})\n\n"
+             
+    msg += "也可以直接点击下方按钮取消订阅："
     
-    await smart_reply_text(update, msg)
+    keyboard = []
+    temp_row = []
+    for sub in subs:
+        short_title = sub["title"][:10] + ".." if len(sub["title"]) > 10 else sub["title"]
+        btn = InlineKeyboardButton(f"❌ {short_title}", callback_data=f"unsub_{sub['id']}")
+        temp_row.append(btn)
+        
+        if len(temp_row) == 2:
+            keyboard.append(temp_row)
+            temp_row = []
+            
+    if temp_row:
+        keyboard.append(temp_row)
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await smart_reply_text(update, msg, reply_markup=reply_markup)
+    return msg
+
+
+async def refresh_user_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+    """
+    [Tool] 手动刷新当前用户的订阅
+    """
+    user_id = update.effective_user.id
+    
+    # 防止频繁调用 (简单防刷，这里可选)
+    # 比如检查 timer
+    
+    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    
+    from core.scheduler import trigger_manual_rss_check
+    result_text = await trigger_manual_rss_check(context, user_id)
+    
+    if result_text:
+        return result_text
+    else:
+        return "✅ 检查完成，您订阅的内容暂时没有更新。"

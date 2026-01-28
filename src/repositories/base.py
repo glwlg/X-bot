@@ -131,5 +131,32 @@ async def init_db():
             )
         """)
         
+        # 对话历史表 (用于上下文持久化)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS chat_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                role TEXT NOT NULL, -- 'user' or 'model'
+                content TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                session_id TEXT -- 用于区分不同会话（/new 可重置 session_id，但不物理删除）
+            )
+        """)
+        
+        # 迁移逻辑：确保 chat_history 有 session_id
+        try:
+             async with db.execute("PRAGMA table_info(chat_history)") as cursor:
+                columns = [row[1] for row in await cursor.fetchall()]
+                
+             if "session_id" not in columns:
+                 await db.execute("ALTER TABLE chat_history ADD COLUMN session_id TEXT")
+                 logger.info("Added column session_id to chat_history")
+                 
+        except Exception as e:
+            logger.error(f"Migration error (chat_history): {e}")
+        
+        # 索引
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_chat_history_user_session ON chat_history(user_id, session_id)")
+        
         await db.commit()
     logger.info("Database initialized successfully")

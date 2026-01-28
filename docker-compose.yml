@@ -9,10 +9,13 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
+    network_mode: "host"
     volumes:
       - ./downloads:/app/downloads
       - ./data:/app/data
-      - ./skills:/app/skills  # 持久化学习到的 Skills
+      # Manual Host Mount for Deployment Staging (Fix "not a directory" error)
+      - /DATA/x-box/data/deployment_staging:/DATA/x-box/data/deployment_staging
+      - ./skills:/app/skills # 持久化学习到的 Skills
       - ./cookies.txt:/app/cookies.txt
       - /mnt/d/media/dlp:/app/media
-      - /var/run/docker.sock:/var/run/docker.sock  # MCP: 允许启动 MCP 服务容器
+      - /var/run/docker.sock:/var/run/docker.sock # MCP: 允许启动 MCP 服务容器

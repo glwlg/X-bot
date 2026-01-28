@@ -16,7 +16,7 @@ SKILL_META = {
     "params": {
         "action": {
             "type": "str",
-            "enum": ["add", "remove", "list"],
+            "enum": ["add", "remove", "list", "refresh"],
             "description": "操作类型"
         },
         "stock_name": {
@@ -25,43 +25,35 @@ SKILL_META = {
             "description": "股票名称"
         }
     },
-    "version": "1.0.0",
+    "version": "1.1.0",
     "author": "system"
 }
 
 
-async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> None:
+async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> str:
     """执行自选股操作"""
     import re
+    from core.scheduler import trigger_manual_stock_check
     
     user_id = update.effective_user.id
     action = params.get("action", "list")
     stock_name = params.get("stock_name", "")
     
+    if action == "refresh":
+        msg = await smart_reply_text(update, "⏳ 正在获取最新行情...")
+        result = await trigger_manual_stock_check(context, user_id)
+        if result:
+            await smart_edit_text(msg, result)
+            return f"✅ 股票行情已刷新。\n[CONTEXT_DATA_ONLY - DO NOT REPEAT]\n{result}"
+        else:
+            await smart_edit_text(msg, "📭 您的自选股列表为空，无法刷新。")
+            return "❌ 刷新失败: 自选股为空"
+    
     if action == "list" or not stock_name:
-        await _show_watchlist(update, user_id)
-        return
-    
-    if action == "remove":
-        await _remove_stock(update, user_id, stock_name)
-        return
-    
-    # action == "add"
-    # 支持多股票：用"和"、顿号、逗号分隔
-    stock_names = re.split(r'[、,，和]+', stock_name.strip())
-    stock_names = [s.strip() for s in stock_names if s.strip()]
-    
-    if not stock_names:
-        await smart_reply_text(update, "❌ 请输入有效的股票名称")
-        return
-    
-    if len(stock_names) == 1:
-        await _add_single_stock(update, user_id, stock_names[0])
-    else:
-        await _add_multiple_stocks(update, user_id, stock_names)
+        return await _show_watchlist(update, user_id)
 
 
-async def _show_watchlist(update: Update, user_id: int) -> None:
+async def _show_watchlist(update: Update, user_id: int) -> str:
     """显示自选股列表"""
     watchlist = await get_user_watchlist(user_id)
     
@@ -70,7 +62,7 @@ async def _show_watchlist(update: Update, user_id: int) -> None:
             "📭 **您的自选股为空**\n\n"
             "发送「帮我关注 XX股票」可添加自选股。"
         )
-        return
+        return "📭 自选股为空"
     
     stock_codes = [item["stock_code"] for item in watchlist]
     quotes = await fetch_stock_quotes(stock_codes)
@@ -83,29 +75,42 @@ async def _show_watchlist(update: Update, user_id: int) -> None:
             lines.append(f"• {item['stock_name']} ({item['stock_code']})")
         message = "\n".join(lines)
     
+    
     keyboard = []
+    temp_row = []
     for item in watchlist:
-        keyboard.append([InlineKeyboardButton(
-            f"❌ 删除 {item['stock_name']}", 
+        btn = InlineKeyboardButton(
+            f"❌ {item['stock_name']}", 
             callback_data=f"stock_del_{item['stock_code']}"
-        )])
+        )
+        temp_row.append(btn)
+        
+        if len(temp_row) == 2:
+            keyboard.append(temp_row)
+            temp_row = []
+            
+    if temp_row:
+        keyboard.append(temp_row)
     
     reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
     await smart_reply_text(update, message, reply_markup=reply_markup)
+    return f"✅ 自选股列表已发送。\n[CONTEXT_DATA_ONLY - DO NOT REPEAT]\n{message}"
 
 
-async def _remove_stock(update: Update, user_id: int, stock_name: str) -> None:
+
+async def _remove_stock(update: Update, user_id: int, stock_name: str) -> str:
     """删除自选股"""
     watchlist = await get_user_watchlist(user_id)
     for item in watchlist:
         if stock_name.lower() in item["stock_name"].lower():
             await remove_watchlist_stock(user_id, item["stock_code"])
             await smart_reply_text(update, f"✅ 已取消关注 **{item['stock_name']}**")
-            return
+            return f"✅ 取消关注成功: {item['stock_name']}"
     await smart_reply_text(update, f"⚠️ 未找到匹配「{stock_name}」的自选股")
+    return f"❌ 未找到匹配股票: {stock_name}"
 
 
-async def _add_single_stock(update: Update, user_id: int, stock_name: str) -> None:
+async def _add_single_stock(update: Update, user_id: int, stock_name: str) -> str:
     """添加单个股票"""
     msg = await smart_reply_text(update, f"🔍 正在搜索「{stock_name}」...")
     
@@ -113,7 +118,7 @@ async def _add_single_stock(update: Update, user_id: int, stock_name: str) -> No
     
     if not results:
         await smart_edit_text(msg, f"❌ 未找到匹配「{stock_name}」的股票")
-        return
+        return f"❌ 未找到股票: {stock_name}"
     
     if len(results) == 1:
         stock = results[0]
@@ -124,9 +129,10 @@ async def _add_single_stock(update: Update, user_id: int, stock_name: str) -> No
                 f"**{stock['name']}** ({stock['code']})\n\n"
                 f"交易时段将每 10 分钟推送行情。"
             )
+            return f"✅ 添加自选股成功: {stock['name']}"
         else:
             await smart_edit_text(msg, f"⚠️ **{stock['name']}** 已在您的自选股中")
-        return
+            return f"⚠️ 自选股已存在: {stock['name']}"
     
     # 多个结果，让用户选择
     keyboard = []
@@ -142,9 +148,10 @@ async def _add_single_stock(update: Update, user_id: int, stock_name: str) -> No
         f"🔍 找到多个匹配「{stock_name}」的股票，请选择：",
         reply_markup=reply_markup
     )
+    return f"✅ 找到多个股票，等待用户选择: {stock_name}"
 
 
-async def _add_multiple_stocks(update: Update, user_id: int, stock_names: list[str]) -> None:
+async def _add_multiple_stocks(update: Update, user_id: int, stock_names: list[str]) -> str:
     """批量添加多个股票"""
     msg = await smart_reply_text(update, f"🔍 正在搜索 {len(stock_names)} 只股票...")
     
@@ -180,3 +187,4 @@ async def _add_multiple_stocks(update: Update, user_id: int, stock_names: list[s
     )
     
     await smart_edit_text(msg, result_msg)
+    return "✅ 批量添加完成: " + ", ".join(result_parts)

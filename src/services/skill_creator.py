@@ -188,6 +188,113 @@ async def create_skill(
         }
 
 
+UPDATE_PROMPT = '''你是一个 X-Bot Skill 维护者。请根据用户需求修改现有的 Skill 代码。
+
+## 原代码
+```python
+{original_code}
+```
+
+## 修改需求
+{requirement}
+
+## 规则
+1. 保持原有的 `SKILL_META` 结构，并在 `description` 中简要说明修改内容，版本号 `version` +0.0.1。
+2. 保持 `execute` 函数签名不变。
+3. 遵循相同的安全和代码质量规则（禁止系统命令，URL编码等）。
+4. 只返回完整的、修改后的 Python 代码。
+
+## 输出
+```python
+...
+```
+'''
+
+
+async def update_skill(
+    skill_name: str,
+    requirement: str,
+    user_id: int
+) -> dict:
+    """
+    更新现有的 Skill (生成新代码并存入 pending)
+    """
+    try:
+        # 1. 查找现有 Skill
+        skills_base = os.path.join(os.path.dirname(__file__), "..", "skills")
+        learned_path = os.path.join(skills_base, "learned", f"{skill_name}.py")
+        
+        # 也可以支持 builtin，但修改后会变成 learned (覆盖)
+        # 暂时只查找 learned，或者通过 SkillLoader 查找路径
+        from core.skill_loader import skill_loader
+        skill_info = skill_loader.get_skill(skill_name)
+        
+        if not skill_info:
+            return {"success": False, "error": f"Skill '{skill_name}' not found."}
+            
+        # 如果是 legacy skill (.py)
+        if skill_info["skill_type"] == "legacy":
+            original_path = skill_info["path"]
+            with open(original_path, "r", encoding="utf-8") as f:
+                original_code = f.read()
+        else:
+            return {"success": False, "error": "目前仅支持修改 Python (Legacy) 格式的 Skill。"}
+
+        # 2. 生成新代码
+        prompt = UPDATE_PROMPT.format(
+            original_code=original_code,
+            requirement=requirement
+        )
+        
+        response = await gemini_client.aio.models.generate_content(
+            model=CREATOR_MODEL,
+            contents=prompt,
+        )
+        
+        code = response.text.strip()
+        
+        # 清理 markdown
+        code = re.sub(r'^```python\s*', '', code)
+        code = re.sub(r'^```\s*', '', code)
+        code = re.sub(r'\s*```$', '', code)
+        code = code.strip()
+        
+        # 3. 验证与安全检查
+        if "SKILL_META" not in code or "async def execute" not in code:
+            return {"success": False, "error": "生成的代码结构不正确"}
+            
+        security_check = _security_check(code)
+        if not security_check["safe"]:
+            return {"success": False, "error": f"安全检查失败: {security_check['reason']}"}
+            
+        # 4. 保存到 pending
+        skills_dir = os.path.join(skills_base, "pending")
+        os.makedirs(skills_dir, exist_ok=True)
+        
+        filename = f"{skill_name}.py"
+        filepath = os.path.join(skills_dir, filename)
+        
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(code)
+            
+        logger.info(f"Generated skill update: {skill_name} -> {filepath}")
+        
+        return {
+            "success": True,
+            "skill_name": skill_name,
+            "filepath": filepath,
+            "code": code
+        }
+
+    except Exception as e:
+        logger.error(f"Skill update error: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
+
 def _security_check(code: str) -> dict:
     """
     代码安全检查
@@ -210,19 +317,37 @@ def _security_check(code: str) -> dict:
     return {"safe": True, "reason": "OK"}
 
 
+
 async def approve_skill(skill_name: str) -> dict:
     """
     审核通过 Skill，从 pending 移动到 learned
+    并修正文件权限以匹配 builtin 目录 (解决 Docker root 创建导致宿主机无法编辑的问题)
     """
     skills_base = os.path.join(os.path.dirname(__file__), "..", "skills")
     pending_path = os.path.join(skills_base, "pending", f"{skill_name}.py")
     learned_path = os.path.join(skills_base, "learned", f"{skill_name}.py")
+    builtin_dir = os.path.join(skills_base, "builtin")
     
     if not os.path.exists(pending_path):
         return {"success": False, "error": f"Skill {skill_name} 不存在于待审核列表"}
     
     os.makedirs(os.path.dirname(learned_path), exist_ok=True)
     os.rename(pending_path, learned_path)
+    
+    # 修正权限 logic
+    try:
+        # 参考 builtin 目录的权限
+        if os.path.exists(builtin_dir):
+            st = os.stat(builtin_dir)
+            target_uid = st.st_uid
+            target_gid = st.st_gid
+            
+            #只有当当前用户是root或者是文件所有者才能chown
+            #但在Docker容器内通常作为root运行，所以可以改变为指定uid
+            os.chown(learned_path, target_uid, target_gid)
+            logger.info(f"Fixed permissions for {skill_name}: {target_uid}:{target_gid}")
+    except Exception as e:
+        logger.warning(f"Failed to fix permissions for {skill_name}: {e}")
     
     # 刷新加载器索引
     from core.skill_loader import skill_loader

@@ -28,7 +28,7 @@ SKILL_META = {
 }
 
 
-async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> None:
+async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> str:
     """执行关键词监控"""
     action = params.get("action", "add")
     keyword = params.get("keyword", "")
@@ -41,8 +41,9 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
     import urllib.parse
     
     if action == "list":
-        await list_subs_command(update, context)
-        return
+        result_text = await list_subs_command(update, context)
+        return f"✅ 监控列表已发送。\n[CONTEXT_DATA_ONLY - DO NOT REPEAT]\n{result_text}"
+
 
     if action == "remove":
         if keyword:
@@ -58,11 +59,14 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
             success = await delete_subscription(user_id, rss_url)
             if success:
                 await smart_reply_text(update, f"🗑️ 已取消监控：{keyword}")
+                return f"✅ 已取消监控: {keyword}"
             else:
                 # Fallback to interactive unsubscribe if direct match fails or user wants selection
                  await unsubscribe_command(update, context)
+                 return "✅ 进入取消交互模式 (直接匹配失败)"
         else:
              await unsubscribe_command(update, context)
+             return "✅ 进入取消交互模式"
         return
 
     # Default: Add
@@ -76,7 +80,11 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
             "• 监控列表\n"
             "• 取消监控 AI"
         )
-        return
+        return "❌ 未提供关键词"
     
     # 委托给现有逻辑
-    await process_monitor(update, context, keyword)
+    if await process_monitor(update, context, keyword):
+        return f"✅ 监控添加成功: {keyword}"
+    else:
+        return f"❌ 监控添加失败: {keyword}"
+

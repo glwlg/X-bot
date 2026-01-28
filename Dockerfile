@@ -9,6 +9,7 @@ ENV PYTHONUNBUFFERED# 安装系统依赖
 # docker-ce-cli: 用于 Docker-in-Docker (Playwright)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
+    git \
     nodejs \
     npm \
     curl \
@@ -21,7 +22,11 @@ RUN install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
-    && apt-get update && apt-get install -y --no-install-recommends docker-ce-cli \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    docker-ce-cli \
+    docker-compose-plugin \
+    net-tools \
+    iproute2 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install uv
