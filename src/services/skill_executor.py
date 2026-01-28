@@ -257,7 +257,15 @@ class SkillExecutor:
                         }
                     )
                     import json
+                    import re
                     response_text = response.text.strip() if response.text else ""
+                    
+                    # Clean markdown code blocks if present
+                    if response_text.startswith("```"):
+                        response_text = re.sub(r"^```json\s*", "", response_text)
+                        response_text = re.sub(r"^```\s*", "", response_text)
+                        response_text = re.sub(r"\s*```$", "", response_text)
+                        
                     if response_text:
                         params = json.loads(response_text)
                     else:

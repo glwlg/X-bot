@@ -250,11 +250,27 @@ async def list_subs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     for sub in subs:
         title = sub["title"]
         url = sub["feed_url"]
-        msg += f"• [{title}]({url})\n  `{url}`\n\n"
-        
-    msg += "发送 `/unsubscribe <链接>` 可取消订阅。"
+        msg += f"• [{title}]({url})\n\n"
+             
+    msg += "也可以直接点击下方按钮取消订阅："
     
-    await smart_reply_text(update, msg)
+    keyboard = []
+    temp_row = []
+    for sub in subs:
+        short_title = sub["title"][:10] + ".." if len(sub["title"]) > 10 else sub["title"]
+        btn = InlineKeyboardButton(f"❌ {short_title}", callback_data=f"unsub_{sub['id']}")
+        temp_row.append(btn)
+        
+        if len(temp_row) == 2:
+            keyboard.append(temp_row)
+            temp_row = []
+            
+    if temp_row:
+        keyboard.append(temp_row)
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await smart_reply_text(update, msg, reply_markup=reply_markup)
+    return msg
 
 
 async def refresh_user_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:

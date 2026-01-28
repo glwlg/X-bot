@@ -23,7 +23,10 @@
     -   **语音/音频分析**：支持语音消息及 .m4a/.mp3 等音频文件，自动转录并回复（支持 Caption 指令）。
     -   **文档分析**：支持 PDF 和 DOCX 文档，提取内容并回答相关问题。
 -   **网页摘要**：发送链接，自动抓取网页内容并生成精简摘要。
--   **AI 绘图**：使用 Google Imagen 3 模型，根据描述生成高质量图像。
+- **AI 绘图 (New)**：
+    -   **官方模型**：集成 Google **Imagen 3** (via Vertex AI)，生成质量极高。
+    -   **简单指令**：只需说 "画一只猫" 或 "生成赛博朋克风格的街道"。
+    -   **独立通道**：支持配置独立的官方 API Key，与对话 LLM 隔离，确保稳定性。
 
 ### 📹 全能媒体下载
 -   **支持平台**：YouTube, X (Twitter), Instagram, TikTok, Bilibili 等。
@@ -105,6 +108,7 @@ TELEGRAM_BOT_TOKEN="你的 Bot Token"
 # Gemini AI (https://aistudio.google.com/)
 GEMINI_API_KEY="你的 API Key"
 GEMINI_MODEL="gemini-2.0-flash"
+GEMINI_IMAGE_API_KEY="你的官方API Key" # (可选) 用于官方 Vertex AI 画图接口
 CREATOR_MODEL="gemini-2.0-pro-exp-02-11" # 用于生成 Skill 代码的强力模型
 ```
 

@@ -9,28 +9,16 @@ logger = logging.getLogger(__name__)
 
 WELCOME_MESSAGE = (
     "👋 **欢迎使用 X-Bot！**\n\n"
-    "我是您的智能 AI 伙伴，支持自然语言指令！🧠\n\n"
-    "**直接告诉我您想做什么：**\n"
-    "• \"下载这个视频 https://...\"\n"
-    "• \"帮我关注英伟达股票\"\n"
-    "• \"10分钟后提醒我喝水\"\n"
-    "• \"订阅 RSS https://...\"\n"
-    "• \"部署这个仓库 https://...\"\n"
-    "• \"列出当前运行的服务\"\n"
-    "• \"监控关键词 AI\"\n"
-    "• \"开启翻译模式\"\n\n"
-    "💡 /teach - 教我学会新技能\n"
-    "📋 /skills - 查看所有能力"
+    "我是您的全能 AI 助手，支持 **自然语言交互** 与 **多模态分析**。\n\n"
+    "💬 **直接对话**：你可以像朋友一样跟我聊天。\n"
+    "🛠️ **执行任务**：下载视频、监控股票、订阅新闻、绘画等。\n\n"
+    "👇 点击下方 **[ℹ️ 帮助]** 查看所有指令与技能。"
 )
 
 def get_main_menu_keyboard():
     return [
         [
-            InlineKeyboardButton("💬 AI 对话", callback_data="ai_chat"),
-        ],
-        [
-            InlineKeyboardButton("📊 统计", callback_data="stats"),
-            InlineKeyboardButton("ℹ️ 帮助", callback_data="help"),
+            InlineKeyboardButton("ℹ️ 使用帮助 / Help", callback_data="help"),
         ],
     ]
 
@@ -66,22 +54,26 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         return
     
     await smart_reply_text(update,
-        "ℹ️ **使用帮助**\n\n"
-        "🚀 **纯自然语言交互** - 直接说话！\n"
-        "• \"下载视频 https://...\"\n"
+        "ℹ️ **X-Bot 使用指南**\n\n"
+        "🚀 **多模态 AI**\n"
+        "• **对话**：直接发送文本、语音。\n"
+        "• **识图**：发送照片，问 \"这是什么\"。\n"
+        "• **绘图**：\"画一只赛博朋克风格的猫\"。\n"
+        "• **翻译**：使用 \"开启翻译模式\" 实现同声传译。\n\n"
+        "📹 **媒体下载**\n"
+        "• 直接发送链接 (YouTube/X/B站等)，支持自动去重。\n"
+        "• \"下载这个视频的音频 https://...\"\n\n"
+        "📈 **行情与资讯**\n"
         "• \"帮我关注英伟达股票\"\n"
-        "• \"1小时后提醒我开会\"\n"
-        "• \"订阅 RSS https://...\"\n"
-        "• \"部署仓库 https://...\"\n"
-        "• \"查看运行中的服务\"\n"
-        "• \"停止 xx 服务\"\n"
-        "• \"监控关键词 AI\"\n"
-        "• \"开启翻译模式\"\n\n"
-        "💡 **Skill 系统**\n"
-        "• /teach - 教我学会新技能\n"
-        "• /skills - 查看所有可用技能\n\n"
-        "🧠 **长期记忆**\n"
-        "我们会记住您的偏好和习惯。\n\n"
+        "• \"监控关键词 AI\" (Google News)\n"
+        "• \"订阅 RSS https://...\"\n\n"
+        "⏰ **实用工具**\n"
+        "• \"10分钟后提醒我喝水\"\n"
+        "• \"部署这个仓库 https://...\"\n"
+        "• \"列出运行的服务\"\n\n"
+        "💡 **技能扩展**\n"
+        "• /teach - 教我学会新技能 (自定义代码)\n"
+        "• /skills - 查看已安装技能\n\n"
         "**常用命令：**\n"
         "/start 主菜单 | /new 新对话 | /stats 统计"
     )
@@ -132,22 +124,26 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             keyboard = [[InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await smart_edit_text(query.message,
-                "ℹ️ **使用帮助**\n\n"
-                "🚀 **纯自然语言交互** - 直接说话！\n"
-                "• \"下载视频 https://...\"\n"
+                "ℹ️ **X-Bot 使用指南**\n\n"
+                "🚀 **多模态 AI**\n"
+                "• **对话**：直接发送文本、语音。\n"
+                "• **识图**：发送照片，问 \"这是什么\"。\n"
+                "• **绘图**：\"画一只赛博朋克风格的猫\"。\n"
+                "• **翻译**：使用 \"开启翻译模式\" 实现同声传译。\n\n"
+                "📹 **媒体下载**\n"
+                "• 直接发送链接 (YouTube/X/B站等)，支持自动去重。\n"
+                "• \"下载这个视频的音频 https://...\"\n\n"
+                "📈 **行情与资讯**\n"
                 "• \"帮我关注英伟达股票\"\n"
-                "• \"1小时后提醒我开会\"\n"
-                "• \"订阅 RSS https://...\"\n"
-                "• \"部署仓库 https://...\"\n"
-                "• \"查看运行中的服务\"\n"
-                "• \"停止 xx 服务\"\n"
-                "• \"监控关键词 AI\"\n"
-                "• \"开启翻译模式\"\n\n"
-                "💡 **Skill 系统**\n"
-                "• /teach - 教我学会新技能\n"
-                "• /skills - 查看所有技能\n\n"
-                "🧠 **长期记忆**\n"
-                "我会记住您的偏好和习惯。\n\n"
+                "• \"监控关键词 AI\" (Google News)\n"
+                "• \"订阅 RSS https://...\"\n\n"
+                "⏰ **实用工具**\n"
+                "• \"10分钟后提醒我喝水\"\n"
+                "• \"部署这个仓库 https://...\"\n"
+                "• \"列出运行的服务\"\n\n"
+                "💡 **技能扩展**\n"
+                "• /teach - 教我学会新技能 (自定义代码)\n"
+                "• /skills - 查看已安装技能\n\n"
                 "**常用命令：**\n"
                 "/start 主菜单 | /new 新对话 | /stats 统计",
                 reply_markup=reply_markup,

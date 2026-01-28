@@ -203,6 +203,8 @@ uv sync
 
 # 本地运行
 cp .env.example .env  # 填入 API Key
+# 推荐配置:
+# GEMINI_IMAGE_API_KEY=... (用于画图)
 uv run src/main.py
 ```
 

@@ -478,6 +478,38 @@ async def stock_push_job(context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Stock push job error: {e}")
 
 
+async def trigger_manual_stock_check(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
+    """
+    [Tool Logic] 手动触发特定用户的自选股行情刷新
+    返回格式化后的行情文本
+    """
+    from services.stock_service import fetch_stock_quotes, format_stock_message
+    
+    try:
+        # 获取用户自选股
+        watchlist = await get_user_watchlist(user_id)
+        if not watchlist:
+            return "" # Empty watchlist
+        
+        # 提取股票代码
+        stock_codes = [item["stock_code"] for item in watchlist]
+        
+        # 批量获取行情
+        quotes = await fetch_stock_quotes(stock_codes)
+        
+        if not quotes:
+            return "❌ 无法获取行情数据，请稍后重试。"
+        
+        # 格式化消息
+        message = format_stock_message(quotes)
+        return message
+        
+    except Exception as e:
+        logger.error(f"Manual stock check error for {user_id}: {e}")
+        return f"❌ 刷新失败: {str(e)}"
+
+
+
 def start_stock_scheduler(job_queue: JobQueue):
     """启动股票推送定时任务"""
     interval = 10 * 60  # 10 分钟

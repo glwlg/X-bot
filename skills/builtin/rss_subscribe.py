@@ -14,30 +14,40 @@ SKILL_META = {
     "params": {
         "action": {
             "type": "str",
-            "description": "操作类型：add (添加), list (列表), remove (删除)",
+            "description": "操作类型：add (添加), list (列表), remove (删除), refresh (刷新)",
             "default": "add",
-            "enum": ["add", "list", "remove"]
+            "enum": ["add", "list", "remove", "refresh"]
         },
         "url": {
             "type": "str",
             "description": "RSS 源的 URL（添加或删除时需要）"
         }
     },
-    "version": "1.1.0",
+    "version": "1.2.0",
     "author": "system"
 }
 
 
-async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> None:
+async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> str:
     """执行 RSS 订阅"""
     action = params.get("action", "add")
     url = params.get("url", "")
     
-    from handlers.subscription_handlers import process_subscribe, list_subs_command, unsubscribe_command, delete_subscription
+    from handlers.subscription_handlers import (
+        process_subscribe, list_subs_command, 
+        unsubscribe_command, delete_subscription, 
+        refresh_user_subscriptions
+    )
+    
+    if action == "refresh":
+        msg = await refresh_user_subscriptions(update, context)
+        if msg:
+            await smart_reply_text(update, msg)
+        return "✅ RSS 刷新完成"
     
     if action == "list":
-        await list_subs_command(update, context)
-        return
+        result_text = await list_subs_command(update, context)
+        return f"✅ 订阅列表已发送。\n[CONTEXT_DATA_ONLY - DO NOT REPEAT]\n{result_text}"
 
     if action == "remove":
         if url:
@@ -46,13 +56,15 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
             success = await delete_subscription(user_id, url)
             if success:
                 await smart_reply_text(update, f"🗑️ 已取消订阅：`{url}`")
+                return f"✅ 已取消订阅: {url}"
             else:
                  await smart_reply_text(update, f"❌ 取消失败，未找到该订阅：`{url}`")
+                 return f"❌ 取消失败: {url}"
         else:
              # Interactive remove
              await unsubscribe_command(update, context)
-        return
-
+             return "✅ 进入取消订阅交互模式"
+    
     # Default: Add
     if not url:
         await smart_reply_text(update,
@@ -64,7 +76,11 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
             "• 订阅列表\n"
             "• 取消订阅"
         )
-        return
+        return "❌ 未提供 URL"
     
     # 委托给现有逻辑
-    await process_subscribe(update, context, url)
+    if await process_subscribe(update, context, url):
+        return f"✅ 订阅成功: {url}"
+    else:
+        return f"❌ 订阅失败: {url}"
+

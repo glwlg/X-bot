@@ -50,54 +50,7 @@ class AgentOrchestrator:
             logger.info(f"Agent invoking tool: {name} with {args}")
             try:
                 # Dispatch to specific handlers
-                if name == "download_video":
-                    from services.download_service import download_video
-                    status_msg = await update.message.reply_text("⏳ Agent: Starting download...")
-                    
-                    result = await download_video(args["url"], update.effective_chat.id, status_msg, audio_only=args.get("audio_only", False))
-                    
-                    if result.success:
-                        if args.get("audio_only", False):
-                            await context.bot.send_audio(update.effective_chat.id, open(result.file_path, "rb"))
-                        else:
-                            await context.bot.send_video(update.effective_chat.id, open(result.file_path, "rb"), supports_streaming=True)
-                        
-                        return f"Success: Video downloaded and sent to user."
-                    else:
-                        return f"Error: Download failed. {result.error_message}"
-
-                elif name == "set_reminder":
-                    from repositories import add_reminder_task
-                    from utils import parse_time_input
-                    
-                    seconds = parse_time_input(args["time_expression"])
-                    if not seconds:
-                        return "Error: Invalid time format."
-                    
-                    await add_reminder_task(
-                        user_id, update.effective_chat.id, args["content"], seconds, update.message.message_id
-                    )
-                    return f"Success: Reminder set for '{args['content']}' in {args['time_expression']}."
-
-                elif name == "rss_subscribe":
-                    from repositories import add_subscription
-                    from services.web_summary_service import fetch_page_title
-                    title = await fetch_page_title(args["url"]) or "New Feed"
-                    await add_subscription(user_id, args["url"], title)
-                    return f"Success: Subscribed to RSS feed: {title}"
-
-                elif name == "monitor_keyword":
-                    from repositories import add_subscription
-                    
-                    keyword = args["keyword"]
-                    from urllib.parse import quote
-                    rss_url = f"https://news.google.com/rss/search?q={quote(keyword)}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
-                    title = f"监控: {keyword}"
-                    
-                    await add_subscription(user_id, rss_url, title)
-                    return f"Success: Now monitoring keyword '{keyword}' via Google News."
-
-                elif name == "call_skill":
+                if name == "call_skill":
                     from services.skill_executor import skill_executor
                     
                     # Notify user about skill invocation (ephemeral, not saved)
@@ -209,67 +162,6 @@ class AgentOrchestrator:
                     )
                     
                     return f"Success: Generated modification for '{skill_name}'. User review required."
-
-                elif name == "list_subscriptions":
-                    from repositories.subscription_repo import get_user_subscriptions
-                    from repositories.watchlist_repo import get_user_watchlist
-                    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-                    from utils import smart_reply_text
-                    
-                    # user_id is already available from outer scope
-                    
-                    rss_subs = await get_user_subscriptions(user_id)
-                    stocks = await get_user_watchlist(user_id)
-                    
-                    if not rss_subs and not stocks:
-                        return "用户当前没有任何订阅。"
-
-                    text_lines = ["📋 **您的订阅列表 (支持点击删除)**\n"]
-                    keyboard = []
-                    
-                    if rss_subs:
-                        text_lines.append(f"\n📢 **RSS 订阅 ({len(rss_subs)})**")
-                        temp_row = []
-                        for sub in rss_subs:
-                            text_lines.append(f"- [{sub['title']}]({sub['feed_url']})")
-                            short_title = sub['title'][:8] + ".." if len(sub['title']) > 8 else sub['title']
-                            btn = InlineKeyboardButton(f"❌ {short_title}", callback_data=f"del_rss_{sub['id']}")
-                            
-                            temp_row.append(btn)
-                            if len(temp_row) == 2:
-                                keyboard.append(temp_row)
-                                temp_row = []
-                        if temp_row:
-                            keyboard.append(temp_row)
-                            
-                    if stocks:
-                        text_lines.append(f"\n📈 **自选股 ({len(stocks)})**")
-                        temp_row = []
-                        for s in stocks:
-                            text_lines.append(f"- {s['stock_name']} (`{s['stock_code']}`)")
-                            
-                            short_name = s['stock_name'][:8] + ".." if len(s['stock_name']) > 8 else s['stock_name']
-                            btn = InlineKeyboardButton(f"❌ {short_name}", callback_data=f"del_stock_{s['stock_code']}")
-                            
-                            temp_row.append(btn)
-                            if len(temp_row) == 2:
-                                keyboard.append(temp_row)
-                                temp_row = []
-                        if temp_row:
-                            keyboard.append(temp_row)
-                            
-                    final_text = "\n".join(text_lines)
-                    reply_markup = InlineKeyboardMarkup(keyboard)
-                    
-                    await smart_reply_text(update, final_text, reply_markup=reply_markup)
-                    
-                    return "[System Hint] The subscription list has been sent to the user as a separate message with DELETE buttons. Do NOT repeat the list in your response. Just confirm you've shown it."
-
-                elif name == "refresh_rss":
-                    from handlers.subscription_handlers import refresh_user_subscriptions
-                    return await refresh_user_subscriptions(update, context)
-
-
 
                 # Memory Tools (Lazy Connect)
                 else:
