@@ -231,9 +231,9 @@ class SkillLoader:
         """
         加载旧版 .py Skill 模块（用于执行）
         """
-        # 检查缓存
-        if skill_name in self._loaded_modules:
-            return self._loaded_modules[skill_name]
+        # 检查缓存 (Disabled for hot-reloading)
+        # if skill_name in self._loaded_modules:
+        #     return self._loaded_modules[skill_name]
         
         # 查找索引
         index = self.get_skill_index()

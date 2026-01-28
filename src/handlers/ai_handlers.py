@@ -293,9 +293,23 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         animation_task.cancel() # Ensure it stops immediately
 
         # 5. 发送最终回复并入库
+        # 5. 发送最终回复并入库
         if final_text_response:
-            # 确保最终文本被渲染
-            sent_msg = await smart_edit_text(thinking_msg, final_text_response)
+            # 用户体验优化：为了避免工具产生的中间消息导致最终结果被顶上去需要翻页，
+            # 这里改为发送一条新消息作为最终结果，并删除原本的"思考中"消息。
+            
+            # 1. 发送新消息
+            sent_msg = await smart_reply_text(update, final_text_response)
+            
+            # 2. 尝试删除旧的思考消息 (如果发送成功)
+            if sent_msg:
+                try:
+                    await thinking_msg.delete()
+                except Exception as del_e:
+                    logger.warning(f"Failed to delete thinking_msg: {del_e}")
+            else:
+                # 如果发送失败（极少见），则降级为编辑旧消息
+                sent_msg = await smart_edit_text(thinking_msg, final_text_response)
             
             # 记录模型回复到上下文 (Explicitly save final response)
             await add_message(context, user_id, "model", final_text_response)

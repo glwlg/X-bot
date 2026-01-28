@@ -122,7 +122,12 @@ class AgentOrchestrator:
                                 await update.message.reply_document(document=file_obj, filename=filename)
                     
                     if not full_output.strip():
+                        logger.warning(f"Skill {skill_name} returned empty output!")
                         return None
+                    
+                    logger.info(f"Skill {skill_name} output length: {len(full_output)}")
+                    logger.info(f"Skill output preview: {full_output[:200]}")
+                    
                     return f"Skill Execution Output:\n{full_output}"
 
                 elif name == "search_skill":
@@ -156,6 +161,54 @@ class AgentOrchestrator:
                         return f"Success: Installed skill '{skill_name}'. It is now ready to use."
                     else:
                         return f"Error: Failed to install skill '{skill_name}'."
+
+                elif name == "modify_skill":
+                    from services.skill_creator import update_skill
+                    from telegram import InlineKeyboardMarkup, InlineKeyboardButton
+                    from utils import smart_edit_text
+                    
+                    skill_name = args["skill_name"]
+                    instruction = args["instruction"]
+                    
+                    status_msg = await update.message.reply_text(f"✍️ Generating modification for `{skill_name}`...")
+                    
+                    result = await update_skill(skill_name, instruction, user_id)
+                    
+                    if not result["success"]:
+                         return f"Error updating skill: {result.get('error', 'Unknown error')}"
+                    
+                    code = result["code"]
+                    filepath = result["filepath"]
+                    
+                    # Store for callback reference if needed (though callback relies on file existence in pending)
+                    context.user_data["pending_skill"] = skill_name
+                    
+                    code_preview = code[:500] + "..." if len(code) > 500 else code
+                    
+                    keyboard = [
+                        [
+                            InlineKeyboardButton("✅ 启用修改", callback_data=f"skill_approve_{skill_name}"),
+                            InlineKeyboardButton("❌ 放弃", callback_data=f"skill_reject_{skill_name}")
+                        ],
+                        [InlineKeyboardButton("📝 查看完整代码", callback_data=f"skill_view_{skill_name}")]
+                    ]
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+                    
+                    # Send UI (Agent will see execution success, User sees buttons)
+                    await context.bot.send_message(
+                        chat_id=update.effective_chat.id,
+                        text=(
+                            f"📝 **Skill 修改草稿**\n\n"
+                            f"**Target**: `{skill_name}`\n"
+                            f"**Instruction**: {instruction}\n\n"
+                            f"```python\n{code_preview}\n```\n\n"
+                            f"Please approve to apply changes."
+                        ),
+                        reply_markup=reply_markup,
+                        parse_mode="Markdown"
+                    )
+                    
+                    return f"Success: Generated modification for '{skill_name}'. User review required."
 
                 elif name == "list_subscriptions":
                     from repositories.subscription_repo import get_user_subscriptions

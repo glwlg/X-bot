@@ -166,6 +166,18 @@ class ToolRegistry:
                     },
                     required=["repo_name", "skill_name"]
                 )
+            ),
+            types.FunctionDeclaration(
+                name="modify_skill",
+                description="Modify an existing skill's code based on natural language instructions. Use this to fix bugs, add features, or change configuration (e.g. API URLs).",
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={
+                        "skill_name": types.Schema(type=types.Type.STRING, description="The name of the skill to modify"),
+                        "instruction": types.Schema(type=types.Type.STRING, description="Instructions for modification"),
+                    },
+                    required=["skill_name", "instruction"]
+                )
             )
         ]
 

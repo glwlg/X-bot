@@ -80,54 +80,68 @@ def markdown_to_telegram_html(text: str) -> str:
     return text
 
 
-async def smart_edit_text(message, text: str, reply_markup=None):
+async def smart_edit_text(message, text: str, reply_markup=None, **kwargs):
     """
     智能编辑消息函数
-    1. 尝试使用 Telegram HTML 模式 (通过转换)
-    2. 失败则降级为纯文本
+    1. 如果指定了 parse_mode，直接发送
+    2. 否则尝试使用 Telegram HTML 模式 (通过转换)
+    3. 失败则降级为纯文本
     """
+    parse_mode = kwargs.get("parse_mode")
+    
+    if parse_mode:
+        # 显式指定模式，直接发送
+        try:
+             return await message.edit_text(
+                text, 
+                reply_markup=reply_markup,
+                **kwargs # 包括 parse_mode
+             )
+        except Exception as e:
+             if "Message is not modified" in str(e): return None
+             # 如果显式模式失败，是否降级？通常应该降级为纯文本，但要移除 parse_mode
+             kwargs.pop("parse_mode")
+             return await message.edit_text(text, reply_markup=reply_markup, parse_mode=None, **kwargs)
+
+    # 默认智能模式
     html_text = markdown_to_telegram_html(text)
     
     try:
         if len(text) > 4000:
-            # 简单的截断，避免超出 Telegram 限制
             html_text = html_text[:4000] + "...(content truncated)"
             
         return await message.edit_text(
             html_text, 
             parse_mode="HTML", 
             reply_markup=reply_markup,
-            disable_web_page_preview=True 
+            disable_web_page_preview=True,
+            **kwargs
         )
     except Exception as e:
-        # Check if it's a "Message is not modified" error which we should ignore
         if "Message is not modified" in str(e):
             return None
 
-        # Fallback to plain text for ANY other error (including BadRequest for parsing)
+        # Fallback to plain text
         try:
-             # Also truncate plain text to avoid length errors
              safe_text = text[:4000] + "...(truncated)" if len(text) > 4000 else text
              return await message.edit_text(
                 safe_text, 
                 parse_mode=None, 
-                reply_markup=reply_markup
+                reply_markup=reply_markup,
+                **kwargs
              )
         except Exception as inner_e:
-             # Log the error if fallback fails
              import logging
              logging.getLogger(__name__).error(f"smart_edit_text fallback failed: {inner_e} | Original: {e}")
              pass
         return None
 
-async def smart_reply_text(update, text: str, reply_markup=None):
+async def smart_reply_text(update, text: str, reply_markup=None, **kwargs):
     """
     智能回复消息函数 (类似 smart_edit_text)
     支持普通消息和 callback_query
     """
-    html_text = markdown_to_telegram_html(text)
-    
-    # 获取回复目标：优先使用 message，否则使用 callback_query.message
+    # 获取回复目标
     target_message = None
     if update.message:
         target_message = update.message
@@ -138,13 +152,30 @@ async def smart_reply_text(update, text: str, reply_markup=None):
         import logging
         logging.getLogger(__name__).error("smart_reply_text: no message to reply to")
         return None
+
+    parse_mode = kwargs.get("parse_mode")
+    if parse_mode:
+        try:
+            return await target_message.reply_text(
+                text, 
+                reply_markup=reply_markup, 
+                **kwargs
+            )
+        except Exception as e:
+            # Fallback to plain text
+            kwargs.pop("parse_mode")
+            return await target_message.reply_text(text, reply_markup=reply_markup, parse_mode=None, **kwargs)
+
+    # 默认智能模式
+    html_text = markdown_to_telegram_html(text)
         
     try:
         return await target_message.reply_text(
             html_text, 
             parse_mode="HTML", 
             reply_markup=reply_markup,
-            disable_web_page_preview=True
+            disable_web_page_preview=True,
+            **kwargs
         )
     except Exception as e:
         # Fallback to plain text
@@ -152,7 +183,8 @@ async def smart_reply_text(update, text: str, reply_markup=None):
              return await target_message.reply_text(
                 text, 
                 parse_mode=None, 
-                reply_markup=reply_markup
+                reply_markup=reply_markup,
+                **kwargs
             )
         except Exception as inner_e:
             import logging
