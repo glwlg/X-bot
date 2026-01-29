@@ -32,6 +32,13 @@ FORBIDDEN_PATTERNS = [
     "open('/etc", "open('/root", "open('/home",
     "shutil.rmtree", "os.remove", "os.unlink",
     "socket", "urllib",  # httpx is allowed for controlled HTTP requests
+    "os.environ",  # 禁止访问环境变量（防止泄露密钥）
+]
+
+# 允许传递给沙箱子进程的安全环境变量
+SAFE_ENV_VARS = [
+    "PATH", "PYTHONPATH", "LANG", "LC_ALL", "LC_CTYPE",
+    "TZ", "HOME", "TMPDIR", "TEMP", "TMP",
 ]
 
 
@@ -50,6 +57,22 @@ class SandboxExecutor:
         self.timeout = timeout
         self.max_output_size = max_output_size
         self.work_dir = tempfile.mkdtemp(prefix="xbot_sandbox_")
+    
+    def _get_safe_env(self, extra_env: Dict[str, str] = None) -> Dict[str, str]:
+        """
+        构建安全的环境变量字典，只包含白名单中的变量
+        防止泄露 API 密钥等敏感信息
+        """
+        safe_env = {}
+        for key in SAFE_ENV_VARS:
+            if key in os.environ:
+                safe_env[key] = os.environ[key]
+        
+        # 合并额外的环境变量
+        if extra_env:
+            safe_env.update(extra_env)
+        
+        return safe_env
         
     def validate_code(self, code: str) -> Tuple[bool, str]:
         """
@@ -127,10 +150,9 @@ if "{skill_dir}" and os.path.exists("{skill_dir}/scripts"):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     cwd=work_dir,
-                    env={
-                        **os.environ,
+                    env=self._get_safe_env({
                         "PYTHONPATH": skill_dir + "/scripts" if skill_dir else "",
-                    }
+                    })
                 )
                 
                 stdout, stderr = await asyncio.wait_for(
@@ -200,6 +222,7 @@ if "{skill_dir}" and os.path.exists("{skill_dir}/scripts"):
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=skill_dir,
+                env=self._get_safe_env(),
             )
             
             stdout, stderr = await asyncio.wait_for(

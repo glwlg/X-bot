@@ -112,6 +112,37 @@ async def execute(update, context, params):
         allowed_cmds = ["docker", "curl", "netstat", "ss", "grep", "cat", "ls", "pwd", "sed", "awk"]
         if cmd_start not in allowed_cmds:
             return f"❌ Security Restriction: Command '{cmd_start}' is not allowed. Allowed: {', '.join(allowed_cmds)}"
+        
+        # Security check: Block commands that could leak sensitive info (API keys, tokens)
+        cmd_lower = command.lower()
+        sensitive_patterns = [
+            "inspect",          # docker inspect can show env vars
+            "printenv",         # printenv shows env vars
+            "/proc/",           # /proc/*/environ contains env vars
+            "environ",          # environment files
+            ".env",             # .env files
+            "api_key",          # API key files
+            "token",            # Token files (but allow 'docker logs' containing 'token' in output)
+            "secret",           # Secret files
+            "password",         # Password files
+        ]
+        # Only apply sensitive check for docker commands that explicitly read env/secrets
+        if cmd_start == "docker":
+            docker_sensitive = ["inspect", "exec"]
+            docker_parts = command.split()
+            # Block: docker inspect (can show all env vars)
+            if len(docker_parts) > 1 and docker_parts[1] == "inspect":
+                return "❌ Security Restriction: 'docker inspect' is not allowed as it may expose sensitive environment variables."
+            # Block: docker exec with env-reading commands
+            if len(docker_parts) > 2 and docker_parts[1] == "exec":
+                exec_cmd = " ".join(docker_parts[3:]) if len(docker_parts) > 3 else ""
+                if any(p in exec_cmd.lower() for p in ["env", "printenv", "environ", ".env", "secret", "password", "token", "api_key"]):
+                    return "❌ Security Restriction: This 'docker exec' command may expose sensitive information and is not allowed."
+        
+        # Block cat/grep on sensitive files
+        if cmd_start in ["cat", "grep"]:
+            if any(p in cmd_lower for p in [".env", "secret", "password", "api_key", "token", "/proc/", "environ"]):
+                return "❌ Security Restriction: Accessing sensitive files is not allowed."
             
         import asyncio
         try:

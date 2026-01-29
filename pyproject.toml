@@ -33,6 +33,9 @@ dependencies = [
     "yfinance>=0.2.36",
     "scikit-learn>=1.4.0",
     "seaborn>=0.13.0",
+    # Browser Automation (NotebookLM)
+    "patchright>=1.0.0",
+    "notebooklm-py[browser]>=0.2.0",
 ]
 
 [project.optional-dependencies]

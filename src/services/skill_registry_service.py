@@ -1,20 +1,25 @@
-import json
 import logging
 import asyncio
 import os
 import shutil
-from typing import List, Dict, Optional, Any
-from core.config import DATA_DIR
+import re
+from typing import List, Dict, Tuple, Any
 
 logger = logging.getLogger(__name__)
+
 
 class SkillRegistryService:
     """
     Service to interact with the skill registry using `npx skills`.
+    Supports: search, install, check updates, update, and delete skills.
     """
     
     def __init__(self):
         self.cmd_prefix = ["npx", "-y", "skills"]
+        # skills 目录路径
+        self.skills_base_dir = os.path.abspath("skills")
+        self.learned_dir = os.path.join(self.skills_base_dir, "learned")
+        self.builtin_dir = os.path.join(self.skills_base_dir, "builtin")
 
     async def search_skills(self, query: str) -> List[Dict[str, Any]]:
         """
@@ -53,9 +58,8 @@ class SkillRegistryService:
         └ https://skills.sh/...
         """
         skills = []
-        import re
         
-        # Strip ANSI
+        # Strip ANSI escape codes
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
         output = ansi_escape.sub('', output)
         
@@ -75,72 +79,67 @@ class SkillRegistryService:
             if '@' in line and '/' in line:
                 parts = line.split('@')
                 if len(parts) >= 2:
-                    repo_full = parts[0] # owner/repo
-                    skill_name = parts[1] # skill-name
+                    repo_full = parts[0]  # owner/repo
+                    skill_name = parts[1]  # skill-name
                     
                     skills.append({
                         "name": skill_name,
                         "repo": repo_full,
-                        # Description isn't provided in the list view of npx skills find currently
-                        # We use a placeholder
-                        "description": f"Skill from {repo_full} (Description not available in preview)",
+                        "description": f"Skill from {repo_full}",
                         "install_args": [repo_full, skill_name]
                     })
         
         return skills
 
-    async def install_skill(self, repo: str, skill_name: str) -> bool:
+    async def install_skill(self, repo: str, skill_name: str) -> Tuple[bool, str]:
         """
-        Install a skill using `npx skills add`.
-        Constructs ID as repo@skill_name.
+        Install a skill using `npx skills add -y`.
+        Uses -y flag to skip confirmation prompts.
+        
+        Returns:
+            (success: bool, message: str)
         """
         try:
-            # ID format: owner/repo@skill
             skill_id = f"{repo}@{skill_name}"
             
-            # Target dir for our bot
-            target_dir = os.path.abspath("skills/learned") 
-            if not os.path.exists(target_dir):
-                os.makedirs(target_dir, exist_ok=True)
+            if not os.path.exists(self.learned_dir):
+                os.makedirs(self.learned_dir, exist_ok=True)
 
-            cmd = self.cmd_prefix + ["add", skill_id]
+            # 使用 -y 参数跳过确认
+            cmd = self.cmd_prefix + ["add", skill_id, "-y"]
             
             logger.info(f"Running install command: {' '.join(cmd)}")
             
-            # npx skills add might prompt or just install. 
-            # We assume it installs to .agent/skills or similar relative path.
-            
             process = await asyncio.create_subprocess_exec(
                 *cmd,
-                stdin=asyncio.subprocess.PIPE, 
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
                 cwd=os.getcwd()
             )
             
-            # Send 'y\n' (yes) just in case it asks to initiate/confirm
             try:
-                stdout, stderr = await asyncio.wait_for(process.communicate(input=b"y\n"), timeout=120)
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(), 
+                    timeout=120
+                )
             except asyncio.TimeoutError:
                 process.kill()
                 logger.error("Skill installation timed out")
-                return False
+                return False, "安装超时"
 
             if process.returncode != 0:
-                logger.error(f"Skill install failed: {stderr.decode()} | OUT: {stdout.decode()}")
-                return False
+                error_msg = stderr.decode().strip() or stdout.decode().strip()
+                logger.error(f"Skill install failed: {error_msg}")
+                return False, f"安装失败: {error_msg}"
             
             logger.info(f"Install stdout: {stdout.decode()}")
             
-            # Post-install: Locate and move
-            # Check likely locations
-            # 1. .agent/skills/<skill_name>
-            # 2. <skill_name> in root
+            # Post-install: Locate and move to skills/learned
             source_patterns = [
-                os.path.join(os.getcwd(), ".agent", "skills", f"{skill_name}.py"),
                 os.path.join(os.getcwd(), ".agent", "skills", skill_name),
+                os.path.join(os.getcwd(), ".agent", "skills", f"{skill_name}.py"),
+                os.path.join(os.getcwd(), skill_name),
                 os.path.join(os.getcwd(), f"{skill_name}.py"),
-                os.path.join(os.getcwd(), skill_name)
             ]
             
             installed_path = None
@@ -150,24 +149,194 @@ class SkillRegistryService:
                     break
             
             if installed_path:
-                dest_path = os.path.join(target_dir, os.path.basename(installed_path))
+                dest_path = os.path.join(self.learned_dir, os.path.basename(installed_path))
                 if os.path.exists(dest_path):
-                     if os.path.isdir(dest_path):
-                         shutil.rmtree(dest_path)
-                     else:
-                         os.remove(dest_path)
+                    if os.path.isdir(dest_path):
+                        shutil.rmtree(dest_path)
+                    else:
+                        os.remove(dest_path)
                 
                 shutil.move(installed_path, dest_path)
                 logger.info(f"Moved installed skill to {dest_path}")
-                return True
+                return True, f"✅ 已安装 {skill_name} 到 skills/learned/"
             else:
-                logger.warning(f"Install successful but could not locate file to move from {source_patterns}")
-                # If we assume success based on exit code 0, we return True, 
-                # but better to return False if we can't manage the file, unless it installed in-place in skills/learned (unlikely).
-                return False
+                logger.warning(f"Install reported success but could not locate files")
+                return False, "安装命令执行成功，但未能定位安装文件"
 
         except Exception as e:
             logger.error(f"Error installing skill: {e}")
-            return False
+            return False, f"安装异常: {e}"
+
+    async def check_updates(self) -> Tuple[bool, str]:
+        """
+        Check for skill updates using `npx skills check`.
+        
+        Returns:
+            (success: bool, output: str)
+        """
+        try:
+            cmd = self.cmd_prefix + ["check"]
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=os.getcwd()
+            )
+            
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=60
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                return False, "检查超时"
+            
+            output = stdout.decode().strip()
+            
+            # Strip ANSI
+            ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+            output = ansi_escape.sub('', output)
+            
+            if process.returncode != 0:
+                error = stderr.decode().strip()
+                return False, f"检查失败: {error or output}"
+            
+            if not output:
+                return True, "所有技能已是最新版本"
+            
+            return True, output
+            
+        except Exception as e:
+            logger.error(f"Error checking updates: {e}")
+            return False, f"检查异常: {e}"
+
+    async def update_skills(self) -> Tuple[bool, str]:
+        """
+        Update all installed skills using `npx skills update -y`.
+        
+        Returns:
+            (success: bool, message: str)
+        """
+        try:
+            cmd = self.cmd_prefix + ["update", "-y"]
+            
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=os.getcwd()
+            )
+            
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=180
+                )
+            except asyncio.TimeoutError:
+                process.kill()
+                return False, "更新超时"
+            
+            output = stdout.decode().strip()
+            
+            # Strip ANSI
+            ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+            output = ansi_escape.sub('', output)
+            
+            if process.returncode != 0:
+                error = stderr.decode().strip()
+                return False, f"更新失败: {error or output}"
+            
+            return True, output or "✅ 技能更新完成"
+            
+        except Exception as e:
+            logger.error(f"Error updating skills: {e}")
+            return False, f"更新异常: {e}"
+
+    async def delete_skill(self, skill_name: str) -> Tuple[bool, str]:
+        """
+        Delete a skill from skills/learned directory.
+        
+        SECURITY: Only skills in 'learned' directory can be deleted.
+                  Builtin skills are protected and cannot be modified.
+        
+        Returns:
+            (success: bool, message: str)
+        """
+        try:
+            # 安全检查：获取 skill 信息以确认来源
+            from core.skill_loader import skill_loader
+            
+            skill_info = skill_loader.get_skill(skill_name)
+            
+            if not skill_info:
+                return False, f"❌ 技能 '{skill_name}' 不存在"
+            
+            # 检查是否为 builtin 技能
+            if skill_info.get("source") == "builtin":
+                return False, f"🚫 禁止删除内置技能 '{skill_name}'"
+            
+            # 确认是 learned 技能
+            if skill_info.get("source") != "learned":
+                return False, f"❌ 技能 '{skill_name}' 来源未知，无法删除"
+            
+            # 获取技能路径
+            skill_path = None
+            if skill_info.get("skill_type") == "standard":
+                skill_path = skill_info.get("skill_dir")
+            elif skill_info.get("skill_type") == "legacy":
+                skill_path = skill_info.get("path")
+            
+            if not skill_path or not os.path.exists(skill_path):
+                return False, f"❌ 找不到技能文件: {skill_path}"
+            
+            # 再次验证路径在 learned 目录下（防止路径遍历攻击）
+            skill_path_abs = os.path.abspath(skill_path)
+            learned_dir_abs = os.path.abspath(self.learned_dir)
+            
+            if not skill_path_abs.startswith(learned_dir_abs):
+                logger.warning(f"Security: Attempted to delete skill outside learned dir: {skill_path_abs}")
+                return False, "🚫 安全限制：只能删除 learned 目录下的技能"
+            
+            # 执行删除
+            if os.path.isdir(skill_path_abs):
+                shutil.rmtree(skill_path_abs)
+            else:
+                os.remove(skill_path_abs)
+            
+            # 从 loader 中卸载并重新扫描
+            skill_loader.unload_skill(skill_name)
+            skill_loader.reload_skills()
+            
+            logger.info(f"Deleted skill: {skill_name} from {skill_path_abs}")
+            return True, f"✅ 已删除技能 '{skill_name}'"
+            
+        except Exception as e:
+            logger.error(f"Error deleting skill {skill_name}: {e}")
+            return False, f"删除异常: {e}"
+
+    def list_learned_skills(self) -> List[Dict[str, Any]]:
+        """
+        List all skills in the learned directory.
+        
+        Returns:
+            List of skill info dicts with 'name' and 'path' keys.
+        """
+        from core.skill_loader import skill_loader
+        
+        skills = []
+        index = skill_loader.get_skill_index()
+        
+        for name, info in index.items():
+            if info.get("source") == "learned":
+                skills.append({
+                    "name": name,
+                    "description": info.get("description", ""),
+                    "skill_type": info.get("skill_type"),
+                })
+        
+        return skills
+
 
 skill_registry = SkillRegistryService()

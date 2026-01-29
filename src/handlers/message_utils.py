@@ -80,6 +80,15 @@ async def process_reply_message(update: Update, context: ContextTypes.DEFAULT_TY
             logger.error(f"Error fetching reply URL: {e}")
             extra_context = "【系统提示】读取链接时发生错误。请告知用户无法访问该链接。\n\n"
             await status_msg.delete()
+    else:
+        # 没有 URL，但有纯文本 -> 提取被引用消息的文本作为上下文
+        reply_text = reply_to.text or reply_to.caption or ""
+        if reply_text:
+            # 截断过长的文本
+            if len(reply_text) > 2000:
+                reply_text = reply_text[:2000] + "...(省略)"
+            extra_context = f"【用户引用的消息】\n{reply_text}\n\n"
+            logger.info(f"Extracted reply text context: {len(reply_text)} chars")
 
     # 2. 处理媒体
     if reply_to.video:

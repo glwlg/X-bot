@@ -229,7 +229,22 @@ MCP 模块允许 X-Bot 调用外部 MCP 服务。
 
 ---
 
-## 5. 注意事项
+## 5. CLI 工具集成
+
+部分复杂功能通过集成现有的 Python CLI 工具实现（如 `notebooklm`）。
+
+### NotebookLM
+- **实现方式**：`skills/builtin/notebooklm.py` 作为 Wrapper，通过 `subprocess` 调用 `notebooklm-py` CLI。
+- **环境隔离**：每个用户的认证信息 (`storage_state.json`) 隔离存储在 `/app/data/users/{user_id}/notebooklm`。
+- **依赖**：需预先安装 `notebooklm-py[browser]`。
+- **交互流程**：
+  1. 用户本地运行 `notebooklm login` 获取 Token。
+  2. 上传认证文件给 Bot。
+  3. Bot 使用 CLI 执行操作，结果返回给用户。
+
+---
+
+## 6. 注意事项
 
 1. **异步编程**: 所有 I/O 操作 **必须** 使用 `await`
 2. **错误处理**: 严禁未捕获异常，使用 `try...except` 并记录日志

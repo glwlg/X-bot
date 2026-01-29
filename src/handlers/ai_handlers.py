@@ -7,7 +7,7 @@ from telegram.error import BadRequest
 import random
 
 from core.config import gemini_client, GEMINI_MODEL
-from services.web_summary_service import extract_urls, summarize_webpage, is_video_platform, fetch_webpage_content
+
 from user_context import get_user_context, add_message
 from repositories import get_user_settings, get_video_cache
 from utils import smart_edit_text, smart_reply_text
@@ -44,48 +44,6 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "⛔ 抱歉，您没有使用 AI 对话功能的权限。\n\n"
             "如需下载视频，请使用 /download 命令。"
         )
-        return
-
-    # 检查消息中是否包含 URL（自动生成网页摘要）
-    urls = extract_urls(user_message)
-    
-    # 如果只是一个 URL 且没有其他内容
-    if urls and user_message.strip() in urls:
-        url = urls[0]
-        
-        # 智能逻辑：如果是视频平台链接，询问用户意图
-        if is_video_platform(url):
-            context.user_data['pending_video_url'] = url
-            
-            from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-            keyboard = [
-                [
-                    InlineKeyboardButton("📹 下载视频", callback_data="action_download_video"),
-                    InlineKeyboardButton("📝 AI 摘要", callback_data="action_summarize_video"),
-                ]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await smart_reply_text(update,
-                "🤔 检测到视频链接，您想要做什么？",
-                reply_markup=reply_markup
-            )
-            return
-
-        # 普通网页，直接生成摘要
-        # 普通网页，直接生成摘要
-        thinking_msg = await smart_reply_text(update, "📄 正在获取网页内容并生成摘要...")
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-        
-        summary = await summarize_webpage(url)
-        # Use smart_edit_text which handles Markdown conversion and fallbacks
-        await smart_edit_text(thinking_msg, summary)
-        
-        # Save summary to history
-        await add_message(context, user_id, "model", summary)
-        
-        # 记录统计
-        await increment_stat(user_id, "ai_chats")
         return
 
     # 检查是否开启了沉浸式翻译
@@ -140,25 +98,8 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
          if (r.video or r.audio or r.voice) and not has_media:
              return
     
-    # 2. 检查当前消息中是否有 URL (混合文本情况)
-    if not extra_context and urls:
-        status_msg = await smart_reply_text(update, "📄 正在获取网页内容...")
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
-        
-        try:
-            web_content = await fetch_webpage_content(urls[0])
-            if web_content:
-                extra_context = f"【网页内容】\n{web_content}\n\n"
-            else:
-                extra_context = "【系统提示】检测到链接，无法读取详情。\n\n"
-            
-        except Exception as e:
-            logger.error(f"Error fetching mixed URL: {e}")
-        
-        try:
-            await status_msg.delete()
-        except:
-            pass
+    # URL 逻辑已移交给 Agent (skill: web_browser, download_video)
+    # 不再进行硬编码预加载或弹窗
 
     # 随机选择一种"消息已收到"的提示
     RECEIVED_PHRASES = [
