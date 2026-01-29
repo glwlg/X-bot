@@ -42,6 +42,12 @@ COPY pyproject.toml .
 # Install Python dependencies using uv
 RUN uv pip install --system -r pyproject.toml
 
+# Install Playwright/Patchright browsers and system dependencies
+RUN apt-get update \
+    && patchright install-deps chromium \
+    && rm -rf /var/lib/apt/lists/* \
+    && patchright install chromium
+
 # Copy the rest of the application's code
 COPY src/ .
 

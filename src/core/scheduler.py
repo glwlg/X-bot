@@ -320,7 +320,8 @@ async def check_and_send_rss_updates(context: ContextTypes.DEFAULT_TYPE, subscri
                 if len(msg_header) + len(msg_body) + len(item_text) > 4000:
                     try:
                         await context.bot.send_message(chat_id=uid, text=msg_header + msg_body, parse_mode="Markdown")
-                        await save_push_message_to_db(uid, msg_header + msg_body)
+                        # 停止保存推送消息到上下文，防止 LLM 在回复时受到污染（幻觉/模仿）
+                        # await save_push_message_to_db(uid, msg_header + msg_body)
                         success_updates.extend(current_batch)
                         sent_count += 1
                     except Exception as e:
@@ -336,7 +337,7 @@ async def check_and_send_rss_updates(context: ContextTypes.DEFAULT_TYPE, subscri
             if msg_body:
                 try:
                     await context.bot.send_message(chat_id=uid, text=msg_header + msg_body, parse_mode="Markdown")
-                    await save_push_message_to_db(uid, msg_header + msg_body)
+                    # await save_push_message_to_db(uid, msg_header + msg_body)
                     success_updates.extend(current_batch)
                     sent_count += 1
                 except Exception as e:
@@ -468,7 +469,8 @@ async def stock_push_job(context: ContextTypes.DEFAULT_TYPE):
                     text=message,
                     parse_mode="Markdown"
                 )
-                await save_push_message_to_db(user_id, message)
+                # 停止保存推送消息到上下文
+                # await save_push_message_to_db(user_id, message)
                 logger.info(f"Sent stock quotes to user {user_id}")
                 
             except Exception as e:
