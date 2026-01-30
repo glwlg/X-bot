@@ -14,7 +14,10 @@ logger = logging.getLogger(__name__)
 SESSION_ID_KEY = "current_session_id"
 
 
-async def get_or_create_session_id(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> str:
+from typing import Union, Any
+from core.platform.models import UnifiedContext
+
+async def get_or_create_session_id(context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext], user_id: int) -> str:
     """获取当前 Session ID，如果内存没有，尝试从 DB 获取最新的"""
     if SESSION_ID_KEY in context.user_data:
         return context.user_data[SESSION_ID_KEY]
@@ -25,7 +28,7 @@ async def get_or_create_session_id(context: ContextTypes.DEFAULT_TYPE, user_id: 
     return session_id
 
 
-async def get_user_context(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> list[dict]:
+async def get_user_context(context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext], user_id: int) -> list[dict]:
     """
     获取用户的对话上下文 (Async)
     
@@ -38,7 +41,7 @@ async def get_user_context(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> 
 
 
 async def add_message(
-    context: ContextTypes.DEFAULT_TYPE,
+    context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext],
     user_id: int,
     role: Literal["user", "model"],
     content: str,
@@ -50,7 +53,7 @@ async def add_message(
     await save_message(user_id, role, content, session_id)
 
 
-def clear_context(context: ContextTypes.DEFAULT_TYPE) -> None:
+def clear_context(context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext]) -> None:
     """
     清除用户的对话上下文 (开启新会话)
     不删除历史记录，只是生成新的 session_id
@@ -60,7 +63,7 @@ def clear_context(context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info(f"Started new session: {new_session_id}")
 
 
-async def get_context_length(context: ContextTypes.DEFAULT_TYPE, user_id: int) -> int:
+async def get_context_length(context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext], user_id: int) -> int:
     """获取用户当前上下文的消息数量"""
     history = await get_user_context(context, user_id)
     return len(history)

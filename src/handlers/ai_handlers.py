@@ -4,7 +4,7 @@ import base64
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
-from core.platform.models import UnifiedContext
+from core.platform.models import UnifiedContext, MessageType
 import random
 
 from core.config import gemini_client, GEMINI_MODEL
@@ -40,13 +40,14 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
     # Note: We save the raw user message here. 
     # If using history later, we might want to avoid saving duplicates if we constructed a complex prmopt.
     # But for "chat record", raw input is best.
-    await add_message(context, user_id, "user", user_message)
+    await add_message(ctx, user_id, "user", user_message)
 
     # 检查用户权限
     from core.config import is_user_allowed
     if not await is_user_allowed(user_id):
         await ctx.reply(
-            "⛔ 抱歉，您没有使用 AI 对话功能的权限。\n\n"
+            f"⛔ 抱歉，您没有使用 AI 对话功能的权限。\n"
+            f"您的 ID 是: `{user_id}`\n\n"
             "如需下载视频，请使用 /download 命令。"
         )
         return
@@ -59,7 +60,8 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         
         # Save URL to context for callback access
         if context:
-            ctx.platform_ctx.user_data['pending_video_url'] = video_url
+            ctx.user_data['pending_video_url'] = video_url
+            logger.info(f"[AIHandler] Set pending_video_url for {user_id}: {video_url}")
         
         # Create Inline Keyboard with options
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -90,7 +92,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
 
         # 翻译模式开启
         thinking_msg = await ctx.reply("🌍 翻译中...")
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        await ctx.send_chat_action(action="typing")
         
         try:
             response = gemini_client.models.generate_content(
@@ -108,15 +110,18 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             )
             if response.text:
                 translation_text = f"🌍 **译文**\n\n{response.text}"
-                await ctx.edit_message(thinking_msg.message_id, translation_text)
-                await add_message(context, user_id, "model", translation_text)
+                msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
+                await ctx.edit_message(msg_id, translation_text)
+                await add_message(ctx, user_id, "model", translation_text)
                 # 统计
                 await increment_stat(user_id, "translations_count")
             else:
-                await ctx.edit_message(thinking_msg.message_id, "❌ 无法翻译。")
+                msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
+                await ctx.edit_message(msg_id, "❌ 无法翻译。")
         except Exception as e:
             logger.error(f"Translation error: {e}")
-            await ctx.edit_message(thinking_msg.message_id, "❌ 翻译服务出错。")
+            msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
+            await ctx.edit_message(msg_id, "❌ 翻译服务出错。")
         return
 
     # --- Agent Orchestration ---
@@ -132,9 +137,10 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         extra_context += reply_extra_context
     
     # Check if we should abort (e.g. file too big)
-    if update.message.reply_to_message:
-         r = update.message.reply_to_message
-         if (r.video or r.audio or r.voice) and not has_media:
+    if ctx.message.reply_to_message:
+         r = ctx.message.reply_to_message
+         is_media = r.type in [MessageType.VIDEO, MessageType.AUDIO, MessageType.VOICE]
+         if is_media and not has_media:
              return
     
     # URL 逻辑已移交给 Agent (skill: web_browser, download_video)
@@ -165,7 +171,8 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
     # await add_message(context, user_id, "user", final_user_message)
 
     # 发送"正在输入"状态
-    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+    # 发送"正在输入"状态
+    await ctx.send_chat_action(action="typing")
 
     import asyncio
 
@@ -218,7 +225,8 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                     display_text = phrase
                 
                 try:
-                    await ctx.edit_message(thinking_msg.message_id, display_text)
+                    msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
+                    await ctx.edit_message(msg_id, display_text)
                 except Exception as e:
                     logger.debug(f"Animation edit failed: {e}")
                 
@@ -244,7 +252,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             })
             
         # 获取历史上下文
-        history = await get_user_context(context, user_id) # Returns list of dicts
+        history = await get_user_context(ctx, user_id) # Returns list of dicts
         
         # 拼接: History + Current
         message_history.extend(history)
@@ -265,7 +273,8 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             # Update UI (Standard Stream)
             now = time.time()
             if now - last_stream_update > 1.0: # Reduce frequency slightly
-                await ctx.edit_message(thinking_msg.message_id, final_text_response)
+                msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
+                await ctx.edit_message(msg_id, final_text_response)
                 last_stream_update = now
         
         # 停止动画
@@ -289,16 +298,18 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                     logger.warning(f"Failed to delete thinking_msg: {del_e}")
             else:
                 # 如果发送失败（极少见），则降级为编辑旧消息
-                sent_msg = await ctx.edit_message(thinking_msg.message_id, final_text_response)
+                msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
+                sent_msg = await ctx.edit_message(msg_id, final_text_response)
             
             # 记录模型回复到上下文 (Explicitly save final response)
-            await add_message(context, user_id, "model", final_text_response)
+            await add_message(ctx, user_id, "model", final_text_response)
             
             # Try to extract code blocks
             final_display_text = await process_and_send_code_files(ctx, final_text_response)
             
             if sent_msg and final_display_text != final_text_response:
-                 await ctx.edit_message(sent_msg.message_id, final_display_text)
+                 msg_id = getattr(sent_msg, "message_id", getattr(sent_msg, "id", None))
+                 await ctx.edit_message(msg_id, final_display_text)
 
             # 记录统计
             await increment_stat(user_id, "ai_chats")
@@ -308,9 +319,10 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         logger.error(f"Agent error: {e}", exc_info=True)
         
         if str(e) == "Message is not modified":
-             pass
+            pass
         else:
-            await ctx.edit_message(thinking_msg.message_id,
+            msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
+            await ctx.edit_message(msg_id,
                 f"❌ Agent 运行出错：{e}\n\n请尝试 /new 重置对话。"
             )
 
@@ -330,7 +342,8 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
     from core.config import is_user_allowed
     if not await is_user_allowed(user_id):
         await ctx.reply(
-            "⛔ 抱歉，您没有使用 AI 功能的权限。"
+            f"⛔ 抱歉，您没有使用 AI 功能的权限。\n"
+            f"您的 ID 是: `{user_id}`"
         )
         return
     
@@ -342,7 +355,7 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
     caption = ctx.message.caption or "请描述这张图片"
 
     # Save to history immediately
-    await add_message(context, user_id, "user", f"【用户发送了一张图片】 {caption}")
+    await add_message(ctx, user_id, "user", f"【用户发送了一张图片】 {caption}")
     
     # 立即发送"正在分析"提示
     thinking_msg = await ctx.reply("🔍 正在分析图片...")
@@ -384,20 +397,25 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
             display_text = await process_and_send_code_files(ctx, response.text)
             
             # 更新消息
-            await ctx.edit_message(thinking_msg.message_id, display_text)
+            # 更新消息
+            msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
+            await ctx.edit_message(msg_id, display_text)
             
             # Save model response to history
-            await add_message(context, user_id, "model", response.text)
+            await add_message(ctx, user_id, "model", response.text)
             
             # 记录统计
             await increment_stat(user_id, "photo_analyses")
 
         else:
-            await ctx.edit_message(thinking_msg.message_id, "抱歉，我无法分析这张图片。请稍后再试。")
+
+            msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
+            await ctx.edit_message(msg_id, "抱歉，我无法分析这张图片。请稍后再试。")
         
     except Exception as e:
         logger.error(f"AI photo analysis error: {e}")
-        await ctx.edit_message(thinking_msg.message_id, "❌ 图片分析失败，请稍后再试。")
+        msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
+        await ctx.edit_message(msg_id, "❌ 图片分析失败，请稍后再试。")
 
 
 async def handle_ai_video(ctx: UnifiedContext) -> None:
@@ -415,7 +433,8 @@ async def handle_ai_video(ctx: UnifiedContext) -> None:
     from core.config import is_user_allowed
     if not await is_user_allowed(user_id):
         await ctx.reply(
-            "⛔ 抱歉，您没有使用 AI 功能的权限。"
+            f"⛔ 抱歉，您没有使用 AI 功能的权限。\n"
+            f"您的 ID 是: `{user_id}`"
         )
         return
     
@@ -427,7 +446,7 @@ async def handle_ai_video(ctx: UnifiedContext) -> None:
     caption = ctx.message.caption or "请分析这个视频的内容"
     
     # Save to history immediately
-    await add_message(context, user_id, "user", f"【用户发送了一个视频】 {caption}")
+    await add_message(ctx, user_id, "user", f"【用户发送了一个视频】 {caption}")
     
     # 检查视频大小（Gemini 有限制）
     # 检查视频大小（Gemini 有限制）
@@ -482,19 +501,22 @@ async def handle_ai_video(ctx: UnifiedContext) -> None:
             display_text = await process_and_send_code_files(ctx, response.text)
             
             # Update the thinking message with the cleaned text
-            await ctx.edit_message(thinking_msg.message_id, display_text)
+            msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
+            await ctx.edit_message(msg_id, display_text)
             
             # Save model response to history
-            await add_message(context, user_id, "model", response.text)
+            await add_message(ctx, user_id, "model", response.text)
             
             # 记录统计
             await increment_stat(user_id, "video_analyses")
         else:
-            await ctx.edit_message(thinking_msg.message_id, "抱歉，我无法分析这个视频。请稍后再试。")
+            msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
+            await ctx.edit_message(msg_id, "抱歉，我无法分析这个视频。请稍后再试。")
         
     except Exception as e:
         logger.error(f"AI video analysis error: {e}")
-        await ctx.edit_message(thinking_msg.message_id,
+        msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
+        await ctx.edit_message(msg_id,
             "❌ 视频分析失败，请稍后再试。\n\n"
             "可能的原因：\n"
             "• 视频格式不支持\n"

@@ -28,7 +28,10 @@ async def check_permission_unified(context: UnifiedContext) -> bool:
     # For now assume Telegram ID is int.
     
     if not await is_user_allowed(user_id):
-        await context.reply("⛔ 抱歉，您没有使用此 Bot 的权限。")
+        await context.reply(
+            f"⛔ 抱歉，您没有使用此 Bot 的权限。\n"
+            f"您的 ID 是: `{user_id}`"
+        )
         return False
     return True
 

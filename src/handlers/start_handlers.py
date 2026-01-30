@@ -44,7 +44,7 @@ async def handle_new_command(ctx: UnifiedContext) -> None:
     from user_context import clear_context
     # clear_context currently expects telegram context? 
     # Let's check user_context.py later. For now pass ctx.platform_ctx
-    clear_context(ctx.platform_ctx)
+    clear_context(ctx)
     
     await ctx.reply(
         "🧹 **已开启新对话**\n\n"

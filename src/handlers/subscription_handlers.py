@@ -74,7 +74,7 @@ async def process_subscribe(ctx: UnifiedContext, url: str) -> bool:
              
         try:
             await add_subscription(user_id, url, title)
-            await ctx.edit_message(msg.message_id, f"✅ **订阅成功！**\n\n源：{title}\nBot 将每 30 分钟检查一次更新。")
+            await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), f"✅ **订阅成功！**\n\n源：{title}\nBot 将每 30 分钟检查一次更新。")
             try:
                 uid_int = int(user_id)
                 await increment_stat(uid_int, "subscriptions_added")
@@ -83,15 +83,15 @@ async def process_subscribe(ctx: UnifiedContext, url: str) -> bool:
             return True
         except Exception as e:
             if "UNIQUE constraint failed" in str(e):
-                await ctx.edit_message(msg.message_id, "⚠️ 您已经订阅过这个源了。")
+                await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), "⚠️ 您已经订阅过这个源了。")
                 return True
             else:
-                await ctx.edit_message(msg.message_id, f"❌ 订阅失败: {e}")
+                await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), f"❌ 订阅失败: {e}")
                 return False
                  
     except Exception as e:
         logger.error(f"Subscribe error: {e}")
-        await ctx.edit_message(msg.message_id, "❌ 无法访问该 RSS 源。")
+        await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), "❌ 无法访问该 RSS 源。")
         return False
 
 
@@ -136,21 +136,21 @@ async def handle_unsubscribe_callback(ctx: UnifiedContext) -> None:
     user_id = ctx.message.user.id
     
     if data == "unsub_cancel":
-        await ctx.edit_message(query.message.message_id, "👌 已取消操作。")
+        await ctx.edit_message(getattr(query.message, "message_id", getattr(query.message, "id", None)), "👌 已取消操作。")
         return
     
     try:
         sub_id = int(data.replace("unsub_", ""))
     except ValueError:
-        await ctx.edit_message(query.message.message_id, "❌ 无效的操作。")
+        await ctx.edit_message(getattr(query.message, "message_id", getattr(query.message, "id", None)), "❌ 无效的操作。")
         return
     
     success = await delete_subscription_by_id(sub_id, user_id)
     
     if success:
-        await ctx.edit_message(query.message.message_id, "✅ 订阅已取消。")
+        await ctx.edit_message(getattr(query.message, "message_id", getattr(query.message, "id", None)), "✅ 订阅已取消。")
     else:
-        await ctx.edit_message(query.message.message_id, "❌ 取消失败，订阅可能已不存在。")
+        await ctx.edit_message(getattr(query.message, "message_id", getattr(query.message, "id", None)), "❌ 取消失败，订阅可能已不存在。")
 
 
 async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -235,7 +235,7 @@ async def process_monitor(ctx: UnifiedContext, keyword: str) -> bool:
         "\n\n来源：Google News\nBot 将每 30 分钟推送相关新闻。"
     )
     
-    await ctx.edit_message(msg.message_id, result_msg)
+    await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), result_msg)
     return len(success_list) > 0 or len(existed_list) > 0
 
 

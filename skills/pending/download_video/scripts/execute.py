@@ -1,5 +1,4 @@
-from telegram import Update
-from telegram.ext import ContextTypes
+from core.platform.models import UnifiedContext
 from utils import smart_reply_text
 import re
 from handlers.media_handlers import process_video_download
@@ -23,7 +22,7 @@ SKILL_META = {
     }
 }
 
-async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict) -> str:
     """执行视频下载"""
     url = params.get("url", "")
     format_type = params.get("format", "video")
@@ -36,7 +35,7 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
             url = match.group(0)
     
     if not url:
-        await smart_reply_text(update,
+        await ctx.reply(
             "📹 **视频下载**\n\n"
             "请提供视频链接，例如：\n"
             "• 下载 https://www.youtube.com/watch?v=xxx\n"
@@ -48,19 +47,19 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
     audio_only = (format_type == "audio")
     
     # 将 URL 存储到 context.args 中，因为 process_video_download 期望从 context.args 获取 URL
-    context.args = [url]
+    # context.args = [url]  <-- Deprecated in UnifiedContext
     
     # 确保 context.user_data 中有用户信息，以防 process_video_download 需要
     # 使用 effective_user 而不是 message.user（后者不存在）
-    user = update.effective_user
-    if user and hasattr(context, 'user_data'):
-        context.user_data['user_id'] = user.id
-        context.user_data['user_name'] = user.first_name
+    user = ctx.message.user
+    if user and hasattr(ctx.platform_ctx, 'user_data'):
+        ctx.platform_ctx.user_data['user_id'] = user.id
+        ctx.platform_ctx.user_data['user_name'] = user.first_name
     
     try:
         # 委托给现有的下载逻辑
-        # process_video_download 只接受 2-3 个参数: update, context, 可选的 audio_only
-        await process_video_download(update, context, audio_only)
+        # process_video_download 只接受 2-3 个参数: update, context, 可选的 audio_only -> Now ctx, url, audio_only
+        await process_video_download(ctx, url, audio_only)
         return "✅ 视频已下载并发送"
     except Exception as e:
         error_msg = str(e)

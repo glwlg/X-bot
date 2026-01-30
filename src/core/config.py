@@ -14,6 +14,9 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 if not TELEGRAM_BOT_TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set!")
 
+# Discord Bot 配置
+DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+
 # Gemini API 配置
 GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")

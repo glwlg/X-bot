@@ -1,5 +1,6 @@
 import base64
 import logging
+import io
 from core.platform.models import UnifiedContext
 from telegram import Update
 from telegram.ext import ContextTypes
@@ -53,8 +54,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
             ),
         )
 
-        # Call generate_content (streaming supported but we might just wait for full response)
-        # Using non-stream for simplicity in image extraction first
+        # Call generate_content 
         response = image_gen_client.models.generate_content(
             model=IMAGE_MODEL,
             contents=contents,
@@ -74,7 +74,6 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                         if part.inline_data:
                             image_bytes = part.inline_data.data
                             break
-                        # Future: handle function_call or text if multi-modal
                         
                         if part.inline_data:
                             image_bytes = part.inline_data.data
@@ -82,12 +81,25 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                         
         if not image_bytes:
              logger.error(f"Image Gen Failed. Full Response Candidates: {response.candidates}")
-             await ctx.edit_message(status_msg.message_id, "❌ 生成失败: API 未返回图片数据 (Candidates Empty or No Inline Data)。")
+             msg_id = getattr(status_msg, "message_id", getattr(status_msg, "id", None))
+             await ctx.edit_message(msg_id, "❌ 生成失败: API 未返回图片数据 (Candidates Empty or No Inline Data)。")
              return "❌ 生成失败: 无图片数据"
 
-        # 发送图片
+        # 发送图片 - Ensure bytes, use BytesIO to avoid "embedded null byte" path logic in Discord
+        if isinstance(image_bytes, bytes):
+            image_io = io.BytesIO(image_bytes)
+        else:
+            # If it's a string (e.g. base64), try to decode or wrap?
+            # Usually it's bytes. If it's str, print warning.
+            logger.warning(f"Image bytes was {type(image_bytes)}, forcing bytes conversion")
+            if isinstance(image_bytes, str):
+                 # Try UTF-8? Or Base64? Assuming raw bytes as str
+                 image_io = io.BytesIO(image_bytes.encode('utf-8')) # Dangerous assumption
+            else:
+                 image_io = io.BytesIO(bytes(image_bytes))
+
         await ctx.reply_photo(
-            photo=image_bytes,
+            photo=image_io,
             caption=f"🎨 **Prompt**: {prompt}\n📏 **Ratio**: {aspect_ratio}"
         )
         
@@ -104,7 +116,8 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
         error_msg = str(e)
         if status_msg:
              try:
-                await ctx.edit_message(status_msg.message_id, f"❌ 绘图失败: {error_msg}")
+                msg_id = getattr(status_msg, "message_id", getattr(status_msg, "id", None))
+                await ctx.edit_message(msg_id, f"❌ 绘图失败: {error_msg}")
              except:
                 pass
         return f"❌ 绘图失败: {error_msg}"

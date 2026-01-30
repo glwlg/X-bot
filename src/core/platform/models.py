@@ -54,7 +54,9 @@ class UnifiedMessage:
     caption: Optional[str] = None
     file_id: Optional[str] = None # Platform-specific file ID
     file_url: Optional[str] = None # Direct download URL if available
+    file_url: Optional[str] = None # Direct download URL if available
     reply_to_message_id: Optional[str] = None
+    reply_to_message: Optional["UnifiedMessage"] = None # Full object of replied message
     raw_data: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -90,6 +92,8 @@ class UnifiedContext:
     platform_ctx: Any # Original platform context (e.g., telegram.ext.ContextTypes.DEFAULT_TYPE)
     platform_event: Any = None # Original platform event (e.g., telegram.Update) - Escape hatch
     _adapter: Any = None # Reference to the adapter instance
+    # Add 'user' field to represent the effective user (e.g. clicker) if different from message sender
+    user: Optional[User] = None
     
     async def reply(self, text: str, **kwargs) -> Any:
         """
@@ -134,3 +138,57 @@ class UnifiedContext:
         Download a file by ID and return bytes.
         """
         return await self._adapter.download_file(self, file_id, **kwargs)
+
+    @property
+    def user_data(self) -> Dict[str, Any]:
+        """
+        Access to user-specific data persistence.
+        Proxies to underlying platform context or adapter storage.
+        """
+        # 1. Telegram Style (ContextTypes.DEFAULT_TYPE)
+        if hasattr(self.platform_ctx, "user_data"):
+             return self.platform_ctx.user_data
+        
+        # 2. Adapter Managed (Discord)
+        if self._adapter and hasattr(self._adapter, "get_user_data"):
+            # Prefer explicit 'user' (effective user), else message sender
+            target_user_id = self.user.id if self.user else self.message.user.id
+            return self._adapter.get_user_data(target_user_id)
+            
+        # 3. Fallback (Ephemeral)
+        # Use simple dict on self if not found? But this won't persist across requests.
+        # But prevents crash.
+        if not hasattr(self, "_ephemeral_user_data"):
+             self._ephemeral_user_data = {}
+        return self._ephemeral_user_data
+
+    @property
+    def callback_data(self) -> Optional[str]:
+        """Unified callback data access"""
+        # Telegram
+        if hasattr(self.platform_event, "callback_query") and self.platform_event.callback_query:
+            return self.platform_event.callback_query.data
+        
+        # Discord Interaction
+        # interaction.data is a dictionary for components
+        if hasattr(self.platform_event, "data") and isinstance(self.platform_event.data, dict):
+            return self.platform_event.data.get("custom_id")
+            
+        return None
+
+    async def answer_callback(self, text: str = None, show_alert: bool = False):
+        """Unified way to acknowledge a callback"""
+        try:
+            # Telegram
+            if hasattr(self.platform_event, "callback_query") and self.platform_event.callback_query:
+                await self.platform_event.callback_query.answer(text=text, show_alert=show_alert)
+                return
+
+            # Discord
+            if hasattr(self.platform_event, "response"):
+                # Avoid "Interaction has already been acknowledged"
+                if not self.platform_event.response.is_done():
+                    await self.platform_event.response.defer()
+        except Exception:
+            pass
+

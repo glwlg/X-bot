@@ -93,7 +93,7 @@ class TelegramAdapter(BotAdapter):
                 video=video,
                 caption=formatted_caption,
                 parse_mode="HTML",
-                supports_streaming=True,
+                supports_streaming=kwargs.pop("supports_streaming", True),
                 **kwargs
             )
         except Exception as e:

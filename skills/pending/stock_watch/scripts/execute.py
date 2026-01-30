@@ -6,6 +6,12 @@ import re
 from core.scheduler import trigger_manual_stock_check
 from core.platform.models import UnifiedContext
 
+SKILL_META = {
+    "name": "stock_watchlist",
+    "description": "自选股管理技能 - 修复 ctx.reply 返回值处理，使用 getattr 安全获取 message_id",
+    "version": "1.0.1"
+}
+
 async def execute(ctx: UnifiedContext, params: dict) -> str:
     """执行自选股操作"""
     import re
@@ -26,17 +32,15 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     
     if action == "refresh":
         msg = await ctx.reply("⏳ 正在获取最新行情...")
-        # Note: trigger_manual_stock_check still expects legacy context? 
-        # Checking imports... it imports job_queue from context?
-        # Assuming we can pass ctx.platform_ctx if needed, but the function signature in scheduler.py likely needs check.
-        # For now, let's pass context if we can. 
-        # Actually trigger_manual_stock_check(context, user_id) uses context.bot probably.
+        msg_id = getattr(msg, 'message_id', None) or getattr(msg, 'id', None)
         result = await trigger_manual_stock_check(ctx.platform_ctx, user_id)
         if result:
-            await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), result)
+            if msg_id:
+                await ctx.edit_message(msg_id, result)
             return f"✅ 股票行情已刷新。\n[CONTEXT_DATA_ONLY - DO NOT REPEAT]\n{result}"
         else:
-            await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), "📭 您的自选股列表为空，无法刷新。")
+            if msg_id:
+                await ctx.edit_message(msg_id, "📭 您的自选股列表为空，无法刷新。")
             return "❌ 刷新失败: 自选股为空"
             
     if action == "add_stock":
@@ -51,6 +55,8 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
 
     if action == "list" or not stock_name:
         return await _show_watchlist(ctx, user_id)
+    
+    return "❌ 未知操作"
 
 
 async def _show_watchlist(ctx: UnifiedContext, user_id: int) -> str:
@@ -113,25 +119,30 @@ async def _remove_stock(ctx: UnifiedContext, user_id: int, stock_name: str) -> s
 async def _add_single_stock(ctx: UnifiedContext, user_id: int, stock_name: str) -> str:
     """添加单个股票"""
     msg = await ctx.reply(f"🔍 正在搜索「{stock_name}」...")
+    # 安全获取 message_id，兼容不同返回类型
+    msg_id = getattr(msg, 'message_id', None) or getattr(msg, 'id', None)
     
     results = await search_stock_by_name(stock_name)
     
     if not results:
-        await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), f"❌ 未找到匹配「{stock_name}」的股票")
+        if msg_id:
+            await ctx.edit_message(msg_id, f"❌ 未找到匹配「{stock_name}」的股票")
         return f"❌ 未找到股票: {stock_name}"
     
     if len(results) == 1:
         stock = results[0]
         success = await add_watchlist_stock(user_id, stock["code"], stock["name"])
         if success:
-            await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), 
-                f"✅ 已添加自选股\n\n"
-                f"**{stock['name']}** ({stock['code']})\n\n"
-                f"交易时段将每 10 分钟推送行情。"
-            )
+            if msg_id:
+                await ctx.edit_message(msg_id, 
+                    f"✅ 已添加自选股\n\n"
+                    f"**{stock['name']}** ({stock['code']})\n\n"
+                    f"交易时段将每 10 分钟推送行情。"
+                )
             return f"✅ 添加自选股成功: {stock['name']}"
         else:
-            await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), f"⚠️ **{stock['name']}** 已在您的自选股中")
+            if msg_id:
+                await ctx.edit_message(msg_id, f"⚠️ **{stock['name']}** 已在您的自选股中")
             return f"⚠️ 自选股已存在: {stock['name']}"
     
     # 多个结果，让用户选择
@@ -144,16 +155,19 @@ async def _add_single_stock(ctx: UnifiedContext, user_id: int, stock_name: str) 
     keyboard.append([InlineKeyboardButton("🚫 取消", callback_data="stock_cancel")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), 
-        f"🔍 找到多个匹配「{stock_name}」的股票，请选择：",
-        reply_markup=reply_markup
-    )
+    if msg_id:
+        await ctx.edit_message(msg_id, 
+            f"🔍 找到多个匹配「{stock_name}」的股票，请选择：",
+            reply_markup=reply_markup
+        )
     return f"✅ 找到多个股票，等待用户选择: {stock_name}"
 
 
 async def _add_multiple_stocks(ctx: UnifiedContext, user_id: int, stock_names: list[str]) -> str:
     """批量添加多个股票"""
     msg = await ctx.reply(f"🔍 正在搜索 {len(stock_names)} 只股票...")
+    # 安全获取 message_id，兼容不同返回类型
+    msg_id = getattr(msg, 'message_id', None) or getattr(msg, 'id', None)
     
     success_list = []
     failed_list = []
@@ -186,5 +200,6 @@ async def _add_multiple_stocks(ctx: UnifiedContext, user_id: int, stock_names: l
         "\n\n交易时段将每 10 分钟推送行情。"
     )
     
-    await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), result_msg)
+    if msg_id:
+        await ctx.edit_message(msg_id, result_msg)
     return "✅ 批量添加完成: " + ", ".join(result_parts)

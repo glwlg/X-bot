@@ -8,10 +8,12 @@ X-Bot 采用模块化分层设计，基于 `python-telegram-bot` 和异步 I/O �
 
 ```mermaid
 graph TD
-    User(["👤 User"]) <-->|Telegram API| Bot(["🤖 X-Bot Server"])
+    User(["👤 User"]) <-->|Telegram/Discord| AdapterLayer(["🔌 Multi-Platform Adapter Layer"])
+    AdapterLayer <--> Bot(["🤖 X-Bot Server"])
 
     subgraph "X-Bot Core (Docker Container)"
-        Dispatcher["📨 Dispatcher & Entry Handlers"]
+        AdapterLayer
+        Dispatcher["📨 Unified Dispatcher"]
         
         subgraph "Agentic Brain"
             AO["🧠 Agent Orchestrator"]
@@ -43,8 +45,20 @@ graph TD
     end
 
     AI <--> Gemini
-    TR -.->|Install| Market
-```
+### 🔌 多平台适配层 (Universal Adapter Layer)
+X-Bot 引入了全新的适配器架构，实现 "一次编写，到处运行"：
+
+1.  **UnifiedContext (`src/core/platform/models.py`)**
+    *   **标准化模型**：将 Telegram Update 和 Discord Interaction 统一转换为 `UnifiedMessage` 和 `UnifiedContext`。
+    *   **统一接口**：提供 `.reply()`, `.reply_photo()`, `.edit_message()` 等统一方法，底层自动调用对应平台的 API。
+
+2.  **Adapter Pattern (`src/core/platform/adapter.py`)**
+    *   **BotAdapter (Base)**: 定义标准接口。
+    *   **TelegramAdapter**: 封装 `python-telegram-bot`。
+    *   **DiscordAdapter**: 封装 `discord.py`。
+
+3.  **AdapterManager (`src/core/platform/registry.py`)**
+    *   **统一调度**：负责启动所有注册的适配器，并将通用命令广播给所有平台。
 
 ### 🧠 智能体架构 (Agentic Core)
 
@@ -226,8 +240,11 @@ uv sync
 
 # 本地运行
 cp .env.example .env  # 填入 API Key
-# 推荐配置:
-# GEMINI_IMAGE_API_KEY=... (用于画图)
+# 必填配置:
+# TELEGRAM_BOT_TOKEN=...
+# DISCORD_BOT_TOKEN=... (可选)
+# GEMINI_API_KEY=...
+
 uv run src/main.py
 ```
 

@@ -138,7 +138,7 @@ async def process_stock_watch(ctx: UnifiedContext, action: str, stock_name: str)
             "\n\n交易时段将每 10 分钟推送行情。"
         )
         
-        await ctx.edit_message(msg.message_id, result_msg)
+        await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), result_msg)
 
 
 async def _add_single_stock(ctx: UnifiedContext, user_id: int, stock_name: str) -> None:
@@ -148,20 +148,20 @@ async def _add_single_stock(ctx: UnifiedContext, user_id: int, stock_name: str) 
     results = await search_stock_by_name(stock_name)
     
     if not results:
-        await ctx.edit_message(msg.message_id, f"❌ 未找到匹配「{stock_name}」的股票")
+        await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), f"❌ 未找到匹配「{stock_name}」的股票")
         return
     
     if len(results) == 1:
         stock = results[0]
         success = await add_watchlist_stock(user_id, stock["code"], stock["name"])
         if success:
-            await ctx.edit_message(msg.message_id, 
+            await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), 
                 f"✅ 已添加自选股\n\n"
                 f"**{stock['name']}** ({stock['code']})\n\n"
                 f"交易时段将每 10 分钟推送行情。"
             )
         else:
-            await ctx.edit_message(msg.message_id, f"⚠️ **{stock['name']}** 已在您的自选股中")
+            await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), f"⚠️ **{stock['name']}** 已在您的自选股中")
         return
     
     keyboard = []
@@ -174,7 +174,7 @@ async def _add_single_stock(ctx: UnifiedContext, user_id: int, stock_name: str) 
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await ctx.edit_message(msg.message_id, 
+    await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), 
         f"🔍 找到多个匹配「{stock_name}」的股票，请选择：",
         reply_markup=reply_markup
     )

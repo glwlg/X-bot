@@ -176,7 +176,7 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
             result = await transcribe_and_translate_voice(voice_bytes, mime_type)
             
             if not result:
-                await ctx.edit_message(thinking_msg.message_id, "❌ 无法识别或翻译语音内容，请重试。")
+                await ctx.edit_message(thinking_getattr(msg, "message_id", getattr(msg, "id", None)), "❌ 无法识别或翻译语音内容，请重试。")
                 return
             
             original_lang = result.get('original_lang', '未知')
@@ -191,7 +191,7 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
                 f"「{translated}」"
             )
             
-            await ctx.edit_message(thinking_msg.message_id, output)
+            await ctx.edit_message(thinking_getattr(msg, "message_id", getattr(msg, "id", None)), output)
             
             # 记录统计
             from stats import increment_stat
@@ -202,7 +202,7 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
         transcribed_text = await transcribe_voice(voice_bytes, mime_type)
         
         if not transcribed_text:
-            await ctx.edit_message(thinking_msg.message_id, "❌ 无法识别语音内容，请重试或发送文字消息。")
+            await ctx.edit_message(thinking_getattr(msg, "message_id", getattr(msg, "id", None)), "❌ 无法识别语音内容，请重试或发送文字消息。")
             return
         
         logger.info(f"Voice transcribed: {transcribed_text[:50]}...")
@@ -213,7 +213,7 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
             final_text = f"{user_instruction}\n\n【语音内容】：\n{transcribed_text}"
             final_text = f"{user_instruction}\n\n【语音内容】：\n{transcribed_text}"
             # 有指令时，视为短语音逻辑处理（走智能路由）
-            await ctx.edit_message(thinking_msg.message_id, f"🎤 已识别语音内容，正在执行指令: **\"{user_instruction}\"**...")
+            await ctx.edit_message(thinking_getattr(msg, "message_id", getattr(msg, "id", None)), f"🎤 已识别语音内容，正在执行指令: **\"{user_instruction}\"**...")
             await process_as_text_message(ctx, final_text, thinking_msg)
             return
 
@@ -221,13 +221,13 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
         duration = getattr(media, 'duration', SHORT_VOICE_THRESHOLD + 1)
         if duration <= SHORT_VOICE_THRESHOLD:
             # 短语音：走智能路由（与文本消息一致）
-            await ctx.edit_message(thinking_msg.message_id, f"🎤 语音转写内容为: **\"{transcribed_text}\"**\n\n🤔 正在思考中...")
+            await ctx.edit_message(thinking_getattr(msg, "message_id", getattr(msg, "id", None)), f"🎤 语音转写内容为: **\"{transcribed_text}\"**\n\n🤔 正在思考中...")
             
             # 调用文本消息处理逻辑
             await process_as_text_message(ctx, transcribed_text, thinking_msg)
         else:
             # 长语音：直接输出转写结果
-            await ctx.edit_message(thinking_msg.message_id, f"🎤 **语音转写结果：**\n\n{transcribed_text}")
+            await ctx.edit_message(thinking_getattr(msg, "message_id", getattr(msg, "id", None)), f"🎤 **语音转写结果：**\n\n{transcribed_text}")
             
             # 记录到上下文
             add_message(context, user_id, "user", f"【用户发送了一段长语音】{transcribed_text}")
@@ -238,7 +238,7 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
         
     except BadRequest as e:
         if "File is too big" in str(e):
-            await ctx.edit_message(thinking_msg.message_id, 
+            await ctx.edit_message(thinking_getattr(msg, "message_id", getattr(msg, "id", None)), 
                 "⚠️ **音频文件过大**\n\n"
                 "抱歉，Telegram 限制 Bot 只能下载 **20MB** 以内的文件，我无法获取这段音频。\n\n"
                 "💡 **建议方案**：\n"
@@ -247,12 +247,12 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
             )
         else:
             logger.error(f"Voice processing BadRequest: {e}")
-            await ctx.edit_message(thinking_msg.message_id, "❌ 处理失败：文件格式或内容受限。")
+            await ctx.edit_message(thinking_getattr(msg, "message_id", getattr(msg, "id", None)), "❌ 处理失败：文件格式或内容受限。")
             
     except Exception as e:
         logger.error(f"Voice processing error: {e}")
         try:
-            await ctx.edit_message(thinking_msg.message_id,
+            await ctx.edit_message(thinking_getattr(msg, "message_id", getattr(msg, "id", None)),
                 "❌ 语音处理失败，请稍后再试。\n\n"
                 "可能的原因：\n"
                 "• 语音格式不支持\n"
@@ -301,19 +301,19 @@ async def process_as_text_message(
             
             now = time.time()
             if now - last_update_time > 0.8:
-                await ctx.edit_message(thinking_msg.message_id, final_text_response)
+                await ctx.edit_message(thinking_getattr(msg, "message_id", getattr(msg, "id", None)), final_text_response)
                 last_update_time = now
         
         # 发送最终回复
         if final_text_response:
-            await ctx.edit_message(thinking_msg.message_id, final_text_response)
+            await ctx.edit_message(thinking_getattr(msg, "message_id", getattr(msg, "id", None)), final_text_response)
             add_message(context, user_id, "model", final_text_response)
             await increment_stat(user_id, "voice_chats")
         else:
-            await ctx.edit_message(thinking_msg.message_id, "抱歉，我无法生成回复。")
+            await ctx.edit_message(thinking_getattr(msg, "message_id", getattr(msg, "id", None)), "抱歉，我无法生成回复。")
             
     except Exception as e:
         logger.error(f"Voice Agent error: {e}")
     except Exception as e:
         logger.error(f"Voice Agent error: {e}")
-        await ctx.edit_message(thinking_msg.message_id, f"❌ Agent 运行出错：{e}")
+        await ctx.edit_message(thinking_getattr(msg, "message_id", getattr(msg, "id", None)), f"❌ Agent 运行出错：{e}")

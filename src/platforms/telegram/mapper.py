@@ -1,19 +1,15 @@
-from telegram import Update
+from telegram import Update, Message as TGMessage
 from telegram.ext import ContextTypes
 from core.platform.models import UnifiedMessage, User, Chat, MessageType
 import logging
 
 logger = logging.getLogger(__name__)
 
-def map_update_to_message(update: Update) -> UnifiedMessage:
-    """Maps a Telegram Update to a UnifiedMessage"""
-    if not update.effective_message:
-        raise ValueError("Update has no effective message")
+def map_telegram_message(msg: TGMessage) -> UnifiedMessage:
+    """Map a Telegram Message object to UnifiedMessage"""
+    user = msg.from_user
+    chat = msg.chat
 
-    msg = update.effective_message
-    user = update.effective_user
-    chat = update.effective_chat
-    
     # Map User
     unified_user = User(
         id=str(user.id) if user else "unknown",
@@ -74,5 +70,12 @@ def map_update_to_message(update: Update) -> UnifiedMessage:
         caption=caption,
         file_id=file_id,
         reply_to_message_id=str(msg.reply_to_message.message_id) if msg.reply_to_message else None,
+        reply_to_message=map_telegram_message(msg.reply_to_message) if msg.reply_to_message else None,
         raw_data=msg.to_dict()
     )
+
+def map_update_to_message(update: Update) -> UnifiedMessage:
+    """Maps a Telegram Update to a UnifiedMessage"""
+    if not update.effective_message:
+        raise ValueError("Update has no effective message")
+    return map_telegram_message(update.effective_message)

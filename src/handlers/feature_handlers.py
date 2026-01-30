@@ -22,7 +22,7 @@ async def feature_command(ctx: UnifiedContext) -> int:
     if not ctx.platform_ctx:
         return ConversationHandler.END
         
-    ctx.platform_ctx.user_data.pop(FEATURE_STATE_KEY, None)
+    ctx.user_data.pop(FEATURE_STATE_KEY, None)
     
     args = ctx.platform_ctx.args
     if args:
@@ -46,7 +46,7 @@ async def handle_feature_input(ctx: UnifiedContext) -> int:
     if not ctx.platform_ctx:
         return ConversationHandler.END
 
-    state = ctx.platform_ctx.user_data.get(FEATURE_STATE_KEY)
+    state = ctx.user_data.get(FEATURE_STATE_KEY)
     if state and state.get("filepath"):
         return await append_feature_supplement(ctx, text)
     else:
@@ -58,7 +58,7 @@ async def save_feature_command(ctx: UnifiedContext) -> int:
     if not ctx.platform_ctx:
         return ConversationHandler.END
         
-    state = ctx.platform_ctx.user_data.pop(FEATURE_STATE_KEY, None)
+    state = ctx.user_data.pop(FEATURE_STATE_KEY, None)
     
     if state and state.get("filename"):
         await ctx.reply(f"✅ 需求 `{state['filename']}` 已保存！")
@@ -117,12 +117,12 @@ async def process_feature_request(ctx: UnifiedContext, description: str) -> int:
             f.write(doc_content)
         
         if ctx.platform_ctx:
-            ctx.platform_ctx.user_data[FEATURE_STATE_KEY] = {
+            ctx.user_data[FEATURE_STATE_KEY] = {
                 "filepath": filepath,
                 "filename": filename,
             }
         
-        await ctx.edit_message(msg.message_id,
+        await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)),
             f"📝 **需求已记录**\n\n"
             f"📄 `{filename}`\n\n"
             f"{doc_content}\n\n"
@@ -132,13 +132,13 @@ async def process_feature_request(ctx: UnifiedContext, description: str) -> int:
         
     except Exception as e:
         logger.error(f"Feature request error: {e}")
-        await ctx.edit_message(msg.message_id, f"❌ 处理失败：{e}")
+        await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), f"❌ 处理失败：{e}")
         return ConversationHandler.END
 
 
 async def append_feature_supplement(ctx: UnifiedContext, supplement: str) -> int:
     """追加用户补充信息到需求文档"""
-    state = ctx.platform_ctx.user_data.get(FEATURE_STATE_KEY, {}) if ctx.platform_ctx else {}
+    state = ctx.user_data.get(FEATURE_STATE_KEY, {}) if ctx.platform_ctx else {}
     filepath = state.get("filepath")
     filename = state.get("filename")
     
@@ -163,7 +163,7 @@ async def append_feature_supplement(ctx: UnifiedContext, supplement: str) -> int
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(content)
         
-        await ctx.edit_message(msg.message_id,
+        await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)),
             f"✅ **补充已添加**\n\n"
             f"📄 `{filename}`\n\n"
             "继续补充说明，或点击 /save_feature 保存结束。"
@@ -172,5 +172,5 @@ async def append_feature_supplement(ctx: UnifiedContext, supplement: str) -> int
         
     except Exception as e:
         logger.error(f"Append feature error: {e}")
-        await ctx.edit_message(msg.message_id, f"❌ 更新失败：{e}")
+        await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), f"❌ 更新失败：{e}")
         return ConversationHandler.END

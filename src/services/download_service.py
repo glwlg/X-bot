@@ -9,7 +9,7 @@ import shutil
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Any
 from telegram import Message
 from telegram.error import BadRequest
 
@@ -24,6 +24,20 @@ from core.config import (
 from utils import create_progress_bar
 
 logger = logging.getLogger(__name__)
+
+async def _safe_edit_message(message: Any, text: str):
+    """Platform-agnostic message editing"""
+    try:
+        # Telegram
+        if hasattr(message, "edit_text"):
+            await message.edit_text(text)
+        # Discord / UnifiedContext wrapper
+        elif hasattr(message, "edit"):
+             # Discord uses.edit(content=...)
+            await message.edit(content=text)
+    except Exception as e:
+        logger.warning(f"Failed to edit message: {e}")
+
 
 @dataclass
 class DownloadResult:
@@ -138,7 +152,7 @@ async def download_video(url: str, user_id: int, progress_message: Message, audi
             -1
         ]
         try:
-            await progress_message.edit_text(f"❌ 下载失败\n{error_line}")
+            await _safe_edit_message(progress_message, f"❌ 下载失败\n{error_line}")
         except Exception:
             pass
         return DownloadResult(success=False, error_message=error_line)
@@ -164,7 +178,7 @@ async def _update_download_progress(proc, progress_message: Message) -> None:
                     percentage = float(match.group(1))
                     new_text = create_progress_bar(percentage)
                     if new_text != current_progress_text:
-                        await progress_message.edit_text(new_text)
+                        await _safe_edit_message(progress_message, new_text)
                         current_progress_text = new_text
                         last_update_time = now
                 except BadRequest as e:
@@ -185,7 +199,7 @@ async def _handle_downloaded_file(
             logger.error(
                 f"[{user_id}] yt-dlp succeeded but file not found: {file_path}"
             )
-            await progress_message.edit_text("❌ 下载后未找到文件。")
+            await _safe_edit_message(progress_message, "❌ 下载后未找到文件。")
             return DownloadResult(success=False, error_message="File not found")
 
         file_size_bytes = os.path.getsize(file_path)
@@ -212,7 +226,7 @@ async def _handle_downloaded_file(
             )
 
         # 文件大小合适，可以发送
-        await progress_message.edit_text("✅ 下载完成，正在上传...")
+        await _safe_edit_message(progress_message, "✅ 下载完成，正在上传...")
         return DownloadResult(
             success=True, 
             file_path=file_path, 
@@ -222,5 +236,5 @@ async def _handle_downloaded_file(
 
     except Exception as e:
         logger.error(f"[{user_id}] Error during file size check or move: {e}")
-        await progress_message.edit_text("❌ 处理文件时出错。")
+        await _safe_edit_message(progress_message, "❌ 处理文件时出错。")
         return DownloadResult(success=False, error_message=str(e))

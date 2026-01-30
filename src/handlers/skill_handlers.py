@@ -70,7 +70,7 @@ async def process_teach(ctx: UnifiedContext, requirement: str) -> int:
     result = await create_skill(requirement, user_id)
     
     if not result["success"]:
-        await ctx.edit_message(msg.message_id, f"❌ 生成失败:{result.get('error', '未知错误')}")
+        await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)), f"❌ 生成失败:{result.get('error', '未知错误')}")
         return ConversationHandler.END
     
     skill_name = result["skill_name"]
@@ -79,7 +79,7 @@ async def process_teach(ctx: UnifiedContext, requirement: str) -> int:
     
     # 保存到上下文供后续审核 (needs platform context)
     if ctx.platform_ctx:
-        ctx.platform_ctx.user_data["pending_skill"] = skill_name
+        ctx.user_data["pending_skill"] = skill_name
     
     # 显示 SKILL.md 预览
     preview_lines = skill_md.split("\n")[:15]
@@ -98,7 +98,7 @@ async def process_teach(ctx: UnifiedContext, requirement: str) -> int:
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await ctx.edit_message(msg.message_id,
+    await ctx.edit_message(getattr(msg, "message_id", getattr(msg, "id", None)),
         f"📝 **新技能草稿**\n\n"
         f"**名称**: `{skill_name}`{scripts_info}\n\n"
         f"```markdown\n{preview}\n```\n\n"
@@ -190,12 +190,12 @@ async def handle_skill_callback(ctx: UnifiedContext) -> None:
                                         caption=f"📜 脚本文件: `{script_file}`"
                                     )
                     
-                    await ctx.edit_message(query.message.message_id, f"📄 技能文件已发送,请查看上方文档。")
+                    await ctx.edit_message(getattr(query.message, "message_id", getattr(query.message, "id", None)), f"📄 技能文件已发送,请查看上方文档。")
                 except Exception as e:
                     logger.error(f"Failed to send skill files: {e}")
-                    await ctx.edit_message(query.message.message_id, f"❌ 发送文件失败:{e}")
+                    await ctx.edit_message(getattr(query.message, "message_id", getattr(query.message, "id", None)), f"❌ 发送文件失败:{e}")
             else:
-                await ctx.edit_message(query.message.message_id, "❌ SKILL.md 文件不存在")
+                await ctx.edit_message(getattr(query.message, "message_id", getattr(query.message, "id", None)), "❌ SKILL.md 文件不存在")
         
         # 旧格式: 单个 .py 文件
         elif os.path.exists(pending_file):
@@ -209,12 +209,12 @@ async def handle_skill_callback(ctx: UnifiedContext) -> None:
                         caption=f"📄 **{skill_name}.py**\n\n审核后点击下方按钮确认。",
                         reply_markup=reply_markup
                     )
-                await ctx.edit_message(query.message.message_id, f"📄 代码已发送为文件,请查看上方文档。")
+                await ctx.edit_message(getattr(query.message, "message_id", getattr(query.message, "id", None)), f"📄 代码已发送为文件,请查看上方文档。")
             except Exception as e:
                 logger.error(f"Failed to send code file: {e}")
-                await ctx.edit_message(query.message.message_id, f"❌ 发送文件失败:{e}")
+                await ctx.edit_message(getattr(query.message, "message_id", getattr(query.message, "id", None)), f"❌ 发送文件失败:{e}")
         else:
-            await ctx.edit_message(query.message.message_id, "❌ 技能文件不存在")
+            await ctx.edit_message(getattr(query.message, "message_id", getattr(query.message, "id", None)), "❌ 技能文件不存在")
 
 
 async def skills_command(ctx: UnifiedContext) -> None:
