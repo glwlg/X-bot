@@ -1,11 +1,10 @@
-from telegram import Update
-from telegram.ext import ContextTypes
+from core.platform.models import UnifiedContext
 from repositories import get_user_settings, set_translation_mode
 from utils import smart_reply_text
 
-async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> None:
+async def execute(ctx: UnifiedContext, params: dict) -> None:
     """执行翻译模式切换"""
-    user_id = update.effective_user.id
+    user_id = int(ctx.message.user.id)
     action = params.get("action", "toggle")
     
     settings = await get_user_settings(user_id)
@@ -27,7 +26,7 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
         "已恢复正常 AI 助手模式。"
     )
     
-    await smart_reply_text(update,
+    await ctx.reply(
         f"ℹ️ **沉浸式翻译模式**\n\n"
         f"当前状态：{status_text}\n\n"
         f"{desc}"

@@ -14,23 +14,24 @@ from repositories import (
     delete_subscription_by_id,
 )
 from stats import increment_stat
-from .base_handlers import check_permission
-from utils import smart_edit_text, smart_reply_text
-
-logger = logging.getLogger(__name__)
+from core.platform.models import UnifiedContext
+from .base_handlers import check_permission_unified
 
 
-async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def subscribe_command(ctx: UnifiedContext) -> int:
     """处理 /subscribe 命令，支持交互式输入"""
-    if not await check_permission(update):
+    if not await check_permission_unified(ctx):
         return ConversationHandler.END
 
-    args = context.args
+    if not ctx.platform_ctx:
+         return ConversationHandler.END
+
+    args = ctx.platform_ctx.args
     if args:
-        await process_subscribe(update, context, args[0])
+        await process_subscribe(ctx, args[0])
         return ConversationHandler.END
         
-    await smart_reply_text(update,
+    await ctx.reply(
         "📢 **订阅 RSS 源**\n\n"
         "请发送您想订阅的 RSS 链接。\n"
         "Bot 将每 30 分钟检查更新。\n\n"
@@ -41,30 +42,30 @@ async def subscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     return WAITING_FOR_SUBSCRIBE_URL
 
 
-async def handle_subscribe_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def handle_subscribe_input(ctx: UnifiedContext) -> int:
     """处理 RSS 链接的输入"""
-    url = update.message.text
+    url = ctx.message.text
     if not url:
-        await update.message.reply_text("请发送有效的链接。")
+        await ctx.reply("请发送有效的链接。")
         return WAITING_FOR_SUBSCRIBE_URL
         
-    success = await process_subscribe(update, context, url)
+    success = await process_subscribe(ctx, url)
     if success:
         return ConversationHandler.END
     else:
         return WAITING_FOR_SUBSCRIBE_URL
 
 
-async def process_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str) -> bool:
+async def process_subscribe(ctx: UnifiedContext, url: str) -> bool:
     """实际处理订阅逻辑"""
-    user_id = update.effective_user.id
+    user_id = ctx.message.user.id
     
     if not url.startswith("http"):
-        await smart_reply_text(update, "❌ 请输入有效的 HTTP/HTTPS 链接。")
+        await ctx.reply("❌ 请输入有效的 HTTP/HTTPS 链接。")
         return False
         
     try:
-        msg = await smart_reply_text(update, "🔍 正在验证 RSS 源...")
+        msg = await ctx.reply("🔍 正在验证 RSS 源...")
         feed = feedparser.parse(url)
              
         title = feed.feed.get("title", url)
@@ -73,41 +74,45 @@ async def process_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE, 
              
         try:
             await add_subscription(user_id, url, title)
-            await smart_edit_text(msg, f"✅ **订阅成功！**\n\n源：{title}\nBot 将每 30 分钟检查一次更新。")
-            await increment_stat(user_id, "subscriptions_added")
+            await ctx.edit_message(msg.message_id, f"✅ **订阅成功！**\n\n源：{title}\nBot 将每 30 分钟检查一次更新。")
+            try:
+                uid_int = int(user_id)
+                await increment_stat(uid_int, "subscriptions_added")
+            except:
+                pass
             return True
         except Exception as e:
             if "UNIQUE constraint failed" in str(e):
-                await smart_edit_text(msg, "⚠️ 您已经订阅过这个源了。")
+                await ctx.edit_message(msg.message_id, "⚠️ 您已经订阅过这个源了。")
                 return True
             else:
-                await smart_edit_text(msg, f"❌ 订阅失败: {e}")
+                await ctx.edit_message(msg.message_id, f"❌ 订阅失败: {e}")
                 return False
                  
     except Exception as e:
         logger.error(f"Subscribe error: {e}")
-        await smart_edit_text(msg, "❌ 无法访问该 RSS 源。")
+        await ctx.edit_message(msg.message_id, "❌ 无法访问该 RSS 源。")
         return False
 
 
-async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def unsubscribe_command(ctx: UnifiedContext) -> None:
     """处理 /unsubscribe 命令"""
-    if not await check_permission(update):
+    if not await check_permission_unified(ctx):
         return
 
-    user_id = update.effective_user.id
-    args = context.args
+    user_id = ctx.message.user.id
+    args = ctx.platform_ctx.args if ctx.platform_ctx else []
     
     if args:
         url = args[0]
         await delete_subscription(user_id, url)
-        await smart_reply_text(update, f"🗑️ 已取消订阅：`{url}`")
+        await ctx.reply(f"🗑️ 已取消订阅：`{url}`")
         return
     
     subs = await get_user_subscriptions(user_id)
     
     if not subs:
-        await smart_reply_text(update, "📭 您当前没有订阅任何内容。")
+        await ctx.reply("📭 您当前没有订阅任何内容。")
         return
     
     keyboard = []
@@ -118,33 +123,34 @@ async def unsubscribe_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     keyboard.append([InlineKeyboardButton("🚫 取消", callback_data="unsub_cancel")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await smart_reply_text(update, "📋 **请选择要取消的订阅**：", reply_markup=reply_markup)
+    await ctx.reply("📋 **请选择要取消的订阅**：", reply_markup=reply_markup)
 
 
-async def handle_unsubscribe_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_unsubscribe_callback(ctx: UnifiedContext) -> None:
     """处理取消订阅按钮回调"""
-    query = update.callback_query
+    # Legacy fallback
+    query = ctx.platform_event.callback_query
     await query.answer()
     
     data = query.data
-    user_id = update.effective_user.id
+    user_id = ctx.message.user.id
     
     if data == "unsub_cancel":
-        await query.edit_message_text("👌 已取消操作。")
+        await ctx.edit_message(query.message.message_id, "👌 已取消操作。")
         return
     
     try:
         sub_id = int(data.replace("unsub_", ""))
     except ValueError:
-        await query.edit_message_text("❌ 无效的操作。")
+        await ctx.edit_message(query.message.message_id, "❌ 无效的操作。")
         return
     
     success = await delete_subscription_by_id(sub_id, user_id)
     
     if success:
-        await query.edit_message_text("✅ 订阅已取消。")
+        await ctx.edit_message(query.message.message_id, "✅ 订阅已取消。")
     else:
-        await query.edit_message_text("❌ 取消失败，订阅可能已不存在。")
+        await ctx.edit_message(query.message.message_id, "❌ 取消失败，订阅可能已不存在。")
 
 
 async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
@@ -169,32 +175,32 @@ async def monitor_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     return WAITING_FOR_MONITOR_KEYWORD
 
 
-async def handle_monitor_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def handle_monitor_input(ctx: UnifiedContext) -> int:
     """处理监控关键词的输入"""
-    keyword = update.message.text
+    keyword = ctx.message.text
     if not keyword:
-        await update.message.reply_text("请发送有效文本。")
+        await ctx.reply("请发送有效文本。")
         return WAITING_FOR_MONITOR_KEYWORD
         
-    success = await process_monitor(update, context, keyword)
+    success = await process_monitor(ctx, keyword)
     if success:
         return ConversationHandler.END
     else:
         return WAITING_FOR_MONITOR_KEYWORD
 
 
-async def process_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE, keyword: str) -> bool:
+async def process_monitor(ctx: UnifiedContext, keyword: str) -> bool:
     """实际处理监控逻辑，支持多关键词"""
-    user_id = update.effective_user.id
+    user_id = ctx.message.user.id
     
     keywords = re.split(r'[、,，]+', keyword.strip())
     keywords = [k.strip() for k in keywords if k.strip()]
     
     if not keywords:
-        await smart_reply_text(update, "❌ 请输入有效的关键词。")
+        await ctx.reply("❌ 请输入有效的关键词。")
         return False
     
-    msg = await smart_reply_text(update, f"🔍 正在配置 {len(keywords)} 个关键词监控...")
+    msg = await ctx.reply(f"🔍 正在配置 {len(keywords)} 个关键词监控...")
     
     success_list = []
     failed_list = []
@@ -229,21 +235,21 @@ async def process_monitor(update: Update, context: ContextTypes.DEFAULT_TYPE, ke
         "\n\n来源：Google News\nBot 将每 30 分钟推送相关新闻。"
     )
     
-    await smart_edit_text(msg, result_msg)
+    await ctx.edit_message(msg.message_id, result_msg)
     return len(success_list) > 0 or len(existed_list) > 0
 
 
-async def list_subs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def list_subs_command(ctx: UnifiedContext) -> None:
     """处理 /list_subs 命令"""
-    if not await check_permission(update):
+    if not await check_permission_unified(ctx):
         return
 
-    user_id = update.effective_user.id
+    user_id = ctx.message.user.id
     
     subs = await get_user_subscriptions(user_id)
     
     if not subs:
-        await smart_reply_text(update, "📭 您当前没有订阅任何 RSS 源。")
+        await ctx.reply("📭 您当前没有订阅任何 RSS 源。")
         return
         
     msg = "📋 **您的订阅列表**：\n\n"
@@ -269,23 +275,29 @@ async def list_subs_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         keyboard.append(temp_row)
 
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await smart_reply_text(update, msg, reply_markup=reply_markup)
+    await ctx.reply(msg, reply_markup=reply_markup)
     return msg
 
 
-async def refresh_user_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> str:
+async def refresh_user_subscriptions(ctx: UnifiedContext) -> str:
     """
     [Tool] 手动刷新当前用户的订阅
     """
-    user_id = update.effective_user.id
+    user_id = ctx.message.user.id
     
     # 防止频繁调用 (简单防刷，这里可选)
     # 比如检查 timer
     
-    await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    # await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
+    # Not creating separate action for now or fallback
+    if ctx.platform_ctx:
+        try:
+           await ctx.platform_ctx.bot.send_chat_action(chat_id=ctx.message.chat.id, action="typing")
+        except:
+           pass
     
     from core.scheduler import trigger_manual_rss_check
-    result_text = await trigger_manual_rss_check(context, user_id)
+    result_text = await trigger_manual_rss_check(ctx.platform_ctx, user_id) if ctx.platform_ctx else "Platform not supported"
     
     if result_text:
         return result_text

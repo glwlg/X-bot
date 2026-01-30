@@ -1,11 +1,10 @@
 import asyncio
 from urllib.parse import quote
 import httpx
-from telegram import Update
-from telegram.ext import ContextTypes
+from core.platform.models import UnifiedContext
 from utils import smart_reply_text
 
-async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> None:
+async def execute(ctx: UnifiedContext, params: dict) -> None:
     query = params.get("query", "").strip()
     queries = params.get("queries", [])
     num_results = params.get("num_results", 5)
@@ -24,7 +23,7 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
     queries = [q for q in queries if q.strip()]
     
     if not queries:
-        await smart_reply_text(update, "❌ 请提供搜索关键词")
+        await ctx.reply("❌ 请提供搜索关键词")
         return
     
     # Limit queries count
@@ -32,7 +31,7 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
     num_results = min(max(1, int(num_results)), 10)
     
     status_msg = f"🔍 正在搜索 {len(queries)} 个主题..." if len(queries) > 1 else f"🔍 正在搜索: {queries[0]}"
-    await smart_reply_text(update, status_msg)
+    await ctx.reply(status_msg)
     
     async def fetch_results(search_query):
         try:
@@ -130,7 +129,7 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
     html_content += "</body></html>"
     
     if not found_any:
-        await smart_reply_text(update, "😔 所有查询均未找到结果")
+        await ctx.reply("😔 所有查询均未找到结果")
         return "No results found for any query."
 
     # Send HTML File
@@ -138,11 +137,11 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
         import io
         file_obj = io.BytesIO(html_content.encode('utf-8'))
         file_obj.name = "search_report.html"
-        await update.message.reply_document(
+        await ctx.reply_document(
             document=file_obj, 
             caption=f"📊 聚合搜索完成 ({len(queries)} 个主题)"
         )
     except Exception as e:
-        await smart_reply_text(update, f"⚠️ 发送报告失败: {e}")
+        await ctx.reply(f"⚠️ 发送报告失败: {e}")
 
     return "\n".join(agent_summary_lines)

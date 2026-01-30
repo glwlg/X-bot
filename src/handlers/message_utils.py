@@ -3,6 +3,7 @@ import base64
 from telegram import Update, Message
 from telegram.ext import ContextTypes
 
+from core.platform.models import UnifiedContext
 from utils import smart_reply_text
 from services.web_summary_service import extract_urls
 from repositories import get_video_cache
@@ -10,14 +11,14 @@ from services.web_summary_service import fetch_webpage_content
 
 logger = logging.getLogger(__name__)
 
-async def process_reply_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> tuple[bool, str, bytes, str]:
+async def process_reply_message(ctx: UnifiedContext) -> tuple[bool, str, bytes, str]:
     """
     处理回复引用的消息，提取 URL 内容、图片或视频数据。
     
     Returns:
         tuple: (has_media, extra_context, media_data, mime_type)
     """
-    reply_to = update.message.reply_to_message
+    reply_to = ctx.message.reply_to_message
     if not reply_to:
         return False, "", None, None
 
@@ -25,7 +26,7 @@ async def process_reply_message(update: Update, context: ContextTypes.DEFAULT_TY
     media_data = None
     mime_type = None
     extra_context = ""
-    chat_id = update.effective_chat.id
+    chat_id = ctx.message.chat.id
 
     # 1. 尝试提取引用消息中的 URL 并获取内容
     reply_urls = []
@@ -60,8 +61,8 @@ async def process_reply_message(update: Update, context: ContextTypes.DEFAULT_TY
     if reply_urls:
         # 发现 URL，尝试获取内容
         # 先发送一个提示，避免用户以为卡死
-        status_msg = await smart_reply_text(update, "📄 正在获取引用网页内容...")
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        status_msg = await ctx.reply("📄 正在获取引用网页内容...")
+        await ctx.send_chat_action(action="typing")
         
         try:
             web_content = await fetch_webpage_content(reply_urls[0])
@@ -104,7 +105,7 @@ async def process_reply_message(update: Update, context: ContextTypes.DEFAULT_TY
             import os
             if os.path.exists(cache_path):
                 logger.info(f"Using cached video: {cache_path}")
-                await smart_reply_text(update, "🎬 正在分析视频（使用缓存）...")
+                await ctx.reply("🎬 正在分析视频（使用缓存）...")
                 with open(cache_path, "rb") as f:
                     media_data = bytearray(f.read())
             else:
@@ -114,23 +115,21 @@ async def process_reply_message(update: Update, context: ContextTypes.DEFAULT_TY
         if media_data is None:
             # 检查大小限制（Telegram API 限制 20MB）
             if video.file_size and video.file_size > 20 * 1024 * 1024:
-                await smart_reply_text(update,
+                await ctx.reply(
                     "⚠️ 引用的视频文件过大（超过 20MB），无法通过 Telegram 下载分析。\n\n"
                     "提示：Bot 下载的视频会被缓存，可以直接分析。"
                 )
                 return False, extra_context, None, None # Abort
             
-            await smart_reply_text(update, "🎬 正在下载并分析视频...")
-            file = await context.bot.get_file(video.file_id)
-            media_data = await file.download_as_bytearray()
+            await ctx.reply("🎬 正在下载并分析视频...")
+            media_data = await ctx.download_file(video.file_id)
             
     elif reply_to.photo:
         has_media = True
         photo = reply_to.photo[-1]
         mime_type = "image/jpeg"
-        await smart_reply_text(update, "🔍 正在分析图片...")
-        file = await context.bot.get_file(photo.file_id)
-        media_data = await file.download_as_bytearray()
+        await ctx.reply("🔍 正在分析图片...")
+        media_data = await ctx.download_file(photo.file_id)
 
     elif reply_to.audio or reply_to.voice:
         has_media = True
@@ -147,15 +146,14 @@ async def process_reply_message(update: Update, context: ContextTypes.DEFAULT_TY
 
         # Check size limit (20MB)
         if file_size and file_size > 20 * 1024 * 1024:
-            await smart_reply_text(update,
+            await ctx.reply(
                 f"⚠️ 引用的{label}文件过大（超过 20MB），无法通过 Telegram 下载分析。"
             )
              # Abort
             return False, extra_context, None, None
 
-        await smart_reply_text(update, f"🎧 正在分析{label}...")
-        file = await context.bot.get_file(file_id)
-        media_data = await file.download_as_bytearray()
+        await ctx.reply(f"🎧 正在分析{label}...")
+        media_data = await ctx.download_file(file_id)
         
     return has_media, extra_context, media_data, mime_type
 
@@ -163,10 +161,9 @@ async def process_reply_message(update: Update, context: ContextTypes.DEFAULT_TY
 import re
 import os
 import aiofiles
-from telegram import Update
 from telegram.constants import ParseMode
 
-async def process_and_send_code_files(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str) -> str:
+async def process_and_send_code_files(ctx: UnifiedContext, text: str) -> str:
     """
     1. Scan text for code blocks.
     2. If blocks are significant (long), save as file and send to user.
@@ -230,13 +227,12 @@ async def process_and_send_code_files(update: Update, context: ContextTypes.DEFA
                 await f.write(code_content)
             
             # Send document
-            chat_id = update.effective_chat.id
-            await context.bot.send_document(
-                chat_id=chat_id,
+            chat_id = ctx.message.chat.id
+            await ctx.reply_document(
                 document=open(filepath, "rb"),
                 filename=filename,
                 caption=f"📝 {language} 代码片段",
-                reply_to_message_id=update.message.message_id
+                reply_to_message_id=ctx.message.message_id
             )
             sent_count += 1
             

@@ -1,26 +1,26 @@
 import os
 import asyncio
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes, ConversationHandler
+from core.platform.models import UnifiedContext
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ConversationHandler
 
 from core.config import WAITING_FOR_VIDEO_URL
 from utils import extract_video_url, smart_edit_text, smart_reply_text
 from services.download_service import download_video
-from services.download_service import download_video
-from .base_handlers import check_permission
+from .base_handlers import check_permission_unified
 from user_context import add_message
 
 logger = logging.getLogger(__name__)
 
 # --- Video Download ---
 
-async def download_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def download_command(ctx: UnifiedContext) -> int:
     """处理 /download 命令，进入视频下载模式"""
-    if not await check_permission(update):
+    if not await check_permission_unified(ctx):
         return ConversationHandler.END
 
-    await smart_reply_text(update,
+    await ctx.reply(
         "📹 **视频下载模式**\n\n"
         "请发送视频链接，支持以下平台：\n"
         "• X (Twitter)\n"
@@ -32,9 +32,9 @@ async def download_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     )
     return WAITING_FOR_VIDEO_URL
 
-async def start_download_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def start_download_video(ctx: UnifiedContext) -> int:
     """进入视频下载模式的入口"""
-    query = update.callback_query
+    query = ctx.platform_event.callback_query
     await query.answer()
     
     logger.info("Entering download video mode")
@@ -52,7 +52,8 @@ async def start_download_video(update: Update, context: ContextTypes.DEFAULT_TYP
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     try:
-        await smart_edit_text(query.message,
+        await ctx.edit_message(
+            query.message.message_id,
             "📹 **视频下载模式**\n\n"
             "请选择下载格式：",
             reply_markup=reply_markup
@@ -63,26 +64,29 @@ async def start_download_video(update: Update, context: ContextTypes.DEFAULT_TYP
     return WAITING_FOR_VIDEO_URL
 
 
-async def handle_download_format(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def handle_download_format(ctx: UnifiedContext) -> int:
     """处理下载格式选择"""
-    query = update.callback_query
+    query = ctx.platform_event.callback_query
     await query.answer()
     
     data = query.data
     
+    if not ctx.platform_ctx:
+         return ConversationHandler.END
+
     # 存储用户选择的格式
     if data == "dl_format_video":
-        context.user_data["download_format"] = "video"
+        ctx.platform_ctx.user_data["download_format"] = "video"
         format_text = "📹 视频（最佳质量）"
     else:
-        context.user_data["download_format"] = "audio"
+        ctx.platform_ctx.user_data["download_format"] = "audio"
         format_text = "🎵 仅音频 (MP3)"
     
     keyboard = [[InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main_cancel")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     try:
-        await smart_edit_text(query.message,
+        await ctx.edit_message(query.message.message_id,
             f"📹 **视频下载模式**\n\n"
             f"已选择：{format_text}\n\n"
             "请发送视频链接，支持以下平台：\n"
@@ -101,45 +105,49 @@ async def handle_download_format(update: Update, context: ContextTypes.DEFAULT_T
 
 
 async def handle_video_download(
-    update: Update, context: ContextTypes.DEFAULT_TYPE
+    ctx: UnifiedContext
 ) -> int:
     """处理视频下载流程中的 URL 输入"""
-    message_text = update.message.text
+    message_text = ctx.message.text
     if not message_text:
-        await smart_reply_text(update, "请发送有效的视频链接。")
+        await ctx.reply("请发送有效的视频链接。")
         return WAITING_FOR_VIDEO_URL
 
     url = extract_video_url(message_text)
     if not url:
-        await smart_reply_text(update,
+        await ctx.reply(
             "链接格式似乎不被支持，请检查。\n\n发送 /cancel 取消操作。"
         )
         return WAITING_FOR_VIDEO_URL
-        return WAITING_FOR_VIDEO_URL
 
-    chat_id = update.message.chat_id
+    if not ctx.platform_ctx:
+        return ConversationHandler.END
+
+    chat_id = ctx.message.chat.id
     
     # 获取用户选择的下载格式（默认视频）
-    audio_only = context.user_data.get("download_format") == "audio"
+    audio_only = ctx.platform_ctx.user_data.get("download_format") == "audio"
     
     # Delegate to the shared processing function
-    await process_video_download(update, context, url, audio_only)
+    await process_video_download(ctx, url, audio_only)
 
     return ConversationHandler.END
 
 
-async def process_video_download(update: Update, context: ContextTypes.DEFAULT_TYPE, url: str, audio_only: bool = False) -> None:
+async def process_video_download(ctx: UnifiedContext, url: str, audio_only: bool = False) -> None:
     """
     Core video download logic, shared by direct command and AI router.
     """
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
+    chat_id = ctx.message.chat.id
+    user_id = ctx.message.user.id
     
+    if not ctx.platform_ctx:
+         logger.error("Platform context missing in process_video_download")
+         return
+
     format_text = "音频" if audio_only else "视频"
 
-    processing_message = await context.bot.send_message(
-        chat_id=chat_id, text=f"正在下载{format_text}，请稍候... ⏳"
-    )
+    processing_message = await ctx.reply(f"正在下载{format_text}，请稍候... ⏳")
 
     # 下载视频/音频
     result = await download_video(url, chat_id, processing_message, audio_only=audio_only)
@@ -149,7 +157,7 @@ async def process_video_download(update: Update, context: ContextTypes.DEFAULT_T
         if result.error_message:
              # 尝试更新消息显示错误（如果 downloader 没做）
             try:
-                await smart_edit_text(processing_message, f"❌ 下载失败: {result.error_message}")
+                await ctx.edit_message(processing_message.message_id, f"❌ 下载失败: {result.error_message}")
             except:
                 pass
         return
@@ -159,7 +167,7 @@ async def process_video_download(update: Update, context: ContextTypes.DEFAULT_T
     # 处理文件过大情况
     if result.is_too_large:
         # 暂存路径到 user_data以供后续操作
-        context.user_data["large_file_path"] = file_path
+        ctx.platform_ctx.user_data["large_file_path"] = file_path
         
         keyboard = [
             [
@@ -172,9 +180,7 @@ async def process_video_download(update: Update, context: ContextTypes.DEFAULT_T
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await smart_edit_text(processing_message,
+        await ctx.edit_message(processing_message.message_id,
             f"⚠️ **视频文件过大 ({result.file_size_mb:.1f}MB)**\n\n"
             f"超过 Telegram 限制 (50MB)，无法直接发送。\n"
             f"您可以选择：",
@@ -188,14 +194,17 @@ async def process_video_download(update: Update, context: ContextTypes.DEFAULT_T
         try:
             if audio_only:
                 # 发送音频文件
-                await context.bot.send_audio(
-                    chat_id=chat_id, audio=open(file_path, "rb")
+                await ctx.reply_audio(
+                    audio=open(file_path, "rb"),
+                    caption="🎵 仅音频 (视频提取)"
                 )
                 # 音频文件也保留以避免重复下载
             else:
                 # 发送视频并获取返回的消息（包含 file_id）
-                sent_message = await context.bot.send_video(
-                    chat_id=chat_id, video=open(file_path, "rb"), supports_streaming=True
+                # ctx.reply_video returns the message object (Telegram Message)
+                sent_message = await ctx.reply_video(
+                    video=open(file_path, "rb"),
+                    supports_streaming=True
                 )
                 
                 # 记录视频文件路径以供 AI 分析
@@ -209,41 +218,39 @@ async def process_video_download(update: Update, context: ContextTypes.DEFAULT_T
                 
                 # 记录统计
                 from stats import increment_stat
-                await increment_stat(user_id, "downloads")
+                try:
+                    await increment_stat(int(user_id), "downloads")
+                except:
+                    pass
                 
             # 删除进度消息
-            await context.bot.delete_message(
-                chat_id=chat_id, message_id=processing_message.message_id
-            )
+            await ctx.delete_message(message_id=processing_message.message_id)
             
         except Exception as e:
             logger.error(f"Failed to send video to chat {chat_id}: {e}")
-        except Exception as e:
-            logger.error(f"Failed to send video to chat {chat_id}: {e}")
-            await smart_edit_text(processing_message, "❌ 发送视频失败，可能是网络问题或格式不受支持。")
+            await ctx.edit_message(processing_message.message_id, "❌ 发送视频失败，可能是网络问题或格式不受支持。")
 
-async def handle_video_actions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_video_actions(ctx: UnifiedContext) -> None:
     """处理视频链接的智能选项（下载 vs 摘要）"""
-    query = update.callback_query
+    query = ctx.platform_event.callback_query
     await query.answer()
     
-    url = context.user_data.get('pending_video_url')
-    url = context.user_data.get('pending_video_url')
+    if not ctx.platform_ctx:
+         return
+
+    url = ctx.platform_ctx.user_data.get('pending_video_url')
     if not url:
-        await smart_edit_text(query.message, "❌ 链接已过期，请重新发送。")
+        await ctx.edit_message(query.message.message_id, "❌ 链接已过期，请重新发送。")
         return
 
     action = query.data
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
+    chat_id = ctx.message.chat.id
+    user_id = ctx.message.user.id
     
     if action == "action_download_video":
-        await smart_edit_text(query.message, "📹 准备下载视频...")
+        await ctx.edit_message(query.message.message_id, "📹 准备下载视频...")
         
-        # 模拟进入下载流程
-        processing_message = await context.bot.send_message(
-            chat_id=chat_id, text=f"正在下载视频，请稍候... ⏳"
-        )
+        processing_message = await ctx.reply(f"正在下载视频，请稍候... ⏳")
         
         # 调用下载逻辑
         result = await download_video(url, chat_id, processing_message, audio_only=False)
@@ -251,16 +258,16 @@ async def handle_video_actions(update: Update, context: ContextTypes.DEFAULT_TYP
         if not result.success:
              if result.error_message:
                 try:
-                    await smart_edit_text(processing_message, f"❌ 下载失败: {result.error_message}")
+                    await ctx.edit_message(processing_message.message_id, f"❌ 下载失败: {result.error_message}")
                 except:
                     pass
              return
 
         file_path = result.file_path
         
-        # 处理文件过大 (复用 handle_video_download 的逻辑)
+        # 处理文件过大 (复用 handle_video_download 的逻辑) - Refactor opportunity: extract common logic
         if result.is_too_large:
-            context.user_data["large_file_path"] = file_path
+            ctx.platform_ctx.user_data["large_file_path"] = file_path
             keyboard = [
                 [
                     InlineKeyboardButton("📝 生成内容摘要 (AI)", callback_data="large_file_summary"),
@@ -272,9 +279,7 @@ async def handle_video_actions(update: Update, context: ContextTypes.DEFAULT_TYP
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            await smart_edit_text(processing_message,
+            await ctx.edit_message(processing_message.message_id,
                 f"⚠️ **视频文件过大 ({result.file_size_mb:.1f}MB)**\n\n"
                 f"超过 Telegram 限制 (50MB)，无法直接发送。\n"
                 f"您可以选择：",
@@ -286,8 +291,9 @@ async def handle_video_actions(update: Update, context: ContextTypes.DEFAULT_TYP
         if file_path and os.path.exists(file_path):
             logger.info(f"Downloaded to {file_path}. Uploading to chat {chat_id}.")
             try:
-                sent_message = await context.bot.send_video(
-                    chat_id=chat_id, video=open(file_path, "rb"), supports_streaming=True
+                sent_message = await ctx.reply_video(
+                    video=open(file_path, "rb"),
+                    supports_streaming=True
                 )
                 
                 # 缓存
@@ -298,59 +304,70 @@ async def handle_video_actions(update: Update, context: ContextTypes.DEFAULT_TYP
                 
                 # 统计
                 from stats import increment_stat
-                await increment_stat(user_id, "downloads")
+                try:
+                    await increment_stat(int(user_id), "downloads")
+                except:
+                    pass
                 
                 # 删除进度消息
-                await context.bot.delete_message(
-                    chat_id=chat_id, message_id=processing_message.message_id
-                )
+                await ctx.delete_message(message_id=processing_message.message_id)
             except Exception as e:
                 logger.error(f"Failed to send video: {e}")
-            except Exception as e:
-                logger.error(f"Failed to send video: {e}")
-                await smart_edit_text(processing_message, "❌ 发送视频失败。")
+                await ctx.edit_message(processing_message.message_id, "❌ 发送视频失败。")
 
     elif action == "action_summarize_video":
-        await smart_edit_text(query.message, "📄 正在获取网页内容并生成摘要...")
-        await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+        await ctx.edit_message(query.message.message_id, "📄 正在获取网页内容并生成摘要...")
+        try:
+           await ctx.send_chat_action(action="typing")
+        except:
+           pass
         
         from services.web_summary_service import summarize_webpage
         summary = await summarize_webpage(url)
         
-        await smart_edit_text(query.message, summary)
+        await ctx.edit_message(query.message.message_id, summary)
         
         # Save summary to history
-        await add_message(context, user_id, "model", summary)
+        try:
+             await add_message(ctx.platform_ctx, int(user_id), "model", summary)
+        except:
+             pass
         
         # 统计
         from stats import increment_stat
-        await increment_stat(user_id, "video_summaries")
+        try:
+             await increment_stat(int(user_id), "video_summaries")
+        except:
+             pass
 
 
-async def handle_large_file_action(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_large_file_action(ctx: UnifiedContext) -> None:
     """处理大文件操作的回调 (摘要/音频/删除)"""
-    query = update.callback_query
+    query = ctx.platform_event.callback_query
     await query.answer()
     
+    if not ctx.platform_ctx:
+         return
+
     data = query.data
-    file_path = context.user_data.get("large_file_path")
+    file_path = ctx.platform_ctx.user_data.get("large_file_path")
     
     if not file_path or not os.path.exists(file_path):
-        await smart_edit_text(query.message, "❌ 文件已过期或不存在，请重新下载。")
-        return
+        await ctx.edit_message(query.message.message_id, "❌ 文件已过期或不存在，请重新下载。")
         return
 
-    chat_id = update.effective_chat.id
+    chat_id = ctx.message.chat.id
     
     try:
         if data == "large_file_delete":
-            os.remove(file_path)
-        if data == "large_file_delete":
-            os.remove(file_path)
-            await smart_edit_text(query.message, "🗑️ 文件已删除。")
+            try:
+                os.remove(file_path)
+            except:
+                pass
+            await ctx.edit_message(query.message.message_id, "🗑️ 文件已删除。")
             
         elif data == "large_file_audio":
-            await smart_edit_text(query.message, "🎵 正在提取音频并发送，请稍候...")
+            await ctx.edit_message(query.message.message_id, "🎵 正在提取音频并发送，请稍候...")
             # 简单实现：如果是 mp4，尝试发原文件当音频？不行，Telegram 会认出是视频。
             # 需要转码。
             base, ext = os.path.splitext(file_path)
@@ -373,20 +390,22 @@ async def handle_large_file_action(update: Update, context: ContextTypes.DEFAULT
                 final_path = file_path # 假设已经是音频
                 
             # 检查音频大小
-            # 检查音频大小
             if os.path.getsize(final_path) > 50 * 1024 * 1024:
-                 await smart_edit_text(query.message, f"❌ 提取的音频也超过 50MB，无法发送。")
+                 await ctx.edit_message(query.message.message_id, f"❌ 提取的音频也超过 50MB，无法发送。")
             else:
-                 await context.bot.send_audio(
+                 await ctx.platform_ctx.bot.send_audio(
                     chat_id=chat_id, 
                     audio=open(final_path, "rb"),
                     caption="🎵 仅音频 (从大视频提取)"
                  )
-                 await query.delete_message()
+                 try:
+                    await query.delete_message()
+                 except:
+                     pass
                  
                  
         elif data == "large_file_summary":
-            await smart_edit_text(query.message, "📝 正在提取并压缩音频，请稍候... (这可能需要几分钟)")
+            await ctx.edit_message(query.message.message_id, "📝 正在提取并压缩音频，请稍候... (这可能需要几分钟)")
             
             # 使用 ffmpeg 提取并压缩音频，确保大小适合 inline传输 (<20MB)
             # 目标：单声道(ac 1), 16kHz(ar 16000), 32kbps(b:a 32k) -> ~14MB/hour
@@ -411,7 +430,7 @@ async def handle_large_file_action(update: Update, context: ContextTypes.DEFAULT
             await process.wait()
             
             if not os.path.exists(compressed_audio_path):
-                await smart_edit_text(query.message, "❌ 音频提取失败。")
+                await ctx.edit_message(query.message.message_id, "❌ 音频提取失败。")
                 return
 
             # 读取文件并进行 base64 编码 (仿照 voice_handler)
@@ -421,11 +440,14 @@ async def handle_large_file_action(update: Update, context: ContextTypes.DEFAULT
             
             # 检查压缩后大小
             if len(audio_bytes) > 25 * 1024 * 1024:
-                await smart_edit_text(query.message, "❌ 即使压缩后音频仍然过大，无法分析。")
-                os.remove(compressed_audio_path)
+                await ctx.edit_message(query.message.message_id, "❌ 即使压缩后音频仍然过大，无法分析。")
+                try:
+                    os.remove(compressed_audio_path)
+                except:
+                    pass
                 return
 
-            await smart_edit_text(query.message, "📝 音频处理完成，正在通过 AI 生成摘要...")
+            await ctx.edit_message(query.message.message_id, "📝 音频处理完成，正在通过 AI 生成摘要...")
 
             # 构造 inline data 请求
             from core.config import gemini_client, GEMINI_MODEL
@@ -445,10 +467,17 @@ async def handle_large_file_action(update: Update, context: ContextTypes.DEFAULT
             ]
             
             # Generate content
-            response = gemini_client.models.generate_content(
-                model=GEMINI_MODEL,
-                contents=contents
-            )
+            try:
+                response = await gemini_client.aio.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=contents
+                )
+            except Exception as e:
+                logger.error(f"Gemini API error: {e}")
+                await ctx.edit_message(query.message.message_id, f"❌ AI 分析失败: {e}")
+                try: os.remove(compressed_audio_path)
+                except: pass
+                return
             
             # 清理压缩的临时文件
             try:
@@ -458,14 +487,17 @@ async def handle_large_file_action(update: Update, context: ContextTypes.DEFAULT
             
             if response.text:
                 summary_text = f"📝 **视频内容摘要**\n\n{response.text}"
-                await smart_reply_text(update, summary_text)
-                await add_message(context, chat_id, "model", summary_text)
-                await query.delete_message()
+                await ctx.reply(summary_text)
+                await add_message(ctx.platform_ctx, int(ctx.message.user.id), "model", summary_text)
+                try:
+                    await query.delete_message()
+                except:
+                    pass
             else:
-                await smart_edit_text(query.message, "❌ AI 无法生成摘要。")
+                await ctx.edit_message(query.message.message_id, "❌ AI 无法生成摘要。")
 
     except Exception as e:
         logger.error(f"Error handling large file action: {e}")
-        await query.message.reply_text(f"❌ 操作失败: {str(e)}")
+        await ctx.reply(f"❌ 操作失败: {str(e)}")
 
 

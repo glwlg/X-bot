@@ -4,6 +4,7 @@ import base64
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.error import BadRequest
+from core.platform.models import UnifiedContext
 import random
 
 from core.config import gemini_client, GEMINI_MODEL
@@ -19,14 +20,18 @@ logger = logging.getLogger(__name__)
 THINKING_MESSAGE = "🤔 正在思考中..."
 
 
-async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_ai_chat(ctx: UnifiedContext) -> None:
     """
     处理普通文本消息，使用 Gemini AI 生成回复
     支持引用（回复）包含图片或视频的消息
     """
-    user_message = update.message.text
-    chat_id = update.message.chat_id
-    user_id = update.message.from_user.id
+    user_message = ctx.message.text
+    # Legacy fallbacks
+    update = ctx.platform_event
+    context = ctx.platform_ctx
+    
+    chat_id = ctx.message.chat.id
+    user_id = ctx.message.user.id
 
     if not user_message:
         return
@@ -40,9 +45,36 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # 检查用户权限
     from core.config import is_user_allowed
     if not await is_user_allowed(user_id):
-        await smart_reply_text(update,
+        await ctx.reply(
             "⛔ 抱歉，您没有使用 AI 对话功能的权限。\n\n"
             "如需下载视频，请使用 /download 命令。"
+        )
+        return
+    
+    # 0.5 Fast-track: Detected video URL -> Show Options (Download vs Summarize)
+    from utils import extract_video_url
+    video_url = extract_video_url(user_message)
+    if video_url:
+        logger.info(f"Detected video URL: {video_url}, presenting options")
+        
+        # Save URL to context for callback access
+        if context:
+            ctx.platform_ctx.user_data['pending_video_url'] = video_url
+        
+        # Create Inline Keyboard with options
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+        keyboard = [
+            [
+                InlineKeyboardButton("📹 下载视频", callback_data="action_download_video"),
+                InlineKeyboardButton("📝 生成摘要", callback_data="action_summarize_video"),
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await ctx.reply(
+            f"🔗 **已识别视频链接**\n\n"
+            f"您可以选择以下操作：",
+            reply_markup=reply_markup
         )
         return
 
@@ -53,11 +85,11 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         if user_message.strip().lower() in ["/cancel", "退出", "关闭翻译", "退出翻译", "cancel"]:
             from repositories import set_translation_mode
             await set_translation_mode(user_id, False)
-            await smart_reply_text(update, "🚫 已退出沉浸式翻译模式。")
+            await ctx.reply("🚫 已退出沉浸式翻译模式。")
             return
 
         # 翻译模式开启
-        thinking_msg = await smart_reply_text(update, "🌍 翻译中...")
+        thinking_msg = await ctx.reply("🌍 翻译中...")
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")
         
         try:
@@ -76,15 +108,15 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             )
             if response.text:
                 translation_text = f"🌍 **译文**\n\n{response.text}"
-                await smart_edit_text(thinking_msg, translation_text)
+                await ctx.edit_message(thinking_msg.message_id, translation_text)
                 await add_message(context, user_id, "model", translation_text)
                 # 统计
                 await increment_stat(user_id, "translations_count")
             else:
-                await smart_edit_text(thinking_msg, "❌ 无法翻译。")
+                await ctx.edit_message(thinking_msg.message_id, "❌ 无法翻译。")
         except Exception as e:
             logger.error(f"Translation error: {e}")
-            await smart_edit_text(thinking_msg, "❌ 翻译服务出错。")
+            await ctx.edit_message(thinking_msg.message_id, "❌ 翻译服务出错。")
         return
 
     # --- Agent Orchestration ---
@@ -94,7 +126,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     from .message_utils import process_reply_message, process_and_send_code_files
     
     extra_context = "" 
-    has_media, reply_extra_context, media_data, mime_type = await process_reply_message(update, context)
+    has_media, reply_extra_context, media_data, mime_type = await process_reply_message(ctx)
     
     if reply_extra_context:
         extra_context += reply_extra_context
@@ -120,9 +152,9 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     ]
     
     if not has_media:
-        thinking_msg = await smart_reply_text(update, random.choice(RECEIVED_PHRASES))
+        thinking_msg = await ctx.reply(random.choice(RECEIVED_PHRASES))
     else:
-        thinking_msg = await smart_reply_text(update, "🤔 正在分析引用内容...")
+        thinking_msg = await ctx.reply("🤔 正在分析引用内容...")
     
     # 3. 构建消息上下文 (History)
     final_user_message = user_message
@@ -186,7 +218,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     display_text = phrase
                 
                 try:
-                    await smart_edit_text(thinking_msg, display_text)
+                    await ctx.edit_message(thinking_msg.message_id, display_text)
                 except Exception as e:
                     logger.debug(f"Animation edit failed: {e}")
                 
@@ -225,7 +257,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         final_text_response = ""
         last_stream_update = 0
         
-        async for chunk_text in agent_orchestrator.handle_message(update, context, message_history):
+        async for chunk_text in agent_orchestrator.handle_message(ctx, message_history):
             final_text_response += chunk_text
             state["final_text"] = final_text_response
             state["last_update_time"] = time.time()
@@ -233,7 +265,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # Update UI (Standard Stream)
             now = time.time()
             if now - last_stream_update > 1.0: # Reduce frequency slightly
-                await smart_edit_text(thinking_msg, final_text_response)
+                await ctx.edit_message(thinking_msg.message_id, final_text_response)
                 last_stream_update = now
         
         # 停止动画
@@ -247,7 +279,7 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             # 这里改为发送一条新消息作为最终结果，并删除原本的"思考中"消息。
             
             # 1. 发送新消息
-            sent_msg = await smart_reply_text(update, final_text_response)
+            sent_msg = await ctx.reply(final_text_response)
             
             # 2. 尝试删除旧的思考消息 (如果发送成功)
             if sent_msg:
@@ -257,63 +289,70 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
                     logger.warning(f"Failed to delete thinking_msg: {del_e}")
             else:
                 # 如果发送失败（极少见），则降级为编辑旧消息
-                sent_msg = await smart_edit_text(thinking_msg, final_text_response)
+                sent_msg = await ctx.edit_message(thinking_msg.message_id, final_text_response)
             
             # 记录模型回复到上下文 (Explicitly save final response)
             await add_message(context, user_id, "model", final_text_response)
             
             # Try to extract code blocks
-            final_display_text = await process_and_send_code_files(update, context, final_text_response)
+            final_display_text = await process_and_send_code_files(ctx, final_text_response)
             
             if sent_msg and final_display_text != final_text_response:
-                 await smart_edit_text(sent_msg, final_display_text)
+                 await ctx.edit_message(sent_msg.message_id, final_display_text)
 
             # 记录统计
             await increment_stat(user_id, "ai_chats")
-        else:
-            await smart_edit_text(thinking_msg, "抱歉，我无法生成回复 (无输出)。")
-
     except Exception as e:
         state["running"] = False
         animation_task.cancel()
         logger.error(f"Agent error: {e}", exc_info=True)
-        await smart_edit_text(thinking_msg,
-            f"❌ Agent 运行出错：{e}\n\n请尝试 /new 重置对话。"
-        )
+        
+        if str(e) == "Message is not modified":
+             pass
+        else:
+            await ctx.edit_message(thinking_msg.message_id,
+                f"❌ Agent 运行出错：{e}\n\n请尝试 /new 重置对话。"
+            )
 
 
-async def handle_ai_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_ai_photo(ctx: UnifiedContext) -> None:
     """
     处理图片消息，使用 Gemini AI 分析图片
     """
-    chat_id = update.message.chat_id
-    user_id = update.message.from_user.id
+    chat_id = ctx.message.chat.id
+    user_id = ctx.message.user.id
+    
+    # Legacy fallback
+    update = ctx.platform_event
+    context = ctx.platform_ctx
     
     # 检查用户权限
     from core.config import is_user_allowed
     if not await is_user_allowed(user_id):
-        await smart_reply_text(update,
+        await ctx.reply(
             "⛔ 抱歉，您没有使用 AI 功能的权限。"
         )
         return
     
     # 获取图片（选择最大分辨率）
+    # Use fallback to access raw photo object for now
+    if not update.message.photo:
+         return
     photo = update.message.photo[-1]
-    caption = update.message.caption or "请描述这张图片"
+    caption = ctx.message.caption or "请描述这张图片"
 
     # Save to history immediately
     await add_message(context, user_id, "user", f"【用户发送了一张图片】 {caption}")
     
     # 立即发送"正在分析"提示
-    thinking_msg = await smart_reply_text(update, "🔍 正在分析图片...")
+    thinking_msg = await ctx.reply("🔍 正在分析图片...")
     
     # 发送"正在输入"状态
-    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+    await ctx.send_chat_action(action="typing")
     
     try:
         # 下载图片
-        file = await context.bot.get_file(photo.file_id)
-        image_bytes = await file.download_as_bytearray()
+        image_bytes = await ctx.download_file(photo.file_id)
         
         # 构建带图片的内容
         contents = [
@@ -342,10 +381,10 @@ async def handle_ai_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if response.text:
             # Try to extract code blocks, send files, and get cleaned text
             from .message_utils import process_and_send_code_files
-            display_text = await process_and_send_code_files(update, context, response.text)
+            display_text = await process_and_send_code_files(ctx, response.text)
             
             # 更新消息
-            await smart_edit_text(thinking_msg, display_text)
+            await ctx.edit_message(thinking_msg.message_id, display_text)
             
             # Save model response to history
             await add_message(context, user_id, "model", response.text)
@@ -354,24 +393,28 @@ async def handle_ai_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await increment_stat(user_id, "photo_analyses")
 
         else:
-            await smart_edit_text(thinking_msg, "抱歉，我无法分析这张图片。请稍后再试。")
+            await ctx.edit_message(thinking_msg.message_id, "抱歉，我无法分析这张图片。请稍后再试。")
         
     except Exception as e:
         logger.error(f"AI photo analysis error: {e}")
-        await smart_edit_text(thinking_msg, "❌ 图片分析失败，请稍后再试。")
+        await ctx.edit_message(thinking_msg.message_id, "❌ 图片分析失败，请稍后再试。")
 
 
-async def handle_ai_video(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_ai_video(ctx: UnifiedContext) -> None:
     """
     处理视频消息，使用 Gemini AI 分析视频
     """
-    chat_id = update.message.chat_id
-    user_id = update.message.from_user.id
+    chat_id = ctx.message.chat.id
+    user_id = ctx.message.user.id
+    
+    # Legacy fallback
+    update = ctx.platform_event
+    context = ctx.platform_ctx
     
     # 检查用户权限
     from core.config import is_user_allowed
     if not await is_user_allowed(user_id):
-        await smart_reply_text(update,
+        await ctx.reply(
             "⛔ 抱歉，您没有使用 AI 功能的权限。"
         )
         return
@@ -381,31 +424,30 @@ async def handle_ai_video(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if not video:
         return
     
-    caption = update.message.caption or "请分析这个视频的内容"
+    caption = ctx.message.caption or "请分析这个视频的内容"
     
     # Save to history immediately
     await add_message(context, user_id, "user", f"【用户发送了一个视频】 {caption}")
     
     # 检查视频大小（Gemini 有限制）
     # 检查视频大小（Gemini 有限制）
+    # 检查视频大小（Gemini 有限制）
     if video.file_size and video.file_size > 20 * 1024 * 1024:  # 20MB 限制
-        await smart_reply_text(update,
+        await ctx.reply(
             "⚠️ 视频文件过大（超过 20MB），无法分析。\n\n"
             "请尝试发送较短的视频片段。"
         )
         return
     
     # 立即发送"正在分析"提示
-    # 立即发送"正在分析"提示
-    thinking_msg = await smart_reply_text(update, "🎬 正在分析视频，这可能需要一些时间...")
+    thinking_msg = await ctx.reply("🎬 正在分析视频，这可能需要一些时间...")
     
     # 发送"正在输入"状态
-    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+    await ctx.send_chat_action(action="typing")
     
     try:
         # 下载视频
-        file = await context.bot.get_file(video.file_id)
-        video_bytes = await file.download_as_bytearray()
+        video_bytes = await ctx.download_file(video.file_id)
         
         # 获取 MIME 类型
         mime_type = video.mime_type or "video/mp4"
@@ -437,10 +479,10 @@ async def handle_ai_video(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if response.text:
             # Try to extract code blocks, send files, and get cleaned text
             from .message_utils import process_and_send_code_files
-            display_text = await process_and_send_code_files(update, context, response.text)
+            display_text = await process_and_send_code_files(ctx, response.text)
             
             # Update the thinking message with the cleaned text
-            await smart_edit_text(thinking_msg, display_text)
+            await ctx.edit_message(thinking_msg.message_id, display_text)
             
             # Save model response to history
             await add_message(context, user_id, "model", response.text)
@@ -448,11 +490,11 @@ async def handle_ai_video(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             # 记录统计
             await increment_stat(user_id, "video_analyses")
         else:
-            await smart_edit_text(thinking_msg, "抱歉，我无法分析这个视频。请稍后再试。")
+            await ctx.edit_message(thinking_msg.message_id, "抱歉，我无法分析这个视频。请稍后再试。")
         
     except Exception as e:
         logger.error(f"AI video analysis error: {e}")
-        await smart_edit_text(thinking_msg,
+        await ctx.edit_message(thinking_msg.message_id,
             "❌ 视频分析失败，请稍后再试。\n\n"
             "可能的原因：\n"
             "• 视频格式不支持\n"

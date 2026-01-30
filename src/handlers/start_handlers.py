@@ -3,7 +3,8 @@ import logging
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ContextTypes, ConversationHandler
 from utils import smart_edit_text, smart_reply_text
-from .base_handlers import check_permission
+from core.platform.models import UnifiedContext
+from .base_handlers import check_permission_unified, check_permission
 
 logger = logging.getLogger(__name__)
 
@@ -23,38 +24,40 @@ def get_main_menu_keyboard():
         ],
     ]
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def start(ctx: UnifiedContext) -> None:
     """处理 /start 命令，显示欢迎消息和功能菜单"""
-    if not await check_permission(update):
+    if not await check_permission_unified(ctx):
         return
 
     reply_markup = InlineKeyboardMarkup(get_main_menu_keyboard())
 
-    await smart_reply_text(update,
+    await ctx.reply(
         WELCOME_MESSAGE,
         reply_markup=reply_markup,
     )
 
-async def handle_new_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_new_command(ctx: UnifiedContext) -> None:
     """处理 /new 命令，清空聊天上下文"""
-    if not await check_permission(update):
+    if not await check_permission_unified(ctx):
         return
 
     from user_context import clear_context
-    clear_context(context)
+    # clear_context currently expects telegram context? 
+    # Let's check user_context.py later. For now pass ctx.platform_ctx
+    clear_context(ctx.platform_ctx)
     
-    await smart_reply_text(update, 
+    await ctx.reply(
         "🧹 **已开启新对话**\n\n"
         "之前的短期对话上下文已清空。\n"
         "不用担心，重要的长期记忆仍然保留！🧠"
     )
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def help_command(ctx: UnifiedContext) -> None:
     """处理 /help 命令"""
-    if not await check_permission(update):
+    if not await check_permission_unified(ctx):
         return
     
-    await smart_reply_text(update,
+    await ctx.reply(
         "ℹ️ **X-Bot 使用指南**\n\n"
         "🚀 **多模态 AI**\n"
         "• **对话**：直接发送文本、语音。\n"
@@ -84,9 +87,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/start 主菜单 | /new 新对话 | /stats 统计"
     )
 
-async def back_to_main_and_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def back_to_main_and_cancel(ctx: UnifiedContext) -> int:
     """返回主菜单并取消当前操作（用于在对话状态中）"""
-    query = update.callback_query
+    # Legacy fallback
+    query = ctx.platform_event.callback_query
     await query.answer()
     
     logger.info("Back to main menu and cancel current operation")
@@ -94,7 +98,8 @@ async def back_to_main_and_cancel(update: Update, context: ContextTypes.DEFAULT_
     reply_markup = InlineKeyboardMarkup(get_main_menu_keyboard())
     
     try:
-        await smart_edit_text(query.message,
+        await ctx.edit_message(
+            query.message.message_id,
             WELCOME_MESSAGE,
             reply_markup=reply_markup,
         )
@@ -103,22 +108,20 @@ async def back_to_main_and_cancel(update: Update, context: ContextTypes.DEFAULT_
     
     return ConversationHandler.END
 
-async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def button_callback(ctx: UnifiedContext) -> int:
     """处理通用内联键盘按钮点击（非会话入口）"""
-    if not await check_permission(update):
+    if not await check_permission_unified(ctx):
         return ConversationHandler.END
 
-    query = update.callback_query
-    await query.answer()
-    
+    query = ctx.platform_event.callback_query
+    msg_id = query.message.message_id
     data = query.data
-    logger.info(f"Button clicked: {data}")
-
+    
     try:
         if data == "ai_chat":
             keyboard = [[InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await smart_edit_text(query.message,
+            await ctx.edit_message(msg_id,
                 "💬 **AI 对话模式**\n\n"
                 "现在您可以直接发送任何消息，我会用 AI 智能回复！\n\n"
                 "💡 提示：直接在对话框输入消息即可，无需点击按钮。",
@@ -129,11 +132,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         elif data == "help":
             keyboard = [[InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await smart_edit_text(query.message,
+            await ctx.edit_message(msg_id,
                 "ℹ️ **X-Bot 使用指南**\n\n"
                 "🚀 **多模态 AI**\n"
                 "• **对话**：直接发送文本、语音。\n"
                 "• **识图**：发送照片，问 \"这是什么\"。\n"
+                "• **绘图**：\"画一只赛博朋克风格的猫\"。\n"
+                "• **翻译**：使用 \"开启翻译模式\" 实现同声传译。\n\n"
                 "• **绘图**：\"画一只赛博朋克风格的猫\"。\n"
                 "• **翻译**：使用 \"开启翻译模式\" 实现同声传译。\n\n"
                 "📓 **NotebookLM 知识库**\n"
@@ -168,7 +173,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             openai_model = os.getenv('OPENAI_MODEL', 'gpt-4o-mini')
             gemini_model = os.getenv('GEMINI_MODEL', 'gemini-2.0-flash')
             
-            await smart_edit_text(query.message,
+            await ctx.edit_message(msg_id,
                 "⚙️ **设置**\n\n"
                 "当前配置：\n"
                 f"• Gemini 模型：{gemini_model}\n"
@@ -182,7 +187,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         elif data == "platforms":
             keyboard = [[InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
-            await smart_edit_text(query.message,
+            await ctx.edit_message(msg_id,
                 "📊 **支持的视频平台**\n\n"
                 "✅ X (Twitter) - twitter.com, x.com\n"
                 "✅ YouTube - youtube.com, youtu.be\n"
@@ -199,10 +204,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             from stats import get_user_stats_text
-            user_id = query.from_user.id
+            user_id = ctx.message.user.id
             stats_text = await get_user_stats_text(user_id)
             
-            await smart_edit_text(query.message,
+            await ctx.edit_message(msg_id,
                 stats_text,
                 reply_markup=reply_markup,
             )
@@ -212,7 +217,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             keyboard = [[InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            user_id = query.from_user.id
+            user_id = ctx.message.user.id
             from repositories import get_user_watchlist
             from services.stock_service import fetch_stock_quotes, format_stock_message
             
@@ -241,14 +246,14 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 
                 text += "\n\n发送「取消关注 XX」可删除"
             
-            await smart_edit_text(query.message, text, reply_markup=reply_markup)
+            await ctx.edit_message(msg_id, text, reply_markup=reply_markup)
             return ConversationHandler.END
         
         elif data == "list_subs":
             keyboard = [[InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            user_id = query.from_user.id
+            user_id = ctx.message.user.id
             from repositories import get_user_subscriptions
             subs = await get_user_subscriptions(user_id)
             
@@ -269,7 +274,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 
                 text += "\n使用 /unsubscribe `<URL>` 取消订阅。"
             
-            await smart_edit_text(query.message,
+            await ctx.edit_message(msg_id,
                 text,
                 reply_markup=reply_markup
             )
@@ -279,7 +284,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             keyboard = [[InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            user_id = query.from_user.id
+            user_id = ctx.message.user.id
             from repositories import get_user_settings, set_translation_mode
             
             settings = await get_user_settings(user_id)
@@ -294,7 +299,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 "已恢复正常 AI 助手模式。"
             )
             
-            await smart_edit_text(query.message,
+            await ctx.edit_message(msg_id,
                 f"ℹ️ **沉浸式翻译模式**\n\n"
                 f"当前状态：{status_text}\n\n"
                 f"{desc}\n\n"
@@ -307,7 +312,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             keyboard = [[InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             
-            await smart_edit_text(query.message,
+            await ctx.edit_message(msg_id,
                 "⏰ **定时提醒使用帮助**\n\n"
                 "请直接发送命令设置提醒：\n\n"
                 "• **/remind 10m 关火** (10分钟后)\n"
@@ -320,7 +325,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         elif data == "back_to_main":
             # 重新显示主菜单
             reply_markup = InlineKeyboardMarkup(get_main_menu_keyboard())
-            await smart_edit_text(query.message,
+            await ctx.edit_message(msg_id,
                 WELCOME_MESSAGE,
                 reply_markup=reply_markup,
             )
@@ -330,7 +335,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.error(f"Error in button_callback for data {data}: {e}")
         # 尝试通知用户发生错误，如果 edit 失败
         try:
-             await smart_reply_text(update, "❌ 操作失败，请重试或输入 /start 重启。")
+             await ctx.reply("❌ 操作失败，请重试或输入 /start 重启。")
         except:
              pass
 

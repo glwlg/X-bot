@@ -12,7 +12,7 @@ from telegram.error import BadRequest
 
 from core.config import gemini_client, GEMINI_MODEL, is_user_allowed
 from user_context import add_message, get_user_context
-from utils import smart_edit_text, smart_reply_text
+from core.platform.models import UnifiedContext
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +117,7 @@ async def transcribe_and_translate_voice(voice_bytes: bytes, mime_type: str) -> 
         return None
 
 
-async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_voice_message(ctx: UnifiedContext) -> None:
     """
     处理语音消息（包括 voice 和 audio 类型）
     
@@ -128,12 +128,16 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     """
     from repositories import get_user_settings
     
-    chat_id = update.message.chat_id
-    user_id = update.message.from_user.id
+    chat_id = ctx.message.chat.id
+    user_id = ctx.message.user.id
+    
+    # Legacy fallback
+    update = ctx.platform_event
+    context = ctx.platform_ctx
     
     # 检查用户权限
     if not await is_user_allowed(user_id):
-        await smart_reply_text(update, "⛔ 抱歉，您没有使用 AI 功能的权限。")
+        await ctx.reply("⛔ 抱歉，您没有使用 AI 功能的权限。")
         return
     
     # 获取语音/音频消息（优先 voice，其次 audio）
@@ -152,17 +156,16 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
     
     # 发送处理中提示
     if translate_mode:
-        thinking_msg = await smart_reply_text(update, "🌍 正在翻译语音内容...")
+        thinking_msg = await ctx.reply("🌍 正在翻译语音内容...")
     else:
-        thinking_msg = await smart_reply_text(update, "🎤 正在识别语音内容...")
+        thinking_msg = await ctx.reply("🎤 正在识别语音内容...")
     
     # 发送"正在输入"状态
-    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+    await ctx.send_chat_action(action="typing")
     
     try:
         # 下载语音文件
-        file = await context.bot.get_file(media.file_id)
-        voice_bytes = await file.download_as_bytearray()
+        voice_bytes = await ctx.download_file(media.file_id)
         mime_type = media.mime_type or "audio/ogg"
         
         # 检查是否包含用户指令（Caption）
@@ -173,7 +176,7 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
             result = await transcribe_and_translate_voice(voice_bytes, mime_type)
             
             if not result:
-                await smart_edit_text(thinking_msg, "❌ 无法识别或翻译语音内容，请重试。")
+                await ctx.edit_message(thinking_msg.message_id, "❌ 无法识别或翻译语音内容，请重试。")
                 return
             
             original_lang = result.get('original_lang', '未知')
@@ -188,7 +191,7 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
                 f"「{translated}」"
             )
             
-            await smart_edit_text(thinking_msg, output)
+            await ctx.edit_message(thinking_msg.message_id, output)
             
             # 记录统计
             from stats import increment_stat
@@ -199,7 +202,7 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         transcribed_text = await transcribe_voice(voice_bytes, mime_type)
         
         if not transcribed_text:
-            await smart_edit_text(thinking_msg, "❌ 无法识别语音内容，请重试或发送文字消息。")
+            await ctx.edit_message(thinking_msg.message_id, "❌ 无法识别语音内容，请重试或发送文字消息。")
             return
         
         logger.info(f"Voice transcribed: {transcribed_text[:50]}...")
@@ -208,25 +211,26 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         final_text = transcribed_text
         if user_instruction:
             final_text = f"{user_instruction}\n\n【语音内容】：\n{transcribed_text}"
+            final_text = f"{user_instruction}\n\n【语音内容】：\n{transcribed_text}"
             # 有指令时，视为短语音逻辑处理（走智能路由）
-            await smart_edit_text(thinking_msg, f"🎤 已识别语音内容，正在执行指令: **\"{user_instruction}\"**...")
-            await process_as_text_message(update, context, final_text, thinking_msg)
+            await ctx.edit_message(thinking_msg.message_id, f"🎤 已识别语音内容，正在执行指令: **\"{user_instruction}\"**...")
+            await process_as_text_message(ctx, final_text, thinking_msg)
             return
 
         # 根据语音时长决定处理策略（若无 duration 属性则默认为长语音）
         duration = getattr(media, 'duration', SHORT_VOICE_THRESHOLD + 1)
         if duration <= SHORT_VOICE_THRESHOLD:
             # 短语音：走智能路由（与文本消息一致）
-            await smart_edit_text(thinking_msg, f"🎤 语音转写内容为: **\"{transcribed_text}\"**\n\n🤔 正在思考中...")
+            await ctx.edit_message(thinking_msg.message_id, f"🎤 语音转写内容为: **\"{transcribed_text}\"**\n\n🤔 正在思考中...")
             
             # 调用文本消息处理逻辑
-            await process_as_text_message(update, context, transcribed_text, thinking_msg)
+            await process_as_text_message(ctx, transcribed_text, thinking_msg)
         else:
             # 长语音：直接输出转写结果
-            await smart_edit_text(thinking_msg, f"🎤 **语音转写结果：**\n\n{transcribed_text}")
+            await ctx.edit_message(thinking_msg.message_id, f"🎤 **语音转写结果：**\n\n{transcribed_text}")
             
             # 记录到上下文
-            add_message(context, "user", f"【用户发送了一段长语音】{transcribed_text}")
+            add_message(context, user_id, "user", f"【用户发送了一段长语音】{transcribed_text}")
             
             # 记录统计
             from stats import increment_stat
@@ -234,7 +238,7 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
         
     except BadRequest as e:
         if "File is too big" in str(e):
-            await smart_edit_text(thinking_msg, 
+            await ctx.edit_message(thinking_msg.message_id, 
                 "⚠️ **音频文件过大**\n\n"
                 "抱歉，Telegram 限制 Bot 只能下载 **20MB** 以内的文件，我无法获取这段音频。\n\n"
                 "💡 **建议方案**：\n"
@@ -243,12 +247,12 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
             )
         else:
             logger.error(f"Voice processing BadRequest: {e}")
-            await smart_edit_text(thinking_msg, "❌ 处理失败：文件格式或内容受限。")
+            await ctx.edit_message(thinking_msg.message_id, "❌ 处理失败：文件格式或内容受限。")
             
     except Exception as e:
         logger.error(f"Voice processing error: {e}")
         try:
-            await smart_edit_text(thinking_msg,
+            await ctx.edit_message(thinking_msg.message_id,
                 "❌ 语音处理失败，请稍后再试。\n\n"
                 "可能的原因：\n"
                 "• 语音格式不支持\n"
@@ -260,8 +264,7 @@ async def handle_voice_message(update: Update, context: ContextTypes.DEFAULT_TYP
 
 
 async def process_as_text_message(
-    update: Update, 
-    context: ContextTypes.DEFAULT_TYPE, 
+    ctx: UnifiedContext, 
     text: str,
     thinking_msg
 ) -> None:
@@ -272,13 +275,17 @@ async def process_as_text_message(
     from core.agent_orchestrator import agent_orchestrator
     from stats import increment_stat
     
-    user_id = update.message.from_user.id
+    # Legacy fallbacks
+    update = ctx.platform_event
+    context = ctx.platform_ctx
+    
+    user_id = ctx.message.user.id
     
     # 记录用户消息到上下文
-    add_message(context, "user", text)
+    add_message(context, user_id, "user", text)
     
     # 构建上下文
-    context_messages = get_user_context(context)
+    context_messages = get_user_context(context, user_id)
     context_messages.append({
         "role": "user",
         "parts": [{"text": text}]
@@ -289,22 +296,24 @@ async def process_as_text_message(
         final_text_response = ""
         last_update_time = 0
         
-        async for chunk_text in agent_orchestrator.handle_message(update, context, context_messages):
+        async for chunk_text in agent_orchestrator.handle_message(ctx, context_messages):
             final_text_response += chunk_text
             
             now = time.time()
             if now - last_update_time > 0.8:
-                await smart_edit_text(thinking_msg, final_text_response)
+                await ctx.edit_message(thinking_msg.message_id, final_text_response)
                 last_update_time = now
         
         # 发送最终回复
         if final_text_response:
-            await smart_edit_text(thinking_msg, final_text_response)
-            add_message(context, "model", final_text_response)
+            await ctx.edit_message(thinking_msg.message_id, final_text_response)
+            add_message(context, user_id, "model", final_text_response)
             await increment_stat(user_id, "voice_chats")
         else:
-            await smart_edit_text(thinking_msg, "抱歉，我无法生成回复。")
+            await ctx.edit_message(thinking_msg.message_id, "抱歉，我无法生成回复。")
             
     except Exception as e:
         logger.error(f"Voice Agent error: {e}")
-        await smart_edit_text(thinking_msg, f"❌ Agent 运行出错：{e}")
+    except Exception as e:
+        logger.error(f"Voice Agent error: {e}")
+        await ctx.edit_message(thinking_msg.message_id, f"❌ Agent 运行出错：{e}")

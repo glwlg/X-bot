@@ -2,14 +2,13 @@ import asyncio
 import json
 import logging
 import os
-from telegram import Update
-from telegram.ext import ContextTypes
+from core.platform.models import UnifiedContext
 from utils import smart_reply_text, smart_edit_text
 
-async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict) -> str:
     """执行 NotebookLM 操作"""
     action = params.get("action", "").lower()
-    user_id = update.effective_user.id
+    user_id = int(ctx.message.user.id) if str(ctx.message.user.id).isdigit() else 0
     
     if not action:
         return (
@@ -400,27 +399,23 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
             if os.path.exists(output_path):
                 # 发送文件给用户
                 try:
-                    chat_id = update.effective_chat.id
                     file_size = os.path.getsize(output_path)
                     
                     if artifact_type in ["audio", "video"]:
                         # 音频/视频使用对应的发送方法
                         if artifact_type == "audio":
-                            await context.bot.send_audio(
-                                chat_id=chat_id,
+                            await ctx.reply_audio(
                                 audio=open(output_path, "rb"),
                                 caption=f"🎙️ NotebookLM 播客\n文件大小: {file_size / 1024 / 1024:.1f}MB"
                             )
                         else:
-                            await context.bot.send_video(
-                                chat_id=chat_id,
+                            await ctx.reply_video(
                                 video=open(output_path, "rb"),
                                 caption=f"🎬 NotebookLM 视频\n文件大小: {file_size / 1024 / 1024:.1f}MB"
                             )
                     else:
                         # 其他文件作为文档发送
-                        await context.bot.send_document(
-                            chat_id=chat_id,
+                        await ctx.reply_document(
                             document=open(output_path, "rb"),
                             caption=f"📄 NotebookLM {artifact_type}\n文件大小: {file_size / 1024:.1f}KB"
                         )

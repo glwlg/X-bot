@@ -8,22 +8,24 @@ from telegram.ext import ContextTypes
 
 from repositories import add_watchlist_stock, remove_watchlist_stock, get_user_watchlist
 from services.stock_service import fetch_stock_quotes, format_stock_message, search_stock_by_name
-from .base_handlers import check_permission
-from utils import smart_edit_text, smart_reply_text
+from core.platform.models import UnifiedContext
 
 logger = logging.getLogger(__name__)
 
 
-async def watchlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def watchlist_command(ctx: UnifiedContext) -> None:
     """处理 /watchlist 命令，显示自选股列表"""
-    if not await check_permission(update):
+    # Check permission using helper or assuming middleware checked it?
+    # For now, simplistic check
+    from core.config import is_user_allowed
+    if not await is_user_allowed(ctx.message.user.id):
         return
 
-    user_id = update.effective_user.id
+    user_id = ctx.message.user.id
     watchlist = await get_user_watchlist(user_id)
     
     if not watchlist:
-        await smart_reply_text(update,
+        await ctx.reply(
             "📭 **您的自选股为空**\n\n"
             "发送「帮我关注 XX股票」可添加自选股。"
         )
@@ -48,23 +50,25 @@ async def watchlist_command(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         )])
     
     reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-    await smart_reply_text(update, message, reply_markup=reply_markup)
+    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
+    await ctx.reply(message, reply_markup=reply_markup)
 
 
-async def process_stock_watch(update: Update, context: ContextTypes.DEFAULT_TYPE, action: str, stock_name: str) -> None:
+async def process_stock_watch(ctx: UnifiedContext, action: str, stock_name: str) -> None:
     """
     处理自选股操作
     - action=add: 搜索股票，若唯一则直接添加，若多个则展示按钮让用户选择
     - action=remove: 删除指定股票
     - action=list: 显示列表
     """
-    if not await check_permission(update):
+    from core.config import is_user_allowed
+    if not await is_user_allowed(ctx.message.user.id):
         return
     
-    user_id = update.effective_user.id
+    user_id = ctx.message.user.id
     
     if action == "list" or not stock_name:
-        await watchlist_command(update, context)
+        await watchlist_command(ctx)
         return
     
     if action == "remove":
@@ -72,9 +76,9 @@ async def process_stock_watch(update: Update, context: ContextTypes.DEFAULT_TYPE
         for item in watchlist:
             if stock_name.lower() in item["stock_name"].lower():
                 await remove_watchlist_stock(user_id, item["stock_code"])
-                await smart_reply_text(update, f"✅ 已取消关注 **{item['stock_name']}**")
+                await ctx.reply(f"✅ 已取消关注 **{item['stock_name']}**")
                 return
-        await smart_reply_text(update, f"⚠️ 未找到匹配「{stock_name}」的自选股")
+        await ctx.reply(f"⚠️ 未找到匹配「{stock_name}」的自选股")
         return
     
     # action == "add": 添加操作
@@ -82,13 +86,13 @@ async def process_stock_watch(update: Update, context: ContextTypes.DEFAULT_TYPE
     stock_names = [s.strip() for s in stock_names if s.strip()]
     
     if not stock_names:
-        await smart_reply_text(update, "❌ 请输入有效的股票名称")
+        await ctx.reply("❌ 请输入有效的股票名称")
         return
     
     if len(stock_names) == 1:
-        await _add_single_stock(update, context, user_id, stock_names[0])
+        await _add_single_stock(ctx, user_id, stock_names[0])
     else:
-        msg = await smart_reply_text(update, f"🔍 正在搜索 {len(stock_names)} 只股票...")
+        msg = await ctx.reply(f"🔍 正在搜索 {len(stock_names)} 只股票...")
         
         success_list = []
         failed_list = []
@@ -128,30 +132,36 @@ async def process_stock_watch(update: Update, context: ContextTypes.DEFAULT_TYPE
             "\n\n交易时段将每 10 分钟推送行情。"
         )
         
-        await smart_edit_text(msg, result_msg)
+        result_msg = (
+            "**自选股添加完成！**\n\n" +
+            "\n".join(result_parts) +
+            "\n\n交易时段将每 10 分钟推送行情。"
+        )
+        
+        await ctx.edit_message(msg.message_id, result_msg)
 
 
-async def _add_single_stock(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, stock_name: str) -> None:
+async def _add_single_stock(ctx: UnifiedContext, user_id: int, stock_name: str) -> None:
     """添加单个股票"""
-    msg = await smart_reply_text(update, f"🔍 正在搜索「{stock_name}」...")
+    msg = await ctx.reply(f"🔍 正在搜索「{stock_name}」...")
     
     results = await search_stock_by_name(stock_name)
     
     if not results:
-        await smart_edit_text(msg, f"❌ 未找到匹配「{stock_name}」的股票")
+        await ctx.edit_message(msg.message_id, f"❌ 未找到匹配「{stock_name}」的股票")
         return
     
     if len(results) == 1:
         stock = results[0]
         success = await add_watchlist_stock(user_id, stock["code"], stock["name"])
         if success:
-            await smart_edit_text(msg, 
+            await ctx.edit_message(msg.message_id, 
                 f"✅ 已添加自选股\n\n"
                 f"**{stock['name']}** ({stock['code']})\n\n"
                 f"交易时段将每 10 分钟推送行情。"
             )
         else:
-            await smart_edit_text(msg, f"⚠️ **{stock['name']}** 已在您的自选股中")
+            await ctx.edit_message(msg.message_id, f"⚠️ **{stock['name']}** 已在您的自选股中")
         return
     
     keyboard = []
@@ -163,19 +173,21 @@ async def _add_single_stock(update: Update, context: ContextTypes.DEFAULT_TYPE, 
     keyboard.append([InlineKeyboardButton("🚫 取消", callback_data="stock_cancel")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await smart_edit_text(msg, 
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await ctx.edit_message(msg.message_id, 
         f"🔍 找到多个匹配「{stock_name}」的股票，请选择：",
         reply_markup=reply_markup
     )
 
 
-async def handle_stock_select_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_stock_select_callback(ctx: UnifiedContext) -> None:
     """处理用户点击选择股票的回调"""
-    query = update.callback_query
+    # Legacy fallback
+    query = ctx.platform_event.callback_query
     await query.answer()
     
     data = query.data
-    user_id = update.effective_user.id
+    user_id = ctx.message.user.id
     
     if data == "stock_cancel":
         await query.edit_message_text("👌 已取消操作。")

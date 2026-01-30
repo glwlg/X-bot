@@ -1,28 +1,28 @@
-from telegram import Update
-from telegram.ext import ContextTypes
+from core.platform.models import UnifiedContext
 from services.deployment_service import docker_deployment_service
-from utils import smart_reply_text, smart_edit_text
 
-async def deploy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def deploy_command(ctx: UnifiedContext):
     """
     Handle /deploy <github_url>
     """
-    if not context.args:
-        await smart_reply_text(update, "⚠️ 请提供 GitHub 仓库地址。\n例如: `/deploy https://github.com/example/app`")
+    args = ctx.platform_ctx.args if ctx.platform_ctx else []
+    if not args:
+        await ctx.reply("⚠️ 请提供 GitHub 仓库地址。\n例如: `/deploy https://github.com/example/app`")
         return
 
-    repo_url = context.args[0]
+    repo_url = args[0]
     if not repo_url.startswith("https://github.com/"):
-        await smart_reply_text(update, "⚠️ 仅支持 GitHub 仓库 URL。")
+        await ctx.reply("⚠️ 仅支持 GitHub 仓库 URL。")
         return
 
     # Initial status message
-    status_msg = await smart_reply_text(update, f"🚀 正在准备部署: {repo_url}\n⏳ 初始化中...")
+    status_msg = await ctx.reply(f"🚀 正在准备部署: {repo_url}\n⏳ 初始化中...")
     
     # Callback to update phase status (Clone, Plan, etc.) - New Message
     async def update_status(msg: str):
         try:
-           await smart_reply_text(update, msg)
+           # Preserving original behavior of sending new message for major status updates
+           await ctx.reply(msg)
         except Exception:
             pass
 
@@ -33,7 +33,7 @@ async def deploy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             # If no log message exists, create one
             if not log_message:
-                log_message = await smart_reply_text(update, f"📋 **日志输出:**\n\n```\n{msg}\n```")
+                log_message = await ctx.reply(f"📋 **日志输出:**\n\n```\n{msg}\n```")
             else:
                 # Append/Update the existing log message
                 # Note: To avoid "Message too long", we might only show the last N lines or rely on smart_edit_text truncation
@@ -85,7 +85,7 @@ async def deploy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
                      pass # Leave it as is
                 
                 # 2. Start new message with the overflow
-                log_message = await smart_reply_text(update, "📋 **接上页日志...**")
+                log_message = await ctx.reply("📋 **接上页日志...**")
                 current_log_lines = [] # Reset buffer for new message
                 display_lines = lines # New lines go to new message
 
@@ -94,9 +94,9 @@ async def deploy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             display_text = f"📋 **执行日志:**\n\n```\n{content_str}\n```"
             
             if not log_message:
-                log_message = await smart_reply_text(update, display_text)
+                log_message = await ctx.reply(display_text)
             else:
-                await smart_edit_text(log_message, display_text)
+                await ctx.edit_message(log_message.message_id, display_text)
                 
         except Exception:
              pass
@@ -109,4 +109,4 @@ async def deploy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     
     # Final result
-    await smart_reply_text(update, result)
+    await ctx.reply(result)

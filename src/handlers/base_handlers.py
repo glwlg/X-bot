@@ -1,6 +1,7 @@
 import logging
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ContextTypes, ConversationHandler
+from core.platform.models import UnifiedContext
 
 from core.config import is_user_allowed
 
@@ -15,9 +16,25 @@ async def check_permission(update: Update) -> bool:
         return False
     return True
 
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+async def check_permission_unified(context: UnifiedContext) -> bool:
+    """Unified permission check"""
+    if not isinstance(context, UnifiedContext):
+        # Fallback to legacy
+        return await check_permission(context)
+
+    user_id = int(context.message.user.id) if context.message.user.id.isdigit() else 0 # Simple fix for now
+    # Note: is_user_allowed expects int for telegram ID usually. 
+    # If we have string IDs, config needs update.
+    # For now assume Telegram ID is int.
+    
+    if not await is_user_allowed(user_id):
+        await context.reply("⛔ 抱歉，您没有使用此 Bot 的权限。")
+        return False
+    return True
+
+async def cancel(ctx: UnifiedContext) -> int:
     """取消当前操作"""
-    await update.message.reply_text(
+    await ctx.reply(
         "操作已取消。\n\n" "发送消息继续 AI 对话，或使用 /download 下载视频。"
     )
     return ConversationHandler.END

@@ -19,7 +19,7 @@ class EvolutionRouter:
     当现有技能无法满足用户需求时，决策并执行进化路径
     """
     
-    async def evolve(self, user_request: str, user_id: int, update: Optional[Any] = None) -> str:
+    async def evolve(self, user_request: str, user_id: int, ctx: Optional["UnifiedContext"] = None) -> str:
         """
         执行进化流程
         Returns:
@@ -49,7 +49,7 @@ class EvolutionRouter:
         
         if strategy == "create":
             # Just-in-Time Creation
-            result_msg = await self._jit_create_skill(user_request, user_id, update)
+            result_msg = await self._jit_create_skill(user_request, user_id, ctx)
             success = "❌" not in result_msg and "⚠️" not in result_msg
             await self.record_evolution(user_request, "create", success, result_msg[:100])
             return result_msg
@@ -216,7 +216,7 @@ Return JSON:
                 
 
 
-    async def _jit_create_skill(self, request: str, user_id: int, update: Optional[Any] = None) -> str:
+    async def _jit_create_skill(self, request: str, user_id: int, ctx: Optional["UnifiedContext"] = None) -> str:
         """
         即时创造技能
         """
@@ -267,10 +267,9 @@ Return JSON:
         )
         
         # Directly notify user to ensure visibility
-        if update:
-             from utils import smart_reply_text
+        if ctx:
              try:
-                 await smart_reply_text(update, msg)
+                 await ctx.reply(msg)
              except Exception as e:
                  logger.error(f"[Evolution] Failed to send success msg: {e}")
                  

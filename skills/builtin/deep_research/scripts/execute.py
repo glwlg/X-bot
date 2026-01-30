@@ -2,26 +2,25 @@ import asyncio
 import logging
 from urllib.parse import quote
 import httpx
-from telegram import Update
-from telegram.ext import ContextTypes
+from core.platform.models import UnifiedContext
 from utils import smart_reply_text
 from services.web_summary_service import fetch_webpage_content
 from core.config import gemini_client, GEMINI_MODEL
 
 logger = logging.getLogger(__name__)
 
-async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict) -> str:
     topic = params.get("topic", "").strip()
     depth = params.get("depth", 3)
     language = params.get("language", "zh-CN")
     
     if not topic:
-        await smart_reply_text(update, "❌ 请提供研究主题 (topic)")
+        await ctx.reply("❌ 请提供研究主题 (topic)")
         return "Failed: No topic provided."
         
     depth = min(max(1, int(depth)), 5) # 限制 1-5
     
-    await smart_reply_text(update, f"🧐 正在对 「{topic}」 进行深度研究 (深度: {depth})...\n此过程包含：搜索 -> 爬取网页 -> 深度阅读 -> 综合报告，可能需要 30-60 秒，请耐心等待。")
+    await ctx.reply(f"🧐 正在对 「{topic}」 进行深度研究 (深度: {depth})...\n此过程包含：搜索 -> 爬取网页 -> 深度阅读 -> 综合报告，可能需要 30-60 秒，请耐心等待。")
     
     # 1. Search Phase
     search_results = []
@@ -36,17 +35,17 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
                 data = response.json()
                 search_results = data.get("results", [])[:depth]
             else:
-                await smart_reply_text(update, f"⚠️ 搜索阶段失败 (Status: {response.status_code})，尝试继续...")
+                await ctx.reply(f"⚠️ 搜索阶段失败 (Status: {response.status_code})，尝试继续...")
     except Exception as e:
         logger.error(f"Search failed: {e}")
-        await smart_reply_text(update, f"⚠️ 搜索阶段出错: {e}")
+        await ctx.reply(f"⚠️ 搜索阶段出错: {e}")
         
     if not search_results:
-        await smart_reply_text(update, "❌ 未找到相关搜索结果，研究终止。")
+        await ctx.reply("❌ 未找到相关搜索结果，研究终止。")
         return f"Failed: No search results found for topic '{topic}'."
 
     # 2. Crawl Phase
-    await smart_reply_text(update, f"🕷️ 正在爬取并阅读 {len(search_results)} 个网页...")
+    await ctx.reply(f"🕷️ 正在爬取并阅读 {len(search_results)} 个网页...")
     
     crawled_data = []
     
@@ -69,11 +68,11 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
     valid_data = [item for item in crawled_results if item]
     
     if not valid_data:
-        await smart_reply_text(update, "❌ 无法读取任何网页内容（可能是因为反爬虫或网络问题），研究终止。")
+        await ctx.reply("❌ 无法读取任何网页内容（可能是因为反爬虫或网络问题），研究终止。")
         return f"Failed: Unable to crawl any content for topic '{topic}'."
 
     # 3. Synthesis Phase
-    await smart_reply_text(update, f"🧠 已获取 {len(valid_data)} 份资料，正在综合分析并撰写报告...")
+    await ctx.reply(f"🧠 已获取 {len(valid_data)} 份资料，正在综合分析并撰写报告...")
     
     # Construct Context
     context_text = f"Research Topic: {topic}\n\nSources Data:\n"
@@ -119,7 +118,7 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
         file_obj = io.BytesIO(report_html.encode('utf-8'))
         file_obj.name = "deep_research_report.html"
         
-        await update.message.reply_document(
+        await ctx.reply_document(
             document=file_obj,
             caption=f"📚 深度研究报告：{topic}\n\n基于 {len(valid_data)} 个来源的深度综合分析。"
         )
@@ -128,5 +127,5 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
         
     except Exception as e:
         logger.error(f"Synthesis failed: {e}")
-        await smart_reply_text(update, f"❌ 报告生成阶段失败: {e}")
+        await ctx.reply(f"❌ 报告生成阶段失败: {e}")
         return f"Failed: Synthesis error: {e}"

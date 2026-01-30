@@ -1,11 +1,10 @@
-from telegram import Update
-from telegram.ext import ContextTypes
+from core.platform.models import UnifiedContext
 from utils import smart_reply_text
 from handlers.subscription_handlers import process_monitor, list_subs_command, unsubscribe_command
 from repositories import delete_subscription
 import urllib.parse
 
-async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict) -> str:
     """执行关键词监控"""
     action = params.get("action", "add")
     keyword = params.get("keyword", "")
@@ -18,7 +17,7 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
     import urllib.parse
     
     if action == "list":
-        result_text = await list_subs_command(update, context)
+        result_text = await list_subs_command(ctx)
         return f"✅ 监控列表已发送。\n[CONTEXT_DATA_ONLY - DO NOT REPEAT]\n{result_text}"
 
 
@@ -32,23 +31,23 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
             rss_url = f"https://news.google.com/rss/search?q={encoded_keyword}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
             
             # Using user_id from update
-            user_id = update.effective_user.id
+            user_id = int(ctx.message.user.id)
             success = await delete_subscription(user_id, rss_url)
             if success:
-                await smart_reply_text(update, f"🗑️ 已取消监控：{keyword}")
+                await ctx.reply(f"🗑️ 已取消监控：{keyword}")
                 return f"✅ 已取消监控: {keyword}"
             else:
                 # Fallback to interactive unsubscribe if direct match fails or user wants selection
-                 await unsubscribe_command(update, context)
+                 await unsubscribe_command(ctx)
                  return "✅ 进入取消交互模式 (直接匹配失败)"
         else:
-             await unsubscribe_command(update, context)
+             await unsubscribe_command(ctx)
              return "✅ 进入取消交互模式"
         return
 
     # Default: Add
     if not keyword:
-        await smart_reply_text(update,
+        await ctx.reply(
             "🔍 **监控关键词**\n\n"
             "请告诉我要监控的关键词，例如：\n"
             "• 监控 AI\n"
@@ -60,7 +59,7 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
         return "❌ 未提供关键词"
     
     # 委托给现有逻辑
-    if await process_monitor(update, context, keyword):
+    if await process_monitor(ctx, keyword):
         return f"✅ 监控添加成功: {keyword}"
     else:
         return f"❌ 监控添加失败: {keyword}"

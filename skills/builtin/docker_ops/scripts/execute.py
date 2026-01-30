@@ -1,7 +1,8 @@
 import asyncio
 from pathlib import Path
+from core.platform.models import UnifiedContext
 
-async def execute(update, context, params):
+async def execute(ctx: UnifiedContext, params: dict):
     """
     Execute Docker operations.
     """
@@ -35,7 +36,8 @@ async def execute(update, context, params):
             return "❌ Missing parameter: 'name' is required to stop a service."
         
         action_desc = "Removing" if remove else "Stopping"
-        await smart_reply_text(update, f"🛑 {action_desc} {name}...")
+        action_desc = "Removing" if remove else "Stopping"
+        await ctx.reply(f"🛑 {action_desc} {name}...")
         
         result = await container_service.stop_service(
             name, 
@@ -43,7 +45,7 @@ async def execute(update, context, params):
             remove=remove, 
             clean_volumes=clean_volumes
         )
-        await smart_reply_text(update, result)
+        await ctx.reply(result)
         return "Command executed."
 
     elif action == "deploy":
@@ -54,7 +56,7 @@ async def execute(update, context, params):
         # Phase Update: Send NEW messages for each stage
         async def update_status(msg: str):
             try:
-                await smart_reply_text(update, msg)
+                await ctx.reply(msg)
             except:
                 pass
 
@@ -72,7 +74,7 @@ async def execute(update, context, params):
                 if len(log_buffer) > 60:
                     # Send current buffer as a new message
                     content = "\n".join(log_buffer)
-                    await smart_reply_text(update, f"📋 **日志:**\n```\n{content}\n```")
+                    await ctx.reply(f"📋 **日志:**\n```\n{content}\n```")
                     log_buffer = []
                     log_message = None
                 else:
@@ -80,7 +82,7 @@ async def execute(update, context, params):
                     content = "\n".join(log_buffer)
                     display_text = f"📋 **执行日志:**\n```\n{content}\n```"
                     if log_message is None:
-                        log_message = await smart_reply_text(update, display_text)
+                        log_message = await ctx.reply(display_text)
                     # Skip editing - just accumulate until overflow triggers new message
             except:
                 pass
@@ -97,7 +99,7 @@ async def execute(update, context, params):
             return result
             
         final_msg = f"✅ 部署成功!\n\n{result}" if success else f"❌ Deploy Failed:\n{result}"
-        await smart_reply_text(update, final_msg)
+        await ctx.reply(final_msg)
         return final_msg
 
     elif action == "execute_command":

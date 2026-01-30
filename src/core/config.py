@@ -57,13 +57,19 @@ if ADMIN_USER_IDS_STR.strip():
     }
 
 
-async def is_user_allowed(user_id: int) -> bool:
+async def is_user_allowed(user_id: int | str) -> bool:
     """
     检查用户是否有权限使用 Bot
     权限逻辑：管理员 OR 在数据库白名单中
     """
+    try:
+        # 尝试转换为 int 以匹配 ADMIN_USER_IDS (set of int)
+        uid_int = int(user_id)
+    except (ValueError, TypeError):
+        return False
+        
     # 1. 如果是管理员，直接允许
-    if user_id in ADMIN_USER_IDS:
+    if uid_int in ADMIN_USER_IDS:
         return True
         
     # 2. 如果没有设置任何管理员，且没有启用白名单模式（默认），是否允许所有人？
@@ -77,7 +83,7 @@ async def is_user_allowed(user_id: int) -> bool:
     # 检查数据库
     from repositories import check_user_allowed_in_db
     try:
-        if await check_user_allowed_in_db(user_id):
+        if await check_user_allowed_in_db(uid_int):
             return True
     except Exception:
         # DB 可能还没初始化或出错
@@ -92,9 +98,12 @@ async def is_user_allowed(user_id: int) -> bool:
     return False
 
 
-def is_user_admin(user_id: int) -> bool:
+def is_user_admin(user_id: int | str) -> bool:
     """检查用户是否为管理员"""
-    return user_id in ADMIN_USER_IDS
+    try:
+        return int(user_id) in ADMIN_USER_IDS
+    except (ValueError, TypeError):
+        return False
 
 # 下载配置
 DOWNLOAD_DIR = "downloads"

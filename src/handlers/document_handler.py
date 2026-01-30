@@ -9,6 +9,7 @@ from telegram.error import BadRequest
 
 from core.config import gemini_client, GEMINI_MODEL, is_user_allowed
 from user_context import add_message
+from core.platform.models import UnifiedContext
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +48,20 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
         return ""
 
 
-async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_document(ctx: UnifiedContext) -> None:
     """
     处理文档消息，提取内容并使用 AI 分析
     """
-    chat_id = update.message.chat_id
-    user_id = update.message.from_user.id
+    chat_id = ctx.message.chat.id
+    user_id = ctx.message.user.id
     
+    # Legacy fallbacks
+    update = ctx.platform_event
+    context = ctx.platform_ctx
+
     # 检查用户权限
     if not await is_user_allowed(user_id):
-        await update.message.reply_text(
+        await ctx.reply(
             "⛔ 抱歉，您没有使用 AI 功能的权限。"
         )
         return
@@ -67,7 +72,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
     
     # 获取用户问题（如果有）
-    caption = update.message.caption or ""
+    caption = ctx.message.caption or ""
 
     # -------------------------------------------------------------------------
     # 特殊功能：NotebookLM Cookies 导入
@@ -81,10 +86,9 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         
         if is_cookie_file:
-            process_msg = await update.message.reply_text("🍪 检测到 Cookies 文件，正在导入...")
+            process_msg = await ctx.reply("🍪 检测到 Cookies 文件，正在导入...")
             try:
-                file = await context.bot.get_file(document.file_id)
-                file_bytes = await file.download_as_bytearray()
+                file_bytes = await ctx.download_file(document.file_id)
                 content = file_bytes.decode('utf-8')
                 
                 import json
@@ -164,7 +168,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                     with open(target_path, "w") as f:
                         json.dump(state_data, f)
                     
-                await process_msg.edit_text(
+                await ctx.edit_message(process_msg.message_id, 
                     "✅ **NotebookLM 登录信息已更新**\n\n"
                     "您现在可以使用 NotebookLM 技能了。试着对我说：\n"
                     "• \"列出我的笔记本\"\n"
@@ -175,13 +179,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 
             except Exception as e:
                 logger.error(f"Failed to import cookies: {e}")
-                await process_msg.edit_text(f"❌ Cookies 导入失败: {str(e)}")
+                await ctx.edit_message(process_msg.message_id, f"❌ Cookies 导入失败: {str(e)}")
                 return
     
     # 检查文件类型
     mime_type = document.mime_type
     if mime_type not in SUPPORTED_MIME_TYPES:
-        await update.message.reply_text(
+        await ctx.reply(
             "⚠️ 不支持的文档格式。\n\n"
             "支持的格式：PDF、DOCX"
         )
@@ -189,27 +193,26 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     
     # 检查文件大小（限制 10MB）
     if document.file_size and document.file_size > 10 * 1024 * 1024:
-        await update.message.reply_text(
+        await ctx.reply(
             "⚠️ 文档过大（超过 10MB），请发送较小的文档。"
         )
         return
     
     # 获取用户问题（如果有）
-    caption = update.message.caption or "请分析这个文档的主要内容"
+    caption = ctx.message.caption or "请分析这个文档的主要内容"
     
     # 发送处理中提示
-    thinking_msg = await update.message.reply_text("📄 正在读取文档内容...")
+    thinking_msg = await ctx.reply("📄 正在读取文档内容...")
     
     # 记录用户文档消息到上下文
-    add_message(context, "user", f"【用户发送了文档：{document.file_name}】{caption}")
+    add_message(context, user_id, "user", f"【用户发送了文档：{document.file_name}】{caption}")
     
     # 发送"正在输入"状态
-    await context.bot.send_chat_action(chat_id=chat_id, action="typing")
+    await ctx.send_chat_action(action="typing")
     
     try:
         # 下载文档
-        file = await context.bot.get_file(document.file_id)
-        file_bytes = bytes(await file.download_as_bytearray())
+        file_bytes = bytes(await ctx.download_file(document.file_id))
         
         # 根据类型提取文本
         doc_type = SUPPORTED_MIME_TYPES[mime_type]
@@ -221,7 +224,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             text = ""
         
         if not text or len(text.strip()) < 50:
-            await thinking_msg.edit_text(
+            await ctx.edit_message(thinking_msg.message_id,
                 "❌ 无法提取文档内容。\n\n"
                 "可能的原因：\n"
                 "• 文档是扫描版（图片）\n"
@@ -235,7 +238,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if len(text) > max_length:
             text = text[:max_length] + "\n\n[内容过长，已截断...]"
         
-        await thinking_msg.edit_text("📄 正在分析文档内容...")
+        await ctx.edit_message(thinking_msg.message_id, "📄 正在分析文档内容...")
         
         # 调用 Gemini 分析
         response = gemini_client.models.generate_content(
@@ -252,19 +255,19 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         )
         
         if response.text:
-            await thinking_msg.edit_text(response.text)
+            await ctx.edit_message(thinking_msg.message_id, response.text)
             # 记录模型回复到上下文
-            add_message(context, "model", response.text)
+            add_message(context, user_id, "model", response.text)
             # 记录统计
             from stats import increment_stat
             await increment_stat(user_id, "doc_analyses")
         else:
-            await thinking_msg.edit_text("抱歉，我无法分析这个文档。请稍后再试。")
+            await ctx.edit_message(thinking_msg.message_id, "抱歉，我无法分析这个文档。请稍后再试。")
         
     except Exception as e:
         logger.error(f"Document processing error: {e}")
         try:
-            await thinking_msg.edit_text(
+            await ctx.edit_message(thinking_msg.message_id, 
                 "❌ 文档处理失败，请稍后再试。\n\n"
                 "可能的原因：\n"
                 "• 文档格式不支持\n"

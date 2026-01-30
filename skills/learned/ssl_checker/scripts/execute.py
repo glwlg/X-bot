@@ -4,12 +4,11 @@ SSL 证书查询 Skill
 import ssl
 import socket
 from datetime import datetime, timezone
-from telegram import Update
-from telegram.ext import ContextTypes
+from core.platform.models import UnifiedContext
 from utils import smart_reply_text
 
 
-async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict) -> str:
     """查询域名 SSL 证书信息"""
     domain = params.get("domain", "651971564.xyz")
     port = params.get("port", 443)
@@ -17,13 +16,12 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
     # 清理域名格式
     domain = domain.replace("https://", "").replace("http://", "").split("/")[0]
     
-    try:
         # 创建 SSL 上下文
-        ctx = ssl.create_default_context()
+        ssl_context = ssl.create_default_context()
         
         # 连接并获取证书
         with socket.create_connection((domain, port), timeout=10) as sock:
-            with ctx.wrap_socket(sock, server_hostname=domain) as ssock:
+            with ssl_context.wrap_socket(sock, server_hostname=domain) as ssock:
                 cert = ssock.getpeercert()
         
         # 解析证书信息
@@ -64,26 +62,26 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
             f"**状态**: {status}"
         )
         
-        await smart_reply_text(update, message)
+        await ctx.reply(message)
         
         return f"SSL证书查询结果: 域名 {domain} 的证书将于 {not_after.strftime('%Y-%m-%d')} 到期，剩余 {days_left} 天，状态: {status}"
         
     except socket.timeout:
         error_msg = f"❌ 连接超时: 无法连接到 {domain}:{port}"
-        await smart_reply_text(update, error_msg)
+        await ctx.reply(error_msg)
         return f"Error: 连接 {domain} 超时"
         
     except socket.gaierror:
         error_msg = f"❌ 域名解析失败: {domain} 可能不存在"
-        await smart_reply_text(update, error_msg)
+        await ctx.reply(error_msg)
         return f"Error: 域名 {domain} 解析失败"
         
     except ssl.SSLCertVerificationError as e:
         error_msg = f"❌ SSL 证书验证失败: {str(e)}"
-        await smart_reply_text(update, error_msg)
+        await ctx.reply(error_msg)
         return f"Error: SSL证书验证失败 - {str(e)}"
         
     except Exception as e:
         error_msg = f"❌ 查询失败: {str(e)}"
-        await smart_reply_text(update, error_msg)
+        await ctx.reply(error_msg)
         return f"Error: {str(e)}"

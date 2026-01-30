@@ -5,13 +5,10 @@
 新代码推荐直接从对应子模块导入。
 """
 import logging
-from telegram import Update
-from telegram.ext import ContextTypes
-
 from repositories import get_user_settings, set_translation_mode
 from stats import get_user_stats_text
-from .base_handlers import check_permission
-from utils import smart_reply_text
+from .base_handlers import check_permission_unified
+from core.platform.models import UnifiedContext
 
 # 从子模块导入
 from .reminder_handlers import (
@@ -46,24 +43,29 @@ logger = logging.getLogger(__name__)
 
 # --- Stats (保留在此文件中，较小) ---
 
-async def stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def stats_command(ctx: UnifiedContext) -> None:
     """处理 /stats 命令"""
-    if not await check_permission(update):
+    if not await check_permission_unified(ctx):
         return
 
-    user_id = update.effective_user.id
-    stats_text = await get_user_stats_text(user_id)
-    await smart_reply_text(update, stats_text)
+    user_id = ctx.message.user.id
+    try:
+         uid_int = int(user_id)
+         stats_text = await get_user_stats_text(uid_int)
+    except:
+         stats_text = "Stats not available for non-numeric ID yet"
+
+    await ctx.reply(stats_text)
 
 
 # --- Translation (保留在此文件中，较小) ---
 
-async def toggle_translation_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def toggle_translation_command(ctx: UnifiedContext) -> None:
     """处理 /translate 命令，切换沉浸式翻译模式"""
-    if not await check_permission(update):
+    if not await check_permission_unified(ctx):
         return
 
-    user_id = update.effective_user.id
+    user_id = int(ctx.message.user.id) # Settings use int IDs
     
     settings = await get_user_settings(user_id)
     current_status = settings.get("auto_translate", 0)
@@ -72,7 +74,7 @@ async def toggle_translation_command(update: Update, context: ContextTypes.DEFAU
     await set_translation_mode(user_id, new_status)
     
     if new_status:
-        await smart_reply_text(update,
+        await ctx.reply(
             "🌍 **沉浸式翻译模式：已开启**\n\n"
             "现在发送任何文本消息，我都会为您自动翻译。\n"
             "• 外语 -> 中文\n"
@@ -80,7 +82,7 @@ async def toggle_translation_command(update: Update, context: ContextTypes.DEFAU
             "再次输入 /translate 可关闭。"
         )
     else:
-        await smart_reply_text(update,
+        await ctx.reply(
             "🚫 **沉浸式翻译模式：已关闭**\n\n"
             "已恢复正常 AI 助手模式。"
         )

@@ -6,18 +6,22 @@ from repositories.subscription_repo import delete_subscription_by_id, get_user_s
 from repositories.watchlist_repo import remove_watchlist_stock, get_user_watchlist
 from utils import smart_edit_text
 
+from core.platform.models import UnifiedContext
+
 logger = logging.getLogger(__name__)
 
-async def handle_subscription_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def handle_subscription_callback(ctx: UnifiedContext):
     """
     处理订阅管理的 Callback Query (删除订阅/删除自选股)
     """
-    query = update.callback_query
+    # Legacy fallback
+    query = ctx.platform_event.callback_query
     await query.answer()
     
     data = query.data
-    user_id = query.from_user.id
-    message = query.message
+    user_id = ctx.message.user.id
+    # message is UnifiedMessage, but we need message_id for edit_message
+    message_id = ctx.message.id
     
     try:
         if data.startswith("del_rss_"):
@@ -39,14 +43,14 @@ async def handle_subscription_callback(update: Update, context: ContextTypes.DEF
                 await query.answer("❌ 删除失败", show_alert=True)
                 
         # 无论成功与否，刷新列表
-        await refresh_subscription_list_message(message, user_id)
+        await refresh_subscription_list_message(ctx, message_id, user_id)
         
     except Exception as e:
         logger.error(f"Error handling subscription callback: {e}")
         await query.answer("❌ 系统错误", show_alert=True)
 
 
-async def refresh_subscription_list_message(message, user_id: int):
+async def refresh_subscription_list_message(ctx: UnifiedContext, message_id: str, user_id: int):
     """
     刷新订阅列表消息内容 (删除后更新 UI)
     """
@@ -55,7 +59,7 @@ async def refresh_subscription_list_message(message, user_id: int):
     stocks = await get_user_watchlist(user_id)
     
     if not rss_subs and not stocks:
-        await smart_edit_text(message, "📭 您当前没有任何订阅。")
+        await ctx.edit_message(message_id, "📭 您当前没有任何订阅。")
         return
 
     # 重新构建文本和按钮
@@ -100,4 +104,4 @@ async def refresh_subscription_list_message(message, user_id: int):
     final_text = "\n".join(text_lines)
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    await smart_edit_text(message, final_text, reply_markup=reply_markup)
+    await ctx.edit_message(message_id, final_text, reply_markup=reply_markup)

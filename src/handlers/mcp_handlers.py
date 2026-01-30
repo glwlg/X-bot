@@ -5,8 +5,7 @@ MCP 相关 Handler
 
 import io
 import logging
-from telegram import Update
-from telegram.ext import ContextTypes
+from core.platform.models import UnifiedContext
 
 from core.config import MCP_ENABLED
 from utils import smart_reply_text, smart_edit_text
@@ -15,14 +14,14 @@ logger = logging.getLogger(__name__)
 
 
 async def handle_browser_action(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict
+    ctx: UnifiedContext, params: dict
 ) -> bool:
     """
     处理浏览器操作（截图等）
     
     Args:
-        update: Telegram Update
-        context: Telegram context
+    Args:
+        ctx: UnifiedContext
         params: 从意图路由提取的参数，包含 url 和 action
         
     Returns:
@@ -36,38 +35,39 @@ async def handle_browser_action(
     action = params.get("action", "screenshot")
     
     if not url:
-        await smart_reply_text(update, "❌ 请提供要操作的网页 URL。\n\n示例：`截图 https://example.com`")
+        await ctx.reply("❌ 请提供要操作的网页 URL。\n\n示例：`截图 https://example.com`")
         return True
     
     # 确保 URL 有协议头
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     
-    chat_id = update.message.chat_id
-    
     if action == "screenshot":
-        return await _handle_screenshot(update, context, url)
+        return await _handle_screenshot(ctx, url)
     else:
         # 其他 action 可以在这里扩展
-        await smart_reply_text(update, f"❌ 暂不支持的操作：`{action}`")
+        await ctx.reply(f"❌ 暂不支持的操作：`{action}`")
         return True
 
 
 async def _handle_screenshot(
-    update: Update, context: ContextTypes.DEFAULT_TYPE, url: str
+    ctx: UnifiedContext, url: str
 ) -> bool:
     """
     处理网页截图请求
     """
-    chat_id = update.message.chat_id
-    
     # 发送处理中提示
-    thinking_msg = await smart_reply_text(
-        update, 
+    thinking_msg = await ctx.reply(
         f"📸 正在截图 `{url}`...\n\n"
         "⏳ 首次使用可能需要较长时间"
     )
-    await context.bot.send_chat_action(chat_id=chat_id, action="upload_photo")
+    # await ctx.platform_ctx.bot.send_chat_action(chat_id=chat_id, action="upload_photo")
+    # UnifiedContext doesn't support chat_action yet, maybe access platform_ctx
+    if ctx.platform_ctx:
+        try:
+             await ctx.platform_ctx.bot.send_chat_action(chat_id=ctx.message.chat.id, action="upload_photo")
+        except:
+             pass
     
     try:
         # 导入并使用 MCP Manager
@@ -149,7 +149,7 @@ async def _handle_screenshot(
             except Exception:
                 pass
             
-            # 发送截图（作为文档发送，避免 Telegram 压缩图片）
+            # 发送截图（作为文档发送，避免 Telegram 压缩图片） (Legacy access for reply_document)
             from urllib.parse import urlparse
             domain = urlparse(url).netloc.replace("www.", "")
             filename = f"screenshot_{domain}.png"
@@ -157,11 +157,21 @@ async def _handle_screenshot(
             screenshot_file = io.BytesIO(screenshot_data)
             screenshot_file.name = filename  # 设置文件名
             
-            await update.message.reply_document(
-                document=screenshot_file,
-                caption=f"📸 网页截图：{url}",
-                parse_mode="Markdown"
-            )
+            # Using platform_event/adapter fallback or ctx.reply_document if available?
+            # UnifiedContext doesn't have reply_document yet. Use adapter specific via Platform Context.
+            
+            if ctx.platform_ctx:
+                 await ctx.platform_ctx.bot.send_document(
+                    chat_id=ctx.message.chat.id,
+                    document=screenshot_file,
+                    caption=f"📸 网页截图：{url}",
+                    parse_mode="Markdown"
+                )
+            # await update.message.reply_document(
+            #     document=screenshot_file,
+            #     caption=f"📸 网页截图：{url}",
+            #     parse_mode="Markdown"
+            # )
             
             # 清理 MCP 连接（释放 Docker 容器）
             await mcp_manager.disconnect_server("playwright")
@@ -169,7 +179,7 @@ async def _handle_screenshot(
             return True
         else:
             logger.error(f"Failed to extract screenshot data from result: {result}")
-            await smart_edit_text(thinking_msg, f"❌ 截图失败：无法获取图片数据\n\nURL: `{url}`")
+            await ctx.edit_message(thinking_msg.message_id, f"❌ 截图失败：无法获取图片数据\n\nURL: `{url}`")
             return True
             
     except Exception as e:
@@ -184,8 +194,8 @@ async def _handle_screenshot(
         else:
             error_hint = error_msg[:200]  # 截断过长的错误信息
         
-        await smart_edit_text(
-            thinking_msg,
+        await ctx.edit_message(
+            thinking_msg.message_id,
             f"❌ 截图失败\n\n"
             f"**URL**: `{url}`\n"
             f"**原因**: {error_hint}"

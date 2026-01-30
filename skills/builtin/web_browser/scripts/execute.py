@@ -1,8 +1,7 @@
-from telegram import Update
-from telegram.ext import ContextTypes
+from core.platform.models import UnifiedContext
 from services.web_summary_service import fetch_webpage_content, summarize_webpage
 
-async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict) -> str:
     """执行网页浏览任务"""
     action = params.get("action", "visit")
     url = params.get("url")

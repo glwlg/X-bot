@@ -1,10 +1,9 @@
-from telegram import Update
-from telegram.ext import ContextTypes
+from core.platform.models import UnifiedContext
 from utils import smart_reply_text
 import re
 from handlers.media_handlers import process_video_download
 
-async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict) -> str:
     """执行视频下载"""
     url = params.get("url", "")
     format_type = params.get("format", "video")
@@ -18,7 +17,7 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
             url = match.group(0)
     
     if not url:
-        await smart_reply_text(update,
+        await ctx.reply(
             "📹 **视频下载**\n\n"
             "请提供视频链接，例如：\n"
             "• 下载 https://www.youtube.com/watch?v=xxx\n"
@@ -30,8 +29,7 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
     from handlers.media_handlers import process_video_download
     
     await process_video_download(
-        update, 
-        context, 
+        ctx, 
         url, 
         audio_only=(format_type == "audio")
     )

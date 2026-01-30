@@ -138,8 +138,7 @@ class SkillExecutor:
                     return
                 
                 # 准备参数 - 使用 AI 解析
-                update = kwargs.get("update")
-                context = kwargs.get("context")
+                ctx = kwargs.get("ctx")
                 
                 # INJECTION: Inject 'run_skill' into context to enable Skill Composition
                 # We attach it directly to 'context' (ephemeral) instead of 'bot_data' (persistent)
@@ -152,15 +151,15 @@ class SkillExecutor:
                     logger.info(f"[SkillComposition] {skill_name} calling {target_skill}...")
                     final_output = []
                     # Reuse the same executor instance (self)
-                    async for msg, files in self.execute_skill(target_skill, "", params=target_params, update=update, context=context):
+                    async for msg, files in self.execute_skill(target_skill, "", params=target_params, ctx=ctx):
                          if msg: final_output.append(msg)
                     
                     return "\n".join(final_output)
 
-                if context:
+                if ctx and ctx.platform_ctx:
                     # Monkey-patch context object for this execution scope
                     # This is not persisted, so it's safe.
-                    setattr(context, 'run_skill', run_skill_helper)
+                    setattr(ctx.platform_ctx, 'run_skill', run_skill_helper)
                 
                 # 使用 AI 从 SKILL.md 中解析参数
                 params = {}
@@ -217,9 +216,9 @@ class SkillExecutor:
                     async def run_single_task(p):
                         try:
                             if asyncio.iscoroutinefunction(module.execute):
-                                return await module.execute(update, context, p)
+                                return await module.execute(ctx, p)
                             else:
-                                return module.execute(update, context, p)
+                                return module.execute(ctx, p)
                         except Exception as e:
                             logger.error(f"Subtask failed: {e}")
                             return f"❌ 子任务失败: {e}"
@@ -235,9 +234,9 @@ class SkillExecutor:
 
                 # Single execution
                 if asyncio.iscoroutinefunction(module.execute):
-                    result = await module.execute(update, context, params)
+                    result = await module.execute(ctx, params)
                 else:
-                    result = module.execute(update, context, params)
+                    result = module.execute(ctx, params)
                 
                 # 返回结果
                 if isinstance(result, str):
@@ -253,12 +252,17 @@ class SkillExecutor:
                 
                 # --- Self-Healing (Reactive Repair) ---
                 try:
-                    update_obj = kwargs.get("update")
-                    if update_obj and update_obj.effective_user:
+                    ctx = kwargs.get("ctx")
+                    user = ctx.message.user if ctx and ctx.message else None
+                    
+                    if user:
                         yield f"🔧 监测到异常，正在尝试生成修复补丁...", None
                         
                         from services.skill_creator import update_skill
-                        user_id = update_obj.effective_user.id
+                        # user_id needs to be int or str depending on update_skill implementation
+                        # update_skill probably expects int for legacy reasons, but let's check.
+                        # Assuming int for now as per codebase convention.
+                        user_id = int(str(user.id)) if str(user.id).isdigit() else 0
                         
                         repair_req = f"Fix execution error: {str(e)}\nOriginal Request: {user_request}"
                         
@@ -413,9 +417,8 @@ class SkillExecutor:
                 return
 
             # 2. 准备参数
-            # 旧版 skill 通常期望 execute(update, context, params)
-            update = kwargs.get("update")
-            context = kwargs.get("context")
+            # 旧版 skill 通常期望 execute(update, context, params) -> Now expect execute(ctx, params)
+            ctx = kwargs.get("ctx")
             
             # 使用 AI 解析参数
             params = kwargs.get("params", {})
@@ -468,10 +471,10 @@ class SkillExecutor:
             # 3. 执行
             if not asyncio.iscoroutinefunction(module.execute):
                 # 同步函数
-                result = module.execute(update, context, params)
+                result = module.execute(ctx, params)
             else:
                 # 异步函数
-                result = await module.execute(update, context, params)
+                result = await module.execute(ctx, params)
             
             # 4. 返回结果
             # 旧版 execute 通常返回字符串 result
@@ -486,12 +489,14 @@ class SkillExecutor:
             
             # --- Self-Healing (Reactive Repair) ---
             try:
-                update_obj = kwargs.get("update")
-                if update_obj and update_obj.effective_user:
+                ctx = kwargs.get("ctx")
+                user = ctx.message.user if ctx and ctx.message else None
+                
+                if user:
                     yield f"🔧 监测到异常，正在尝试生成修复补丁...", None
                     
                     from services.skill_creator import update_skill
-                    user_id = update_obj.effective_user.id
+                    user_id = int(str(user.id)) if str(user.id).isdigit() else 0
                     
                     repair_req = f"Fix execution error: {str(e)}\nOriginal Request: {user_request}"
                     

@@ -2,9 +2,10 @@ from services.skill_registry_service import skill_registry
 from core.skill_loader import skill_loader
 from utils import smart_reply_text
 from services.skill_creator import update_skill
+from core.platform.models import UnifiedContext
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 
-async def execute(update, context, params):
+async def execute(ctx: UnifiedContext, params: dict):
     """
     Execute skill management operations.
     """
@@ -19,7 +20,7 @@ async def execute(update, context, params):
         if not query:
             return "❌ 请提供搜索关键词"
         
-        await smart_reply_text(update, f"🔍 正在搜索技能: '{query}'...")
+        await ctx.reply(f"🔍 正在搜索技能: '{query}'...")
         skills = await skill_registry.search_skills(query)
         
         if not skills:
@@ -40,7 +41,7 @@ async def execute(update, context, params):
         if not skill_name or not repo_name:
             return "❌ 需要提供 skill_name 和 repo_name"
         
-        await smart_reply_text(update, f"⬇️ 正在安装技能: {skill_name}...")
+        await ctx.reply(f"⬇️ 正在安装技能: {skill_name}...")
         
         success, message = await skill_registry.install_skill(repo_name, skill_name)
         
@@ -94,12 +95,12 @@ async def execute(update, context, params):
         return response
 
     elif action == "check_updates":
-        await smart_reply_text(update, "🔄 正在检查技能更新...")
+        await ctx.reply("🔄 正在检查技能更新...")
         success, message = await skill_registry.check_updates()
         return message
 
     elif action == "update":
-        await smart_reply_text(update, "🔄 正在更新所有技能...")
+        await ctx.reply("🔄 正在更新所有技能...")
         success, message = await skill_registry.update_skills()
         
         if success:
@@ -117,9 +118,9 @@ async def execute(update, context, params):
         if not skill_name or not instruction:
             return "❌ 需要提供 skill_name 和 instruction"
         
-        user_id = update.effective_user.id
+        user_id = int(ctx.message.user.id)
         
-        await smart_reply_text(update, f"✍️ 正在生成 `{skill_name}` 的修改方案...")
+        await ctx.reply(f"✍️ 正在生成 `{skill_name}` 的修改方案...")
         
         result = await update_skill(skill_name, instruction, user_id)
         
@@ -129,8 +130,11 @@ async def execute(update, context, params):
         code = result["code"]
         filepath = result["filepath"]
         
-        # 存储待审核信息
-        context.user_data["pending_skill"] = skill_name
+        filepath = result["filepath"]
+        
+        # 存储待审核信息 - Use platform_ctx.user_data
+        if hasattr(ctx.platform_ctx, "user_data"):
+             ctx.platform_ctx.user_data["pending_skill"] = skill_name
         
         code_preview = code[:500] + "..." if len(code) > 500 else code
         
@@ -143,8 +147,10 @@ async def execute(update, context, params):
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
         
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # Using adapter's reply with reply_markup
+        await ctx.reply(
             text=(
                 f"📝 **Skill 修改草稿**\n\n"
                 f"**目标**: `{skill_name}`\n"
@@ -152,8 +158,7 @@ async def execute(update, context, params):
                 f"```python\n{code_preview}\n```\n\n"
                 f"请确认是否应用修改。"
             ),
-            reply_markup=reply_markup,
-            parse_mode="Markdown"
+            reply_markup=reply_markup
         )
         
         return f"已生成 '{skill_name}' 的修改方案，等待用户审核。"

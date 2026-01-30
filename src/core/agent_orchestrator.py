@@ -3,6 +3,7 @@ import logging
 import json
 from telegram import Update
 from telegram.ext import ContextTypes
+from core.platform.models import UnifiedContext
 
 from core.config import MCP_MEMORY_ENABLED
 from core.tool_registry import tool_registry
@@ -26,15 +27,14 @@ class AgentOrchestrator:
 
     async def handle_message(
         self, 
-        update: Update, 
-        context: ContextTypes.DEFAULT_TYPE, 
+        ctx: UnifiedContext, 
         message_history: list
     ):
         """
         Main entry point for handling user messages via the Agent.
         Returns a generator of text chunks (streaming response).
         """
-        user_id = update.effective_user.id
+        user_id = int(ctx.message.user.id) # Assuming ID is int compatible for now
         
         # 1. Gather Tools
         tools = tool_registry.get_all_tools()
@@ -56,23 +56,19 @@ class AgentOrchestrator:
                     # Notify user about skill invocation (ephemeral, not saved)
                     skill_name = args["skill_name"]
                     instruction_preview = args["instruction"][:100] + "..." if len(args["instruction"]) > 100 else args["instruction"]
-                    await update.message.reply_text(f"🔧 正在调用技能: `{skill_name}`\n📝 指令: `{instruction_preview}`", parse_mode="Markdown")
+                    await ctx.reply(f"🔧 正在调用技能: `{skill_name}`\n📝 指令: `{instruction_preview}`")
                     
                     full_output = ""
-                    # Pass update and context for legacy skills
+                    # Pass unified context
                     async for chunk, files in skill_executor.execute_skill(
                         args["skill_name"], 
                         args["instruction"],
-                        update=update,
-                        context=context
+                        ctx=ctx
                     ):
                         full_output += chunk
                         if files:
                              for filename, content in files.items():
-                                import io
-                                file_obj = io.BytesIO(content)
-                                file_obj.name = filename
-                                await update.message.reply_document(document=file_obj, filename=filename)
+                                await ctx.reply_document(document=content, filename=filename)
                     
                     if not full_output.strip():
                         logger.warning(f"Skill {skill_name} returned empty output!")
@@ -87,10 +83,11 @@ class AgentOrchestrator:
                     from core.evolution_router import evolution_router
                     
                     user_request = args.get("user_request", "")
-                    user_request = args.get("user_request", "")
-                    await update.message.reply_text(f"🤔 这个问题... 我现在的技能库里好像还没装对应的功能。\n⚡️ 不过没关系！正在启动自我进化程序，现场为您现学现卖……\n\n🎯 学习目标：{user_request}", parse_mode="Markdown")
+                    await ctx.reply(f"🤔 这个问题... 我现在的技能库里好像还没装对应的功能。\n⚡️ 不过没关系！正在启动自我进化程序，现场为您现学现卖……\n\n🎯 学习目标：{user_request}")
                     
-                    result = await evolution_router.evolve(user_request, user_id, update)
+                    # Evolution Router still expects update object for now, pass legacy if available
+                    # TODO: Migrate Evolution Router to UnifiedContext
+                    result = await evolution_router.evolve(user_request, user_id, ctx.platform_event)
                     return f"Evolution Result:\n{result}"
 
                 # Memory Tools (Lazy Connect)

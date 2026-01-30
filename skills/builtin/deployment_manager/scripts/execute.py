@@ -50,9 +50,8 @@ You must output a JSON object describing your THOUGHT and NEXT ACTION.
 """
 
 class DeploymentManager:
-    def __init__(self, update, context):
-        self.update = update
-        self.context = context
+    def __init__(self, ctx: UnifiedContext):
+        self.ctx = ctx
         self.history = []
         self.max_loops = 20
 
@@ -69,7 +68,7 @@ class DeploymentManager:
             response = await self._think()
 
             if not response:
-                await smart_reply_text(self.update, "❌ 思考中断，请重试。")
+                await self.ctx.reply("❌ 思考中断，请重试。")
                 break
                 
             thought = response.get("thought", "")
@@ -78,7 +77,7 @@ class DeploymentManager:
             
             # User feedback
             if action != "finish":
-                await smart_reply_text(self.update, f"🤖 {thought}")
+                await self.ctx.reply(f"🤖 {thought}")
             
             # 2. Execute
             result = await self._execute_tool(action, params)
@@ -126,20 +125,20 @@ class DeploymentManager:
             if action == "deploy":
                 url = params.get("url")
                 # Call docker_ops.execute
-                return await docker_ops_execute(self.update, self.context, {"action": "deploy", "url": url, "silent": True})
+                return await docker_ops_execute(self.ctx, {"action": "deploy", "url": url, "silent": True})
             
             elif action == "execute":
                 cmd = params.get("command")
-                return await docker_ops_execute(self.update, self.context, {"action": "execute_command", "command": cmd})
+                return await docker_ops_execute(self.ctx, {"action": "execute_command", "command": cmd})
             
             elif action == "edit":
                 path = params.get("path")
                 content = params.get("content")
-                return await docker_ops_execute(self.update, self.context, {"action": "edit_file", "path": path, "content": content})
+                return await docker_ops_execute(self.ctx, {"action": "edit_file", "path": path, "content": content})
 
             elif action == "stop":
                 name = params.get("name")
-                return await docker_ops_execute(self.update, self.context, {"action": "stop", "name": name, "is_compose": True})
+                return await docker_ops_execute(self.ctx, {"action": "stop", "name": name, "is_compose": True})
             
             elif action == "read_file":
                 path = params.get("path")
@@ -152,7 +151,7 @@ class DeploymentManager:
             elif action == "finish":
                 msg = params.get("message", "Done.")
                 final_text = f"🏁 **任务完成**: {msg}"
-                await smart_reply_text(self.update, final_text)
+                await self.ctx.reply(final_text)
                 return ""
 
             else:
@@ -160,9 +159,11 @@ class DeploymentManager:
         except Exception as e:
             return f"Tool execution failed: {e}"
 
-async def execute(update, context, params):
+async def execute(ctx, params):
     goal = params.get("goal")
     url = params.get("repo_url")
     
-    manager = DeploymentManager(update, context)
+    from core.platform.models import UnifiedContext
+    
+    manager = DeploymentManager(ctx)
     return await manager.run(goal, url)

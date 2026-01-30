@@ -1,5 +1,6 @@
 import base64
 import logging
+from core.platform.models import UnifiedContext
 from telegram import Update
 from telegram.ext import ContextTypes
 from google.genai import types
@@ -8,7 +9,7 @@ from utils import smart_reply_text
 
 logger = logging.getLogger(__name__)
 
-async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict) -> str:
     """执行文生图任务"""
     logger.info(f"Executing generate_image with params: {params}")
     
@@ -17,10 +18,10 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
     aspect_ratio = params.get("aspect_ratio", "1:1")
     
     if not prompt:
-        await smart_reply_text(update, "🎨 请描述你想要生成的画面。")
+        await ctx.reply("🎨 请描述你想要生成的画面。")
         return "❌ 未提供提示词"
         
-    status_msg = await smart_reply_text(update, f"🎨 正在绘图: {prompt} ({aspect_ratio})...")
+    status_msg = await ctx.reply(f"🎨 正在绘图: {prompt} ({aspect_ratio})...")
     
     try:
         # Construct content object
@@ -81,14 +82,13 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
                         
         if not image_bytes:
              logger.error(f"Image Gen Failed. Full Response Candidates: {response.candidates}")
-             await status_msg.edit_text("❌ 生成失败: API 未返回图片数据 (Candidates Empty or No Inline Data)。")
+             await ctx.edit_message(status_msg.message_id, "❌ 生成失败: API 未返回图片数据 (Candidates Empty or No Inline Data)。")
              return "❌ 生成失败: 无图片数据"
 
         # 发送图片
-        await update.message.reply_photo(
+        await ctx.reply_photo(
             photo=image_bytes,
-            caption=f"🎨 **Prompt**: {prompt}\n📏 **Ratio**: {aspect_ratio}",
-            parse_mode="Markdown"
+            caption=f"🎨 **Prompt**: {prompt}\n📏 **Ratio**: {aspect_ratio}"
         )
         
         # 删除进度消息
@@ -102,5 +102,9 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
     except Exception as e:
         logger.error(f"Image generation failed: {e}")
         error_msg = str(e)
-        await status_msg.edit_text(f"❌ 绘图失败: {error_msg}")
+        if status_msg:
+             try:
+                await ctx.edit_message(status_msg.message_id, f"❌ 绘图失败: {error_msg}")
+             except:
+                pass
         return f"❌ 绘图失败: {error_msg}"

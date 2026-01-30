@@ -30,7 +30,6 @@ from handlers import (
     deluser_command,
     button_callback,
     start_download_video,
-    start_download_video,
     back_to_main_and_cancel,
     handle_download_format,
     download_command,
@@ -63,6 +62,10 @@ from handlers.skill_handlers import (
 )
 from handlers.callback_handlers import handle_subscription_callback
 from handlers.deployment_handlers import deploy_command
+
+# Multi-Channel Imports
+from core.platform.registry import AdapterManager
+from platforms.telegram.adapter import TelegramAdapter
 
 
 # 日志配置
@@ -159,6 +162,12 @@ def main() -> None:
     # 设置 Bot 初始化 (加载数据库和菜单)
     application.post_init = initialize_data
 
+    # --- Multi-Channel Adapter Setup ---
+    adapter_manager = AdapterManager()
+    tg_adapter = TelegramAdapter(application)
+    adapter_manager.register_adapter(tg_adapter)
+    # -----------------------------------
+
     # 0. 全局调试记录器 (注册在最前面)
     from telegram.ext import TypeHandler
     application.add_handler(TypeHandler(Update, log_update), group=-1)
@@ -168,37 +177,45 @@ def main() -> None:
     # 注意：排除 download_video, generate_image, back_to_main_cancel 以及 dl_format_ 和 large_file_ 开头的回调
     
     # 1.0 先注册智能视频操作按钮 (优先级高于通用按钮)
-    application.add_handler(CallbackQueryHandler(handle_video_actions, pattern="^action_.*"))
+    tg_adapter.on_callback_query("^action_.*", handle_video_actions)
 
     # 1.1 大文件处理按钮
-    application.add_handler(CallbackQueryHandler(handle_large_file_action, pattern="^large_file_"))
+    tg_adapter.on_callback_query("^large_file_", handle_large_file_action)
     
     # 1.2 通用菜单按钮
     common_pattern = "^(?!download_video$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_|skill_|del_rss_|del_stock_).*$"
-    application.add_handler(CallbackQueryHandler(button_callback, pattern=common_pattern))
+    # [UNIFIED]
+    tg_adapter.on_callback_query(common_pattern, button_callback)
     
     # 1.3 Skill 审核按钮
-    application.add_handler(CallbackQueryHandler(handle_skill_callback, pattern="^skill_"))
+    # [UNIFIED]
+    tg_adapter.on_callback_query("^skill_", handle_skill_callback)
     
     # Handler for subscription management (delete)
     application.add_handler(CallbackQueryHandler(handle_subscription_callback, pattern="^(del_rss_|del_stock_)"))
 
     # AI Chat Handler (Text)
-    back_handler = CallbackQueryHandler(back_to_main_and_cancel, pattern="^back_to_main_cancel$")
-    format_handler = CallbackQueryHandler(handle_download_format, pattern="^dl_format_")
+    # [UNIFIED] Factory for conversation handler
+    back_handler = tg_adapter.create_callback_handler("^back_to_main_cancel$", back_to_main_and_cancel)
+    format_handler = tg_adapter.create_callback_handler("^dl_format_", handle_download_format)
+    # Note: start_download_video is triggered by button, so use callback handler as entry point
+    # But CallbackQueryHandler usually doesn't take 'pattern' inside create_... (wait, my factory supports pattern?)
+    # Let's check adapter.py. 
+    # create_callback_handler(self, pattern: str, handler_func: Callable) -> CallbackQueryHandler
+    
     video_conv_handler = ConversationHandler(
         entry_points=[
-            CallbackQueryHandler(start_download_video, pattern="^download_video$"),
-            CommandHandler("download", download_command),
+            tg_adapter.create_callback_handler("^download_video$", start_download_video),
+            tg_adapter.create_command_handler("download", download_command),
         ],
         states={
             WAITING_FOR_VIDEO_URL: [
                 back_handler,
                 format_handler,
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_video_download),
+                tg_adapter.create_message_handler(filters.TEXT & ~filters.COMMAND, handle_video_download),
             ],
         },
-        fallbacks=[CommandHandler("cancel", cancel), back_handler, format_handler],
+        fallbacks=[tg_adapter.create_command_handler("cancel", cancel), back_handler, format_handler],
 
         allow_reentry=True,
         per_message=False,
@@ -207,79 +224,73 @@ def main() -> None:
 
     # 3.4 需求收集对话处理器
     feature_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("feature", feature_command)],
+        entry_points=[tg_adapter.create_command_handler("feature", feature_command)],
         states={
             WAITING_FOR_FEATURE_INPUT: [
-                CommandHandler("save_feature", save_feature_command),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_feature_input)
+                tg_adapter.create_command_handler("save_feature", save_feature_command),
+                tg_adapter.create_message_handler(filters.TEXT & ~filters.COMMAND, handle_feature_input)
             ],
         },
 
-        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("save_feature", save_feature_command)],
+        fallbacks=[tg_adapter.create_command_handler("cancel", cancel), tg_adapter.create_command_handler("save_feature", save_feature_command)],
         per_message=False,
     )
 
     # 4. 注册核心功能处理器
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("new", handle_new_command))
-    application.add_handler(CommandHandler("adduser", adduser_command))
-    application.add_handler(CommandHandler("deluser", deluser_command))
-    application.add_handler(CommandHandler("deploy", deploy_command))
+    # [UNIFIED] 使用 Adapter 注册统一命令
+    tg_adapter.on_command("start", start)
+    tg_adapter.on_command("help", help_command)
+    tg_adapter.on_command("new", handle_new_command)
+    
+    # [LEGACY] 传统方式注册
+    tg_adapter.on_command("adduser", adduser_command)
+    tg_adapter.on_command("deluser", deluser_command)
+    tg_adapter.on_command("deploy", deploy_command)
 
     
     # 移除独立命令注册 (已迁移至 Skill)
     # remind, translate, subscribe, monitor, watchlist
     
     # 4.1 核心后台回调 (Skill 可能触发)
-    application.add_handler(CallbackQueryHandler(handle_unsubscribe_callback, pattern="^unsub_"))
-    application.add_handler(CallbackQueryHandler(handle_stock_select_callback, pattern="^stock_"))
+    # [UNIFIED] 使用 Adapter 注册回调
+    tg_adapter.on_callback_query("^unsub_", handle_unsubscribe_callback)
+    tg_adapter.on_callback_query("^stock_", handle_stock_select_callback)
     
     # 4.2 特色功能
     application.add_handler(feature_conv_handler)
-    application.add_handler(CommandHandler("stats", stats_command))
+    tg_adapter.on_command("stats", stats_command)
     application.add_handler(video_conv_handler)
     
     # 4.1 Skill 管理命令
     teach_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("teach", teach_command)],
+        entry_points=[tg_adapter.create_command_handler("teach", teach_command)],
         states={
             WAITING_FOR_SKILL_DESC: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_teach_input)
+                tg_adapter.create_message_handler(filters.TEXT & ~filters.COMMAND, handle_teach_input)
             ],
         },
 
-        fallbacks=[CommandHandler("cancel", cancel)],
+        fallbacks=[tg_adapter.create_command_handler("cancel", cancel)],
         per_message=False,
     )
     application.add_handler(teach_conv_handler)
-    application.add_handler(CommandHandler("skills", skills_command))
-    application.add_handler(CommandHandler("reload_skills", reload_skills_command))
+    tg_adapter.on_command("skills", skills_command)
+    tg_adapter.on_command("reload_skills", reload_skills_command)
     
     # 5. 图片消息处理器（AI 图片分析）
-    application.add_handler(
-        MessageHandler(filters.PHOTO, handle_ai_photo)
-    )
+    tg_adapter.on_message(filters.PHOTO, handle_ai_photo)
     
     # 6. 视频消息处理器（AI 视频分析）
-    application.add_handler(
-        MessageHandler(filters.VIDEO, handle_ai_video)
-    )
+    tg_adapter.on_message(filters.VIDEO, handle_ai_video)
     
     # 7. 语音/音频消息处理器（包括 voice 和 audio）
-    application.add_handler(
-        MessageHandler(filters.VOICE | filters.AUDIO, handle_voice_message)
-    )
+    tg_adapter.on_message(filters.VOICE | filters.AUDIO, handle_voice_message)
     
     # 8. 文档消息处理器（PDF、DOCX）
-    application.add_handler(
-        MessageHandler(filters.Document.ALL, handle_document)
-    )
+    tg_adapter.on_message(filters.Document.ALL, handle_document)
     
     # 9. AI 对话处理器（兜底文本消息）
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ai_chat)
-    )
+    tg_adapter.on_message(filters.TEXT & ~filters.COMMAND, handle_ai_chat)
 
     # 启动 Bot
     logger.info("Bot is running...")
