@@ -1,3 +1,4 @@
+import asyncio
 from urllib.parse import quote
 import httpx
 from telegram import Update
@@ -6,94 +7,142 @@ from utils import smart_reply_text
 
 async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> None:
     query = params.get("query", "").strip()
+    queries = params.get("queries", [])
     num_results = params.get("num_results", 5)
     categories = params.get("categories", "general")
     time_range = params.get("time_range", "")
     language = params.get("language", "zh-CN")
     
-    if not query:
+    # Normalize input
+    if isinstance(queries, str):
+         queries = [queries]
+    
+    # If single query provided but no queries list
+    if query and not queries:
+        queries = [query]
+        
+    queries = [q for q in queries if q.strip()]
+    
+    if not queries:
         await smart_reply_text(update, "❌ 请提供搜索关键词")
         return
     
-    # 限制结果数量
+    # Limit queries count
+    queries = queries[:5] 
     num_results = min(max(1, int(num_results)), 10)
     
-    # 构建提示信息
-    status_parts = [f"🔍 正在搜索: {query}"]
-    if categories != "general":
-        status_parts.append(f"📂 分类: {categories}")
-    if time_range:
-        status_parts.append(f"🕒 时间: {time_range}")
+    status_msg = f"🔍 正在搜索 {len(queries)} 个主题..." if len(queries) > 1 else f"🔍 正在搜索: {queries[0]}"
+    await smart_reply_text(update, status_msg)
     
-    await smart_reply_text(update, " | ".join(status_parts))
-    
-    try:
-        # 构建 SearXNG API 请求 URL
-        # 参数文档: https://docs.searxng.org/dev/search_api.html
-        encoded_query = quote(query)
-        
-        # Base URL
-        search_url = f"http://192.168.1.100:28080/search?q={encoded_query}&format=json"
-        
-        # Add optional params
-        if categories:
-            search_url += f"&categories={categories}"
-        if time_range:
-            search_url += f"&time_range={time_range}"
-        if language:
-            search_url += f"&language={language}"
+    async def fetch_results(search_query):
+        try:
+            encoded_query = quote(search_query)
+            # Base URL - use configured IP or localhost fallback
+            search_url = f"http://192.168.1.100:28080/search?q={encoded_query}&format=json"
             
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(search_url)
-            response.raise_for_status()
-            data = response.json()
-        
-        results = data.get("results", [])[:num_results]
-        
-        if not results:
-            msg = f"😔 未找到与 「{query}」 相关的结果"
-            await smart_reply_text(update, msg)
-            return msg # Return for Agent
-        
-        # 格式化搜索结果
-        message_lines = [f"🔎 搜索结果: {query}\n"]
-        
-        for i, result in enumerate(results, 1):
-            title = result.get("title", "无标题")
-            url = result.get("url", "")
-            content = result.get("content", "")
-            ws_engine = result.get("engine", "") # Source engine, e.g. google, bing
-            published_date = result.get("publishedDate", "")
+            if categories: search_url += f"&categories={categories}"
+            if time_range: search_url += f"&time_range={time_range}"
+            if language: search_url += f"&language={language}"
             
-            # 截断过长的内容
-            if len(content) > 150:
-                content = content[:150] + "..."
-            
-            # 构建标题行 (含来源)
-            source_tag = f"[{ws_engine}] " if ws_engine else ""
-            message_lines.append(f"{i}. {source_tag}<b>{title}</b>")
-            
-            if published_date:
-                # 尝试简单格式化日期 (SearXNG date output might handle formatting)
-                message_lines.append(f"   🕒 {published_date}")
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(search_url)
+                response.raise_for_status()
+                data = response.json()
+                results = data.get("results", [])[:num_results]
                 
-            if content:
-                message_lines.append(f"   {content}")
-            message_lines.append(f"   🔗 {url}\n")
+                # Fallback mechanism: If specific category yields no results, try 'general'
+                if not results and categories and categories != "general":
+                    retry_url = f"http://192.168.1.100:28080/search?q={encoded_query}&format=json&categories=general"
+                    if time_range: retry_url += f"&time_range={time_range}"
+                    if language: retry_url += f"&language={language}"
+                    
+                    response = await client.get(retry_url)
+                    if response.status_code == 200:
+                        data = response.json()
+                        results = data.get("results", [])[:num_results]
+                
+                return search_query, results
+        except Exception as e:
+            return search_query, []
+
+    # Concurrent Execution
+    results_list = await asyncio.gather(*(fetch_results(q) for q in queries))
+    
+    # Build HTML Report
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Search Report</title>
+        <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; color: #333; max-width: 800px; margin: 0 auto; padding: 20px; }
+            h1 { font-size: 24px; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+            h2 { font-size: 20px; color: #0066cc; margin-top: 30px; }
+            .result-item { margin-bottom: 20px; padding: 15px; background: #f9f9f9; border-radius: 8px; border-left: 4px solid #0066cc; }
+            .title { font-weight: bold; font-size: 16px; display: block; margin-bottom: 5px; text-decoration: none; color: #333; }
+            .title:hover { text-decoration: underline; color: #0066cc; }
+            .meta { font-size: 12px; color: #666; margin-bottom: 5px; }
+            .content { font-size: 14px; color: #444; }
+            .source { display: inline-block; background: #e0e0e0; padding: 2px 6px; border-radius: 4px; font-size: 11px; margin-right: 5px; }
+            .empty { color: #888; font-style: italic; }
+        </style>
+    </head>
+    <body>
+        <h1>🔍 搜索聚合报告</h1>
+    """
+    
+    agent_summary_lines = []
+    
+    found_any = False
+    for query_text, res_items in results_list:
+        html_content += f"<h2>Results for: {query_text}</h2>"
+        agent_summary_lines.append(f"## 搜索: {query_text}")
         
-        result_message = "\n".join(message_lines)
-        await smart_reply_text(update, result_message, parse_mode="HTML")
-        return result_message # RETURN RESULT TO AGENT
-        
-    except httpx.TimeoutException:
-        msg = "❌ 搜索请求超时，请稍后重试"
-        await smart_reply_text(update, msg)
-        return msg
-    except httpx.HTTPStatusError as e:
-        msg = f"❌ 搜索服务返回错误: {e.response.status_code}"
-        await smart_reply_text(update, msg)
-        return msg
+        if not res_items:
+            html_content += '<div class="empty">未找到相关结果</div>'
+            agent_summary_lines.append("> 无结果")
+            continue
+            
+        found_any = True
+        for item in res_items:
+            title = item.get("title", "No Title")
+            url = item.get("url", "#")
+            content = item.get("content", "")
+            engine = item.get("engine", "unknown")
+            pub_date = item.get("publishedDate", "")
+            
+            html_content += f"""
+            <div class="result-item">
+                <a href="{url}" class="title" target="_blank">{title}</a>
+                <div class="meta">
+                    <span class="source">{engine}</span>
+                    {f'<span>🕒 {pub_date}</span>' if pub_date else ''}
+                </div>
+                <div class="content">{content[:300] + '...' if len(content) > 300 else content}</div>
+            </div>
+            """
+            
+            # Agent Summary (simplified)
+            agent_summary_lines.append(f"- [{title}]({url})\n  {content[:100]}...")
+            
+    html_content += "</body></html>"
+    
+    if not found_any:
+        await smart_reply_text(update, "😔 所有查询均未找到结果")
+        return "No results found for any query."
+
+    # Send HTML File
+    try:
+        import io
+        file_obj = io.BytesIO(html_content.encode('utf-8'))
+        file_obj.name = "search_report.html"
+        await update.message.reply_document(
+            document=file_obj, 
+            caption=f"📊 聚合搜索完成 ({len(queries)} 个主题)"
+        )
     except Exception as e:
-        msg = f"❌ 搜索失败: {str(e)}"
-        await smart_reply_text(update, msg)
-        return msg
+        await smart_reply_text(update, f"⚠️ 发送报告失败: {e}")
+
+    return "\n".join(agent_summary_lines)

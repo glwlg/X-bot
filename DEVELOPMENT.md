@@ -70,6 +70,13 @@ X-Bot 已完成从"规则路由"到"智能体核心"的进化。现在，所有�
 
 ---
 
+5.  **Evolution Router (`src/core/evolution_router.py`) & Skill Creator**
+    *   **Meta-Learning**: 核心进化引擎。当现有工具无法满足需求时，接管控制权。
+    *   **JIT Skill Generation**: 实时生成 Python 代码 (`src/services/skill_creator.py`)，自动编写 `SKILL.md` 和 `execute.py`。
+    *   **Self-Healing Loop**: 假如生成代码运行报错，自动捕获 Traceback，将错误反馈给 Creator AI 进行代码修正，实现自我治愈。
+
+---
+
 ## 2. 核心模块说明
 
 项目的核心代码位于 `src/` 目录下：
@@ -152,6 +159,22 @@ src/
 `SkillExecutor` 实现了通用适配器模式：
 - **流式响应**：实时流式传输 AI 的思考过程。
 - **文件自动交付**：自动捕获沙箱中生成的任何新文件，并将其作为 Telegram Document 发送给用户，无需 Skill 开发者编写特定发送逻辑。
+
+---
+
+#### 3. Self-Evolution Loop (The Flywheel)
+```mermaid
+graph TD
+    Req[User Request] -->|Task Boundary| AO[Agent Orchestrator]
+    AO -->|Missing Capability| ER[Evolution Router]
+    ER -->|Prompt Engineering| LLM[Gemini 2.0 Pro]
+    LLM -->|Generate Code| SC[Skill Creator]
+    SC -->|Hot Load| SL[Skill Loader]
+    SL -->|Execute| SE[Skill Executor]
+    SE --"Success"--> User
+    SE --"Error"--> SH[Self-Healing]
+    SH -->|Error Log + Context| LLM
+```
 
 ---
 

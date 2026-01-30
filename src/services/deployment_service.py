@@ -76,6 +76,11 @@ class DockerDeploymentService:
             # We assume the internal `/app` maps to `/DATA/x-box` on host.
             if update_callback: await update_callback("🔧 正在修正 Docker 挂载路径...")
             self._patch_volumes_for_host(config_dir, repo_name)
+            
+            # 3.9 Pre-emptive Port Randomization
+            # Use random high ports (>20000) to avoid conflicts (Zero-Touch)
+            if update_callback: await update_callback("⚙️ 正在优化端口配置 (20000+)...")
+            self._randomize_ports(config_dir)
 
             # 4. Execute Deployment with Retry for Port Conflicts
             if update_callback: await update_callback(f"🚀 开始执行部署命令...\nCommands:\n" + "\n".join(plan['commands']))
@@ -88,18 +93,40 @@ class DockerDeploymentService:
                     break
                 
                 # Check for port conflict
+                # Check for port conflict
                 import re
-                # "Bind for 0.0.0.0:5000 failed"
+                # Patterns:
+                # 1. "Bind for 0.0.0.0:5000 failed"
+                # 2. "bind: address already in use" (often preceded by port)
+                # 3. "driver failed programming external connectivity ... port is already allocated"
+                
+                conflict_port = None
+                
+                # Try specific match first
                 match = re.search(r"Bind for \d+\.\d+\.\d+\.\d+:(\d+) failed", execution_log)
-                if match and attempt < max_retries - 1:
+                if match:
                     conflict_port = match.group(1)
+                
+                if not conflict_port:
+                    # Generic "address already in use" - often hard to find which port from log alone if simple regex
+                    # But often it appears as: "Listen tcp :3001: bind: address already in use"
+                    match_generic = re.search(r":(\d+): bind: address already in use", execution_log)
+                    if match_generic:
+                        conflict_port = match_generic.group(1)
+                        
+                if not conflict_port and ("address already in use" in execution_log or "port is already allocated" in execution_log):
+                    # Fallback: Assume the mapping we tried failed.
+                    # We need to look at what we tried to deploy.
+                    # This is tricky without parsing the compose file again. 
+                    # But usually we can guess from context or just try a random new port if we know which service failed.
+                    # For now, let's try to parse "Allocated port 3001..." if it exists.
+                    pass
+
+                if conflict_port and attempt < max_retries - 1:
                     new_port = self._find_free_port()
                     if update_callback: 
-                        await update_callback(f"⚠️ 检测到端口 {conflict_port} 冲突，正在自动切换到 {new_port} 并重试 ({attempt+1}/{max_retries})...")
+                        await update_callback(f"⚠️ 检测到端口 {conflict_port} 由其他服务占用，正在自动切换到 {new_port} 并重试 ({attempt+1}/{max_retries})...")
                     
-                    # Try to patch docker-compose.yml
-                    # We assume standard syntax:  - "5000:5000" or - 5000:5000
-                    # We want to replace the host port (left side)
                     patched = self._patch_docker_compose_port(config_dir, conflict_port, str(new_port))
                     if not patched:
                         return False, f"❌ 端口 {conflict_port} 冲突，且自动修复失败。"
@@ -108,7 +135,9 @@ class DockerDeploymentService:
 
             # 5. Get Access Info
             if update_callback: await update_callback("🔍 正在获取访问地址...")
-            access_info = await self._get_access_info(local_path)
+            # Use config_dir because that's where docker-compose.yml is
+            access_info = await self._get_access_info(config_dir)
+            logger.info(f"Detected Access Info: {access_info}")
             
             return True, f"✅ 部署成功!\n\n{access_info}"
 
@@ -196,6 +225,59 @@ class DockerDeploymentService:
         # If crowded, just return a random one
         return random.randint(20000, 60000)
     
+    def _randomize_ports(self, config_dir: Path) -> None:
+        """
+        Scan docker-compose.yml for low ports (< 20000) and replace them with random high ports.
+        """
+        try:
+            candidates = ["docker-compose.yml", "docker-compose.yaml"]
+            target = None
+            for fname in candidates:
+                if (config_dir / fname).exists():
+                    target = config_dir / fname
+                    break
+            
+            if not target: return
+            
+            content = target.read_text(encoding="utf-8")
+            import re
+            
+            # Regex to find "host:container" port mappings
+            # Matches:  - "8080:80"  or  - 8080:80  or  published: 8080
+            # We focus on the most common format: spaces/dash/quotes + HOST_PORT + : + CONTAINER_PORT
+            # Capture group 1: Prefix, Group 2: Host Port, Group 3: Container Part
+            # We only touch Host Port if it's < 20000
+            
+            def replace_port_match(match):
+                prefix = match.group(1)
+                host_port_str = match.group(2)
+                suffix = match.group(3)
+                
+                try:
+                    port = int(host_port_str)
+                    if port < 20000:
+                        new_port = self._find_free_port()
+                        logger.info(f"Randomizing port: {port} -> {new_port}")
+                        return f"{prefix}{new_port}{suffix}"
+                except:
+                    pass
+                return match.group(0) # No change
+
+            # Regex breakdown:
+            # (\s-\s*["']?) : Prefix (indent, dash, quote)
+            # (\d+)         : Host Port
+            # (:\d+)        : :Container Port (suffix)
+            # We look for standard `- 80:80` content
+            pattern = re.compile(r'(\s-\s*["\']?)(\d+)(:\d+)')
+            
+            new_content = pattern.sub(replace_port_match, content)
+            
+            if new_content != content:
+                target.write_text(new_content, encoding="utf-8")
+                
+        except Exception as e:
+            logger.warning(f"Port randomization failed: {e}")
+
     def _patch_docker_compose_port(self, config_dir: Path, old_port: str, new_port: str) -> bool:
         """Replace host port in docker-compose.yml."""
         try:
@@ -483,22 +565,55 @@ Rules:
                 
         return True, "\n".join(full_log)
 
-    async def _get_access_info(self, cwd: Path) -> str:
-        """Determine potential access URLs."""
-        # 1. Get Host LAN IP
-        host_ip = "127.0.0.1"
+    async def _get_access_info(self, config_dir: Path) -> str:
+        """
+        Get access info (IP and Ports)
+        """
+        from core.config import SERVER_IP
+        
+        ips = []
+        
+        # 1. Configured Static IP (Priority)
+        if SERVER_IP:
+             ips.append(f"{SERVER_IP} (Config)")
+
+        # 2. Get Public IP (Verification)
         try:
-            # Trick to get host IP from inside container: run a container on host net
-            cmd = "docker run --rm --net=host alpine ip route get 1.1.1.1 | awk '{print $7}'"
+            cmd = "curl -s --max-time 2 ifconfig.me"
             process = await asyncio.create_subprocess_shell(
                 cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
             stdout, _ = await process.communicate()
-            ip = stdout.decode().strip()
-            if ip:
-                host_ip = ip
+            public_ip = stdout.decode().strip()
+            if public_ip and len(public_ip) < 20: # Sanity check length
+                ips.append(f"{public_ip} (Public)")
+        except Exception:
+            pass
+            
+        # 2. Get LAN/Internal IP (Robust Method for Host Network)
+        try:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            # Use Google DNS as target (doesn't send data) to find outbound interface
+            s.connect(("8.8.8.8", 80))
+            lan_ip = s.getsockname()[0]
+            s.close()
+            
+            with open("/app/data/ip_debug.txt", "a") as f:
+                f.write(f"Socket detected: {lan_ip}\n")
+            
+            if lan_ip and lan_ip != "127.0.0.1":
+                ips.append(f"{lan_ip} (LAN)")
         except Exception as e:
-            logger.error(f"Failed to get host IP: {e}")
+            with open("/app/data/ip_debug.txt", "a") as f:
+                f.write(f"Socket failed: {e}\n")
+            logger.warning(f"LAN IP detection failed: {e}")
+
+        # Fallback
+        if not ips:
+             ips.append("<您的服务器IP>")
+             
+        display_ip = " / ".join(ips)
 
         # 2. Get Ports via docker compose ps or docker ps
         # We try to parse running containers in this folder
@@ -544,9 +659,15 @@ Rules:
            logger.error(f"Failed to get ports info: {e}")
 
         if not ports:
-            return f"无法自动检测端口，请尝试访问宿主机 IP: {host_ip}"
+            return f"无法自动检测端口，请尝试访问: http://{display_ip}:<端口>"
             
-        urls = [f"http://{host_ip}:{p}" for p in ports]
+        urls = []
+        for p in ports:
+            # Construct URLs for each IP found
+            for ip_entry in ips:
+                ip_addr = ip_entry.split()[0] # remove (Public) or (LAN) label logic if needed, but simple is better
+                urls.append(f"http://{ip_addr}:{p}")
+                
         return "请尝试访问:\n" + "\n".join(urls)
 
 docker_deployment_service = DockerDeploymentService()

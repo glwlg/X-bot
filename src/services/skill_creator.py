@@ -8,6 +8,7 @@ from typing import Optional
 from datetime import datetime
 
 from core.config import gemini_client, CREATOR_MODEL, DATA_DIR
+from core.skill_loader import skill_loader
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,9 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
     user_id = update.effective_user.id
     
 {execute_body}
+    
+    # Must return a string summarizing the result for the Agent
+    return "Execution completed."
 '''
 
 GENERATION_PROMPT = '''你是一个 X-Bot Skill 生成器。根据用户需求生成标准 SKILL.md 格式的技能。
@@ -62,6 +66,9 @@ GENERATION_PROMPT = '''你是一个 X-Bot Skill 生成器。根据用户需求�
 - `import httpx` - HTTP 请求
 - `from telegram import Update`
 - `from telegram.ext import ContextTypes`
+- `await context.run_skill('skill_name', {{'param': 'value'}})` - **关键**: 调用其他技能
+  - 例如: `await context.run_skill('searxng_search', {{'query': '...', 'num_results': 1}})`
+  - 优先通过组合现有技能来实现复杂功能，实现"技术沉淀"
 
 ## 安全规则 (仅适用于 scripts)
 1. 禁止执行系统命令 (os.system, subprocess)
@@ -70,6 +77,8 @@ GENERATION_PROMPT = '''你是一个 X-Bot Skill 生成器。根据用户需求�
 4. URL 中的用户输入必须使用 urllib.parse.quote 编码
 5. HTTP 请求必须设置 timeout
 6. 异常必须捕获并返回友好的错误消息
+7. **重要**: `execute` 函数必须返回一个字符串 (str) 描述执行结果，供 Agent 决策。
+   例如: `return f"质因数分解结果: {{factors}}"`。不要只用 `smart_reply_text`，必须同时 return。
 
 ## 输出格式
 返回 JSON 格式:
@@ -112,7 +121,7 @@ Bot 会记住用户的提醒需求,并在适当时候发送提醒消息。
 {{
   "skill_md": "---\\nname: weather_query\\ndescription: 查询天气信息,支持国内外主要城市\\n---\\n\\n# 天气查询\\n\\n查询指定城市的天气信息。\\n\\n## 使用方法\\n\\n- \\"北京天气\\"\\n- \\"上海天气怎么样\\"\\n- \\"查询深圳天气\\"\\n\\n## 实现\\n\\n使用 `scripts/execute.py` 调用天气 API 获取实时数据。",
   "scripts": {{
-    "execute.py": "\\"\\"\\"\\"\\n天气查询 Skill\\n\\"\\"\\"\\"\\"\\nimport httpx\\nfrom telegram import Update\\nfrom telegram.ext import ContextTypes\\nfrom utils import smart_reply_text\\nimport urllib.parse\\n\\n\\nasync def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> None:\\n    \\"\\"\\"执行天气查询\\"\\"\\"\\n    user_id = update.effective_user.id\\n    city = params.get(\\"city\\", \\"北京\\")\\n    \\n    try:\\n        # URL 编码\\n        encoded_city = urllib.parse.quote(city)\\n        url = f\\"https://api.example.com/weather?city={{encoded_city}}\\"\\n        \\n        async with httpx.AsyncClient(timeout=10.0) as client:\\n            response = await client.get(url)\\n            response.raise_for_status()\\n            data = response.json()\\n            \\n        weather = data.get(\\"weather\\", \\"未知\\")\\n        temp = data.get(\\"temperature\\", \\"N/A\\")\\n        \\n        await smart_reply_text(update, f\\"🌤️ {{city}} 天气: {{weather}}, 温度: {{temp}}°C\\")\\n        \\n    except Exception as e:\\n        await smart_reply_text(update, f\\"❌ 查询失败: {{str(e)}}\\")\\n"
+    "execute.py": "\\"\\"\\"\\"\\n天气查询 Skill\\n\\"\\"\\"\\"\\"\\nimport httpx\\nfrom telegram import Update\\nfrom telegram.ext import ContextTypes\\nfrom utils import smart_reply_text\\nimport urllib.parse\\n\\n\\nasync def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> None:\\n    \\"\\"\\"执行天气查询\\"\\"\\"\\n    user_id = update.effective_user.id\\n    city = params.get(\\"city\\", \\"北京\\")\\n    \\n    try:\\n        # URL 编码\\n        encoded_city = urllib.parse.quote(city)\\n        url = f\\"https://api.example.com/weather?city={{encoded_city}}\\"\\n        \\n        async with httpx.AsyncClient(timeout=10.0) as client:\\n            response = await client.get(url)\\n            response.raise_for_status()\\n            data = response.json()\\n            \\n        weather = data.get(\\"weather\\", \\"未知\\")\\n        temp = data.get(\\"temperature\\", \\"N/A\\")\\n        \\n        await smart_reply_text(update, f\\"🌤️ {{city}} 天气: {{weather}}, 温度: {{temp}}°C\\")\\n        \\n        return f\\"Check Result: {{city}} weather is {{weather}}, {{temp}}C\\"\\n\\n    except Exception as e:\\n        await smart_reply_text(update, f\\"❌ 查询失败: {{str(e)}}\\")\\n        return f\\"Error: {{str(e)}}\\"\\n"
   }}
 }}
 ```
@@ -208,7 +217,7 @@ async def create_skill(
                     }
         
         # 创建技能目录结构
-        skills_base = os.path.join(os.path.dirname(__file__), "..", "skills")
+        skills_base = skill_loader.skills_dir
         pending_dir = os.path.join(skills_base, "pending", extracted_name)
         os.makedirs(pending_dir, exist_ok=True)
         
@@ -258,6 +267,7 @@ UPDATE_PROMPT = '''你是一个 X-Bot Skill 维护者。请根据用户需求修
 ## 规则
 1. 保持原有的 `SKILL_META` 结构，并在 `description` 中简要说明修改内容，版本号 `version` +0.0.1。
 2. 保持 `execute` 函数签名不变。
+3. 必须确保 `execute` 函数返回字符串结果。
 3. 遵循相同的安全和代码质量规则（禁止系统命令，URL编码等）。
 4. 只返回完整的、修改后的 Python 代码。
 
@@ -275,27 +285,41 @@ async def update_skill(
 ) -> dict:
     """
     更新现有的 Skill (生成新代码并存入 pending)
+    支持 standard (scripts/execute.py) 和 legacy (.py) 两种格式
     """
     try:
         # 1. 查找现有 Skill
-        skills_base = os.path.join(os.path.dirname(__file__), "..", "skills")
-        learned_path = os.path.join(skills_base, "learned", f"{skill_name}.py")
-        
-        # 也可以支持 builtin，但修改后会变成 learned (覆盖)
-        # 暂时只查找 learned，或者通过 SkillLoader 查找路径
-        from core.skill_loader import skill_loader
         skill_info = skill_loader.get_skill(skill_name)
         
         if not skill_info:
             return {"success": False, "error": f"Skill '{skill_name}' not found."}
             
-        # 如果是 legacy skill (.py)
-        if skill_info["skill_type"] == "legacy":
+        skill_type = skill_info.get("skill_type")
+        original_code = ""
+        is_standard = False
+        
+        # 确定代码位置和读取原始内容
+        if skill_type == "standard":
+            is_standard = True
+            skill_dir = skill_info.get("skill_dir")
+            scripts = skill_info.get("scripts", [])
+            
+            if "execute.py" not in scripts:
+                 return {"success": False, "error": f"标准技能 {skill_name} 缺少 scripts/execute.py，无法进行代码更新。"}
+            
+            original_path = os.path.join(skill_dir, "scripts", "execute.py")
+            if not os.path.exists(original_path):
+                 return {"success": False, "error": f"找不到文件: {original_path}"}
+                 
+            with open(original_path, "r", encoding="utf-8") as f:
+                original_code = f.read()
+
+        elif skill_type == "legacy":
             original_path = skill_info["path"]
             with open(original_path, "r", encoding="utf-8") as f:
                 original_code = f.read()
         else:
-            return {"success": False, "error": "目前仅支持修改 Python (Legacy) 格式的 Skill。"}
+             return {"success": False, "error": f"不支持更新类型为 {skill_type} 的技能。"}
 
         # 2. 生成新代码
         prompt = UPDATE_PROMPT.format(
@@ -317,22 +341,53 @@ async def update_skill(
         code = code.strip()
         
         # 3. 验证与安全检查
-        if "SKILL_META" not in code or "async def execute" not in code:
-            return {"success": False, "error": "生成的代码结构不正确"}
+        if "SKILL_META" not in code and "async def execute" not in code:
+             # Standard skills execute.py usually doesn't need SKILL_META inside the script (it's in SKILL.md), 
+             # but check for execute function is good.
+             if is_standard and "async def execute" not in code:
+                  return {"success": False, "error": "生成的代码缺少 async def execute 函数"}
+             elif not is_standard and ("SKILL_META" not in code or "async def execute" not in code):
+                  return {"success": False, "error": "生成的 Legacy 代码结构不正确 (缺少 SKILL_META 或 execute)"}
             
         security_check = _security_check(code)
         if not security_check["safe"]:
             return {"success": False, "error": f"安全检查失败: {security_check['reason']}"}
             
         # 4. 保存到 pending
-        skills_dir = os.path.join(skills_base, "pending")
-        os.makedirs(skills_dir, exist_ok=True)
+        skills_base = skill_loader.skills_dir
+        pending_base = os.path.join(skills_base, "pending")
+        os.makedirs(pending_base, exist_ok=True)
         
-        filename = f"{skill_name}.py"
-        filepath = os.path.join(skills_dir, filename)
-        
-        with open(filepath, "w", encoding="utf-8") as f:
-            f.write(code)
+        if is_standard:
+            # 标准模式：复制整个目录到 pending，然后覆盖 execute.py
+            import shutil
+            skill_dir = skill_info.get("skill_dir")
+            pending_skill_dir = os.path.join(pending_base, skill_name)
+            
+            # 如果 pending 中已存在，先删除
+            if os.path.exists(pending_skill_dir):
+                shutil.rmtree(pending_skill_dir)
+            
+            # 复制原目录
+            # ignore .git in case it exists, though typically learned skills don't have .git inside unless git cloned
+            shutil.copytree(skill_dir, pending_skill_dir, dirs_exist_ok=True)
+            
+            # 覆盖 execute.py
+            script_path = os.path.join(pending_skill_dir, "scripts", "execute.py")
+            os.makedirs(os.path.dirname(script_path), exist_ok=True)
+            
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write(code)
+            
+            filepath = script_path # for return info
+            
+        else:
+            # Legacy 模式：创建单文件
+            filename = f"{skill_name}.py"
+            filepath = os.path.join(pending_base, filename)
+            
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(code)
             
         logger.info(f"Generated skill update: {skill_name} -> {filepath}")
         
@@ -381,7 +436,7 @@ async def approve_skill(skill_name: str) -> dict:
     支持目录结构和旧版 .py 文件
     并修正文件权限以匹配 builtin 目录
     """
-    skills_base = os.path.join(os.path.dirname(__file__), "..", "skills")
+    skills_base = skill_loader.skills_dir
     pending_dir_path = os.path.join(skills_base, "pending", skill_name)
     pending_file_path = os.path.join(skills_base, "pending", f"{skill_name}.py")
     builtin_dir = os.path.join(skills_base, "builtin")
@@ -435,7 +490,7 @@ async def approve_skill(skill_name: str) -> dict:
             logger.warning(f"Failed to fix permissions for {skill_name}: {e}")
     
     # 刷新加载器索引
-    from core.skill_loader import skill_loader
+    # 刷新加载器索引
     skill_loader.scan_skills()
     
     logger.info(f"Approved skill: {skill_name}")
@@ -446,7 +501,7 @@ async def reject_skill(skill_name: str) -> dict:
     """
     拒绝 Skill，删除 pending 目录或文件
     """
-    skills_base = os.path.join(os.path.dirname(__file__), "..", "skills")
+    skills_base = skill_loader.skills_dir
     pending_dir_path = os.path.join(skills_base, "pending", skill_name)
     pending_file_path = os.path.join(skills_base, "pending", f"{skill_name}.py")
     
@@ -467,7 +522,7 @@ def list_pending_skills() -> list[dict]:
     """
     列出待审核的 Skills (支持目录和文件)
     """
-    skills_dir = os.path.join(os.path.dirname(__file__), "..", "skills", "pending")
+    skills_dir = os.path.join(skill_loader.skills_dir, "pending")
     
     if not os.path.exists(skills_dir):
         return []

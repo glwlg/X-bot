@@ -9,21 +9,23 @@ triggers:
 - check_updates
 - update_skills
 - modify_skill
+- approve_skill
+- reject_skill
 ---
 # Skill Manager
 
 技能管理器 - 统一的技能管理入口
-支持搜索、安装、删除、更新、列出技能
+支持搜索、安装、删除、更新、列出技能、**修改、审核**
 
 ## 使用方法
 
-**触发词**: `search_skill`, `install_skill`, `delete_skill`, `list_skills`, `check_updates`
+**触发词**: `search_skill`, `install_skill`, `delete_skill`, `list_skills`, `check_updates`, `approve_skill`
 
 ## 参数
 
-- **action**: Action: 'search', 'install', 'delete', 'list', 'check_updates', 'update', 'modify'
+- **action**: Action: 'search', 'install', 'delete', 'list', 'check_updates', 'update', 'modify', 'approve', 'reject'
 - **query**: 搜索关键词 (for 'search')
-- **skill_name**: 技能名称 (for 'install', 'delete', 'modify')
+- **skill_name**: 技能名称 (for 'install', 'delete', 'modify', 'approve', 'reject')
 - **repo_name**: 仓库地址 owner/repo (for 'install')
 - **instruction**: 修改指令 (for 'modify')
 

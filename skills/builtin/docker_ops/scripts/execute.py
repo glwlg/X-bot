@@ -14,18 +14,35 @@ async def execute(update, context, params):
     
     if action == "list_services":
         return await container_service.get_active_services()
-        
+
     elif action == "list_networks":
         return await container_service.get_networks()
+    
+    # Alias 'remove'/'delete' to 'stop' with cleanup
+    elif action in ["remove", "delete"]:
+        # Mutate params to use 'stop' logic
+        action = "stop"
+        params["remove"] = True
+        params["clean_volumes"] = True # Default to clean volumes for explicit delete
         
-    elif action == "stop":
+    if action == "stop":
         name = params.get("name")
         is_compose = params.get("is_compose", False)
+        remove = params.get("remove", False)
+        clean_volumes = params.get("clean_volumes", False)
+        
         if not name:
             return "❌ Missing parameter: 'name' is required to stop a service."
         
-        await smart_reply_text(update, f"🛑 Stopping {name}...")
-        result = await container_service.stop_service(name, is_compose_project=is_compose)
+        action_desc = "Removing" if remove else "Stopping"
+        await smart_reply_text(update, f"🛑 {action_desc} {name}...")
+        
+        result = await container_service.stop_service(
+            name, 
+            is_compose_project=is_compose, 
+            remove=remove, 
+            clean_volumes=clean_volumes
+        )
         await smart_reply_text(update, result)
         return "Command executed."
 
@@ -81,7 +98,7 @@ async def execute(update, context, params):
             
         final_msg = f"✅ 部署成功!\n\n{result}" if success else f"❌ Deploy Failed:\n{result}"
         await smart_reply_text(update, final_msg)
-        return "Deployment finished."
+        return final_msg
 
     elif action == "execute_command":
         command = params.get("command")

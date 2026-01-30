@@ -18,8 +18,7 @@ SearXNG 网络搜索 Skill - 通过本地部署的 SearXNG 进行网络搜索
 
 ## 参数
 
-- **query** (`str`) (可选): 单一搜索关键词 (如果未提供 queries)
-- **queries** (`List[str]`) (可选): 并行搜索关键词列表，用于对比或多角度搜索。如果提供此参数，将忽略 `query` 并生成聚合报告 (HTML)。
+- **query** (`str`) (必需): 搜索关键词
 - **num_results** (`int`) (必需): 返回结果数量 (1-10)
 - **categories** (`str`) (必需): 搜索分类: general, news, it, science, files, images, videos, social media, map
 - **time_range** (`str`) (必需): 时间范围: day, week, month, year
