@@ -116,8 +116,13 @@ MCP_ENABLED = os.getenv("MCP_ENABLED", "true").lower() == "true"
 MCP_PLAYWRIGHT_IMAGE = os.getenv("MCP_PLAYWRIGHT_IMAGE", "mcr.microsoft.com/playwright/mcp:1.51.0-noble")
 MCP_MEMORY_ENABLED = os.getenv("MCP_MEMORY_ENABLED", "true").lower() == "true"
 MCP_TIMEOUT_SECONDS = int(os.getenv("MCP_TIMEOUT_SECONDS", "60"))
+# Internal Search Service URL (SearXNG)
+SEARXNG_URL = os.getenv("SEARXNG_URL", "http://192.168.1.100:28080/search")
 # Skill Context Injection Mode: 'full' (default), 'search_first', 'compact'
 SKILL_INJECTION_MODE = os.getenv("SKILL_INJECTION_MODE", "full")
+
+# Server IP Override (Optional, for fixed deployment)
+SERVER_IP = os.getenv("SERVER_IP")
 
 # 确保目录存在
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)

@@ -115,8 +115,8 @@ class SkillExecutor:
         
         yield f"📚 正在使用技能 **{skill_name}** 处理您的请求...", None
         
-        # **关键优化**: builtin 技能如果有 execute.py,直接导入并调用
-        if source == "builtin" and "execute.py" in scripts:
+        # **关键优化**: 如果有 execute.py, 直接导入并调用 (支持 builtin 和 learned)
+        if "execute.py" in scripts:
             import os
             import sys
             import importlib.util
@@ -140,6 +140,27 @@ class SkillExecutor:
                 # 准备参数 - 使用 AI 解析
                 update = kwargs.get("update")
                 context = kwargs.get("context")
+                
+                # INJECTION: Inject 'run_skill' into context to enable Skill Composition
+                # We attach it directly to 'context' (ephemeral) instead of 'bot_data' (persistent)
+                # to avoid PickleError (local functions cannot be pickled).
+                async def run_skill_helper(target_skill: str, target_params: dict) -> str:
+                    """
+                    Helper injected into context to allow skills to call other skills.
+                    Returns the final text result.
+                    """
+                    logger.info(f"[SkillComposition] {skill_name} calling {target_skill}...")
+                    final_output = []
+                    # Reuse the same executor instance (self)
+                    async for msg, files in self.execute_skill(target_skill, "", params=target_params, update=update, context=context):
+                         if msg: final_output.append(msg)
+                    
+                    return "\n".join(final_output)
+
+                if context:
+                    # Monkey-patch context object for this execution scope
+                    # This is not persisted, so it's safe.
+                    setattr(context, 'run_skill', run_skill_helper)
                 
                 # 使用 AI 从 SKILL.md 中解析参数
                 params = {}
@@ -188,7 +209,31 @@ class SkillExecutor:
                 else:
                     params = {"instruction": user_request}
                 
-                # 执行
+                # Check if params is a list (concurrent execution)
+                if isinstance(params, list):
+                    logger.info(f"Detected multiple tasks ({len(params)}), executing concurrently...")
+                    yield f"🔄 检测到 {len(params)} 个子任务，正在并发执行...", None
+                    
+                    async def run_single_task(p):
+                        try:
+                            if asyncio.iscoroutinefunction(module.execute):
+                                return await module.execute(update, context, p)
+                            else:
+                                return module.execute(update, context, p)
+                        except Exception as e:
+                            logger.error(f"Subtask failed: {e}")
+                            return f"❌ 子任务失败: {e}"
+
+                    results = await asyncio.gather(*(run_single_task(p) for p in params))
+                    
+                    # Merge results
+                    final_result = "\n".join([str(r) for r in results if r])
+                    yield f"✅ 并发执行完成 ({len(results)}/{len(results)})", None
+                    if final_result:
+                         yield final_result, None
+                    return
+
+                # Single execution
                 if asyncio.iscoroutinefunction(module.execute):
                     result = await module.execute(update, context, params)
                 else:
@@ -205,6 +250,53 @@ class SkillExecutor:
             except Exception as e:
                 logger.error(f"Error executing builtin script: {e}", exc_info=True)
                 yield f"❌ 执行错误: {e}", None
+                
+                # --- Self-Healing (Reactive Repair) ---
+                try:
+                    update_obj = kwargs.get("update")
+                    if update_obj and update_obj.effective_user:
+                        yield f"🔧 监测到异常，正在尝试生成修复补丁...", None
+                        
+                        from services.skill_creator import update_skill
+                        user_id = update_obj.effective_user.id
+                        
+                        repair_req = f"Fix execution error: {str(e)}\nOriginal Request: {user_request}"
+                        
+                        result = await update_skill(skill_name, repair_req, user_id)
+                        
+                        if result["success"]:
+                            success_msg = (
+                                f"✅ 已自动生成修复方案！\n\n"
+                                f"请运行以下命令批准修改生效：\n"
+                                f"`approve_skill {skill_name}`"
+                            )
+                            yield success_msg, None
+                            
+                            # Record Success
+                            from core.evolution_router import evolution_router
+                            await evolution_router.record_evolution(
+                                request=f"Fix skill {skill_name}: {str(e)}",
+                                strategy="reactive_repair",
+                                success=True,
+                                details=f"Generated fix for error: {str(e)[:100]}"
+                            )
+                            
+                        else:
+                             err_msg = f"⚠️ 自动修复尝试失败: {result.get('error')}"
+                             yield err_msg, None
+                             
+                             # Record Failure
+                             from core.evolution_router import evolution_router
+                             await evolution_router.record_evolution(
+                                request=f"Fix skill {skill_name}: {str(e)}",
+                                strategy="reactive_repair",
+                                success=False,
+                                details=f"Fix failed: {result.get('error')}"
+                            )
+                             
+                except Exception as he:
+                    logger.error(f"Self-healing failed: {he}")
+                
                 return
         
         # 2. 构建提示 (learned 技能或没有 execute.py 的 builtin 技能)
@@ -391,6 +483,30 @@ class SkillExecutor:
         except Exception as e:
             logger.error(f"Error executing legacy skill {skill_name}: {e}", exc_info=True)
             yield f"❌ 执行出错: {str(e)}", None
+            
+            # --- Self-Healing (Reactive Repair) ---
+            try:
+                update_obj = kwargs.get("update")
+                if update_obj and update_obj.effective_user:
+                    yield f"🔧 监测到异常，正在尝试生成修复补丁...", None
+                    
+                    from services.skill_creator import update_skill
+                    user_id = update_obj.effective_user.id
+                    
+                    repair_req = f"Fix execution error: {str(e)}\nOriginal Request: {user_request}"
+                    
+                    result = await update_skill(skill_name, repair_req, user_id)
+                    
+                    if result["success"]:
+                        yield (
+                            f"✅ 已自动生成修复方案！\n\n"
+                            f"请运行以下命令批准修改生效：\n"
+                            f"`approve_skill {skill_name}`"
+                        ), None
+                    else:
+                         yield f"⚠️ 自动修复尝试失败: {result.get('error')}", None
+            except Exception as he:
+                logger.error(f"Self-healing failed: {he}")
 
 
 # 全局单例

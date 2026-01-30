@@ -83,11 +83,11 @@ class AiService:
                                 try:
                                     logger.info(f"Executing tool: {fc.name} args={fc.args}")
                                     import asyncio
-                                    # Add 60s timeout for tool execution
-                                    tool_result = await asyncio.wait_for(tool_executor(fc.name, fc.args), timeout=60.0)
+                                    # Increase timeout for tool execution (Deep Research can take time)
+                                    tool_result = await asyncio.wait_for(tool_executor(fc.name, fc.args), timeout=300.0)
                                 except asyncio.TimeoutError:
                                     logger.error(f"Tool execution timed out: {fc.name}")
-                                    tool_result = f"Error: Tool '{fc.name}' timed out after 60 seconds."
+                                    tool_result = f"Error: Tool '{fc.name}' timed out after 300 seconds."
                                 except Exception as e:
                                     logger.error(f"Tool execution error: {e}")
                                     tool_result = f"Error executing tool {fc.name}: {str(e)}"

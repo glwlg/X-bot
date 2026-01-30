@@ -111,19 +111,34 @@ class ContainerService:
             logger.error(f"Error getting networks: {e}")
             return f"❌ System Error: {str(e)}"
 
-    async def stop_service(self, name: str, is_compose_project: bool = False) -> str:
+    async def stop_service(self, name: str, is_compose_project: bool = False, remove: bool = False, clean_volumes: bool = False) -> str:
         """
         Safe stop command. 
-        If is_compose_project is True, treats 'name' as a project name.
-        Otherwise treats 'name' as a container name.
+        If is_compose_project is True:
+            - stop: docker compose stop
+            - remove: docker compose down (clean_volumes -> -v)
+        Otherwise:
+            - stop: docker stop
+            - remove: docker rm -f
         """
         try:
             if is_compose_project:
-                cmd = f"docker compose -p {name} stop"
-                msg = f"🛑 Stopping project '{name}'..."
+                if remove:
+                    cmd = f"docker compose -p {name} down"
+                    if clean_volumes:
+                        cmd += " -v"
+                    msg = f"🛑 Stopping and removing project '{name}'..."
+                else:
+                    cmd = f"docker compose -p {name} stop"
+                    msg = f"🛑 Stopping project '{name}'..."
             else:
-                cmd = f"docker stop {name}"
-                msg = f"🛑 Stopping container '{name}'..."
+                if remove:
+                    # Force remove (kills if running)
+                    cmd = f"docker rm -f {name}"
+                    msg = f"🛑 Removing container '{name}'..."
+                else:
+                    cmd = f"docker stop {name}"
+                    msg = f"🛑 Stopping container '{name}'..."
             
             # Execute
             process = await asyncio.create_subprocess_shell(
@@ -134,12 +149,13 @@ class ContainerService:
             stdout, stderr = await process.communicate()
             
             if process.returncode == 0:
-                return f"✅ Successfully stopped '{name}'."
+                action = "removed" if remove else "stopped"
+                return f"✅ Successfully {action} '{name}'."
             else:
-                return f"❌ Failed to stop '{name}':\n{stderr.decode()}"
+                return f"❌ Failed to process '{name}':\n{stderr.decode()}"
 
         except Exception as e:
-            logger.error(f"Error stopping service {name}: {e}")
+            logger.error(f"Error managing service {name}: {e}")
             return f"❌ System Error: {str(e)}"
 
 container_service = ContainerService()

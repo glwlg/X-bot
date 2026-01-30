@@ -158,5 +158,32 @@ async def execute(update, context, params):
         
         return f"已生成 '{skill_name}' 的修改方案，等待用户审核。"
 
+    elif action == "approve":
+        skill_name = params.get("skill_name")
+        if not skill_name:
+            return "❌ 请提供要批准的技能名称"
+        
+        from services.skill_creator import approve_skill
+        
+        result = await approve_skill(skill_name)
+        if result["success"]:
+            skill_loader.reload_skills()
+            return f"✅ 技能 '{skill_name}' 已审核通过并生效！"
+        else:
+            return f"❌ 审核失败: {result.get('error')}"
+
+    elif action == "reject":
+        skill_name = params.get("skill_name")
+        if not skill_name:
+            return "❌ 请提供要拒绝的技能名称"
+        
+        from services.skill_creator import reject_skill
+        
+        result = await reject_skill(skill_name)
+        if result["success"]:
+            return f"✅ 技能 '{skill_name}' 修改已驳回（删除 pending）。"
+        else:
+            return f"❌ 驳回失败: {result.get('error')}"
+
     else:
-        return f"❌ 未知操作: {action}。支持的操作: search, install, delete, list, check_updates, update, modify"
+        return f"❌ 未知操作: {action}。支持的操作: search, install, delete, list, check_updates, update, modify, approve, reject"

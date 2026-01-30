@@ -25,6 +25,9 @@ class ToolRegistry:
         # All capabilities including skill management are accessed via call_skill
         tools.append(self._get_skill_tool())
         
+        # 3. Evolution Tool (Self-Evolution)
+        tools.append(self._get_evolution_tool())
+        
         return tools
 
     def _get_native_tools(self) -> List[types.FunctionDeclaration]:
@@ -90,6 +93,27 @@ class ToolRegistry:
             )
         )
 
+
+    
+    def _get_evolution_tool(self) -> types.FunctionDeclaration:
+        """
+        Tool for Self-Evolution (Capability Expansion).
+        """
+        return types.FunctionDeclaration(
+            name="evolve_capability",
+            description=(
+                "Call this tool when the user asks for a capability or task that you currently CANNOT perform with existing skills, "
+                "OR when the task requires real-time programmatic verification (e.g., SSL checks, API testing) rather than just information retrieval. "
+                "This tool will trigger the self-evolution process to analyze the request and write new skill code to achieve it."
+            ),
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={
+                    "user_request": types.Schema(type=types.Type.STRING, description="The original user request describing the desired capability"),
+                },
+                required=["user_request"]
+            )
+        )
 
 tool_registry = ToolRegistry()
 

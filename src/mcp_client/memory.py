@@ -14,7 +14,7 @@ class MemoryMCPServer(MCPServerBase):
     Runs locally via npx (since usage is inside a container already)
     """
 
-    def __init__(self, user_id: int = None):
+    def __init__(self, user_id: int | str = None):
         super().__init__()
         self.user_id = user_id
 
@@ -67,13 +67,16 @@ class MemoryMCPServer(MCPServerBase):
         if not self.user_id:
             raise ValueError("MemoryMCPServer requires user_id for physical isolation.")
 
+        from core.config import DATA_DIR
+        
         # 用户专属记忆文件
-        # 路径: /app/data/users/{user_id}/memory.json
-        user_data_dir = f"/app/data/users/{self.user_id}"
-        memory_file_path = f"{user_data_dir}/memory.json"
+        # Local: /path/to/project/data/users/{user_id}/memory.json
+        # Docker: /app/data/users/{user_id}/memory.json
+        user_data_dir = os.path.abspath(os.path.join(DATA_DIR, "users", str(self.user_id)))
+        memory_file_path = os.path.join(user_data_dir, "memory.json")
             
         # 确保目录存在
-        import os
+        # import os  <-- Removed to use global os
         os.makedirs(user_data_dir, exist_ok=True)
         
         # 使用 npx 直接在本地运行 (Assuming 'npm' is installed in Dockerfile)

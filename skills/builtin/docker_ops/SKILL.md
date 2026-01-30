@@ -1,13 +1,14 @@
 ---
 name: docker_ops
-description: NATIVE DOCKER MANAGER. CAPABLE OF DEPLOYING GITHUB REPOS DIRECTLY. Use
-  this skill to deploy applications (e.g. SearXNG, Typecho) from GitHub URLs, manage
-  containers, and edit docker-compose.yml. DO NOT SEARCH FOR EXTERNAL SKILLS FOR DOCKER
-  DEPLOYMENT.
+description: NATIVE DOCKER MANAGER. Handles DEPLOYMENT, STOPPING, and REMOVING containers. Use this skill to deploy apps from GitHub, stop services, and DELETE/REMOVE containers and volumes. DO NOT SEARCH FOR EXTERNAL SKILLS FOR DOCKER ACTIONS.
 triggers:
 - docker
 - 容器
 - container
+- remove
+- delete
+- 删除
+- 移除
 ---
 # Docker Ops
 
@@ -19,10 +20,12 @@ triggers:
 
 ## 参数
 
-- **action**: Action: 'list_services', 'list_networks', 'stop', 'deploy', 'execute_command', 'edit_file'
+- **action**: Action: 'list_services', 'list_networks', 'stop', 'deploy', 'execute_command', 'edit_file', 'remove', 'delete'
 - **url**: GitHub URL (for 'deploy')
-- **name**: Container name (for 'stop')
-- **is_compose**: Boolean (for 'stop')
+- **name**: Container or Project name (for 'stop')
+- **is_compose**: Boolean (for 'stop'), treats name as compose project if True
+- **remove**: Boolean (for 'stop'), if True, removes container (rm) or stops project (down)
+- **clean_volumes**: Boolean (for 'stop'), if True, removes named volumes (only with remove=True)
 - **command**: Raw docker command to run (for 'execute_command', e.g. 'docker logs caddy')
 - **path**: File path to edit (for 'edit_file')
 - **content**: New file content (for 'edit_file')

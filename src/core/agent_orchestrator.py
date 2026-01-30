@@ -55,8 +55,8 @@ class AgentOrchestrator:
                     
                     # Notify user about skill invocation (ephemeral, not saved)
                     skill_name = args["skill_name"]
-                    instruction_preview = args["instruction"][:50] + "..." if len(args["instruction"]) > 50 else args["instruction"]
-                    await update.message.reply_text(f"🔧 正在调用技能: `{skill_name}`\n📝 指令: {instruction_preview}", parse_mode="Markdown")
+                    instruction_preview = args["instruction"][:100] + "..." if len(args["instruction"]) > 100 else args["instruction"]
+                    await update.message.reply_text(f"🔧 正在调用技能: `{skill_name}`\n📝 指令: `{instruction_preview}`", parse_mode="Markdown")
                     
                     full_output = ""
                     # Pass update and context for legacy skills
@@ -82,6 +82,16 @@ class AgentOrchestrator:
                     logger.info(f"Skill output preview: {full_output[:200]}")
                     
                     return f"Skill Execution Output:\n{full_output}"
+
+                elif name == "evolve_capability":
+                    from core.evolution_router import evolution_router
+                    
+                    user_request = args.get("user_request", "")
+                    user_request = args.get("user_request", "")
+                    await update.message.reply_text(f"🤔 这个问题... 我现在的技能库里好像还没装对应的功能。\n⚡️ 不过没关系！正在启动自我进化程序，现场为您现学现卖……\n\n🎯 学习目标：{user_request}", parse_mode="Markdown")
+                    
+                    result = await evolution_router.evolve(user_request, user_id, update)
+                    return f"Evolution Result:\n{result}"
 
                 # Memory Tools (Lazy Connect)
                 else:
