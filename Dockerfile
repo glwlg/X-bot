@@ -37,7 +37,7 @@ ENV PATH="/root/.local/bin:$PATH"
 WORKDIR /app
 
 # Copy dependency files
-COPY pyproject.toml README.md .
+COPY pyproject.toml .
 
 # Install Python dependencies using uv
 RUN uv pip install --system -r pyproject.toml
