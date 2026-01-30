@@ -13,30 +13,6 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class StandardSkill:
-    """标准 SKILL.md 协议的 Skill"""
-    name: str
-    description: str
-    skill_md_path: str
-    skill_md_content: str
-    scripts: List[str] = field(default_factory=list)
-    source: str = "learned"
-    skill_type: str = "standard"  # "standard" or "legacy"
-    
-    # 额外元数据
-    license: str = ""
-    
-
-@dataclass 
-class LegacySkill:
-    """旧版 .py 格式的 Skill"""
-    name: str
-    description: str
-    triggers: List[str]
-    path: str
-    source: str = "builtin"
-    skill_type: str = "legacy"
 
 
 class SkillLoader:
@@ -65,9 +41,7 @@ class SkillLoader:
         
     def scan_skills(self) -> Dict[str, Dict]:
         """
-        扫描所有 Skill 目录，支持两种格式：
-        1. 标准协议: 目录包含 SKILL.md
-        2. 旧版协议: .py 文件包含 SKILL_META
+        扫描所有 Skill 目录,只支持标准 SKILL.md 格式
         """
         self._skill_index.clear()
         
@@ -79,7 +53,7 @@ class SkillLoader:
             for entry in os.listdir(dir_path):
                 entry_path = os.path.join(dir_path, entry)
                 
-                # 检查是否为标准协议目录（包含 SKILL.md）
+                # 只检查目录
                 if os.path.isdir(entry_path):
                     skill_md_path = os.path.join(entry_path, "SKILL.md")
                     if os.path.exists(skill_md_path):
@@ -87,14 +61,6 @@ class SkillLoader:
                         if skill_info:
                             self._skill_index[skill_info["name"]] = skill_info
                             logger.info(f"Indexed standard skill: {skill_info['name']} from {subdir}")
-                        continue
-                
-                # 检查是否为旧版 .py 文件
-                if entry.endswith(".py") and not entry.startswith("_"):
-                    skill_info = self._parse_legacy_skill(entry_path, subdir)
-                    if skill_info:
-                        self._skill_index[skill_info["name"]] = skill_info
-                        logger.info(f"Indexed legacy skill: {skill_info['name']} from {subdir}")
         
         return self._skill_index
     
@@ -131,6 +97,7 @@ class SkillLoader:
             
             name = frontmatter.get("name", os.path.basename(skill_dir))
             description = frontmatter.get("description", "")
+            triggers = frontmatter.get("triggers", [])  # 解析触发词
             
             # 扫描 scripts 目录
             scripts = []
@@ -143,6 +110,7 @@ class SkillLoader:
             return {
                 "name": name,
                 "description": description,
+                "triggers": triggers,  # 添加 triggers
                 "skill_type": "standard",
                 "skill_md_path": skill_md_path,
                 "skill_md_content": markdown_content,
@@ -156,39 +124,6 @@ class SkillLoader:
             logger.error(f"Error parsing standard skill {skill_md_path}: {e}")
             return None
     
-    def _parse_legacy_skill(self, filepath: str, source: str) -> Optional[Dict]:
-        """
-        解析旧版 .py 格式（包含 SKILL_META）
-        """
-        try:
-            with open(filepath, "r", encoding="utf-8") as f:
-                file_source = f.read()
-            
-            tree = ast.parse(file_source)
-            
-            for node in ast.walk(tree):
-                if isinstance(node, ast.Assign):
-                    for target in node.targets:
-                        if isinstance(target, ast.Name) and target.id == "SKILL_META":
-                            try:
-                                meta = ast.literal_eval(node.value)
-                                # 验证必要字段
-                                if "name" not in meta or "triggers" not in meta:
-                                    continue
-                                    
-                                return {
-                                    "name": meta.get("name"),
-                                    "description": meta.get("description", ""),
-                                    "skill_type": "legacy",
-                                    "triggers": meta.get("triggers", []),
-                                    "params": meta.get("params", {}),
-                                    "path": filepath,
-                                    "source": source,
-                                }
-                            except (ValueError, TypeError) as e:
-                                logger.warning(f"Cannot parse SKILL_META in {filepath}: {e}")
-            
-            return None
             
         except Exception as e:
             logger.error(f"Error parsing legacy skill {filepath}: {e}")
@@ -212,11 +147,8 @@ class SkillLoader:
                 "name": name,
                 "description": info.get("description", "")[:200],
                 "skill_type": info.get("skill_type"),
+                "triggers": info.get("triggers", []),  # 添加 triggers
             }
-            
-            # 旧版 skill 有 triggers
-            if info.get("skill_type") == "legacy":
-                skill_summary["triggers"] = info.get("triggers", [])
             
             summary.append(skill_summary)
         
@@ -227,19 +159,6 @@ class SkillLoader:
         index = self.get_skill_index()
         return index.get(skill_name)
     
-    def load_legacy_skill(self, skill_name: str) -> Optional[Any]:
-        """
-        加载旧版 .py Skill 模块（用于执行）
-        """
-        # 检查缓存 (Disabled for hot-reloading)
-        # if skill_name in self._loaded_modules:
-        #     return self._loaded_modules[skill_name]
-        
-        # 查找索引
-        index = self.get_skill_index()
-        if skill_name not in index:
-            logger.warning(f"Skill not found: {skill_name}")
-            return None
         
         skill_info = index[skill_name]
         

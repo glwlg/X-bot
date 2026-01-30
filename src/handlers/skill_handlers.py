@@ -61,37 +61,43 @@ async def process_teach(update: Update, context: ContextTypes.DEFAULT_TYPE, requ
     """处理新能力学习"""
     user_id = update.effective_user.id
     
-    msg = await smart_reply_text(update, "🤔 正在理解您的需求并生成代码...")
+    msg = await smart_reply_text(update, "🤔 正在理解您的需求并生成技能...")
     
     result = await create_skill(requirement, user_id)
     
     if not result["success"]:
-        await smart_edit_text(msg, f"❌ 生成失败：{result.get('error', '未知错误')}")
+        await smart_edit_text(msg, f"❌ 生成失败:{result.get('error', '未知错误')}")
         return ConversationHandler.END
     
     skill_name = result["skill_name"]
-    code = result["code"]
+    skill_md = result.get("skill_md", "")
+    has_scripts = result.get("has_scripts", False)
     
     # 保存到上下文供后续审核
     context.user_data["pending_skill"] = skill_name
     
-    # 显示预览和确认按钮
-    code_preview = code[:500] + "..." if len(code) > 500 else code
+    # 显示 SKILL.md 预览
+    preview_lines = skill_md.split("\n")[:15]
+    preview = "\n".join(preview_lines)
+    if len(skill_md.split("\n")) > 15:
+        preview += "\n..."
+    
+    scripts_info = "\n📦 **包含代码**: 是" if has_scripts else "\n📦 **包含代码**: 否"
     
     keyboard = [
         [
             InlineKeyboardButton("✅ 启用", callback_data=f"skill_approve_{skill_name}"),
             InlineKeyboardButton("❌ 取消", callback_data=f"skill_reject_{skill_name}")
         ],
-        [InlineKeyboardButton("📝 查看完整代码", callback_data=f"skill_view_{skill_name}")]
+        [InlineKeyboardButton("📝 查看完整内容", callback_data=f"skill_view_{skill_name}")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await smart_edit_text(msg,
-        f"📝 **新能力草稿**\n\n"
-        f"**名称**: `{skill_name}`\n\n"
-        f"```python\n{code_preview}\n```\n\n"
-        f"确认启用后，您可以通过关键词触发这个能力。",
+        f"📝 **新技能草稿**\n\n"
+        f"**名称**: `{skill_name}`{scripts_info}\n\n"
+        f"```markdown\n{preview}\n```\n\n"
+        f"确认启用后,您可以使用这个技能。",
         reply_markup=reply_markup
     )
     
@@ -131,34 +137,69 @@ async def handle_skill_callback(update: Update, context: ContextTypes.DEFAULT_TY
     
     if data.startswith("skill_view_"):
         skill_name = data.replace("skill_view_", "")
-        # 读取完整代码
-        import os
-        skills_dir = os.path.join(os.path.dirname(__file__), "..", "skills", "pending")
-        filepath = os.path.join(skills_dir, f"{skill_name}.py")
         
-        if os.path.exists(filepath):
-            keyboard = [
-                [
-                    InlineKeyboardButton("✅ 启用", callback_data=f"skill_approve_{skill_name}"),
-                    InlineKeyboardButton("❌ 取消", callback_data=f"skill_reject_{skill_name}")
-                ]
+        # 查找技能目录或文件
+        import os
+        skills_base = os.path.join(os.path.dirname(__file__), "..", "skills")
+        pending_dir = os.path.join(skills_base, "pending", skill_name)
+        pending_file = os.path.join(skills_base, "pending", f"{skill_name}.py")
+        
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ 启用", callback_data=f"skill_approve_{skill_name}"),
+                InlineKeyboardButton("❌ 取消", callback_data=f"skill_reject_{skill_name}")
             ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # 新格式: 目录结构
+        if os.path.isdir(pending_dir):
+            skill_md_path = os.path.join(pending_dir, "SKILL.md")
+            scripts_dir = os.path.join(pending_dir, "scripts")
             
-            # 发送代码文件
+            if os.path.exists(skill_md_path):
+                try:
+                    # 发送 SKILL.md
+                    await query.message.reply_document(
+                        document=open(skill_md_path, "rb"),
+                        filename="SKILL.md",
+                        caption=f"📄 **{skill_name}** - SKILL.md\n\n审核后点击下方按钮确认。",
+                        reply_markup=reply_markup
+                    )
+                    
+                    # 如果有 scripts,也发送
+                    if os.path.isdir(scripts_dir):
+                        for script_file in os.listdir(scripts_dir):
+                            if script_file.endswith(".py"):
+                                script_path = os.path.join(scripts_dir, script_file)
+                                await query.message.reply_document(
+                                    document=open(script_path, "rb"),
+                                    filename=f"scripts/{script_file}",
+                                    caption=f"📜 脚本文件: `{script_file}`"
+                                )
+                    
+                    await smart_edit_text(query.message, f"📄 技能文件已发送,请查看上方文档。")
+                except Exception as e:
+                    logger.error(f"Failed to send skill files: {e}")
+                    await smart_edit_text(query.message, f"❌ 发送文件失败:{e}")
+            else:
+                await smart_edit_text(query.message, "❌ SKILL.md 文件不存在")
+        
+        # 旧格式: 单个 .py 文件
+        elif os.path.exists(pending_file):
             try:
                 await query.message.reply_document(
-                    document=open(filepath, "rb"),
+                    document=open(pending_file, "rb"),
                     filename=f"{skill_name}.py",
                     caption=f"📄 **{skill_name}.py**\n\n审核后点击下方按钮确认。",
                     reply_markup=reply_markup
                 )
-                await smart_edit_text(query.message, f"📄 代码已发送为文件，请查看上方文档。")
+                await smart_edit_text(query.message, f"📄 代码已发送为文件,请查看上方文档。")
             except Exception as e:
                 logger.error(f"Failed to send code file: {e}")
-                await smart_edit_text(query.message, f"❌ 发送文件失败：{e}")
+                await smart_edit_text(query.message, f"❌ 发送文件失败:{e}")
         else:
-            await smart_edit_text(query.message, "❌ 代码文件不存在")
+            await smart_edit_text(query.message, "❌ 技能文件不存在")
 
 
 async def skills_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -179,10 +220,9 @@ async def skills_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     learned = []
     
     for name, info in index.items():
-        meta = info.get("meta", {})
-        triggers_list = meta.get("triggers", [])
-        triggers = ", ".join(triggers_list[:3]) if triggers_list else "No triggers"
-        line = f"• **{name}**: {triggers}"
+        description = info.get("description", "")[:60]
+        # 标准格式没有 triggers,显示描述
+        line = f"• **{name}**: {description}"
         
         if info["source"] == "builtin":
             builtin.append(line)

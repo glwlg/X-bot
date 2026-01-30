@@ -1,6 +1,6 @@
 ---
 name: data-quality-frameworks
-description: Implement data quality validation with Great Expectations, dbt tests, and data contracts. Use when building data quality pipelines, implementing validation rules, or establishing data contracts.
+description: 使用 Great Expectations、dbt 测试和 Pandera 实现数据质量验证框架
 ---
 
 # Data Quality Frameworks

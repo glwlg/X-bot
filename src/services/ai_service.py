@@ -112,8 +112,16 @@ class AiService:
                         
                     else:
                         # Agent decided to reply with text (Final Answer)
-                        if response.text:
-                            yield response.text
+                        try:
+                            if response.text:
+                                yield response.text
+                            else:
+                                logger.warning(f"[AiService] Empty text response. Candidates: {response.candidates}")
+                                yield "⚠️ 抱歉，模型返回了空响应，可能是触发了安全过滤或内部错误。"
+                        except ValueError:
+                             # response.text might raise ValueError if there are no text parts
+                             logger.warning(f"[AiService] Invalid text response. Candidates: {response.candidates}")
+                             yield "⚠️ 抱歉，模型返回了无效响应。"
                         break
                         
                 else:

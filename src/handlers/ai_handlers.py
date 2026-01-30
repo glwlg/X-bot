@@ -49,6 +49,13 @@ async def handle_ai_chat(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     # 检查是否开启了沉浸式翻译
     settings = await get_user_settings(user_id)
     if settings.get("auto_translate", 0):
+        # 检查是否是退出指令
+        if user_message.strip().lower() in ["/cancel", "退出", "关闭翻译", "退出翻译", "cancel"]:
+            from repositories import set_translation_mode
+            await set_translation_mode(user_id, False)
+            await smart_reply_text(update, "🚫 已退出沉浸式翻译模式。")
+            return
+
         # 翻译模式开启
         thinking_msg = await smart_reply_text(update, "🌍 翻译中...")
         await context.bot.send_chat_action(chat_id=chat_id, action="typing")

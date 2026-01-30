@@ -124,17 +124,22 @@ class SandboxExecutor:
             # 写入代码文件
             code_file = os.path.join(work_dir, "main.py")
             
-            # 包装代码，添加工作目录切换
+            # 包装代码,添加工作目录切换和 skill scripts 路径
+            skill_scripts_setup = ""
+            if skill_dir and os.path.exists(os.path.join(skill_dir, "scripts")):
+                scripts_path = os.path.join(skill_dir, "scripts")
+                # 使用 repr() 确保路径正确转义
+                skill_scripts_setup = f"""
+# 添加 skill scripts 到路径
+import sys
+sys.path.insert(0, {repr(scripts_path)})
+"""
+            
             wrapped_code = f'''
 import os
-import sys
-
+{skill_scripts_setup}
 # 切换到工作目录
-os.chdir("{work_dir}")
-
-# 添加 skill scripts 到路径
-if "{skill_dir}" and os.path.exists("{skill_dir}/scripts"):
-    sys.path.insert(0, "{skill_dir}/scripts")
+os.chdir({repr(work_dir)})
 
 # 用户代码
 {code}

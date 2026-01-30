@@ -158,14 +158,78 @@ class SkillRegistryService:
                 
                 shutil.move(installed_path, dest_path)
                 logger.info(f"Moved installed skill to {dest_path}")
+                
+                # 安装后处理: 翻译英文描述为中文
+                await self._translate_skill_description(dest_path, skill_name)
+                
                 return True, f"✅ 已安装 {skill_name} 到 skills/learned/"
             else:
                 logger.warning(f"Install reported success but could not locate files")
-                return False, "安装命令执行成功，但未能定位安装文件"
+                return False, "安装命令执行成功,但未能定位安装文件"
 
         except Exception as e:
             logger.error(f"Error installing skill: {e}")
             return False, f"安装异常: {e}"
+    
+    async def _translate_skill_description(self, skill_path: str, skill_name: str):
+        """
+        如果技能的 description 是英文,翻译为中文并更新 SKILL.md
+        """
+        try:
+            # 只处理目录格式的技能
+            if not os.path.isdir(skill_path):
+                return
+            
+            skill_md_path = os.path.join(skill_path, "SKILL.md")
+            if not os.path.exists(skill_md_path):
+                return
+            
+            # 读取 SKILL.md
+            with open(skill_md_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # 解析 frontmatter
+            if not content.startswith("---"):
+                return
+            
+            parts = content.split("---", 2)
+            if len(parts) < 3:
+                return
+            
+            import yaml
+            frontmatter = yaml.safe_load(parts[1])
+            description = frontmatter.get("description", "")
+            
+            # 检测是否为英文 (简单启发式: 如果包含中文字符则跳过)
+            if not description or any('\u4e00' <= char <= '\u9fff' for char in description):
+                return
+            
+            # 调用 AI 翻译
+            from core.gemini_client import gemini_client
+            
+            prompt = f"将以下技能描述翻译为简洁的中文,保持专业性,不要添加任何解释:\n\n{description}"
+            
+            response = await gemini_client.models.generate_content_async(
+                model="gemini-2.0-flash-exp",
+                contents=prompt
+            )
+            
+            chinese_desc = response.text.strip()
+            
+            # 更新 frontmatter
+            frontmatter["description"] = chinese_desc
+            
+            # 重新组装 SKILL.md
+            new_content = "---\n" + yaml.dump(frontmatter, allow_unicode=True, sort_keys=False) + "---" + parts[2]
+            
+            # 写回文件
+            with open(skill_md_path, 'w', encoding='utf-8') as f:
+                f.write(new_content)
+            
+            logger.info(f"Translated description for {skill_name}: {description[:50]}... -> {chinese_desc[:50]}...")
+            
+        except Exception as e:
+            logger.warning(f"Failed to translate description for {skill_name}: {e}")
 
     async def check_updates(self) -> Tuple[bool, str]:
         """

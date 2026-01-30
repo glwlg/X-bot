@@ -111,10 +111,103 @@ class SkillExecutor:
         skill_content = skill_info.get("skill_md_content", "")
         skill_dir = skill_info.get("skill_dir", "")
         scripts = skill_info.get("scripts", [])
+        source = skill_info.get("source", "")
         
         yield f"📚 正在使用技能 **{skill_name}** 处理您的请求...", None
         
-        # 2. 构建提示
+        # **关键优化**: builtin 技能如果有 execute.py,直接导入并调用
+        if source == "builtin" and "execute.py" in scripts:
+            import os
+            import sys
+            import importlib.util
+            
+            execute_script = os.path.join(skill_dir, "scripts", "execute.py")
+            
+            yield "⚙️ 正在执行内置脚本...", None
+            
+            try:
+                # 动态导入 execute.py
+                spec = importlib.util.spec_from_file_location(f"{skill_name}_execute", execute_script)
+                module = importlib.util.module_from_spec(spec)
+                sys.modules[f"{skill_name}_execute"] = module
+                spec.loader.exec_module(module)
+                
+                # 调用 execute 函数
+                if not hasattr(module, "execute"):
+                    yield f"❌ {execute_script} 中没有 execute 函数", None
+                    return
+                
+                # 准备参数 - 使用 AI 解析
+                update = kwargs.get("update")
+                context = kwargs.get("context")
+                
+                # 使用 AI 从 SKILL.md 中解析参数
+                params = {}
+                if user_request:
+                    try:
+                        from google.genai import types
+                        import json
+                        import re
+                        
+                        logger.info(f"[PARAM_EXTRACT] Starting parameter extraction for {skill_name}")
+                        logger.info(f"[PARAM_EXTRACT] User request: {user_request}")
+                        
+                        prompt = (
+                            f"Extract parameters for skill '{skill_name}' from the user instruction.\n\n"
+                            f"Skill Documentation:\n{skill_content[:2000]}\n\n"
+                            f"User Instruction: {user_request}\n\n"
+                            "Based on the skill documentation, extract the required parameters from the user instruction.\n"
+                            "Return ONLY a JSON object with the extracted parameters."
+                        )
+                        
+                        response = gemini_client.models.generate_content(
+                            model=GEMINI_MODEL,
+                            contents=prompt,
+                            config={
+                                "response_mime_type": "application/json",
+                            }
+                        )
+                        response_text = response.text.strip() if response.text else ""
+                        logger.info(f"[PARAM_EXTRACT] AI response: {response_text}")
+                        
+                        # Clean markdown code blocks if present
+                        if response_text.startswith("```"):
+                            response_text = re.sub(r"^```json\s*", "", response_text)
+                            response_text = re.sub(r"^```\s*", "", response_text)
+                            response_text = re.sub(r"\s*```$", "", response_text)
+                        
+                        if response_text:
+                            params = json.loads(response_text)
+                            logger.info(f"[PARAM_EXTRACT] Extracted params for {skill_name}: {params}")
+                        else:
+                            logger.warning(f"[PARAM_EXTRACT] Empty response from AI")
+                            params = {"instruction": user_request}
+                    except Exception as e:
+                        logger.error(f"[PARAM_EXTRACT] Param extraction failed: {e}", exc_info=True)
+                        params = {"instruction": user_request}
+                else:
+                    params = {"instruction": user_request}
+                
+                # 执行
+                if asyncio.iscoroutinefunction(module.execute):
+                    result = await module.execute(update, context, params)
+                else:
+                    result = module.execute(update, context, params)
+                
+                # 返回结果
+                if isinstance(result, str):
+                    yield result, None
+                else:
+                    yield f"✅ 执行完成: {str(result)}", None
+                
+                return
+                
+            except Exception as e:
+                logger.error(f"Error executing builtin script: {e}", exc_info=True)
+                yield f"❌ 执行错误: {e}", None
+                return
+        
+        # 2. 构建提示 (learned 技能或没有 execute.py 的 builtin 技能)
         scripts_list = "\n".join([f"- {s}" for s in scripts]) if scripts else "无"
         
         prompt = SKILL_EXECUTION_PROMPT.format(

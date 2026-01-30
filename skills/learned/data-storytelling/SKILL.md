@@ -1,6 +1,6 @@
 ---
 name: data-storytelling
-description: Transform data into compelling narratives using visualization, context, and persuasive structure. Use when presenting analytics to stakeholders, creating data reports, or building executive presentations.
+description: 使用可视化、叙事技巧和数据分析将数据转化为引人入胜的故事
 ---
 
 # Data Storytelling
