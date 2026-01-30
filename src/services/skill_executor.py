@@ -256,6 +256,16 @@ class SkillExecutor:
                     user = ctx.message.user if ctx and ctx.message else None
                     
                     if user:
+                        # 🔒 安全检查：禁止修改 builtin 技能
+                        if source == "builtin":
+                            logger.warning(f"[Self-Healing] Blocked attempt to modify builtin skill: {skill_name}")
+                            yield (
+                                f"⚠️ 执行错误: {error_msg}\n\n"
+                                f"🔒 **系统技能受保护，无法自动修复**\n"
+                                f"请联系管理员手动处理。"
+                            ), None
+                            return
+                        
                         yield f"🔧 监测到异常，正在尝试生成修复补丁...", None
                         
                         from services.skill_creator import update_skill

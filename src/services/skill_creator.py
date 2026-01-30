@@ -293,6 +293,15 @@ async def update_skill(
         
         if not skill_info:
             return {"success": False, "error": f"Skill '{skill_name}' not found."}
+        
+        # 🔒 安全检查：禁止修改 builtin 技能
+        source = skill_info.get("source", "")
+        if source == "builtin":
+            logger.warning(f"[update_skill] Blocked attempt to modify builtin skill: {skill_name}")
+            return {
+                "success": False,
+                "error": "🔒 系统技能受保护，无法修改。请联系管理员。"
+            }
             
         skill_type = skill_info.get("skill_type")
         original_code = ""
