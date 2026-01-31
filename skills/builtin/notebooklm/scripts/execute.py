@@ -2,6 +2,9 @@ import asyncio
 import json
 import os
 from core.platform.models import UnifiedContext
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 async def execute(ctx: UnifiedContext, params: dict) -> str:

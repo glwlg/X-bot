@@ -8,6 +8,12 @@ import logging
 import datetime
 from core.platform.models import UnifiedContext
 from .base_handlers import check_permission_unified
+from telegram.ext import (
+    ConversationHandler,
+)
+from core.config import (
+    WAITING_FOR_FEATURE_INPUT,
+)
 
 logger = logging.getLogger(__name__)
 
