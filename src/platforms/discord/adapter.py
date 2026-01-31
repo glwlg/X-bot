@@ -286,7 +286,7 @@ class DiscordAdapter(BotAdapter):
                 # If not responded, use response.send_message
                 if not interaction.response.is_done():
                      await interaction.response.send_message(text, view=view)
-                     return interaction.original_response() # Hack to return something waitable if needed, but simple return is ok
+                     return await interaction.original_response() # Hack to return something waitable if needed, but simple return is ok
                 else:
                      # Use followup
                      return await interaction.followup.send(text, view=view)

@@ -35,4 +35,5 @@ description: X-Bot 项目开发规范与注意事项
 
 ## 5. 开发规范
 - **消息发送**：一律使用smart_edit_text和smart_reply_text来编辑或发送文本消息，而非直接调用sdk的接口
+- **权限控制**：所有用户交互入口（Command, Message, Callback）必须首先调用 `check_permission_unified` (或 `is_user_allowed` 等价逻辑) 校验权限。
 - **工作完整**：完成一项开发任务之后执行`docker compose down && docker compose up --build -d`重新发布服务

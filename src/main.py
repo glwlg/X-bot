@@ -143,28 +143,38 @@ async def main():
     logger.info("Starting X-Bot (Universal Mode)...")
 
     # 1. Setup Telegram Application
-    persistence = PicklePersistence(filepath="data/bot_persistence.pickle")
-    tg_app = (
-        Application.builder()
-        .token(TELEGRAM_BOT_TOKEN)
-        .persistence(persistence)
-        .read_timeout(60)
-        .write_timeout(120)
-        .build()
-    )
-    
-    # Hook initialization
-    tg_app.post_init = initialize_data
-    
-    # Debug logging
-    tg_app.add_handler(TypeHandler(Update, log_update), group=-1)
+    tg_adapter = None
+    if TELEGRAM_BOT_TOKEN:
+        persistence = PicklePersistence(filepath="data/bot_persistence.pickle")
+        tg_app = (
+            Application.builder()
+            .token(TELEGRAM_BOT_TOKEN)
+            .persistence(persistence)
+            .read_timeout(60)
+            .write_timeout(120)
+            .build()
+        )
+        
+        # Hook initialization
+        tg_app.post_init = initialize_data
+        
+        # Debug logging
+        tg_app.add_handler(TypeHandler(Update, log_update), group=-1)
 
-    # 2. Setup Adapters
-    adapter_manager = AdapterManager()
-    
-    # A. Telegram Adapter
-    tg_adapter = TelegramAdapter(tg_app)
-    adapter_manager.register_adapter(tg_adapter)
+        # 2. Setup Adapters
+        adapter_manager = AdapterManager()
+        
+        # A. Telegram Adapter
+        tg_adapter = TelegramAdapter(tg_app)
+        adapter_manager.register_adapter(tg_adapter)
+        logger.info("✅ Telegram Adapter enabled.")
+    else:
+        logger.info("ℹ️ Telegram Adapter skipped (no token).")
+        # Initialize basic components that TG init used to do if TG is missing?
+        # e.g., DB init needs to run somewhere. 
+        # For now, simplistic approach: TG is primary, if no TG, we might miss some init unless we refactor initialize_data
+        # Let's ensure adapter_manager is created
+        adapter_manager = AdapterManager()
     
     # B. Discord Adapter
     if DISCORD_BOT_TOKEN:
@@ -191,75 +201,86 @@ async def main():
     # These rely on python-telegram-bot features (ConversationHandler)
     # So we attach them directly to tg_adapter/application logic via existing code
     
-    # Telegram Buttons & Callbacks
-    tg_adapter.on_callback_query("^action_.*", handle_video_actions)
-    tg_adapter.on_callback_query("^large_file_", handle_large_file_action)
-    
-    common_pattern = "^(?!download_video$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_|skill_|del_rss_|del_stock_).*$"
-    tg_adapter.on_callback_query(common_pattern, button_callback)
-    tg_adapter.on_callback_query("^skill_", handle_skill_callback)
-    tg_adapter.on_callback_query("^unsub_", handle_unsubscribe_callback)
-    tg_adapter.on_callback_query("^stock_", handle_stock_select_callback)
-    tg_app.add_handler(CallbackQueryHandler(handle_subscription_callback, pattern="^(del_rss_|del_stock_)"))
+    if tg_adapter:
+        # Telegram Buttons & Callbacks
+        tg_adapter.on_callback_query("^action_.*", handle_video_actions)
+        tg_adapter.on_callback_query("^large_file_", handle_large_file_action)
+        
+        common_pattern = "^(?!download_video$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_|skill_|del_rss_|del_stock_).*$"
+        tg_adapter.on_callback_query(common_pattern, button_callback)
+        tg_adapter.on_callback_query("^skill_", handle_skill_callback)
+        tg_adapter.on_callback_query("^unsub_", handle_unsubscribe_callback)
+        tg_adapter.on_callback_query("^stock_", handle_stock_select_callback)
+        tg_app.add_handler(CallbackQueryHandler(handle_subscription_callback, pattern="^(del_rss_|del_stock_)"))
 
-    # Telegram Conversations
-    back_handler = tg_adapter.create_callback_handler("^back_to_main_cancel$", back_to_main_and_cancel)
-    format_handler = tg_adapter.create_callback_handler("^dl_format_", handle_download_format)
-    
-    video_conv_handler = ConversationHandler(
-        entry_points=[
-            tg_adapter.create_callback_handler("^download_video$", start_download_video),
-            tg_adapter.create_command_handler("download", download_command),
-        ],
-        states={
-            WAITING_FOR_VIDEO_URL: [
-                back_handler,
-                format_handler,
-                tg_adapter.create_message_handler(filters.TEXT & ~filters.COMMAND, handle_video_download),
+        # Telegram Conversations
+        back_handler = tg_adapter.create_callback_handler("^back_to_main_cancel$", back_to_main_and_cancel)
+        format_handler = tg_adapter.create_callback_handler("^dl_format_", handle_download_format)
+        
+        video_conv_handler = ConversationHandler(
+            entry_points=[
+                tg_adapter.create_callback_handler("^download_video$", start_download_video),
+                tg_adapter.create_command_handler("download", download_command),
             ],
-        },
-        fallbacks=[tg_adapter.create_command_handler("cancel", cancel), back_handler, format_handler],
-        allow_reentry=True,
-        per_message=False,
-    )
-    tg_app.add_handler(video_conv_handler)
-    
-    feature_conv_handler = ConversationHandler(
-        entry_points=[tg_adapter.create_command_handler("feature", feature_command)],
-        states={
-            WAITING_FOR_FEATURE_INPUT: [
-                tg_adapter.create_command_handler("save_feature", save_feature_command),
-                tg_adapter.create_message_handler(filters.TEXT & ~filters.COMMAND, handle_feature_input)
-            ],
-        },
-        fallbacks=[tg_adapter.create_command_handler("cancel", cancel), tg_adapter.create_command_handler("save_feature", save_feature_command)],
-        per_message=False,
-    )
-    tg_app.add_handler(feature_conv_handler)
+            states={
+                WAITING_FOR_VIDEO_URL: [
+                    back_handler,
+                    format_handler,
+                    tg_adapter.create_message_handler(filters.TEXT & ~filters.COMMAND, handle_video_download),
+                ],
+            },
+            fallbacks=[tg_adapter.create_command_handler("cancel", cancel), back_handler, format_handler],
+            allow_reentry=True,
+            per_message=False,
+        )
+        tg_app.add_handler(video_conv_handler)
+        
+        feature_conv_handler = ConversationHandler(
+            entry_points=[tg_adapter.create_command_handler("feature", feature_command)],
+            states={
+                WAITING_FOR_FEATURE_INPUT: [
+                    tg_adapter.create_command_handler("save_feature", save_feature_command),
+                    tg_adapter.create_message_handler(filters.TEXT & ~filters.COMMAND, handle_feature_input)
+                ],
+            },
+            fallbacks=[tg_adapter.create_command_handler("cancel", cancel), tg_adapter.create_command_handler("save_feature", save_feature_command)],
+            per_message=False,
+        )
+        tg_app.add_handler(feature_conv_handler)
 
-    teach_conv_handler = ConversationHandler(
-        entry_points=[tg_adapter.create_command_handler("teach", teach_command)],
-        states={
-            WAITING_FOR_SKILL_DESC: [
-                tg_adapter.create_message_handler(filters.TEXT & ~filters.COMMAND, handle_teach_input)
-            ],
-        },
-        fallbacks=[tg_adapter.create_command_handler("cancel", cancel)],
-        per_message=False,
-    )
-    tg_app.add_handler(teach_conv_handler)
-    
-    # 5. Media Handlers (Register to AdapterManager for broadcast where supported)
-    # Telegram supports Photo/Video/Voice/Doc specific filters.
-    # Discord adapter maps these to Message + Type check.
-    # We should add `on_message` support to AdapterManager to broadcast generic content handlers.
-    
-    # For now, register to TG explicitly, and Discord explicitly if simple
-    tg_adapter.on_message(filters.PHOTO, handle_ai_photo)
-    tg_adapter.on_message(filters.VIDEO, handle_ai_video)
-    tg_adapter.on_message(filters.VOICE | filters.AUDIO, handle_voice_message)
-    tg_adapter.on_message(filters.Document.ALL, handle_document)
-    tg_adapter.on_message(filters.TEXT & ~filters.COMMAND, handle_ai_chat)
+        teach_conv_handler = ConversationHandler(
+            entry_points=[tg_adapter.create_command_handler("teach", teach_command)],
+            states={
+                WAITING_FOR_SKILL_DESC: [
+                    tg_adapter.create_message_handler(filters.TEXT & ~filters.COMMAND, handle_teach_input)
+                ],
+            },
+            fallbacks=[tg_adapter.create_command_handler("cancel", cancel)],
+            per_message=False,
+        )
+        tg_app.add_handler(teach_conv_handler)
+        
+        # 5. Media Handlers (Register to AdapterManager for broadcast where supported)
+        # Telegram supports Photo/Video/Voice/Doc specific filters.
+        # Discord adapter maps these to Message + Type check.
+        # We should add `on_message` support to AdapterManager to broadcast generic content handlers.
+        
+        # For now, register to TG explicitly, and Discord explicitly if simple
+        tg_adapter.on_message(filters.PHOTO, handle_ai_photo)
+        tg_adapter.on_message(filters.VIDEO, handle_ai_video)
+        tg_adapter.on_message(filters.VOICE | filters.AUDIO, handle_voice_message)
+        tg_adapter.on_message(filters.Document.ALL, handle_document)
+        tg_adapter.on_message(filters.TEXT & ~filters.COMMAND, handle_ai_chat)
+    else:
+         # Need to init DB if Telegram is not present, because initialize_data was bound to tg_app.post_init
+         # We need a manual init here.
+         from repositories import init_db
+         await init_db()
+         
+         # Load skills
+         from core.skill_loader import skill_loader
+         skill_loader.scan_skills()
+         logger.info(f"Loaded {len(skill_loader.get_skill_index())} skills")
 
     # Register Discord equivalents (Manual mapping for now)
     if DISCORD_BOT_TOKEN:

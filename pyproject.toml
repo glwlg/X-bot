@@ -1,7 +1,7 @@
 [project]
 name = "x-bot"
 version = "0.2.1"
-description = "A powerful AI Telegram Bot for video downloading and multi-modal analysis."
+description = "A powerful, self-evolving AI Bot for multi-modal interactions."
 readme = "README.md"
 requires-python = ">=3.14"
 dependencies = [
