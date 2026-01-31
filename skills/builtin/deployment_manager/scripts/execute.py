@@ -1,13 +1,11 @@
-import asyncio
 import json
 import logging
-from typing import Dict, Any, List
+from typing import Dict
 from pathlib import Path
+from core.platform.models import UnifiedContext
 
 # Internal imports
 from core.config import gemini_client, CREATOR_MODEL, GEMINI_MODEL
-from google.genai import types
-from utils import smart_reply_text, smart_edit_text
 
 # Import docker_ops execution logic
 # We import the 'execute' function from the docker_ops script
@@ -49,6 +47,7 @@ You must output a JSON object describing your THOUGHT and NEXT ACTION.
 }
 """
 
+
 class DeploymentManager:
     def __init__(self, ctx: UnifiedContext):
         self.ctx = ctx
@@ -59,7 +58,7 @@ class DeploymentManager:
         # Initial context
         context_str = f"Goal: {goal}\nRepo URL: {repo_url or 'Unknown'}"
         self.history.append({"role": "user", "parts": [context_str]})
-        
+
         for i in range(self.max_loops):
             # 1. Plan
             # response = await self._think()
@@ -70,22 +69,22 @@ class DeploymentManager:
             if not response:
                 await self.ctx.reply("❌ 思考中断，请重试。")
                 break
-                
+
             thought = response.get("thought", "")
             action = response.get("action", "")
             params = response.get("params", {})
-            
+
             # User feedback
             if action != "finish":
                 await self.ctx.reply(f"🤖 {thought}")
-            
+
             # 2. Execute
             result = await self._execute_tool(action, params)
-            
+
             # 3. Observe
             obs = f"Observation from {action}: {result}"
             self.history.append({"role": "user", "parts": [obs]})
-            
+
             # Check finish
             if action == "finish":
                 return result
@@ -103,18 +102,22 @@ class DeploymentManager:
             response = await gemini_client.aio.models.generate_content(
                 model=MANAGER_MODEL,
                 contents=conversation,
-                config={"response_mime_type": "application/json"}
+                config={"response_mime_type": "application/json"},
             )
-            
+
             text = response.text
-            if not text: return None
-                
+            if not text:
+                return None
+
             text = text.strip()
             # Remove markdown code blocks
-            if text.startswith("```json"): text = text[7:]
-            elif text.startswith("```"): text = text[3:]
-            if text.endswith("```"): text = text[:-3]
-            
+            if text.startswith("```json"):
+                text = text[7:]
+            elif text.startswith("```"):
+                text = text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+
             return json.loads(text.strip())
         except Exception as e:
             logger.error(f"Manager thinking error: {e}")
@@ -125,26 +128,34 @@ class DeploymentManager:
             if action == "deploy":
                 url = params.get("url")
                 # Call docker_ops.execute
-                return await docker_ops_execute(self.ctx, {"action": "deploy", "url": url, "silent": True})
-            
+                return await docker_ops_execute(
+                    self.ctx, {"action": "deploy", "url": url, "silent": True}
+                )
+
             elif action == "execute":
                 cmd = params.get("command")
-                return await docker_ops_execute(self.ctx, {"action": "execute_command", "command": cmd})
-            
+                return await docker_ops_execute(
+                    self.ctx, {"action": "execute_command", "command": cmd}
+                )
+
             elif action == "edit":
                 path = params.get("path")
                 content = params.get("content")
-                return await docker_ops_execute(self.ctx, {"action": "edit_file", "path": path, "content": content})
+                return await docker_ops_execute(
+                    self.ctx, {"action": "edit_file", "path": path, "content": content}
+                )
 
             elif action == "stop":
                 name = params.get("name")
-                return await docker_ops_execute(self.ctx, {"action": "stop", "name": name, "is_compose": True})
-            
+                return await docker_ops_execute(
+                    self.ctx, {"action": "stop", "name": name, "is_compose": True}
+                )
+
             elif action == "read_file":
                 path = params.get("path")
                 p = Path(path)
                 if p.exists():
-                    return p.read_text(encoding='utf-8')[:5000]
+                    return p.read_text(encoding="utf-8")[:5000]
                 else:
                     return "File not found."
 
@@ -159,11 +170,10 @@ class DeploymentManager:
         except Exception as e:
             return f"Tool execution failed: {e}"
 
+
 async def execute(ctx, params):
     goal = params.get("goal")
     url = params.get("repo_url")
-    
-    from core.platform.models import UnifiedContext
-    
+
     manager = DeploymentManager(ctx)
     return await manager.run(goal, url)

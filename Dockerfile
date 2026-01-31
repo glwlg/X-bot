@@ -2,12 +2,25 @@
 FROM python:3.14-slim
 
 # Set environment variables
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED# 安装系统依赖
-# ffmpeg: 用于处理音视频
-# nodejs, npm: 用于运行 MCP Servers (如 memory, playwright)
-# docker-ce-cli: 用于 Docker-in-Docker (Playwright)
-RUN apt-get update && apt-get install -y --no-install-recommends \
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH="/root/.local/bin:$PATH" \
+    # UV Mirror for China
+    UV_PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple \
+    # Playwright/Patchright Browsers Path (for caching)
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+
+# Replace Debian sources with Tsinghua Mirror (for China speedup)
+RUN sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources
+
+# Install system dependencies
+# ffmpeg: for audio/video processing
+# nodejs, npm: for executing MCP Servers/Skills
+# docker-ce-cli: for Docker-in-Docker operations
+# Added --mount=type=cache to speed up apt installs
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     git \
     nodejs \
@@ -15,23 +28,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     ca-certificates \
     gnupg \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install Docker CLI only (for MCP)
-RUN install -m 0755 -d /etc/apt/keyrings \
+    procps \
+    net-tools \
+    iproute2 \
+    # Install Docker CLI setup
+    && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
     && apt-get update && apt-get install -y --no-install-recommends \
     docker-ce-cli \
-    docker-compose-plugin \
-    net-tools \
-    iproute2 \
-    && rm -rf /var/lib/apt/lists/*
+    docker-compose-plugin
 
 # Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-ENV PATH="/root/.local/bin:$PATH"
 
 # Set the working directory in the container
 WORKDIR /app
@@ -39,14 +49,19 @@ WORKDIR /app
 # Copy dependency files
 COPY pyproject.toml .
 
-# Install Python dependencies using uv
-RUN uv pip install --system -r pyproject.toml
+# Install Python dependencies using uv with cache mount
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system -r pyproject.toml
 
 # Install Playwright/Patchright browsers and system dependencies
-RUN apt-get update \
+# Using shared cache for browsers to avoid re-downloading when pyproject.toml changes
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    --mount=type=cache,target=/ms-playwright,sharing=locked \
+    apt-get update \
     && patchright install-deps chromium \
-    && rm -rf /var/lib/apt/lists/* \
-    && patchright install chromium
+    && patchright install chromium \
+    && rm -rf /var/lib/apt/lists/*
 
 # Copy the rest of the application's code
 COPY src/ .

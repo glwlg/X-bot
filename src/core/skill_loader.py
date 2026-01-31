@@ -1,6 +1,7 @@
 """
 Skill 加载器 - 支持标准 SKILL.md 协议和旧版 .py 格式
 """
+
 import os
 import ast
 import logging
@@ -13,74 +14,78 @@ from dataclasses import dataclass, field
 logger = logging.getLogger(__name__)
 
 
-
-
 class SkillLoader:
     """Skill 动态加载器 - 支持双协议"""
-    
+
     def __init__(self, skills_dir: str = None):
         if skills_dir is None:
             # 自动探测 skills 目录
             base_dir = os.path.dirname(__file__)
             docker_path = os.path.join(base_dir, "..", "skills")
             local_path = os.path.join(base_dir, "..", "..", "skills")
-            
+
             if os.path.exists(local_path) and os.path.isdir(local_path):
                 skills_dir = local_path
             else:
                 skills_dir = docker_path
-        
+
         self.skills_dir = os.path.abspath(skills_dir)
         logger.info(f"Using skills directory: {self.skills_dir}")
-        
+
         # 已加载的旧版 Skill 模块缓存
         self._loaded_modules: Dict[str, Any] = {}
-        
+
         # Skill 索引（统一格式）
         self._skill_index: Dict[str, Dict] = {}
-        
+
     def scan_skills(self) -> Dict[str, Dict]:
         """
         扫描所有 Skill 目录,只支持标准 SKILL.md 格式
         """
         self._skill_index.clear()
-        
+
         for subdir in ["builtin", "learned"]:
             dir_path = os.path.join(self.skills_dir, subdir)
             if not os.path.exists(dir_path):
                 continue
-            
+
             for entry in os.listdir(dir_path):
                 entry_path = os.path.join(dir_path, entry)
-                
+
                 # 只检查目录
                 if os.path.isdir(entry_path):
                     skill_md_path = os.path.join(entry_path, "SKILL.md")
                     if os.path.exists(skill_md_path):
-                        skill_info = self._parse_standard_skill(skill_md_path, entry_path, subdir)
+                        skill_info = self._parse_standard_skill(
+                            skill_md_path, entry_path, subdir
+                        )
                         if skill_info:
                             self._skill_index[skill_info["name"]] = skill_info
-                            logger.info(f"Indexed standard skill: {skill_info['name']} from {subdir}")
-        
+                            logger.info(
+                                f"Indexed standard skill: {skill_info['name']} from {subdir}"
+                            )
+
         return self._skill_index
-    
-    def _parse_standard_skill(self, skill_md_path: str, skill_dir: str, source: str) -> Optional[Dict]:
+
+    def _parse_standard_skill(
+        self, skill_md_path: str, skill_dir: str, source: str
+    ) -> Optional[Dict]:
         """
         解析标准 SKILL.md 格式
-        
+
         格式:
         ---
         name: skill_name
         description: Short description
         license: MIT
         ---
-        
+
         # Markdown content...
         """
         try:
             with open(skill_md_path, "r", encoding="utf-8") as f:
                 content = f.read()
-            
+
             # 解析 YAML frontmatter
             if content.startswith("---"):
                 parts = content.split("---", 2)
@@ -94,11 +99,13 @@ class SkillLoader:
                 # 没有 frontmatter，使用目录名作为 name
                 frontmatter = {"name": os.path.basename(skill_dir)}
                 markdown_content = content
-            
+
             name = frontmatter.get("name", os.path.basename(skill_dir))
             description = frontmatter.get("description", "")
             triggers = frontmatter.get("triggers", [])  # 解析触发词
-            
+            cron_instruction = frontmatter.get("cron_instruction")  # 解析 Cron 任务指令
+            params = frontmatter.get("params", {})
+
             # 扫描 scripts 目录
             scripts = []
             scripts_dir = os.path.join(skill_dir, "scripts")
@@ -106,11 +113,13 @@ class SkillLoader:
                 for script in os.listdir(scripts_dir):
                     if script.endswith(".py"):
                         scripts.append(script)
-            
+
             return {
                 "name": name,
                 "description": description,
                 "triggers": triggers,  # 添加 triggers
+                "cron_instruction": cron_instruction,  # 任务指令
+                "params": params,  # 参数定义
                 "skill_type": "standard",
                 "skill_md_path": skill_md_path,
                 "skill_md_content": markdown_content,
@@ -119,29 +128,24 @@ class SkillLoader:
                 "source": source,
                 "license": frontmatter.get("license", ""),
             }
-            
+
         except Exception as e:
             logger.error(f"Error parsing standard skill {skill_md_path}: {e}")
             return None
-    
-            
-        except Exception as e:
-            logger.error(f"Error parsing legacy skill {filepath}: {e}")
-            return None
-    
+
     def get_skill_index(self) -> Dict[str, Dict]:
         """获取当前索引"""
         if not self._skill_index:
             self.scan_skills()
         return self._skill_index
-    
+
     def get_skills_summary(self) -> List[Dict]:
         """
         获取所有 Skill 的摘要（用于 AI 路由）
         """
         index = self.get_skill_index()
         summary = []
-        
+
         for name, info in index.items():
             skill_summary = {
                 "name": name,
@@ -149,53 +153,99 @@ class SkillLoader:
                 "skill_type": info.get("skill_type"),
                 "triggers": info.get("triggers", []),  # 添加 triggers
             }
-            
+
             summary.append(skill_summary)
-        
+
         return summary
-    
+
+    def find_similar_skills(self, query: str, threshold: float = 0.4) -> List[Dict]:
+        """
+        查找相似技能 (Fuzzy Match based on name and description)
+        """
+        import difflib
+
+        skills = self.get_skills_summary()
+        matched = []
+        query = query.lower()
+
+        for skill in skills:
+            name = skill["name"].lower()
+            desc = skill["description"].lower() if skill.get("description") else ""
+
+            # 1. Exact or Partial Name Match (High confidence)
+            if query == name or name in query:
+                skill["score"] = 1.0
+                matched.append(skill)
+                continue
+
+            # 2. Description keyword match
+            if query in desc:
+                skill["score"] = 0.8
+                matched.append(skill)
+                continue
+
+            # 3. Sequence Matcher for fuzzy similarity
+            ratio_name = difflib.SequenceMatcher(None, query, name).ratio()
+            ratio_desc = 0
+            # Only check description if it's short enough to be a title-like match,
+            # otherwise it might be noise.
+            if len(desc) < 100:
+                ratio_desc = difflib.SequenceMatcher(None, query, desc).ratio()
+
+            score = max(ratio_name, ratio_desc)
+            if score >= threshold:
+                skill["score"] = score
+                matched.append(skill)
+
+        # Sort by score desc
+        matched.sort(key=lambda x: x.get("score", 0), reverse=True)
+        return matched
+
     def get_skill(self, skill_name: str) -> Optional[Dict]:
         """获取 Skill 完整信息"""
         index = self.get_skill_index()
         return index.get(skill_name)
-    
-        
+
         skill_info = index[skill_name]
-        
+
         # 只能加载旧版 skill
         if skill_info.get("skill_type") != "legacy":
-            logger.warning(f"Skill {skill_name} is not a legacy skill, cannot load as module")
+            logger.warning(
+                f"Skill {skill_name} is not a legacy skill, cannot load as module"
+            )
             return None
-        
+
         filepath = skill_info["path"]
-        
+
         try:
             spec = importlib.util.spec_from_file_location(skill_name, filepath)
             if spec is None or spec.loader is None:
                 logger.error(f"Cannot create module spec for {skill_name}")
                 return None
-            
+
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
-            
+
             # 验证模块结构
             if not hasattr(module, "SKILL_META") or not hasattr(module, "execute"):
-                logger.error(f"Skill {skill_name} missing SKILL_META or execute function")
+                logger.error(
+                    f"Skill {skill_name} missing SKILL_META or execute function"
+                )
                 return None
-            
+
             self._loaded_modules[skill_name] = module
             logger.info(f"Loaded legacy skill: {skill_name}")
             return module
-            
+
         except Exception as e:
             logger.error(f"Error loading legacy skill {skill_name}: {e}")
             return None
-    
+
     def reload_skills(self):
         """重新扫描所有 Skills"""
         self._loaded_modules.clear()
         self.scan_skills()
-    
+
     def unload_skill(self, skill_name: str) -> bool:
         """卸载 Skill"""
         if skill_name in self._loaded_modules:

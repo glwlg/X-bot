@@ -225,7 +225,99 @@ graph TD
 
 ---
 
-## 3. 环境搭建指南
+## 3. 技能系统架构 (Skill System Architecture)
+
+X-Bot 的核心竞争力在于其 **"Always Evolving" (持续进化)** 能力。技能系统并非简单的插件机制，而是 Bot 的"大脑皮层"。
+
+### 3.1 技能分类
+
+所有技能存储在 `skills/` 目录下，分为两大类：
+
+1.  **Builtin Skills (`skills/builtin/`)**:
+    *   **定义**: 系统预装的核心能力（如 `skill_manager`, `notebooklm`, `reminder`）。
+    *   **特性**: 通常为不可变（Protected），直接集成系统底层服务，作为"元能力"。
+    *   **管理**: 仅可通过代码提交修改，`skill_manager` 会拦截对 builtin 的修改请求。
+
+2.  **Learned Skills (`skills/learned/`)**:
+    *   **定义**: 后天学习或用户创建的能力（如 `moltbook`, `crypto_checker`）。
+    *   **特性**: 动态、可变、沙箱化。
+    *   **来源**: 通过 `create` (AI生成)、`install` (GitHub/URL)、`teach` (自然语言教学) 获得。
+
+### 3.2 技能结构 (Standard Format)
+
+所有 Learned Skills 必须遵循标准目录结构：
+
+```
+skills/learned/my_awesome_skill/
+├── SKILL.md            # [核心] 元数据 + 使用文档 (SOP)
+└── scripts/            # [可选] 执行逻辑
+    └── execute.py      # Python 入口函数
+```
+
+#### 核心文件: SKILL.md
+
+这是技能的"灵魂"，既是给 AI 看的说明书，也是系统的配置表。
+
+```yaml
+---
+name: my_skill              # 唯一标识
+description: |
+  技能的简要描述 (用于 AI 路由)
+triggers:                   # 触发词 (Intent Router 使用)
+- 关键词1
+- 关键词2
+crontab: "0 * * * *"        # [可选] 定时任务表达式
+cron_instruction: "Run..."  # [可选] 定时任务的具体指令
+version: 1.0.0
+---
+
+# 技能详细文档
+
+这里是给 Agent 阅读的 SOP (Standard Operating Procedure)。
+如果包含 execute.py，Agent 会根据这里的说明去调用代码。
+如果不包含代码，Agent 会严格遵循这里的文本步骤执行 (纯 SOP 模式)。
+```
+
+### 3.3 Skill Manager: 技能系统的 OS
+
+`skill_manager` 是一个特殊的 Builtin Skill，它是管理所有其他技能的"操作系统"。
+
+#### 核心机制: Config vs Modify
+
+为了平衡**稳定性**和**灵活性**，技能修改被拆分为两个独立路径：
+
+| 特性 | `config` (配置) | `modify` (进化) |
+| :--- | :--- | :--- |
+| **对象** | `SKILL.md` (YAML Frontmatter) | `scripts/*.py` (代码逻辑) |
+| **实现** | Python 直接读写文件 | AI (LLM) 生成新代码 |
+| **速度** | ⚡️ 毫秒级 (Atomic) | 🐢 秒级 (需生成+审核) |
+| **用途** | 修改 Crontab、添加 Trigger、更新描述 | 修复 Bug、重构逻辑、增加新功能 |
+| **风险** | 低 (Schema 校验) | 高 (可能引入新 Bug) |
+
+**最佳实践**:
+*   想让技能每天运行？ -> **Config** (`config crontab`)
+*   想让技能支持新 API？ -> **Modify** (`modify logic`)
+
+### 3.4 定时任务机制 (Cron)
+
+X-Bot 拥有内置的分布式兼容调度器 (`src/core/scheduler.py`)，目前支持 **Hybrid Mode** (混合模式)：
+
+1.  **数据库调度 (推荐)**:
+    *   通过 `skill_manager` 的 `config` 或 `schedule` 指令，将任务存储在 SQLite 数据库 (`scheduled_tasks` 表) 中。
+    *   **优点**: 修改无需 Git 提交，隐私性好，支持动态管理。
+    *   `EvolutionRouter` 自动生成的技能也会优先使用此方式配置定时任务。
+
+2.  **SKILL.md 调度 (Legacy)**:
+    *   系统启动时，扫描 `SKILL.md` 中的 `crontab` 字段。
+    *   **优点**: 版本控制友好，适合固定的系统级任务。
+    *   *注意*: 建议逐步迁移到数据库调度。
+
+**执行流程**:
+调度器触发 -> 构造 `UnifiedContext` (System User) -> 投递给 `AgentOrchestrator` -> 智能体执行指令。
+
+---
+
+## 4. 环境搭建指南
 
 ### 🛠️ 环境准备
 

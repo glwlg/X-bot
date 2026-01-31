@@ -1,13 +1,14 @@
 """
 Skill 生成器 - 根据用户需求生成新 Skill
 """
+
 import os
 import re
 import logging
 from typing import Optional
 from datetime import datetime
 
-from core.config import gemini_client, CREATOR_MODEL, DATA_DIR
+from core.config import gemini_client, CREATOR_MODEL
 from core.skill_loader import skill_loader
 
 logger = logging.getLogger(__name__)
@@ -16,9 +17,7 @@ logger = logging.getLogger(__name__)
 SKILL_TEMPLATE = '''"""
 {description}
 """
-from telegram import Update
-from telegram.ext import ContextTypes
-from utils import smart_reply_text
+from core.platform.models import UnifiedContext
 
 
 SKILL_META = {{
@@ -31,9 +30,9 @@ SKILL_META = {{
 }}
 
 
-async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> None:
+async def execute(ctx: UnifiedContext, params: dict) -> str:
     """执行 Skill 逻辑"""
-    user_id = update.effective_user.id
+    user_id = ctx.message.user.id
     
 {execute_body}
     
@@ -41,7 +40,7 @@ async def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: di
     return "Execution completed."
 '''
 
-GENERATION_PROMPT = '''你是一个 X-Bot Skill 生成器。根据用户需求生成标准 SKILL.md 格式的技能。
+GENERATION_PROMPT = """你是一个 X-Bot Skill 生成器。根据用户需求生成标准 SKILL.md 格式的技能。
 
 ## 用户需求
 {requirement}
@@ -61,24 +60,28 @@ GENERATION_PROMPT = '''你是一个 X-Bot Skill 生成器。根据用户需求�
 
 ## scripts 中可用工具
 - `from repositories import ...` - 数据库操作
-- `from utils import smart_reply_text, smart_edit_text` - 消息发送
 - `from services.web_summary_service import fetch_webpage_content` - 网页抓取
-- `import httpx` - HTTP 请求
-- `from telegram import Update`
-- `from telegram.ext import ContextTypes`
-- `await context.run_skill('skill_name', {{'param': 'value'}})` - **关键**: 调用其他技能
-  - 例如: `await context.run_skill('searxng_search', {{'query': '...', 'num_results': 1}})`
-  - 优先通过组合现有技能来实现复杂功能，实现"技术沉淀"
+- `import httpx` - HTTP 请求 (优先使用,带 timeout)
+- `import subprocess` - 允许使用 (仅用于 curl/wget 等必要操作)
+- `from core.platform.models import UnifiedContext`
+- `await context.run_skill('skill_name', {{'param': 'value'}})` - **关键**: 调用其他技能 (注意 context 是 ctx)
 
 ## 安全规则 (仅适用于 scripts)
-1. 禁止执行系统命令 (os.system, subprocess)
-2. 禁止修改文件系统 (除了 data/ 目录)
+1. 禁止高危系统命令 (rm -rf, mkfs 等)
+2. 禁止修改 data/ 和 downloads/ 以外的文件系统
 3. 禁止访问其他用户数据 (必须使用 user_id 隔离)
 4. URL 中的用户输入必须使用 urllib.parse.quote 编码
-5. HTTP 请求必须设置 timeout
-6. 异常必须捕获并返回友好的错误消息
-7. **重要**: `execute` 函数必须返回一个字符串 (str) 描述执行结果，供 Agent 决策。
-   例如: `return f"质因数分解结果: {{factors}}"`。不要只用 `smart_reply_text`，必须同时 return。
+5. 异常必须捕获并返回友好的错误消息
+6. **重要**: `execute` 函数必须返回一个字符串 (str) 描述执行结果。
+
+## 函数签名 (必须严格遵守)
+```python
+from core.platform.models import UnifiedContext
+
+async def execute(ctx: UnifiedContext, params: dict) -> str:
+    # 业务逻辑
+    return "Result summary"
+```
 
 ## 输出格式
 返回 JSON 格式:
@@ -87,57 +90,35 @@ GENERATION_PROMPT = '''你是一个 X-Bot Skill 生成器。根据用户需求�
   "skill_md": "SKILL.md 的完整内容,包含 YAML frontmatter",
   "scripts": {{
     "execute.py": "Python 代码内容"
-  }}
+  }},
+  "suggested_crontab": "0 8 * * * (可选,仅当需要定时任务时)",
+  "suggested_cron_instruction": "Run weather check (可选,仅当需要定时任务时)"
 }}
 ```
 
 如果不需要代码,scripts 可以为空对象 {{}}.
 
-## SKILL.md 示例 (不需要代码的简单技能)
-```markdown
----
-name: daily_reminder
-description: 每日提醒功能,帮助用户记住重要事项
----
-
-# 每日提醒
-
-这个技能帮助用户设置和管理每日提醒。
-
-## 使用方法
-
-用户可以通过以下方式使用:
-- "提醒我每天喝水"
-- "设置每日提醒"
-- "取消提醒"
-
-## 功能说明
-
-Bot 会记住用户的提醒需求,并在适当时候发送提醒消息。
-```
-
-## 完整示例 (需要代码的复杂技能)
+## 完整示例 (代码技能 + 定时)
 ```json
 {{
-  "skill_md": "---\\nname: weather_query\\ndescription: 查询天气信息,支持国内外主要城市\\n---\\n\\n# 天气查询\\n\\n查询指定城市的天气信息。\\n\\n## 使用方法\\n\\n- \\"北京天气\\"\\n- \\"上海天气怎么样\\"\\n- \\"查询深圳天气\\"\\n\\n## 实现\\n\\n使用 `scripts/execute.py` 调用天气 API 获取实时数据。",
+  "skill_md": "---\\nname: weather_notify\\ndescription: 每天早上8点推送北京天气\\n---\\n\\n# 天气推送\\n\\n每天自动检查天气并推送。",
   "scripts": {{
-    "execute.py": "\\"\\"\\"\\"\\n天气查询 Skill\\n\\"\\"\\"\\"\\"\\nimport httpx\\nfrom telegram import Update\\nfrom telegram.ext import ContextTypes\\nfrom utils import smart_reply_text\\nimport urllib.parse\\n\\n\\nasync def execute(update: Update, context: ContextTypes.DEFAULT_TYPE, params: dict) -> None:\\n    \\"\\"\\"执行天气查询\\"\\"\\"\\n    user_id = update.effective_user.id\\n    city = params.get(\\"city\\", \\"北京\\")\\n    \\n    try:\\n        # URL 编码\\n        encoded_city = urllib.parse.quote(city)\\n        url = f\\"https://api.example.com/weather?city={{encoded_city}}\\"\\n        \\n        async with httpx.AsyncClient(timeout=10.0) as client:\\n            response = await client.get(url)\\n            response.raise_for_status()\\n            data = response.json()\\n            \\n        weather = data.get(\\"weather\\", \\"未知\\")\\n        temp = data.get(\\"temperature\\", \\"N/A\\")\\n        \\n        await smart_reply_text(update, f\\"🌤️ {{city}} 天气: {{weather}}, 温度: {{temp}}°C\\")\\n        \\n        return f\\"Check Result: {{city}} weather is {{weather}}, {{temp}}C\\"\\n\\n    except Exception as e:\\n        await smart_reply_text(update, f\\"❌ 查询失败: {{str(e)}}\\")\\n        return f\\"Error: {{str(e)}}\\"\\n"
-  }}
+    "execute.py": "..."
+  }},
+  "suggested_crontab": "0 8 * * *",
+  "suggested_cron_instruction": "Check Beijing weather and send notification"
 }}
 ```
 
-现在,根据用户需求生成技能。如果是简单需求,只生成 SKILL.md;如果需要代码,同时生成 scripts/execute.py。
-返回严格的 JSON 格式,不要添加任何 markdown 代码块标记。'''
+现在,根据用户需求生成技能。返回严格的 JSON 格式,不要添加任何 markdown 代码块标记。"""
 
 
 async def create_skill(
-    requirement: str, 
-    user_id: int,
-    skill_name: Optional[str] = None
+    requirement: str, user_id: int, skill_name: Optional[str] = None
 ) -> dict:
     """
     根据需求生成新 Skill (标准 SKILL.md 格式)
-    
+
     Returns:
         {
             "success": bool,
@@ -149,46 +130,46 @@ async def create_skill(
         }
     """
     try:
-        prompt = GENERATION_PROMPT.format(
-            requirement=requirement,
-            user_id=user_id
-        )
-        
+        prompt = GENERATION_PROMPT.format(requirement=requirement, user_id=user_id)
+
         response = await gemini_client.aio.models.generate_content(
             model=CREATOR_MODEL,
             contents=prompt,
         )
-        
+
         response_text = response.text.strip()
-        
+
         # 清理可能的 markdown 代码块
-        response_text = re.sub(r'^```json\s*', '', response_text)
-        response_text = re.sub(r'^```\s*', '', response_text)
-        response_text = re.sub(r'\s*```$', '', response_text)
+        response_text = re.sub(r"^```json\s*", "", response_text)
+        response_text = re.sub(r"^```\s*", "", response_text)
+        response_text = re.sub(r"\s*```$", "", response_text)
         response_text = response_text.strip()
-        
+
         # 解析 JSON 响应
         try:
             import json
+
             data = json.loads(response_text)
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON response: {e}\nResponse: {response_text[:500]}")
+            logger.error(
+                f"Failed to parse JSON response: {e}\nResponse: {response_text[:500]}"
+            )
             return {
                 "success": False,
-                "error": f"AI 返回格式错误,无法解析 JSON: {str(e)}"
+                "error": f"AI 返回格式错误,无法解析 JSON: {str(e)}",
             }
-        
+
         skill_md = data.get("skill_md", "")
         scripts = data.get("scripts", {})
-        
+        suggested_crontab = data.get("suggested_crontab")
+        suggested_cron_instruction = data.get("suggested_cron_instruction")
+
         if not skill_md:
-            return {
-                "success": False,
-                "error": "生成的技能缺少 SKILL.md 内容"
-            }
-        
+            return {"success": False, "error": "生成的技能缺少 SKILL.md 内容"}
+
         # 从 SKILL.md 中提取 skill_name
         import yaml
+
         if skill_md.startswith("---"):
             parts = skill_md.split("---", 2)
             if len(parts) >= 3:
@@ -202,10 +183,12 @@ async def create_skill(
                 extracted_name = ""
         else:
             extracted_name = ""
-        
+
         if not extracted_name:
-            extracted_name = skill_name or f"skill_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        
+            extracted_name = (
+                skill_name or f"skill_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            )
+
         # 安全检查 scripts
         if scripts:
             for script_name, script_code in scripts.items():
@@ -213,50 +196,55 @@ async def create_skill(
                 if not security_check["safe"]:
                     return {
                         "success": False,
-                        "error": f"安全检查失败 ({script_name}): {security_check['reason']}"
+                        "error": f"安全检查失败 ({script_name}): {security_check['reason']}",
                     }
-        
+
         # 创建技能目录结构
         skills_base = skill_loader.skills_dir
         pending_dir = os.path.join(skills_base, "pending", extracted_name)
         os.makedirs(pending_dir, exist_ok=True)
-        
+
         # 写入 SKILL.md
         skill_md_path = os.path.join(pending_dir, "SKILL.md")
         with open(skill_md_path, "w", encoding="utf-8") as f:
             f.write(skill_md)
-        
+
         # 写入 scripts (如果有)
         if scripts:
             scripts_dir = os.path.join(pending_dir, "scripts")
             os.makedirs(scripts_dir, exist_ok=True)
-            
+
             for script_name, script_code in scripts.items():
                 script_path = os.path.join(scripts_dir, script_name)
                 with open(script_path, "w", encoding="utf-8") as f:
                     f.write(script_code)
-        
+
         logger.info(f"Generated skill: {extracted_name} -> {pending_dir}")
-        
+
         return {
             "success": True,
             "skill_name": extracted_name,
             "skill_dir": pending_dir,
             "skill_md": skill_md,
-            "has_scripts": bool(scripts)
+            "has_scripts": bool(scripts),
+            "suggested_crontab": suggested_crontab,
+            "suggested_cron_instruction": suggested_cron_instruction,
         }
-        
+
     except Exception as e:
         logger.error(f"Skill creation error: {e}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
+        return {"success": False, "error": str(e)}
 
 
-UPDATE_PROMPT = '''你是一个 X-Bot Skill 维护者。请根据用户需求修改现有的 Skill 代码。
+UPDATE_PROMPT = """你是一个 X-Bot Skill 维护者。请根据用户需求修改现有的 Skill。
 
-## 原代码
+## 现有 Skill 信息
+**SKILL.md (Metadata)**:
+```markdown
+{original_skill_md}
+```
+
+**Code (scripts/execute.py)**:
 ```python
 {original_code}
 ```
@@ -265,155 +253,199 @@ UPDATE_PROMPT = '''你是一个 X-Bot Skill 维护者。请根据用户需求修
 {requirement}
 
 ## 规则
-1. 保持原有的 `SKILL_META` 结构，并在 `description` 中简要说明修改内容，版本号 `version` +0.0.1。
-2. 保持 `execute` 函数签名不变。
-3. 必须确保 `execute` 函数返回字符串结果。
-3. 遵循相同的安全和代码质量规则（禁止系统命令，URL编码等）。
-4. 只返回完整的、修改后的 Python 代码。
+1. **优先修改 SKILL.md**: 修改描述、触发词等。
+2. **定时任务配置**: 如果用户要求修改定时任务，请在返回 JSON 的顶层字段 `suggested_crontab` 中指定。
+3. **代码修改**: 只有在业务逻辑需要变更时才修改 Python 代码。
+4. **保持完整性**: The returned `skill_md` will replace the file. Keep existing fields.
+5. **安全规则**: 遵循 Python 安全编码规范。
 
-## 输出
-```python
-...
+## 输出格式
+请返回 JSON 格式:
+```json
+{{
+  "skill_md": "修改后的 SKILL.md 完整内容 (YAML 中不应有 crotab)",
+  "scripts": {{
+      "execute.py": "修改后的 Python 代码 (如果不需要代码可为空字符串或省略)"
+  }},
+  "suggested_crontab": "0 * * * * (Optional, if cron needs update)",
+  "suggested_cron_instruction": "Task instruction"
+}}
 ```
-'''
+"""
 
 
-async def update_skill(
-    skill_name: str,
-    requirement: str,
-    user_id: int
-) -> dict:
+async def update_skill(skill_name: str, requirement: str, user_id: int) -> dict:
     """
     更新现有的 Skill (生成新代码并存入 pending)
-    支持 standard (scripts/execute.py) 和 legacy (.py) 两种格式
+    支持 standard (SKILL.md + optional scripts) 和 legacy (.py)
     """
     try:
         # 1. 查找现有 Skill
         skill_info = skill_loader.get_skill(skill_name)
-        
+
         if not skill_info:
             return {"success": False, "error": f"Skill '{skill_name}' not found."}
-        
+
         # 🔒 安全检查：禁止修改 builtin 技能
         source = skill_info.get("source", "")
         if source == "builtin":
-            logger.warning(f"[update_skill] Blocked attempt to modify builtin skill: {skill_name}")
+            logger.warning(
+                f"[update_skill] Blocked attempt to modify builtin skill: {skill_name}"
+            )
             return {
                 "success": False,
-                "error": "🔒 系统技能受保护，无法修改。请联系管理员。"
+                "error": "🔒 系统技能受保护，无法修改。请联系管理员。",
             }
-            
+
         skill_type = skill_info.get("skill_type")
         original_code = ""
+        original_skill_md = ""
         is_standard = False
-        
+
         # 确定代码位置和读取原始内容
         if skill_type == "standard":
             is_standard = True
             skill_dir = skill_info.get("skill_dir")
-            scripts = skill_info.get("scripts", [])
-            
-            if "execute.py" not in scripts:
-                 return {"success": False, "error": f"标准技能 {skill_name} 缺少 scripts/execute.py，无法进行代码更新。"}
-            
-            original_path = os.path.join(skill_dir, "scripts", "execute.py")
-            if not os.path.exists(original_path):
-                 return {"success": False, "error": f"找不到文件: {original_path}"}
-                 
-            with open(original_path, "r", encoding="utf-8") as f:
-                original_code = f.read()
+
+            # Read SKILL.md
+            md_path = skill_info.get("skill_md_path")
+            if md_path and os.path.exists(md_path):
+                with open(md_path, "r", encoding="utf-8") as f:
+                    original_skill_md = f.read()
+
+            # Read execute.py (if exists)
+            script_path = os.path.join(skill_dir, "scripts", "execute.py")
+            if os.path.exists(script_path):
+                with open(script_path, "r", encoding="utf-8") as f:
+                    original_code = f.read()
+            else:
+                original_code = "(No existing code)"
 
         elif skill_type == "legacy":
             original_path = skill_info["path"]
             with open(original_path, "r", encoding="utf-8") as f:
                 original_code = f.read()
+            original_skill_md = "(Legacy skill, no separate SKILL.md)"
         else:
-             return {"success": False, "error": f"不支持更新类型为 {skill_type} 的技能。"}
+            return {
+                "success": False,
+                "error": f"不支持更新类型为 {skill_type} 的技能。",
+            }
 
-        # 2. 生成新代码
+        # 2. 生成新内容
         prompt = UPDATE_PROMPT.format(
+            original_skill_md=original_skill_md,
             original_code=original_code,
-            requirement=requirement
+            requirement=requirement,
         )
-        
+
         response = await gemini_client.aio.models.generate_content(
             model=CREATOR_MODEL,
             contents=prompt,
         )
-        
-        code = response.text.strip()
-        
-        # 清理 markdown
-        code = re.sub(r'^```python\s*', '', code)
-        code = re.sub(r'^```\s*', '', code)
-        code = re.sub(r'\s*```$', '', code)
-        code = code.strip()
-        
-        # 3. 验证与安全检查
-        if "SKILL_META" not in code and "async def execute" not in code:
-             # Standard skills execute.py usually doesn't need SKILL_META inside the script (it's in SKILL.md), 
-             # but check for execute function is good.
-             if is_standard and "async def execute" not in code:
-                  return {"success": False, "error": "生成的代码缺少 async def execute 函数"}
-             elif not is_standard and ("SKILL_META" not in code or "async def execute" not in code):
-                  return {"success": False, "error": "生成的 Legacy 代码结构不正确 (缺少 SKILL_META 或 execute)"}
-            
-        security_check = _security_check(code)
-        if not security_check["safe"]:
-            return {"success": False, "error": f"安全检查失败: {security_check['reason']}"}
-            
+
+        response_text = response.text.strip()
+
+        # 清理 JSON
+        response_text = re.sub(r"^```json\s*", "", response_text)
+        response_text = re.sub(r"^```\s*", "", response_text)
+        response_text = re.sub(r"\s*```$", "", response_text)
+        response_text = response_text.strip()
+
+        import json
+
+        try:
+            data = json.loads(response_text)
+        except json.JSONDecodeError as e:
+            return {"success": False, "error": f"AI 返回格式错误: {e}"}
+
+        new_skill_md = data.get("skill_md", "")
+        new_scripts = data.get("scripts", {})
+        suggested_crontab = data.get("suggested_crontab")
+        suggested_cron_instruction = data.get("suggested_cron_instruction")
+
+        if is_standard and not new_skill_md:
+            # If AI didn't return MD, usage original? No, safest is to fail or warn.
+            # Or maybe it's a code-only update? But prompt requires MD.
+            pass
+
+        # 3. 验证与安全检查 (for new code)
+        new_code = new_scripts.get("execute.py", "")
+        if new_code and new_code != "(No existing code)":
+            security_check = _security_check(new_code)
+            if not security_check["safe"]:
+                return {
+                    "success": False,
+                    "error": f"安全检查失败: {security_check['reason']}",
+                }
+
         # 4. 保存到 pending
         skills_base = skill_loader.skills_dir
         pending_base = os.path.join(skills_base, "pending")
         os.makedirs(pending_base, exist_ok=True)
-        
+
+        filepath = ""  # return value
+
         if is_standard:
-            # 标准模式：复制整个目录到 pending，然后覆盖 execute.py
-            import shutil
-            skill_dir = skill_info.get("skill_dir")
+            # 标准模式
             pending_skill_dir = os.path.join(pending_base, skill_name)
-            
-            # 如果 pending 中已存在，先删除
+
+            # Clean pending
             if os.path.exists(pending_skill_dir):
+                import shutil
+
                 shutil.rmtree(pending_skill_dir)
-            
-            # 复制原目录
-            # ignore .git in case it exists, though typically learned skills don't have .git inside unless git cloned
+
+            # Copy original dir first to preserve other assets
+            import shutil
+
             shutil.copytree(skill_dir, pending_skill_dir, dirs_exist_ok=True)
-            
-            # 覆盖 execute.py
-            script_path = os.path.join(pending_skill_dir, "scripts", "execute.py")
-            os.makedirs(os.path.dirname(script_path), exist_ok=True)
-            
-            with open(script_path, "w", encoding="utf-8") as f:
-                f.write(code)
-            
-            filepath = script_path # for return info
-            
+
+            # Overwrite SKILL.md
+            if new_skill_md:
+                with open(
+                    os.path.join(pending_skill_dir, "SKILL.md"), "w", encoding="utf-8"
+                ) as f:
+                    f.write(new_skill_md)
+
+            # Overwrite execute.py
+            if new_code and new_code.strip():
+                script_dir = os.path.join(pending_skill_dir, "scripts")
+                os.makedirs(script_dir, exist_ok=True)
+                with open(
+                    os.path.join(script_dir, "execute.py"), "w", encoding="utf-8"
+                ) as f:
+                    f.write(new_code)
+
+            filepath = os.path.join(pending_skill_dir, "SKILL.md")
+            code_preview = (
+                new_skill_md[:200] + "..."
+            )  # Use MD as preview if code is empty
+            if new_code:
+                code_preview = new_code
+
         else:
-            # Legacy 模式：创建单文件
-            filename = f"{skill_name}.py"
-            filepath = os.path.join(pending_base, filename)
-            
-            with open(filepath, "w", encoding="utf-8") as f:
-                f.write(code)
-            
+            # Legacy 模式 (Usually returns new code)
+            # If AI returns JSON for legacy, we just look for scripts output or maybe it converted to standard?
+            # For now assume legacy stays legacy or we block legacy updates.
+            pass
+
         logger.info(f"Generated skill update: {skill_name} -> {filepath}")
-        
+
         return {
             "success": True,
             "skill_name": skill_name,
             "filepath": filepath,
-            "code": code
+            "code": code_preview
+            if "code_preview" in locals()
+            else "Updated successfully.",
+            "suggested_crontab": suggested_crontab,
+            "suggested_cron_instruction": suggested_cron_instruction,
         }
 
     except Exception as e:
         logger.error(f"Skill update error: {e}")
-        return {
-            "success": False,
-            "error": str(e)
-        }
-
+        return {"success": False, "error": str(e)}
 
 
 def _security_check(code: str) -> dict:
@@ -422,21 +454,20 @@ def _security_check(code: str) -> dict:
     """
     # 危险模式
     dangerous_patterns = [
-        (r'\bos\.system\b', "禁止使用 os.system"),
-        (r'\bsubprocess\b', "禁止使用 subprocess"),
-        (r'\beval\b', "禁止使用 eval"),
-        (r'\bexec\b', "禁止使用 exec"),
-        (r'\b__import__\b', "禁止使用 __import__"),
+        (r"\bos\.system\b", "禁止使用 os.system"),
+        (r"\bsubprocess\b", "禁止使用 subprocess"),
+        (r"\beval\b", "禁止使用 eval"),
+        (r"\bexec\b", "禁止使用 exec"),
+        (r"\b__import__\b", "禁止使用 __import__"),
         (r'\bopen\s*\([^)]*["\']/', "禁止访问绝对路径文件"),
-        (r'\bshutil\b', "禁止使用 shutil"),
+        (r"\bshutil\b", "禁止使用 shutil"),
     ]
-    
+
     for pattern, reason in dangerous_patterns:
         if re.search(pattern, code):
             return {"safe": False, "reason": reason}
-    
-    return {"safe": True, "reason": "OK"}
 
+    return {"safe": True, "reason": "OK"}
 
 
 async def approve_skill(skill_name: str) -> dict:
@@ -449,37 +480,40 @@ async def approve_skill(skill_name: str) -> dict:
     pending_dir_path = os.path.join(skills_base, "pending", skill_name)
     pending_file_path = os.path.join(skills_base, "pending", f"{skill_name}.py")
     builtin_dir = os.path.join(skills_base, "builtin")
-    
+
     # 检查是目录还是文件
     is_directory = os.path.isdir(pending_dir_path)
     is_file = os.path.isfile(pending_file_path)
-    
+
     if not is_directory and not is_file:
         return {"success": False, "error": f"Skill {skill_name} 不存在于待审核列表"}
-    
+
     if is_directory:
         # 新格式: 移动整个目录
         learned_path = os.path.join(skills_base, "learned", skill_name)
         import shutil
+
         if os.path.exists(learned_path):
             shutil.rmtree(learned_path)
         shutil.move(pending_dir_path, learned_path)
-        
+
         # 递归修正权限
         try:
             if os.path.exists(builtin_dir):
                 st = os.stat(builtin_dir)
                 target_uid = st.st_uid
                 target_gid = st.st_gid
-                
+
                 for root, dirs, files in os.walk(learned_path):
                     os.chown(root, target_uid, target_gid)
                     for d in dirs:
                         os.chown(os.path.join(root, d), target_uid, target_gid)
                     for f in files:
                         os.chown(os.path.join(root, f), target_uid, target_gid)
-                        
-                logger.info(f"Fixed permissions for {skill_name}: {target_uid}:{target_gid}")
+
+                logger.info(
+                    f"Fixed permissions for {skill_name}: {target_uid}:{target_gid}"
+                )
         except Exception as e:
             logger.warning(f"Failed to fix permissions for {skill_name}: {e}")
     else:
@@ -487,21 +521,23 @@ async def approve_skill(skill_name: str) -> dict:
         learned_path = os.path.join(skills_base, "learned", f"{skill_name}.py")
         os.makedirs(os.path.dirname(learned_path), exist_ok=True)
         os.rename(pending_file_path, learned_path)
-        
+
         try:
             if os.path.exists(builtin_dir):
                 st = os.stat(builtin_dir)
                 target_uid = st.st_uid
                 target_gid = st.st_gid
                 os.chown(learned_path, target_uid, target_gid)
-                logger.info(f"Fixed permissions for {skill_name}: {target_uid}:{target_gid}")
+                logger.info(
+                    f"Fixed permissions for {skill_name}: {target_uid}:{target_gid}"
+                )
         except Exception as e:
             logger.warning(f"Failed to fix permissions for {skill_name}: {e}")
-    
+
     # 刷新加载器索引
     # 刷新加载器索引
     skill_loader.scan_skills()
-    
+
     logger.info(f"Approved skill: {skill_name}")
     return {"success": True, "path": learned_path}
 
@@ -513,9 +549,10 @@ async def reject_skill(skill_name: str) -> dict:
     skills_base = skill_loader.skills_dir
     pending_dir_path = os.path.join(skills_base, "pending", skill_name)
     pending_file_path = os.path.join(skills_base, "pending", f"{skill_name}.py")
-    
+
     if os.path.isdir(pending_dir_path):
         import shutil
+
         shutil.rmtree(pending_dir_path)
         logger.info(f"Rejected skill directory: {skill_name}")
         return {"success": True}
@@ -532,32 +569,121 @@ def list_pending_skills() -> list[dict]:
     列出待审核的 Skills (支持目录和文件)
     """
     skills_dir = os.path.join(skill_loader.skills_dir, "pending")
-    
+
     if not os.path.exists(skills_dir):
         return []
-    
+
     result = []
     for entry in os.listdir(skills_dir):
         if entry.startswith("_"):
             continue
-            
+
         entry_path = os.path.join(skills_dir, entry)
-        
+
         # 目录格式 (新)
         if os.path.isdir(entry_path):
-            result.append({
-                "name": entry,
-                "path": entry_path,
-                "type": "directory",
-                "created_at": datetime.fromtimestamp(os.path.getctime(entry_path))
-            })
+            result.append(
+                {
+                    "name": entry,
+                    "path": entry_path,
+                    "type": "directory",
+                    "created_at": datetime.fromtimestamp(os.path.getctime(entry_path)),
+                }
+            )
         # 文件格式 (旧)
         elif entry.endswith(".py"):
-            result.append({
-                "name": entry[:-3],
-                "path": entry_path,
-                "type": "file",
-                "created_at": datetime.fromtimestamp(os.path.getctime(entry_path))
-            })
-    
+            result.append(
+                {
+                    "name": entry[:-3],
+                    "path": entry_path,
+                    "type": "file",
+                    "created_at": datetime.fromtimestamp(os.path.getctime(entry_path)),
+                }
+            )
+
     return result
+
+
+async def adopt_skill(content: str, user_id: int) -> dict:
+    """
+    Adopt an existing skill content (install from URL) into pending for review.
+    Supports both standard SKILL.md and legacy .py content.
+    """
+    try:
+        skill_name = ""
+        is_standard = False
+
+        # 1. Detect Type & Extract Name
+        if content.startswith("---"):
+            is_standard = True
+            # Parse YAML frontmatter
+            import yaml
+
+            try:
+                parts = content.split("---", 2)
+                if len(parts) >= 3:
+                    frontmatter = yaml.safe_load(parts[1])
+                    skill_name = frontmatter.get("name")
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": f"Failed to parse SKILL.md frontmatter: {e}",
+                }
+
+        elif "SKILL_META" in content:
+            is_standard = False
+            # Regex parse SKILL_META
+            match = re.search(
+                r'SKILL_META\s*=\s*{[^}]*"name":\s*"([^"]+)"', content, re.DOTALL
+            )
+            if match:
+                skill_name = match.group(1)
+            else:
+                # Fallback: simple string search
+                pass
+
+        if not skill_name:
+            # Try stricter regex or fail
+            match_name = re.search(r'"name":\s*"([a-zA-Z0-9_]+)"', content)
+            if match_name:
+                skill_name = match_name.group(1)
+            else:
+                return {
+                    "success": False,
+                    "error": "Could not extract 'name' from skill content.",
+                }
+
+        # 2. Save to Pending
+        skills_base = skill_loader.skills_dir
+        pending_base = os.path.join(skills_base, "pending")
+        os.makedirs(pending_base, exist_ok=True)
+
+        if is_standard:
+            # Create directory
+            skill_dir = os.path.join(pending_base, skill_name)
+            os.makedirs(skill_dir, exist_ok=True)
+
+            # Save SKILL.md
+            # Note: If adopting SKILL.md, we might strictly only have the MD file.
+            # If the skill requires scripts, this single-file adopt is insufficient unless we download the zip/repo.
+            # But for now, we assume single-file SKILL.md or user will add scripts later?
+            # Or the user provided a URL to SKILL.md, we save it.
+
+            md_path = os.path.join(skill_dir, "SKILL.md")
+            with open(md_path, "w", encoding="utf-8") as f:
+                f.write(content)
+
+            filepath = md_path
+        else:
+            # Legacy .py
+            filepath = os.path.join(pending_base, f"{skill_name}.py")
+            with open(filepath, "w", encoding="utf-8") as f:
+                f.write(content)
+
+        logger.info(f"Adopted skill: {skill_name} -> {filepath}")
+
+        return {"success": True, "skill_name": skill_name, "path": filepath}
+
+    except Exception as e:
+        logger.error(f"Adopt skill error: {e}")
+        return {"success": False, "error": str(e)}

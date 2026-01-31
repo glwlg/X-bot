@@ -25,8 +25,9 @@ class ToolRegistry:
         # All capabilities including skill management are accessed via call_skill
         tools.append(self._get_skill_tool())
         
-        # 3. Evolution Tool (Self-Evolution)
-        tools.append(self._get_evolution_tool())
+        # 3. Evolution Tool (Self-Evolution) - REMOVED
+        # Evolution is now handled via skill_manager
+        # tools.append(self._get_evolution_tool())
         
         return tools
 
