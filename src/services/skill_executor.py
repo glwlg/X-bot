@@ -140,6 +140,26 @@ class SkillExecutor:
                 # 准备参数 - 使用 AI 解析
                 ctx = kwargs.get("ctx")
                 
+                # INJECTION: Storage API
+                from services.storage_service import storage_service
+                
+                class StorageAdapter:
+                    """Scoped storage for a specific skill"""
+                    def __init__(self, skill_name):
+                        self.skill_name = skill_name
+                        
+                    def put(self, key, value):
+                        return storage_service.put(self.skill_name, key, value)
+                        
+                    def get(self, key, default=None):
+                        return storage_service.get(self.skill_name, key, default)
+                        
+                    def delete(self, key):
+                        return storage_service.delete(self.skill_name, key)
+                
+                if ctx and ctx.platform_ctx:
+                     setattr(ctx.platform_ctx, 'storage', StorageAdapter(skill_name))
+                
                 # INJECTION: Inject 'run_skill' into context to enable Skill Composition
                 # We attach it directly to 'context' (ephemeral) instead of 'bot_data' (persistent)
                 # to avoid PickleError (local functions cannot be pickled).
@@ -180,6 +200,7 @@ class SkillExecutor:
                             "Return ONLY a JSON object with the extracted parameters."
                         )
                         
+                        logger.debug(f"🤖 [SkillExecutor] Sending param extraction prompt to AI:\n{prompt}")
                         response = gemini_client.models.generate_content(
                             model=GEMINI_MODEL,
                             contents=prompt,
@@ -248,7 +269,11 @@ class SkillExecutor:
                 
             except Exception as e:
                 logger.error(f"Error executing builtin script: {e}", exc_info=True)
-                yield f"❌ 执行错误: {e}", None
+                error_msg = str(e)
+                if "Permission" in error_msg or "401" in error_msg or "403" in error_msg:
+                    yield f"❌ 权限错误: {e}\n💡 提示: 这可能需要 API 密钥或特定权限。请检查您的配置。", None
+                else:
+                    yield f"❌ 执行错误: {e}", None
                 
                 # --- Self-Healing (Reactive Repair) ---
                 try:
@@ -266,7 +291,16 @@ class SkillExecutor:
                             ), None
                             return
                         
-                        yield f"🔧 监测到异常，正在尝试生成修复补丁...", None
+                        # Structured Error Tags for EvolutionRouter
+                        error_tag = "[UNKNOWN_ERROR]"
+                        if "Permission" in error_msg or "401" in error_msg or "403" in error_msg:
+                            error_tag = "[PERMISSION_DENIED]"
+                        elif "ModuleNotFoundError" in error_msg:
+                            error_tag = "[MISSING_DEPENDENCY]"
+                        elif "Timeout" in error_msg:
+                            error_tag = "[TIMEOUT]"
+
+                        yield f"🔧 ({error_tag}) 监测到异常，正在尝试生成修复补丁...", None
                         
                         from services.skill_creator import update_skill
                         # user_id needs to be int or str depending on update_skill implementation
@@ -326,7 +360,11 @@ class SkillExecutor:
         # 3. 调用 AI 生成解决方案
         yield "🤔 正在分析任务...", None
         
+        # 3. 调用 AI 生成解决方案
+        yield "🤔 正在分析任务...", None
+        
         try:
+            logger.debug(f"🤖 [SkillExecutor] Sending execution prompt to AI:\n{prompt}")
             response = gemini_client.models.generate_content(
                 model=GEMINI_MODEL,
                 contents=prompt,
@@ -368,7 +406,10 @@ class SkillExecutor:
                 all_output_files.update(output_files)
                 
                 if not success:
-                    yield f"⚠️ 代码执行出现问题:\n```\n{output}\n```", None
+                    hint = ""
+                    if "Permission" in output or "401" in output or "403" in output:
+                        hint = "\n💡 提示: 这可能是权限不足导致的。如果是 API 调用，请检查 Key 是否设置正确。"
+                    yield f"⚠️ 代码执行出现问题:\n```\n{output}\n```{hint}", None
             
             # 5. 返回结果
             if all_output_files:
@@ -447,6 +488,7 @@ class SkillExecutor:
                         "Return ONLY a JSON object."
                     )
                     
+                    logger.debug(f"🤖 [SkillExecutor] Sending legacy param extraction prompt to AI:\n{prompt}")
                     response = gemini_client.models.generate_content(
                         model=GEMINI_MODEL,
                         contents=prompt,

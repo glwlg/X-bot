@@ -33,7 +33,7 @@ class AiService:
         Yields:
             str: Text chunks of the final response.
         """
-        MAX_TURNS = 10  # Agent can think for 10 turns
+        MAX_TURNS = 20  # Agent can think for 20 turns
         turn_count = 0 
         
         # Clone history to avoid mutating the original reference too early
@@ -52,7 +52,8 @@ class AiService:
                     # Gemini API supports streaming function calls, but the SDK handling might be trickier.
                     # For stability, we use non-stream for the decision phase.
                     
-                    response = gemini_client.models.generate_content(
+                    logger.debug(f"🤖 [AiService] Sending prompt to AI (Tools Mode):\n{current_history}")
+                    response = await gemini_client.aio.models.generate_content(
                         model=GEMINI_MODEL,
                         contents=current_history,
                         config=config,
@@ -126,12 +127,13 @@ class AiService:
                         
                 else:
                     # No tools -> Pure streaming chat
-                    stream = gemini_client.models.generate_content_stream(
+                    logger.debug(f"🤖 [AiService] Sending prompt to AI (Stream Mode):\n{current_history}")
+                    stream = await gemini_client.aio.models.generate_content_stream(
                         model=GEMINI_MODEL,
                         contents=current_history,
                         config=config,
                     )
-                    for chunk in stream:
+                    async for chunk in stream:
                         if chunk.text:
                             yield chunk.text
                     break

@@ -1,4 +1,3 @@
-
 import asyncio
 import json
 import sys
@@ -11,45 +10,41 @@ from core.tool_registry import tool_registry
 from core.prompts import DEFAULT_SYSTEM_PROMPT, MEMORY_MANAGEMENT_GUIDE
 from core.config import MCP_MEMORY_ENABLED
 
+
 async def main():
     print("--- Context Size Analysis ---")
-    
-    # 1. System Prompt
-    sys_prompt = DEFAULT_SYSTEM_PROMPT
+
+    import datetime
+    from core.skill_loader import skill_loader
+
+    current_time_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
+
+    # Inject Skill Awareness - User Feedback Optimization
+    # Only inject skill_manager details to save context and encourage dynamic lookup
+    skill_mgr = skill_loader.get_skill("skill_manager")
+    skill_instruction = ""
+
+    if skill_mgr:
+        skill_instruction = (
+            f"\n\n【系统核心能力】\n"
+            f"你不仅仅是一个聊天机器人，你拥有完整的技能管理系统。\n"
+            f"{skill_mgr['description']}\n"
+        )
+
+    system_instruction = DEFAULT_SYSTEM_PROMPT
+    system_instruction += skill_instruction
+    system_instruction += "\n⚠️ **提示**：系统可能安装了其他数百个技能。如果你需要特定的能力（如绘制图表、Docker管理等），请务必先调用 `skill_manager` 的 `search_skills` 或 `list_skills` 来查找，而不是假设自己不能做。"
+
     if MCP_MEMORY_ENABLED:
-        sys_prompt = MEMORY_MANAGEMENT_GUIDE
-    
-    print(f"System Prompt Length: {len(sys_prompt)} chars")
-    
-    # 2. Tools
-    tools = tool_registry.get_all_tools()
-    
-    # Convert tools to dictionary format (simulating JSON payload)
-    # google.genai.types.FunctionDeclaration -> dict
-    tools_dict = []
-    for t in tools:
-        # We need to manually serialize or use their to_dict method if available
-        # The SDK objects usually have _to_dict or similar, or we just estimate
-        t_json = {
-            "name": t.name,
-            "description": t.description,
-            "parameters": "...", # Schema size estimate
-        }
-        # A more accurate way is to dump the whole schema structure
-        # But for quick estimate, let's just dump the string rep
-        tools_dict.append(str(t))
+        # Use memory guide if enabled, but we avoid eager connection
+        system_instruction += "\n\n" + MEMORY_MANAGEMENT_GUIDE
 
-    tools_str = str(tools_dict)
-    print(f"Tools Definition Length (Approx): {len(tools_str)} chars")
-    
-    # Detail on 'call_skill'
-    skill_tool = next((t for t in tools if t.name == "call_skill"), None)
-    if skill_tool:
-        print(f"  - 'call_skill' description length: {len(skill_tool.description)}")
-        print(f"  - 'call_skill' description preview:\n{skill_tool.description[:200]}...")
+    # Append dynamic time context
+    system_instruction += f"\n\n【当前系统时间】: {current_time_str}"
 
-    total = len(sys_prompt) + len(tools_str)
-    print(f"Total Static Overhead: ~{total} chars")
+    print(system_instruction)
+    print(f"System Prompt Length: {len(system_instruction)} chars")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

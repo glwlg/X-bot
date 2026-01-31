@@ -1,31 +1,29 @@
 from core.platform.models import UnifiedContext
-from utils import smart_reply_text
 from handlers.subscription_handlers import (
-    process_subscribe, list_subs_command, 
-    unsubscribe_command, delete_subscription, 
-    refresh_user_subscriptions
+    process_subscribe,
+    list_subs_command,
+    unsubscribe_command,
+    delete_subscription,
+    refresh_user_subscriptions,
 )
+
 
 async def execute(ctx: UnifiedContext, params: dict) -> str:
     """执行 RSS 订阅"""
     action = params.get("action", "add")
     url = params.get("url", "")
-    
-    from handlers.subscription_handlers import (
-        process_subscribe, list_subs_command, 
-        unsubscribe_command, delete_subscription, 
-        refresh_user_subscriptions
-    )
-    
+
     if action == "refresh":
         msg = await refresh_user_subscriptions(ctx)
         if msg:
             await ctx.reply(msg)
         return "✅ RSS 刷新完成"
-    
+
     if action == "list":
         result_text = await list_subs_command(ctx)
-        return f"✅ 订阅列表已发送。\n[CONTEXT_DATA_ONLY - DO NOT REPEAT]\n{result_text}"
+        return (
+            f"✅ 订阅列表已发送。\n[CONTEXT_DATA_ONLY - DO NOT REPEAT]\n{result_text}"
+        )
 
     if action == "remove":
         if url:
@@ -36,13 +34,13 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                 await ctx.reply(f"🗑️ 已取消订阅：`{url}`")
                 return f"✅ 已取消订阅: {url}"
             else:
-                 await ctx.reply(f"❌ 取消失败，未找到该订阅：`{url}`")
-                 return f"❌ 取消失败: {url}"
+                await ctx.reply(f"❌ 取消失败，未找到该订阅：`{url}`")
+                return f"❌ 取消失败: {url}"
         else:
-             # Interactive remove
-             await unsubscribe_command(ctx)
-             return "✅ 进入取消订阅交互模式"
-    
+            # Interactive remove
+            await unsubscribe_command(ctx)
+            return "✅ 进入取消订阅交互模式"
+
     # Default: Add
     if not url:
         await ctx.reply(
@@ -55,10 +53,9 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
             "• 取消订阅"
         )
         return "❌ 未提供 URL"
-    
+
     # 委托给现有逻辑
     if await process_subscribe(ctx, url):
         return f"✅ 订阅成功: {url}"
     else:
         return f"❌ 订阅失败: {url}"
-
