@@ -11,8 +11,6 @@ load_dotenv(override=False)
 
 # Telegram Bot 配置
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-if not TELEGRAM_BOT_TOKEN:
-    raise ValueError("TELEGRAM_BOT_TOKEN environment variable not set!")
 
 # Discord Bot 配置
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")

@@ -113,6 +113,10 @@ async def handle_video_download(
         await ctx.reply("请发送有效的视频链接。")
         return WAITING_FOR_VIDEO_URL
 
+    # Permission check for direct text input in download mode
+    if not await check_permission_unified(ctx):
+         return ConversationHandler.END
+
     url = extract_video_url(message_text)
     if not url:
         await ctx.reply(
@@ -247,6 +251,9 @@ async def handle_video_actions(ctx: UnifiedContext) -> None:
     """处理视频链接的智能选项（下载 vs 摘要）"""
     await ctx.answer_callback()
     
+    if not await check_permission_unified(ctx):
+         return
+    
     if not ctx.platform_ctx:
          return
 
@@ -373,6 +380,9 @@ async def handle_video_actions(ctx: UnifiedContext) -> None:
 async def handle_large_file_action(ctx: UnifiedContext) -> None:
     """处理大文件操作的回调 (摘要/音频/删除)"""
     await ctx.answer_callback()
+    
+    if not await check_permission_unified(ctx):
+         return
     
     if not ctx.platform_ctx:
          return

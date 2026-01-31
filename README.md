@@ -1,9 +1,9 @@
 # X-Bot
 
-**X-Bot** 是一个全能型 AI 助手，支持 **Telegram** 和 **Discord** 双平台，集成了媒体下载、智能对话、文档分析、语音交互和 AI 绘图功能。
- 
-它不仅仅是一个下载工具，更是你的智能生活助手。
- 
+**X-Bot** 是一个具有 **自进化能力** 的全能型 AI 智能体，集成了媒体下载、多模态对话、文档分析、语音交互和 AI 绘图功能。
+
+它不仅仅是一个下载工具或简单的 AI 问答机器人，而是一个能够通过自主学习不断扩展能力的**智能生命体**。
+
 ![logo](logo.png) 
 
 ## 🏗️ 系统架构
@@ -12,9 +12,9 @@
 > 
 > 📚 **[X-Bot 开发手册 (DEVELOPMENT.md)](DEVELOPMENT.md)**
 
-## 🎮 多平台支持 (NEW)
+## 🌍 支持平台
 
-X-Bot 现已支持双平台运行，一套代码，双重体验：
+X-Bot 现已支持多平台运行，一套代码，无缝体验：
 
 - **Telegram Bot**: 经典体验，功能最全，支持复杂的会话和菜单交互。
 - **Discord Bot**: 全新支持，流畅的 AI 对话，高清视频下载，原生 Button 交互。
@@ -119,7 +119,7 @@ X-Bot 现已支持双平台运行，一套代码，双重体验：
 ### 2. 获取配置
 创建一个 `.env` 文件（参考 `.env.example`）：
 
-# Telegram
+# Telegram (Optional)
 TELEGRAM_BOT_TOKEN="你的 Telegram Bot Token"
 
 # Discord (Optional)
