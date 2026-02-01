@@ -1,17 +1,14 @@
 ---
 name: skill_manager
 description: |
-  核心技能中心。你必须通过此技能来管理所有能力。
+  **核心技能中心**。负责管理所有能力（安装、搜索、创建、修改、删除）。
   
   **核心能力**:
   1. **安装/搜索**: `install`, `search` - 获取新能力。
-  2. **配置/定时**: `config` 或 `schedule` - 添加定时任务到数据库。
-     - **查看任务**: `tasks` - (IMPORTANT) 列出所有正在运行的定时任务/Cron。
-     - **删除任务**: `delete_task` - 删除指定任务。
-  3. **进化/重构**: `modify` - 使用 AI 修改技能代码或逻辑 (需要审核)。
-  4. **管理**: `list` - (IMPORTANT) 仅列出安装的 *技能包*，不列出运行的任务。
-  5. **管理**: `delete` - 删除技能包。
-  6. **创造**: `create` - 只有当搜索不到现有技能时，才使用此功能创建新技能。
+  2. **进化/重构**: `modify` - 使用 AI 修改技能代码或逻辑 (需要审核)。
+  3. **管理**: `list` - 列出安装的技能。
+  4. **管理**: `delete` - 删除技能包。
+  5. **创造**: `create` - 只有当搜索不到现有技能时，才使用此功能创建新技能。
 
 triggers:
 - search_skill
@@ -19,118 +16,101 @@ triggers:
 - create_skill
 - delete_skill
 - list_skills
-- config_skill
-- schedule_skill
-- list_tasks
-- delete_task
 - modify_skill
 - refactor_skill
 - 进化技能
 - 修改技能
 - 重构技能
-- 自动运行
-- 周期执行
-- 每天
-- 每小时
-- 定时任务
-- cron
+- 搜索技能
+- 安装技能
+- 删除技能
 ---
 
-# Skill Manager & 技能系统规范
+# Skill Manager (技能中心)
 
-这个技能不仅是管理工具，也是 X-Bot 技能系统的**核心定义文档**。
+你是一个负责管理 X-Bot 技能系统的核心助手。你的职责是帮助用户扩展 Bot 的能力边界。
 
-## 1. 技能管理功能
+## 核心能力
 
-用户可以通过自然语言或指令管理技能：
+1.  **列出技能 (Action: list)**: 查看当前已安装的所有技能包 (Builtin + Learned).
+2.  **搜索技能 (Action: search)**: 从 GitHub 或市场搜索可用技能。
+3.  **安装技能 (Action: install)**: 从指定 URL 或仓库安装新技能。
+4.  **删除技能 (Action: delete)**: 卸载并删除指定名称的技能。
+5.  **创建技能 (Action: create)**: 根据需求描述，使用 AI 自动编写新技能。
+6.  **修改技能 (Action: modify)**: 修改现有技能的代码逻辑或修复 Bug。
+7.  **配置技能 (Action: config)**: (仅 metadata) 修改技能的 triggers, description 等元数据。
 
-- **搜索技能**: "搜索天气技能" (搜索 GitHub)
-- **配置/定时**: "每天早上8点运行 Moltbook" (Bot 会自动调用 `config` 接口修改配置)
-- **查看任务**: "列出定时任务" 或 "Show scheduled tasks" -> 使用 `action="tasks"` (不要使用 `list`)
-- **创建技能**: "创建一个查快递的技能" (AI 自动编程)
-- **安装技能**: "安装 user/repo"
-- **列出技能**: "列出已安装技能" -> 使用 `action="list"`
-- **删除技能**: "删除 [技能名]"
-- **删除任务**: "删除任务 1" -> 使用 `action="delete_task", task_id="1"`
+## 执行指令 (SOP)
 
-## 2. 技能系统架构
+当用户请求管理技能时，请分析其意图并提取以下参数调用内置脚本：
 
-### 2.1 标准技能结构 (Standard)
+### 参数说明
 
-```
-skills/learned/
-  └── my_awesome_skill/
-      ├── SKILL.md
-      └── scripts/
-          └── execute.py
-```
+| 参数名 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `action` | string | 是 | 操作类型: `list`, `search`, `install`, `delete`, `create`, `modify`, `config` |
+| `skill_name` | string | 条件 | 目标技能名称 (create, delete, modify, config 时必填) |
+| `query` | string | 条件 | 搜索关键词 (search 时必填) |
+| `repo_url` | string | 条件 | 仓库地址 (install 时必填，格式 `owner/repo` 或 `https://...`) |
+| `instruction` | string | 条件 | 给 AI 的具体指令 (create, modify 时必填，例如 "实现一个查天气的技能") |
+| `key` | string | 条件 | 配置项键名 (config 时必填) |
+| `value` | string | 条件 | 配置项新值 (config 时必填) |
 
-#### SKILL.md 规范 (示例)
+### 意图映射示例
 
-```markdown
----
-name: my_awesome_skill
-description: 这是一个示例技能描述。
-triggers:
-- 示例
-- example
-config: "value"
----
-```
-# 技能名称
+**1. 列出技能**
+- 用户输入: "我有哪些技能？" / "查看已安装插件"
+- 提取参数:
+  ```json
+  { "action": "list" }
+  ```
 
-这里是详细文档。当用户询问该技能用法时，Bot 会读取这部分内容。
+**2. 搜索技能**
+- 用户输入: "搜索一下有没有查汇率的技能"
+- 提取参数:
+  ```json
+  { "action": "search", "query": "currency exchange" }
+  ```
 
-## 使用方法
-...
-```
+**3. 安装技能**
+- 用户输入: "安装 glwlg/xbot-skills"
+- 提取参数:
+  ```json
+  { "action": "install", "repo_url": "glwlg/xbot-skills" }
+  ```
 
-### 2.2 脚本规范 (scripts/execute.py)
+**4. 创建技能**
+- 用户输入: "帮我写一个技能，可以查询 BTC 价格"
+- 提取参数:
+  ```json
+  {
+    "action": "create",
+    "skill_name": "crypto_price",
+    "instruction": "创建一个查询 BTC 价格的技能，使用 CoinGecko API"
+  }
+  ```
 
-如果技能需要执行逻辑（API 调用、数据处理），则需要 `scripts/execute.py`。
+**5. 修改技能**
+- 用户输入: "修改 weather 技能，增加显示湿度"
+- 提取参数:
+  ```json
+  {
+    "action": "modify",
+    "skill_name": "weather",
+    "instruction": "增加显示湿度的功能"
+  }
+  ```
 
-**基本模版:**
+**6. 删除技能**
+- 用户输入: "删除 test 技能"
+- 提取参数:
+  ```json
+  { "action": "delete", "skill_name": "test" }
+  ```
 
-**基本模版:**
+## 注意事项
 
-```python
-from core.platform.models import UnifiedContext
-
-# 必须包含 execute 函数
-async def execute(ctx: UnifiedContext, params: dict) -> str:
-    """
-    params: 包含了从用户指令中提取的参数
-    """
-    user_id = ctx.message.user.id
-    
-    # 业务逻辑...
-    
-    # 必须返回一个字符串，向 Agent 汇报执行结果
-    return "执行成功，结果是..." 
-```
-
-**可用能力 & 安全规则:**
-
-- **网络**: 允许使用 `httpx` (推荐) 或 `subprocess` 调用 `curl`.
-- **依赖**: 尽量使用标准库。项目已预装 `httpx`, `beautifulsoup4`, `yt-dlp` 等常用库。
-- **文件**: 只能读写 `data/` 目录。
-- **系统**: 禁止使用 `os.system` (请用 `subprocess`)，禁止高危操作。
-
-## 3. 如何导入/分享技能？(Direct Adoption)
-
-X-Bot 支持**零门槛导入**。只需将符合规范的 `SKILL.md` 文件链接发给 Bot 即可。
-
-1. **编写**: 按上述规范编写 `SKILL.md` (如果需要代码，可以将代码内嵌在文档中，或者提供包含 `scripts` 的仓库).
-2. **分享**: 将文件上传到 GitHub, Gist, Pastebin 或任何公开 URL.
-3. **导入**: 发送链接给 Bot："看看这个技能 https://..." 或 "安装 https://..."
-4. **生效**: Bot 会自动识别元数据，下载并请求您批准。
-
-## 4. AI 自动进化
-
-最强大的方式是让 Bot 自己写技能。
-
-- "我需要一个能查币价的某些功能..." -> Bot 会自动编写代码 -> 生成 `SKILL.md` -> 请求审核 -> 存入 `skills/learned`。
-
----
-*Power to the Agent. Code is capability.*
-
+- **优先搜索**: 在创建新技能前，优先搜索已有的技能。
+- **配置 vs 修改**: 
+  - 如果用户只是想修改定时任务 (`crontab`) 或触发词 (`triggers`)，使用 `config`。
+  - 如果用户想修改代码逻辑，使用 `modify`。

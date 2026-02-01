@@ -6,11 +6,8 @@ X-Bot: 多平台媒体助手 + AI 智能伙伴
 import logging
 import asyncio
 import signal
-import sys
 from telegram.ext import (
     Application,
-    CommandHandler,
-    MessageHandler,
     CallbackQueryHandler,
     ConversationHandler,
     PicklePersistence,
@@ -24,17 +21,12 @@ from core.config import (
     DISCORD_BOT_TOKEN,
     LOG_LEVEL,
     WAITING_FOR_VIDEO_URL,
-    WAITING_FOR_REMIND_INPUT,
-    WAITING_FOR_MONITOR_KEYWORD,
-    WAITING_FOR_SUBSCRIBE_URL,
     WAITING_FOR_FEATURE_INPUT,
 )
 from handlers import (
     start,
     handle_new_command,
     help_command,
-    adduser_command,
-    deluser_command,
     button_callback,
     start_download_video,
     back_to_main_and_cancel,
@@ -43,11 +35,8 @@ from handlers import (
     handle_video_download,
     cancel,
     handle_large_file_action,
-    remind_command,
-    handle_remind_input,
     handle_unsubscribe_callback,
     handle_stock_select_callback,
-    handle_monitor_input,
     handle_video_actions,
     stats_command,
     handle_ai_chat,
@@ -56,6 +45,7 @@ from handlers import (
     feature_command,
     handle_feature_input,
     save_feature_command,
+    toggle_translation_command,
 )
 from handlers.skill_handlers import (
     teach_command,
@@ -150,6 +140,7 @@ async def setup_telegram_commands(application: Application) -> None:
             ("skills", "查看 Skills"),
             ("feature", "提交需求"),
             ("stats", "使用统计"),
+            ("translate", "沉浸式翻译"),
             ("help", "使用帮助"),
             ("cancel", "取消当前操作"),
         ]
@@ -221,6 +212,7 @@ async def main():
     adapter_manager.on_command("stats", stats_command)
     adapter_manager.on_command("skills", skills_command)
     adapter_manager.on_command("reload_skills", reload_skills_command)
+    adapter_manager.on_command("translate", toggle_translation_command)
 
     # Legacy/Admin commands (Broadcast to all? Or just TG?)
     # For now broadcast, assuming adapter handles permission checks inside handler if generic

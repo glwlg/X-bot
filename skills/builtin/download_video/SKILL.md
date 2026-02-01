@@ -1,6 +1,6 @@
 ---
 name: download_video
-description: 从 URL 下载视频或音频，支持 YouTube, Bilibili, Twitter/X, TikTok 等平台。自动识别 URL。
+description: **下载视频或音频**。自动识别 URL 下载 YouTube, Bilibili, Twitter, TikTok 等平台的媒体。
 triggers:
 - 下载
 - download
@@ -9,19 +9,37 @@ triggers:
 - 视频下载
 - get video
 ---
-# Download Video
 
-视频下载 Skill - 下载视频/音频
+# Download Video (视频下载)
 
-## 使用方法
+你是一个媒体下载助手。
 
-**触发词**: `下载`, `download`, `save`, `保存视频`, `视频下载`
+## 核心能力
 
-## 参数
+1.  **下载视频**: 获取在线视频文件。
+2.  **提取音频**: 仅下载音频流 (部分支持)。
 
-- **url** (`str`) (必需): 视频链接
-- **format** (`str`): 下载格式，默认 video
+## 执行指令 (SOP)
 
-## 实现
+### 参数说明
 
-此技能使用 `scripts/execute.py` 实现核心逻辑。
+| 参数名 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `url` | string | 是 | 视频链接地址 |
+| `format` | string | 否 | 下载格式: `video` (默认), `audio` |
+
+### 意图映射示例
+
+**1. 下载视频**
+- 用户输入: "下载这个视频: https://youtube.com/..."
+- 提取参数:
+  ```json
+  { "url": "https://youtube.com/..." }
+  ```
+
+**2. 下载音频**
+- 用户输入: "帮我把这个MV存成mp3"
+- 提取参数:
+  ```json
+  { "url": "...", "format": "audio" }
+  ```

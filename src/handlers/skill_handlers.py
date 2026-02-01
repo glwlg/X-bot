@@ -5,7 +5,6 @@ Skill 管理 handlers - /teach, /skills 等命令
 import logging
 import os
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ConversationHandler
 
 from core.platform.models import UnifiedContext
 
@@ -17,7 +16,7 @@ from services.skill_creator import (
     reject_skill,
     list_pending_skills,
 )
-from handlers.base_handlers import check_permission_unified
+from handlers.base_handlers import check_permission_unified, CONVERSATION_END
 
 logger = logging.getLogger(__name__)
 
@@ -30,10 +29,10 @@ async def teach_command(ctx: UnifiedContext) -> int:
     /teach 命令 - 教 Bot 新能力
     """
     if not await check_permission_unified(ctx):
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     if not ctx.platform_ctx:
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     args = ctx.platform_ctx.args
     if args:
@@ -75,7 +74,7 @@ async def process_teach(ctx: UnifiedContext, requirement: str) -> int:
             getattr(msg, "message_id", getattr(msg, "id", None)),
             f"❌ 生成失败:{result.get('error', '未知错误')}",
         )
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     skill_name = result["skill_name"]
     skill_md = result.get("skill_md", "")
@@ -117,7 +116,7 @@ async def process_teach(ctx: UnifiedContext, requirement: str) -> int:
         reply_markup=reply_markup,
     )
 
-    return ConversationHandler.END
+    return CONVERSATION_END
 
 
 async def handle_skill_callback(ctx: UnifiedContext) -> None:

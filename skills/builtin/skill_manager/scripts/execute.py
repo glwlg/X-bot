@@ -82,11 +82,10 @@ async def execute(ctx: UnifiedContext, params: dict):
         learned_skills = []
 
         for name, info in index.items():
-            skill_type = info.get("skill_type", "unknown")
             source = info.get("source", "unknown")
             desc = info.get("description", "")[:60]
 
-            entry = f"• **{name}** ({skill_type}): {desc}"
+            entry = f"• **{name}**: {desc}"
 
             if source == "builtin":
                 builtin_skills.append(entry)
@@ -136,7 +135,7 @@ async def execute(ctx: UnifiedContext, params: dict):
             return f"❌ 修改失败: {result.get('error', '未知错误')}"
 
         code = result["code"]
-        filepath = result["filepath"]
+        # filepath = result["filepath"] # Unused
 
         # 存储待审核信息
         if hasattr(ctx.platform_ctx, "user_data"):
@@ -202,36 +201,6 @@ async def execute(ctx: UnifiedContext, params: dict):
         else:
             return f"❌ 驳回失败: {result.get('error')}"
 
-    elif action == "config" or action == "schedule":
-        # New: Configure Scheduled Tasks via DB
-        skill_name = params.get("skill_name")
-        crontab = params.get("crontab")
-        instruction = params.get("instruction") or params.get("cron_instruction")
-
-        if not skill_name:
-            return "❌ 请提供技能名称 (skill_name)"
-
-        if not crontab:
-            return "❌ 请提供 crontab (e.g. '0 * * * *')"
-
-        if not instruction:
-            # Try to get default instruction from skill info if missing?
-            # Or just use a default.
-            instruction = f"Execute {skill_name}"
-
-        skill_info = skill_loader.get_skill(skill_name)
-        if not skill_info:
-            return f"❌ 找不到技能: {skill_name}"
-
-        try:
-            from repositories.task_repo import add_scheduled_task
-
-            await add_scheduled_task(skill_name, crontab, instruction)
-            return f"✅ 定时任务已添加/更新 (DB): {skill_name}\nCrontab: `{crontab}`\nInstruction: `{instruction}`"
-        except Exception as e:
-            logger.error(f"Task add error: {e}")
-            return f"❌ 添加任务失败: {str(e)}"
-
     elif action == "create":
         # New capability: Create Skill via Evolution Router (Smart)
         requirement = params.get("requirement") or params.get("instruction")
@@ -249,46 +218,6 @@ async def execute(ctx: UnifiedContext, params: dict):
         result_msg = await evolution_router.evolve(requirement, user_id, ctx)
 
         return result_msg
-
-    elif action == "tasks":
-        logger.info(f"Executing 'tasks' action. Params: {params}")
-        # List all scheduled tasks from DB
-        try:
-            from repositories.task_repo import get_all_active_tasks
-
-            logger.info("Imported task_repo, calling get_all_active_tasks...")
-
-            tasks = await get_all_active_tasks()
-            logger.info(f"Got active tasks: {tasks}")
-
-            if not tasks:
-                return "📭 当前没有活动的定时任务 (DB)。"
-
-            response = "📋 定时任务列表\n\n"
-            for t in tasks:
-                # Use backticks to prevent markdown errors with underscores in names
-                response += f"ID: `{t['id']}` | Skill: `{t['skill_name']}`\n"
-                response += f"Cron: `{t['crontab']}`\n"
-                response += f"Desc: `{t['instruction']}`\n\n"
-
-            return response
-        except Exception as e:
-            logger.error(f"Error in 'tasks' action: {e}", exc_info=True)
-            return f"❌ 获取任务列表失败: {str(e)}"
-
-    elif action == "delete_task":
-        # Delete a scheduled task by ID
-        task_id = params.get("task_id")
-        if not task_id:
-            return "❌ 请提供 task_id"
-
-        from repositories.task_repo import delete_task
-
-        try:
-            await delete_task(int(task_id))
-            return f"✅ 任务 {task_id} 已删除"
-        except Exception as e:
-            return f"❌ 删除失败: {e}"
 
     else:
         return f"❌ 未知操作: {action}。支持的操作: search, install, create, delete, list, modify, approve, reject, config, tasks, delete_task"
@@ -401,11 +330,7 @@ def _delete_skill(skill_name: str) -> Tuple[bool, str]:
         if skill_info.get("source") == "builtin":
             return False, f"🚫 禁止删除内置技能 '{skill_name}'"
 
-        skill_path = None
-        if skill_info.get("skill_type") == "standard":
-            skill_path = skill_info.get("skill_dir")
-        elif skill_info.get("skill_type") == "legacy":
-            skill_path = skill_info.get("path")
+        skill_path = skill_info.get("skill_dir")
 
         if not skill_path or not os.path.exists(skill_path):
             return False, f"❌ 找不到技能文件: {skill_path}"

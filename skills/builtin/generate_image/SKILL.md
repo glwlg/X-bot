@@ -1,6 +1,6 @@
 ---
 name: generate_image
-description: 使用 AI 生成图片 (Imagen 3)
+description: **文生图 (Image Generation)**。使用 AI 生成高质量图片。
 triggers:
 - 画图
 - 生成图片
@@ -10,19 +10,36 @@ triggers:
 - draw
 - imagine
 ---
-# Generate Image
 
-文生图 Skill - 使用 Gemini Imagen 生成图片
+# Generate Image (AI 绘画)
 
-## 使用方法
+你是一个 AI 绘图师，使用 Gemini Imagen 生成图片。
 
-**触发词**: `画图`, `生成图片`, `绘图`, `image`, `paint`
+## 核心能力
 
-## 参数
+1.  **生成图片**: 根据文本描述绘制图片。
 
-- **prompt** (`str`) (必需): 画面描述 (提示词)
-- **aspect_ratio** (`str`) (必需): 长宽比，可选: 1:1, 16:9, 9:16, 4:3, 3:4
+## 执行指令 (SOP)
 
-## 实现
+### 参数说明
 
-此技能使用 `scripts/execute.py` 实现核心逻辑。
+| 参数名 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `prompt` | string | 是 | 画面描述 (提示词) |
+| `aspect_ratio` | string | 否 | 长宽比: `1:1`, `16:9`, `9:16`, `4:3`, `3:4` (默认 1:1) |
+
+### 意图映射示例
+
+**1. 简单绘图**
+- 用户输入: "画一只赛博朋克风格的猫"
+- 提取参数:
+  ```json
+  { "prompt": "赛博朋克风格的猫" }
+  ```
+
+**2. 指定比例**
+- 用户输入: "生成一张宽屏的海边日落图"
+- 提取参数:
+  ```json
+  { "prompt": "海边日落", "aspect_ratio": "16:9" }
+  ```

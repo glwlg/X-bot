@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Protocol, Union
 from enum import Enum
 from datetime import datetime
+from typing import Final
 
 
 class MessageType(Enum):
@@ -16,6 +17,9 @@ class MessageType(Enum):
     STICKER = "sticker"
     ANIMATION = "animation"
     UNKNOWN = "unknown"
+
+
+CONVERSATION_END: Final[int] = -1
 
 
 @dataclass

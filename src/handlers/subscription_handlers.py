@@ -7,7 +7,6 @@ import logging
 import urllib.parse
 import feedparser
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ConversationHandler
 
 from core.config import WAITING_FOR_MONITOR_KEYWORD, WAITING_FOR_SUBSCRIBE_URL
 from repositories import (
@@ -18,7 +17,7 @@ from repositories import (
 )
 from stats import increment_stat
 from core.platform.models import UnifiedContext
-from .base_handlers import check_permission_unified
+from .base_handlers import check_permission_unified, CONVERSATION_END
 
 logger = logging.getLogger(__name__)
 
@@ -26,15 +25,15 @@ logger = logging.getLogger(__name__)
 async def subscribe_command(ctx: UnifiedContext) -> int:
     """处理 /subscribe 命令，支持交互式输入"""
     if not await check_permission_unified(ctx):
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     if not ctx.platform_ctx:
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     args = ctx.platform_ctx.args
     if args:
         await process_subscribe(ctx, args[0])
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     await ctx.reply(
         "📢 **订阅 RSS 源**\n\n"
@@ -56,7 +55,7 @@ async def handle_subscribe_input(ctx: UnifiedContext) -> int:
 
     success = await process_subscribe(ctx, url)
     if success:
-        return ConversationHandler.END
+        return CONVERSATION_END
     else:
         return WAITING_FOR_SUBSCRIBE_URL
 
@@ -70,8 +69,23 @@ async def process_subscribe(ctx: UnifiedContext, url: str) -> bool:
         logger.warning(f"Failed to cast user_id {user_id} to int")
 
     if not url.startswith("http"):
-        await ctx.reply("❌ 请输入有效的 HTTP/HTTPS 链接。")
-        return False
+        # 尝试作为关键词处理 (集成 Monitor 功能)
+        logger.info(f"Input '{url}' is not a URL, treating as keyword for monitor.")
+
+        # 使用 Google News 搜索该关键词
+        keywords = re.split(r"[、,，]+", url.strip())
+        keywords = [k.strip() for k in keywords if k.strip()]
+
+        if not keywords:
+            await ctx.reply("❌ 请输入有效的 HTTP/HTTPS 链接或监控关键词。")
+            return False
+
+        # 如果是多个关键词，直接调用 process_monitor 批量处理
+        # 但 process_monitor 返回的是 bool (是否有成功)，我们需要统一反馈
+        # 这里为了简单，如果检测到不是 URL，直接转交给 process_monitor 处理即可
+        # 因为 process_monitor 已经包含了完善的反馈逻辑
+
+        return await process_monitor(ctx, url)
 
     try:
         msg = await ctx.reply("🔍 正在验证 RSS 源...")
@@ -190,12 +204,12 @@ async def handle_unsubscribe_callback(ctx: UnifiedContext) -> None:
 async def monitor_command(ctx: UnifiedContext) -> int:
     """处理 /monitor 命令，支持交互式输入"""
     if not await check_permission_unified(ctx):
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     args = ctx.platform_ctx.args
     if args:
         await process_monitor(ctx, " ".join(args))
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     await ctx.reply(
         "🔍 **监控关键词**\n\n"
@@ -218,7 +232,7 @@ async def handle_monitor_input(ctx: UnifiedContext) -> int:
 
     success = await process_monitor(ctx, keyword)
     if success:
-        return ConversationHandler.END
+        return CONVERSATION_END
     else:
         return WAITING_FOR_MONITOR_KEYWORD
 

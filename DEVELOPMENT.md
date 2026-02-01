@@ -73,11 +73,15 @@ X-Bot 已完成从"规则路由"到"智能体核心"的进化。现在，所有�
     *   **统一接口**：将系统原有的零散功能（如 `download_video`, `add_reminder`）和插件化的 Skills 统一封装为标准 Agent 工具。
     *   **技能桥接**：将 `skills/` 目录下的 Python 脚本自动转换为 Function Calling 定义。
 
-3.  **AiService (`src/services/ai_service.py`)**
+3.  **Skill Agent (`src/services/skill_agent.py`)**
+    *   **Intelligent Executor**：技能系统的智能大脑。
+    *   **Think-Act Loop**：负责技能执行的具体决策与委托 (Execute/Delegate/Reply)，支持 Shell/Python 执行。
+
+4.  **AiService (`src/services/ai_service.py`)**
     *   **Agent Engine**：封装了 Gemini API 的 Function Calling 逻辑。
     *   **流式响应**：支持工具调用的实时流式反馈。
 
-4.  **Smart Deployment Manager (`skills/builtin/deployment_manager.py`)**
+5.  **Smart Deployment Manager (`skills/builtin/deployment_manager.py`)**
     *   **Autonomous Agent**: 独立的 ReAct 智能体，专用于 Docker 部署。
     *   **Policy Enforcer**: 强制执行端口 (>20000) 和配置规范。
     *   **Silence Execution**: 具备自主思考能力，仅汇报最终结果。
@@ -169,10 +173,11 @@ src/
 - 如遇到语法错误或加载失败，**自动卸载**并尝试下一个。
 - 若所有候选均失败，自动记录 **Feature Request**。
 
-#### 2. Skill Universal Adapter (Skill Executor)
-`SkillExecutor` 实现了通用适配器模式：
-- **流式响应**：实时流式传输 AI 的思考过程。
-- **文件自动交付**：自动捕获沙箱中生成的任何新文件，并将其作为 Telegram Document 发送给用户，无需 Skill 开发者编写特定发送逻辑。
+#### 2. Skill Agent (Intelligent Executor)
+`SkillAgent` 替代了传统的 `SkillExecutor`，成为技能系统的智能大脑：
+- **Think-Act Loop**：调用技能时，首先请求 LLM 进行决策 (`think`)。
+- **Flexible Execution**：支持运行 Python 脚本 (`EXECUTE SCRIPT`)、动态生成的代码 (`EXECUTE CODE`)、直接 Shell 命令 (`EXECUTE COMMAND`) 或直接回复 (`REPLY`)。
+- **Delegation**：支持技能委托 (`DELEGATE`)，例如 "股票查询" 技能可以委托 "Web Search" 技能先获取代码，实现了技能间的组合调用。
 
 ---
 
@@ -180,14 +185,15 @@ src/
 ```mermaid
 graph TD
     Req[User Request] -->|Task Boundary| AO[Agent Orchestrator]
-    AO -->|Missing Capability| ER[Evolution Router]
-    ER -->|Prompt Engineering| LLM[Gemini 2.0 Pro]
-    LLM -->|Generate Code| SC[Skill Creator]
-    SC -->|Hot Load| SL[Skill Loader]
-    SL -->|Execute| SE[Skill Executor]
-    SE --"Success"--> User
-    SE --"Error"--> SH[Self-Healing]
-    SH -->|Error Log + Context| LLM
+    AO -->|Call Skill| SA[Skill Agent]
+    SA -->|Think| Decision{Decision}
+    Decision --"EXECUTE"--> Result
+    Decision --"DELEGATE"--> SubSkill[Delegated Skill]
+    SubSkill -->|Result| SA
+    Decision --"REPLY"--> User
+    
+    Result --"Error"--> SH[Self-Healing]
+    SH -->|Fix| SC[Skill Creator]
 ```
 
 ---
@@ -239,7 +245,7 @@ X-Bot 的核心竞争力在于其 **"Always Evolving" (持续进化)** 能力。
     *   **管理**: 仅可通过代码提交修改，`skill_manager` 会拦截对 builtin 的修改请求。
 
 2.  **Learned Skills (`skills/learned/`)**:
-    *   **定义**: 后天学习或用户创建的能力（如 `moltbook`, `crypto_checker`）。
+    *   **定义**: 后天学习或用户创建的能力（如 `crypto_checker`）。
     *   **特性**: 动态、可变、沙箱化。
     *   **来源**: 通过 `create` (AI生成)、`install` (GitHub/URL)、`teach` (自然语言教学) 获得。
 
@@ -266,8 +272,6 @@ description: |
 triggers:                   # 触发词 (Intent Router 使用)
 - 关键词1
 - 关键词2
-crontab: "0 * * * *"        # [可选] 定时任务表达式
-cron_instruction: "Run..."  # [可选] 定时任务的具体指令
 version: 1.0.0
 ---
 
@@ -300,20 +304,15 @@ version: 1.0.0
 
 ### 3.4 定时任务机制 (Cron)
 
-X-Bot 拥有内置的分布式兼容调度器 (`src/core/scheduler.py`)，目前支持 **Hybrid Mode** (混合模式)：
+X-Bot 拥有内置的分布式兼容调度器 (`src/core/scheduler.py`)：
 
-1.  **数据库调度 (推荐)**:
-    *   通过 `skill_manager` 的 `config` 或 `schedule` 指令，将任务存储在 SQLite 数据库 (`scheduled_tasks` 表) 中。
-    *   **优点**: 修改无需 Git 提交，隐私性好，支持动态管理。
-    *   `EvolutionRouter` 自动生成的技能也会优先使用此方式配置定时任务。
-
-2.  **SKILL.md 调度 (Legacy)**:
-    *   系统启动时，扫描 `SKILL.md` 中的 `crontab` 字段。
-    *   **优点**: 版本控制友好，适合固定的系统级任务。
-    *   *注意*: 建议逐步迁移到数据库调度。
+*   **唯一入口**: 请使用 `scheduler_manager` skill 进行定时任务管理 (`add`, `list`, `delete`)。
+*   **存储**: 任务存储在 SQLite 数据库 (`scheduled_tasks` 表) 中。
+*   **特性**: 修改立即生效 (支持 Hot Reload)，隐私性好，支持动态管理。
+*   `EvolutionRouter` 自动生成的技能也会优先使用此方式配置定时任务。
 
 **执行流程**:
-调度器触发 -> 构造 `UnifiedContext` (System User) -> 投递给 `AgentOrchestrator` -> 智能体执行指令。
+调度器触发 -> 构造 `UnifiedContext` (System User) -> 投递给 `AgentOrchestrator` -> 智能体执行指令 (支持 Tool/Skill 调用)。
 
 ---
 
@@ -380,7 +379,7 @@ MCP 模块允许 X-Bot 调用外部 MCP 服务。
 
 1. **异步编程**: 所有 I/O 操作 **必须** 使用 `await`
 2. **错误处理**: 严禁未捕获异常，使用 `try...except` 并记录日志
-3. **权限控制**: 敏感操作必须检查 `check_permission`
+3. **权限控制**: 敏感操作必须检查 `check_permission_unified`
 4. **数据库变更**: 修改表结构需更新 `repositories/base.py` 的 `init_db`
 5. **CallbackQuery**: 新增回调前缀需更新 `main.py` 的 `common_pattern` 正则
 

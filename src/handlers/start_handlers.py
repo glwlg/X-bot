@@ -1,9 +1,8 @@
 import os
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ConversationHandler
 from core.platform.models import UnifiedContext
-from .base_handlers import check_permission_unified
+from .base_handlers import check_permission_unified, CONVERSATION_END
 
 logger = logging.getLogger(__name__)
 
@@ -109,17 +108,17 @@ async def back_to_main_and_cancel(ctx: UnifiedContext) -> int:
     except Exception as e:
         logger.error(f"Error in back_to_main_and_cancel: {e}")
 
-    return ConversationHandler.END
+    return CONVERSATION_END
 
 
 async def button_callback(ctx: UnifiedContext) -> int:
     """处理通用内联键盘按钮点击（非会话入口）"""
     if not await check_permission_unified(ctx):
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     data = ctx.callback_data
     if not data:
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     # Answer callback to stop spinner
     await ctx.answer_callback()
@@ -139,7 +138,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                 "💡 提示：直接在对话框输入消息即可，无需点击按钮。",
                 reply_markup=reply_markup,
             )
-            return ConversationHandler.END
+            return CONVERSATION_END
 
         elif data == "help":
             keyboard = [
@@ -178,7 +177,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                 "/start 主菜单 | /new 新对话 | /stats 统计",
                 reply_markup=reply_markup,
             )
-            return ConversationHandler.END
+            return CONVERSATION_END
 
         elif data == "settings":
             keyboard = [
@@ -200,7 +199,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                 "更多设置功能即将推出...",
                 reply_markup=reply_markup,
             )
-            return ConversationHandler.END
+            return CONVERSATION_END
 
         elif data == "platforms":
             keyboard = [
@@ -218,7 +217,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                 "支持绝大多数公开视频链接！",
                 reply_markup=reply_markup,
             )
-            return ConversationHandler.END
+            return CONVERSATION_END
 
         elif data == "stats":
             keyboard = [
@@ -236,7 +235,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                 stats_text,
                 reply_markup=reply_markup,
             )
-            return ConversationHandler.END
+            return CONVERSATION_END
 
         elif data == "watchlist":
             keyboard = [
@@ -274,7 +273,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                 text += "\n\n发送「取消关注 XX」可删除"
 
             await ctx.edit_message(msg_id, text, reply_markup=reply_markup)
-            return ConversationHandler.END
+            return CONVERSATION_END
 
         elif data == "list_subs":
             keyboard = [
@@ -305,7 +304,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                 text += "\n使用 /unsubscribe `<URL>` 取消订阅。"
 
             await ctx.edit_message(msg_id, text, reply_markup=reply_markup)
-            return ConversationHandler.END
+            return CONVERSATION_END
 
         elif data == "toggle_translation":
             keyboard = [
@@ -336,7 +335,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                 "点击按钮可再次切换。",
                 reply_markup=reply_markup,
             )
-            return ConversationHandler.END
+            return CONVERSATION_END
 
         elif data == "remind_help":
             keyboard = [
@@ -353,7 +352,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                 "时间单位支持：s(秒), m(分), h(时), d(天)",
                 reply_markup=reply_markup,
             )
-            return ConversationHandler.END
+            return CONVERSATION_END
 
         elif data == "back_to_main":
             # 重新显示主菜单
@@ -363,7 +362,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                 WELCOME_MESSAGE,
                 reply_markup=reply_markup,
             )
-            return ConversationHandler.END
+            return CONVERSATION_END
 
     except Exception as e:
         logger.error(f"Error in button_callback for data {data}: {e}")
@@ -373,4 +372,4 @@ async def button_callback(ctx: UnifiedContext) -> int:
         except:
             pass
 
-    return ConversationHandler.END
+    return CONVERSATION_END

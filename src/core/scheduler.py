@@ -9,7 +9,6 @@ import dateutil.parser
 import feedparser
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
-from core.skill_loader import skill_loader
 from core.platform.registry import adapter_manager
 from core.platform.models import UnifiedContext
 
@@ -597,90 +596,167 @@ def start_stock_scheduler():
 # --- 动态 Skill 调度 ---
 
 
-async def run_skill_cron_job(skill_name: str, instruction: str):
+async def run_skill_cron_job(
+    skill_name: str,
+    instruction: str,
+    user_id: int = 0,
+    platform: str = "telegram",
+    need_push: bool = False,
+):
     """
     通用 Skill 定时任务执行器
     """
     if not skill_name:
         return
 
-    logger.info(f"[Cron] Executing scheduled skill: {skill_name}")
+    logger.info(
+        f"[Cron] Executing scheduled skill: '{skill_name}' for user {user_id} on {platform}, instruction: {instruction}"
+    )
 
     try:
-        from services.skill_executor import skill_executor
+        from core.platform.models import UnifiedMessage, User, Chat, MessageType
+
+        # 组装消息
+        instruction = f"使用 skill ({skill_name}) 执行任务: {instruction}"
 
         # 构造系统上下文
-        system_ctx = UnifiedContext(
-            platform="system",
-            message=None,  # System messages have no triggers
-        )
+        # 模拟用户身份以便 SkillAgent 知道是谁触发的任务 (方便权限检查和个性化)
+        if user_id > 0:
+            mock_user = User(id=str(user_id), username="Cron User", is_bot=False)
+            mock_chat = Chat(id=str(user_id), type="private")
+            mock_message = UnifiedMessage(
+                id="cron",
+                platform=platform,
+                user=mock_user,
+                chat=mock_chat,
+                text=instruction,
+                date=datetime.datetime.now(),
+                type=MessageType.TEXT,
+            )
+
+            # 获取 Adapter 实例
+            adapter = None
+            try:
+                adapter = adapter_manager.get_adapter(platform)
+            except Exception:
+                pass
+
+            ctx = UnifiedContext(
+                message=mock_message,
+                platform_ctx=None,
+                _adapter=adapter,
+                user=mock_user,
+            )
+        else:
+            ctx = UnifiedContext(message=None, platform_ctx=None)
 
         if not instruction:
             instruction = "Execute scheduled maintenance/run_cron task."
 
-        async for chunk, files in skill_executor.execute_skill(
-            skill_name, instruction, ctx=system_ctx
-        ):
+        final_output = []
+
+        # Use AgentOrchestrator (The Brain) to handle the request
+        # This effectively treats the cron job as a user message, verifying permission and handling tool usage (Delegation)
+        from core.agent_orchestrator import agent_orchestrator
+        from google.genai import types
+
+        # Construct message history for the Agent
+        message_history = [
+            types.Content(role="user", parts=[types.Part(text=instruction)])
+        ]
+
+        # Execute via Agent Brain
+        async for chunk in agent_orchestrator.handle_message(ctx, message_history):
             if chunk and chunk.strip():
-                logger.info(f"[Cron {skill_name}] Output: {chunk[:100]}...")
+                final_output.append(chunk)
+
+        # Push Notification Logic
+        if need_push and user_id > 0:
+            full_response = "".join(final_output).strip()
+            if full_response:
+                logger.info(f"[Cron] Pushing result to {user_id} on {platform}")
+                await send_via_adapter(
+                    chat_id=user_id,
+                    text=f"⏰ **定时任务执行报告 ({skill_name})**\n\n{full_response}",
+                    platform=platform,
+                )
+            else:
+                logger.info(f"[Cron] No output to push for {skill_name}")
 
     except Exception as e:
-        logger.error(f"[Cron] Failed to run skill {skill_name}: {e}")
+        logger.error(f"[Cron] Failed to run skill {skill_name}: {e}", exc_info=True)
+
+
+async def reload_scheduler_jobs():
+    """
+    重新加载数据库中的定时任务 (全量刷新)
+    """
+    logger.info("Reloading scheduler jobs from database...")
+
+    # 1. Clear existing dynamic jobs to handle deletions/updates
+    # We identify them by ID prefix "cron_db_"
+    # Note: scheduler.get_jobs() returns a list
+    start_time = datetime.datetime.now()
+    removed_count = 0
+    for job in scheduler.get_jobs():
+        if job.id.startswith("cron_db_"):
+            try:
+                job.remove()
+                removed_count += 1
+            except Exception:
+                pass
+
+    if removed_count > 0:
+        logger.info(f"Removed {removed_count} existing dynamic jobs.")
+
+    # 2. Load from DB
+    tasks = await get_all_active_tasks()
+    count = 0
+    for task in tasks:
+        task_id = task["id"]
+        skill_name = task["skill_name"]
+        crontab = task["crontab"]
+        instruction = task["instruction"]
+        user_id = task.get("user_id", 0)
+        platform = task.get("platform", "telegram")
+        # SQLite stores boolean as 0/1 usually, ensures compat
+        need_push = bool(task.get("need_push", True))
+
+        try:
+            parts = crontab.split()
+            if len(parts) == 5:
+                trigger = CronTrigger(
+                    minute=parts[0],
+                    hour=parts[1],
+                    day=parts[2],
+                    month=parts[3],
+                    day_of_week=parts[4],
+                )
+
+                scheduler.add_job(
+                    run_skill_cron_job,
+                    trigger,
+                    id=f"cron_db_{task_id}_{skill_name}",
+                    args=[skill_name, instruction, user_id, platform, need_push],
+                    replace_existing=True,
+                )
+                count += 1
+            else:
+                logger.warning(f"Invalid crontab format for task {task_id}: {crontab}")
+        except Exception as e:
+            logger.error(f"Failed to register DB cron for {skill_name}: {e}")
+
+    logger.info(
+        f"Reloaded {count} jobs from Database in {(datetime.datetime.now() - start_time).total_seconds()}s."
+    )
 
 
 def start_dynamic_skill_scheduler():
     """
-    扫描数据库中的任务并注册定时任务
+    启动动态 Skill 调度器 (Initial Load)
     """
-    logger.info("Scanning for dynamic skill jobs...")
-
-    # 1. Load from DB (Primary Source)
-    async def load_db_tasks():
-        tasks = await get_all_active_tasks()
-        count = 0
-        for task in tasks:
-            task_id = task["id"]
-            skill_name = task["skill_name"]
-            crontab = task["crontab"]
-            instruction = task["instruction"]
-
-            try:
-                parts = crontab.split()
-                if len(parts) == 5:
-                    trigger = CronTrigger(
-                        minute=parts[0],
-                        hour=parts[1],
-                        day=parts[2],
-                        month=parts[3],
-                        day_of_week=parts[4],
-                    )
-
-                    scheduler.add_job(
-                        run_skill_cron_job,
-                        trigger,
-                        id=f"cron_db_{task_id}_{skill_name}",
-                        args=[skill_name, instruction],
-                        replace_existing=True,
-                    )
-                    count += 1
-                else:
-                    logger.warning(
-                        f"Invalid crontab format for task {task_id}: {crontab}"
-                    )
-            except Exception as e:
-                logger.error(f"Failed to register DB cron for {skill_name}: {e}")
-
-        logger.info(f"Registered {count} jobs from Database.")
-
-    # Run task loader once
-    # We can just run it now since we are in async context when starting services?
-    # Or schedule it to run in 1s.
-
-    # But scheduler needs to be running.
-    # We will call start() in main.
-
     scheduler.add_job(
-        load_db_tasks,
+        reload_scheduler_jobs,
         "date",
         run_date=datetime.datetime.now() + datetime.timedelta(seconds=1),
     )

@@ -297,40 +297,25 @@ async def update_skill(skill_name: str, requirement: str, user_id: int) -> dict:
                 "error": "🔒 系统技能受保护，无法修改。请联系管理员。",
             }
 
-        skill_type = skill_info.get("skill_type")
         original_code = ""
         original_skill_md = ""
-        is_standard = False
 
         # 确定代码位置和读取原始内容
-        if skill_type == "standard":
-            is_standard = True
-            skill_dir = skill_info.get("skill_dir")
+        skill_dir = skill_info.get("skill_dir")
 
-            # Read SKILL.md
-            md_path = skill_info.get("skill_md_path")
-            if md_path and os.path.exists(md_path):
-                with open(md_path, "r", encoding="utf-8") as f:
-                    original_skill_md = f.read()
+        # Read SKILL.md
+        md_path = skill_info.get("skill_md_path")
+        if md_path and os.path.exists(md_path):
+            with open(md_path, "r", encoding="utf-8") as f:
+                original_skill_md = f.read()
 
-            # Read execute.py (if exists)
-            script_path = os.path.join(skill_dir, "scripts", "execute.py")
-            if os.path.exists(script_path):
-                with open(script_path, "r", encoding="utf-8") as f:
-                    original_code = f.read()
-            else:
-                original_code = "(No existing code)"
-
-        elif skill_type == "legacy":
-            original_path = skill_info["path"]
-            with open(original_path, "r", encoding="utf-8") as f:
+        # Read execute.py (if exists)
+        script_path = os.path.join(skill_dir, "scripts", "execute.py")
+        if os.path.exists(script_path):
+            with open(script_path, "r", encoding="utf-8") as f:
                 original_code = f.read()
-            original_skill_md = "(Legacy skill, no separate SKILL.md)"
         else:
-            return {
-                "success": False,
-                "error": f"不支持更新类型为 {skill_type} 的技能。",
-            }
+            original_code = "(No existing code)"
 
         # 2. 生成新内容
         prompt = UPDATE_PROMPT.format(

@@ -120,7 +120,6 @@ class SkillLoader:
                 "triggers": triggers,  # 添加 triggers
                 "cron_instruction": cron_instruction,  # 任务指令
                 "params": params,  # 参数定义
-                "skill_type": "standard",
                 "skill_md_path": skill_md_path,
                 "skill_md_content": markdown_content,
                 "skill_dir": skill_dir,
@@ -150,7 +149,6 @@ class SkillLoader:
             skill_summary = {
                 "name": name,
                 "description": info.get("description", "")[:200],
-                "skill_type": info.get("skill_type"),
                 "triggers": info.get("triggers", []),  # 添加 triggers
             }
 
@@ -205,41 +203,6 @@ class SkillLoader:
         """获取 Skill 完整信息"""
         index = self.get_skill_index()
         return index.get(skill_name)
-
-        skill_info = index[skill_name]
-
-        # 只能加载旧版 skill
-        if skill_info.get("skill_type") != "legacy":
-            logger.warning(
-                f"Skill {skill_name} is not a legacy skill, cannot load as module"
-            )
-            return None
-
-        filepath = skill_info["path"]
-
-        try:
-            spec = importlib.util.spec_from_file_location(skill_name, filepath)
-            if spec is None or spec.loader is None:
-                logger.error(f"Cannot create module spec for {skill_name}")
-                return None
-
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-
-            # 验证模块结构
-            if not hasattr(module, "SKILL_META") or not hasattr(module, "execute"):
-                logger.error(
-                    f"Skill {skill_name} missing SKILL_META or execute function"
-                )
-                return None
-
-            self._loaded_modules[skill_name] = module
-            logger.info(f"Loaded legacy skill: {skill_name}")
-            return module
-
-        except Exception as e:
-            logger.error(f"Error loading legacy skill {skill_name}: {e}")
-            return None
 
     def reload_skills(self):
         """重新扫描所有 Skills"""

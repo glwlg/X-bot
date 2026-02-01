@@ -46,31 +46,93 @@ class AgentOrchestrator:
             logger.info(f"Agent invoking tool: {name} with {args}")
             try:
                 # Dispatch to specific handlers
+                # Dispatch to specific handlers
                 if name == "call_skill":
-                    from services.skill_executor import skill_executor
+                    from services.skill_agent import skill_agent, SkillDelegationRequest
 
                     # Notify user about skill invocation (ephemeral, not saved)
                     skill_name = args["skill_name"]
+                    instruction = args["instruction"]
+
                     instruction_preview = (
-                        args["instruction"][:100] + "..."
-                        if len(args["instruction"]) > 100
-                        else args["instruction"]
+                        instruction[:200] + "..."
+                        if len(instruction) > 200
+                        else instruction
                     )
                     await ctx.reply(
                         f"🔧 正在调用技能: `{skill_name}`\n📝 指令: `{instruction_preview}`"
                     )
 
                     full_output = ""
-                    # Pass unified context
-                    async for chunk, files in skill_executor.execute_skill(
-                        args["skill_name"], args["instruction"], ctx=ctx
-                    ):
-                        full_output += chunk
-                        if files:
-                            for filename, content in files.items():
-                                await ctx.reply_document(
-                                    document=content, filename=filename
-                                )
+                    extra_context = ""
+                    current_skill = skill_name
+                    current_instruction = instruction
+
+                    # Delegation Loop (Max depth 3 to prevent infinite loops)
+                    MAX_DEPTH = 3
+
+                    for depth in range(MAX_DEPTH):
+                        delegation = None
+                        iteration_output = ""
+
+                        # Execute Skill
+                        async for chunk, files, result_obj in skill_agent.execute_skill(
+                            current_skill,
+                            current_instruction,
+                            extra_context=extra_context,
+                            ctx=ctx,
+                        ):
+                            if chunk:
+                                iteration_output += chunk + "\n"
+                                # Stream crucial updates to user? Or maybe just status.
+                                # SkillAgent yields status messages.
+                                if (
+                                    "正在" in chunk
+                                    or "完成" in chunk
+                                    or "委托" in chunk
+                                ):
+                                    pass  # Let Agent allow these?
+                                    # Actually AgentOrchestrator usually waits for generator.
+                                    # If we want to stream status, we can.
+
+                            if files:
+                                for filename, content in files.items():
+                                    await ctx.reply_document(
+                                        document=content, filename=filename
+                                    )
+
+                            if isinstance(result_obj, SkillDelegationRequest):
+                                delegation = result_obj
+
+                        full_output += iteration_output
+
+                        if delegation:
+                            logger.info(f"Delegating to {delegation.target_skill}")
+                            await ctx.reply(
+                                f"🔄 (层级 {depth + 1}) 正在委托给 `{delegation.target_skill}`: {delegation.instruction}"
+                            )
+
+                            # Execute Delegated Skill (Capture output for context)
+                            delegated_output = ""
+                            async for d_chunk, d_files, _ in skill_agent.execute_skill(
+                                delegation.target_skill, delegation.instruction, ctx=ctx
+                            ):
+                                if d_chunk:
+                                    delegated_output += d_chunk
+                                if d_files:
+                                    # Send files from delegated skill too
+                                    for f_name, f_content in d_files.items():
+                                        await ctx.reply_document(
+                                            document=f_content, filename=f_name
+                                        )
+
+                            # Add to context and continue loop (re-execute original skill with new context)
+                            extra_context += f"\n\n[来自 {delegation.target_skill} 的结果]:\n{delegated_output}\n"
+                            # Continue loop: execute current_skill again (it will now see the context and likely EXECUTE)
+                            continue
+                        else:
+                            # No delegation, we are done
+                            break
 
                     if not full_output.strip():
                         logger.warning(f"Skill {skill_name} returned empty output!")
@@ -117,7 +179,7 @@ class AgentOrchestrator:
             skill_instruction = (
                 f"\n\n【系统核心能力】\n"
                 f"你不仅仅是一个聊天机器人，你拥有完整的技能管理系统。\n"
-                f"{skill_mgr['description']}\n"
+                f"skill_manager：{skill_mgr['description']}\n"
             )
         else:
             logger.warning("Skill Manager not found during prompt generation!")

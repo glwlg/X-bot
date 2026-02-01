@@ -39,6 +39,7 @@ dependencies = [
     "patchright>=1.0.0",
     "notebooklm-py[browser]>=0.2.0",
     "discord-py>=2.6.4",
+    "pyotp>=2.9.0",
 ]
 
 [project.optional-dependencies]

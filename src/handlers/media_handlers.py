@@ -3,12 +3,10 @@ import asyncio
 import logging
 from core.platform.models import UnifiedContext
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ConversationHandler
-
 from core.config import WAITING_FOR_VIDEO_URL
 from utils import extract_video_url
 from services.download_service import download_video
-from .base_handlers import check_permission_unified
+from .base_handlers import check_permission_unified, CONVERSATION_END
 from user_context import add_message
 
 logger = logging.getLogger(__name__)
@@ -19,7 +17,7 @@ logger = logging.getLogger(__name__)
 async def download_command(ctx: UnifiedContext) -> int:
     """处理 /download 命令，进入视频下载模式"""
     if not await check_permission_unified(ctx):
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     await ctx.reply(
         "📹 **视频下载模式**\n\n"
@@ -70,12 +68,12 @@ async def handle_download_format(ctx: UnifiedContext) -> int:
     """处理下载格式选择"""
     data = ctx.callback_data
     if not data:
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     await ctx.answer_callback()
 
     if not ctx.platform_ctx:
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     # 存储用户选择的格式
     if data == "dl_format_video":
@@ -119,7 +117,7 @@ async def handle_video_download(ctx: UnifiedContext) -> int:
 
     # Permission check for direct text input in download mode
     if not await check_permission_unified(ctx):
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     url = extract_video_url(message_text)
     if not url:
@@ -127,7 +125,7 @@ async def handle_video_download(ctx: UnifiedContext) -> int:
         return WAITING_FOR_VIDEO_URL
 
     if not ctx.platform_ctx:
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     chat_id = ctx.message.chat.id
 
@@ -137,7 +135,7 @@ async def handle_video_download(ctx: UnifiedContext) -> int:
     # Delegate to the shared processing function
     await process_video_download(ctx, url, audio_only)
 
-    return ConversationHandler.END
+    return CONVERSATION_END
 
 
 async def process_video_download(

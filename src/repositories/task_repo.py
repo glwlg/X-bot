@@ -10,15 +10,29 @@ from repositories.base import get_db
 logger = logging.getLogger(__name__)
 
 
-async def add_scheduled_task(skill_name: str, crontab: str, instruction: str) -> int:
+async def add_scheduled_task(
+    skill_name: str,
+    crontab: str,
+    instruction: str,
+    user_id: int = 0,
+    platform: str = "telegram",
+    need_push: bool = True,
+) -> int:
     """Add a new scheduled task"""
     async with await get_db() as db:
         cursor = await db.execute(
             """
-            INSERT INTO scheduled_tasks (skill_name, crontab, instruction, is_active)
-            VALUES (?, ?, ?, 1)
+            INSERT INTO scheduled_tasks (skill_name, crontab, instruction, user_id, platform, need_push, is_active)
+            VALUES (?, ?, ?, ?, ?, ?, 1)
             """,
-            (skill_name, crontab, instruction),
+            (
+                skill_name,
+                crontab,
+                instruction,
+                user_id,
+                platform,
+                1 if need_push else 0,
+            ),
         )
         await db.commit()
         return cursor.lastrowid

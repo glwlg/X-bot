@@ -156,6 +156,9 @@ async def init_db():
                 skill_name TEXT NOT NULL,
                 crontab TEXT NOT NULL,         -- e.g. '0 8 * * *'
                 instruction TEXT NOT NULL,     -- The prompt/instruction to execute
+                user_id INTEGER DEFAULT 0,
+                platform TEXT DEFAULT 'telegram',
+                need_push BOOLEAN DEFAULT 1,
                 is_active BOOLEAN DEFAULT 1,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -210,6 +213,23 @@ async def init_db():
                 )
                 logger.info("Added column platform to watchlist")
 
+            # Scheduled Tasks (Migration)
+            async with db.execute("PRAGMA table_info(scheduled_tasks)") as cursor:
+                columns = [row[1] for row in await cursor.fetchall()]
+
+            new_task_columns = [
+                ("user_id", "INTEGER DEFAULT 0"),
+                ("platform", "TEXT DEFAULT 'telegram'"),
+                ("need_push", "BOOLEAN DEFAULT 1"),  # Default to True for now
+            ]
+
+            for col_name, col_def in new_task_columns:
+                if col_name not in columns:
+                    await db.execute(
+                        f"ALTER TABLE scheduled_tasks ADD COLUMN {col_name} {col_def}"
+                    )
+                    logger.info(f"Added column {col_name} to scheduled_tasks")
+
         except Exception as e:
             logger.error(f"Migration error (tables): {e}")
 
@@ -217,6 +237,18 @@ async def init_db():
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_history_user_session ON chat_history(user_id, session_id)"
         )
+
+        # 账号管理表
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                service TEXT NOT NULL,
+                enc_data TEXT NOT NULL, -- JSON string
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(user_id, service)
+            )
+        """)
 
         await db.commit()
     logger.info("Database initialized successfully")

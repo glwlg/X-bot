@@ -340,7 +340,7 @@ class EvolutionRouter:
 Request: "{request}"
 
 Determine the best strategy:
-1. "config_existing": If the request is about scheduling (cron, timer), configuring, enabling/disabling, or changing settings of an EXISTING skill (e.g., "run moltbook every hour", "set weather city to Beijing").
+1. "config_existing": If the request is about scheduling (cron, timer), configuring, enabling/disabling, or changing settings of an EXISTING skill (e.g., "set weather city to Beijing").
 2. "reuse_search": If the request implies a complex application, service, or tool likely existing on GitHub or Docker Hub (e.g., "deploy uptime kuma", "run a minecraft server", "file browser").
 3. "create": If the request implies a specific calculation, data processing, scriptable task, or simple tool (e.g., "calculate md5", "convert currency", "check website status", "generate uuid").
 

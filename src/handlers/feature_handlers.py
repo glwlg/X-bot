@@ -7,10 +7,7 @@ import re
 import logging
 import datetime
 from core.platform.models import UnifiedContext
-from .base_handlers import check_permission_unified
-from telegram.ext import (
-    ConversationHandler,
-)
+from .base_handlers import check_permission_unified, CONVERSATION_END
 from core.config import (
     WAITING_FOR_FEATURE_INPUT,
 )
@@ -23,10 +20,10 @@ FEATURE_STATE_KEY = "feature_request"
 async def feature_command(ctx: UnifiedContext) -> int:
     """处理 /feature 命令，收集功能需求"""
     if not await check_permission_unified(ctx):
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     if not ctx.platform_ctx:
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     ctx.user_data.pop(FEATURE_STATE_KEY, None)
 
@@ -48,7 +45,7 @@ async def handle_feature_input(ctx: UnifiedContext) -> int:
         return WAITING_FOR_FEATURE_INPUT
 
     if not ctx.platform_ctx:
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     state = ctx.user_data.get(FEATURE_STATE_KEY)
     if state and state.get("filepath"):
@@ -60,7 +57,7 @@ async def handle_feature_input(ctx: UnifiedContext) -> int:
 async def save_feature_command(ctx: UnifiedContext) -> int:
     """保存需求并结束对话"""
     if not ctx.platform_ctx:
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     state = ctx.user_data.pop(FEATURE_STATE_KEY, None)
 
@@ -69,7 +66,7 @@ async def save_feature_command(ctx: UnifiedContext) -> int:
     else:
         await ctx.reply("✅ 需求收集已结束。")
 
-    return ConversationHandler.END
+    return CONVERSATION_END
 
 
 async def process_feature_request(ctx: UnifiedContext, description: str) -> int:
@@ -145,7 +142,7 @@ async def process_feature_request(ctx: UnifiedContext, description: str) -> int:
         await ctx.edit_message(
             getattr(msg, "message_id", getattr(msg, "id", None)), f"❌ 处理失败：{e}"
         )
-        return ConversationHandler.END
+        return CONVERSATION_END
 
 
 async def append_feature_supplement(ctx: UnifiedContext, supplement: str) -> int:
@@ -155,7 +152,7 @@ async def append_feature_supplement(ctx: UnifiedContext, supplement: str) -> int
     filename = state.get("filename")
 
     if not filepath:
-        return ConversationHandler.END
+        return CONVERSATION_END
 
     msg = await ctx.reply("📝 正在更新需求...")
 
@@ -190,4 +187,4 @@ async def append_feature_supplement(ctx: UnifiedContext, supplement: str) -> int
         await ctx.edit_message(
             getattr(msg, "message_id", getattr(msg, "id", None)), f"❌ 更新失败：{e}"
         )
-        return ConversationHandler.END
+        return CONVERSATION_END

@@ -1,39 +1,74 @@
 ---
 name: notebooklm
-description: Google NotebookLM 自动化工具。管理笔记本、添加来源、提问、生成播客/视频等。
+description: **Google NotebookLM 客户端**。支持管理笔记本、上传来源(网页/PDF/YouTube)、提问、生成播客/视频。
 triggers:
 - notebooklm
 - notebook
 - podcast
 - 播客
 ---
-# Notebooklm
 
-NotebookLM Skill - Google NotebookLM 自动化工具
+# NotebookLM (AI 笔记助手)
 
-基于 notebooklm-py CLI 实现，支持笔记本管理、来源添加、提问、生成播客/视频等功能。
+你是一个基于 Google NotebookLM 的知识助手。
 
-## 使用方法
+## 核心能力
 
-**触发词**: `notebooklm`, `笔记本`, `notebook`, `播客`, `podcast`
+1.  **知识问答**: 基于上传的来源回答问题 (RAG)。
+2.  **内容生成**: 生成类似广播的对话式音频 (Podcast) 或视频。
+3.  **资源管理**: 管理不同主题的笔记本和来源。
 
-## 参数
+## 执行指令 (SOP)
 
-- **action** (`str`) (必需): 操作类型: status, login, list, create, use, ask, source_add, source_list, source_fulltext, source_guide, generate_audio, generate_video, generate_quiz, artifact_list, artifact_wait, download, delete
-- **notebook_id** (`str`) (必需): 笔记本 ID
-- **title** (`str`) (必需): 笔记本标题（用于创建或查找）
-- **question** (`str`) (必需): 提问内容
-- **source_url** (`str`) (必需): 来源 URL（网页/YouTube/文件路径）
-- **source_id** (`str`) (必需): 来源 ID
-- **source_ids** (`list`) (必需): 多个来源 ID，用于指定提问或生成的来源范围
-- **instructions** (`str`) (必需): 生成指令（用于播客/视频）
-- **artifact_id** (`str`) (必需): 内容 ID（用于等待或下载）
-- **artifact_type** (`str`) (必需): 下载类型: audio, video, report, mind-map, data-table, quiz, flashcards
-- **output_path** (`str`) (必需): 下载输出路径
-- **research_query** (`str`) (必需): 网络研究查询
-- **research_mode** (`str`) (必需): 研究模式: fast, deep
-- **new_conversation** (`bool`) (必需): 是否开启新对话
+当用户请求使用 NotebookLM 相关功能时，提取参数。
 
-## 实现
+### 参数说明
 
-此技能使用 `scripts/execute.py` 实现核心逻辑。
+| 参数名 | 类型 | 必填 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `action` | string | 是 | 操作类型 (见下表) |
+| `notebook_id` | string | 条件 | 笔记本ID (或 title) |
+| `question` | string | 条件 | 提问内容 (ask) |
+| `source_url` | string | 条件 | 来源地址 (source_add) |
+| `instructions` | string | 否 | 生成指令 (generate_audio/video) |
+
+### 可用 Action 列表
+
+| Action | 说明 | 必需参数 |
+| :--- | :--- | :--- |
+| `status` | 检查认证状态 | 无 |
+| `list` | 列出笔记本 | 无 |
+| `create` | 创建新笔记本 | `title` |
+| `ask` | 提问 | `question` |
+| `source_add` | 添加来源 | `source_url` |
+| `source_list` | 列出来源 | `notebook_id` (可选) |
+| `generate_audio` | 生成播客 | `notebook_id` (可选) |
+| `download` | 下载内容 | `artifact_type` |
+
+### 意图映射示例
+
+**1. 提问**
+- 用户输入: "根据这个笔记本回答，什么是量子纠缠？"
+- 提取参数:
+  ```json
+  { "action": "ask", "question": "什么是量子纠缠？" }
+  ```
+
+**2. 添加来源**
+- 用户输入: "把这个网页加入到笔记本: https://..."
+- 提取参数:
+  ```json
+  { "action": "source_add", "source_url": "https://..." }
+  ```
+
+**3. 生成播客**
+- 用户输入: "生成一段关于这个主题的中文播客"
+- 提取参数:
+  ```json
+  { "action": "generate_audio", "instructions": "Chinese conversation" }
+  ```
+
+## 注意事项
+
+- **认证**: 如果返回未认证，请引导用户在本地运行 CLI 获取 `storage_state.json`。
+- **耗时**: 生成音频/视频可能需要 5-10 分钟，请告知用户稍后查询。

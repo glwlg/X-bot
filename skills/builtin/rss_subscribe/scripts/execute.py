@@ -9,9 +9,10 @@ from handlers.subscription_handlers import (
 
 
 async def execute(ctx: UnifiedContext, params: dict) -> str:
-    """执行 RSS 订阅"""
+    """执行 RSS 订阅或关键词监控"""
     action = params.get("action", "add")
-    url = params.get("url", "")
+    # 支持 url 或 keyword 参数
+    url = params.get("url") or params.get("keyword", "")
 
     if action == "refresh":
         msg = await refresh_user_subscriptions(ctx)
