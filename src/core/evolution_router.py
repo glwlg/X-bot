@@ -10,7 +10,6 @@ if TYPE_CHECKING:
     from core.platform.models import UnifiedContext
 
 from core.config import gemini_client, GEMINI_MODEL
-from services.skill_creator import create_skill, approve_skill
 from core.skill_loader import skill_loader
 
 logger = logging.getLogger(__name__)
@@ -94,15 +93,17 @@ class EvolutionRouter:
             skill_name = analysis.get("skill_name")
             logger.info(f"[Evolution] Strategy: REPAIR existing skill '{skill_name}'")
 
-            # Use skill_creator.update_skill
-            from services.skill_creator import update_skill
+            # Use skill_creator via dynamic import
+            creator = skill_loader.import_skill_module("skill_manager", "creator.py")
+            if not creator:
+                return f"⚠️ 无法加载 Skill Manager 组件, 修复失败。"
 
-            update_res = await update_skill(
+            update_res = await creator.update_skill(
                 skill_name, f"Repair/Update request: {user_request}", user_id
             )
             if update_res["success"]:
                 # Approve immediately as it's a repair request
-                await approve_skill(skill_name)
+                await creator.approve_skill(skill_name)
                 skill_loader.reload_skills()
 
                 # Handle Scheduled Tasks (if suggested)
@@ -131,8 +132,6 @@ class EvolutionRouter:
                     f"已对技能 `{skill_name}` 进行了调整，以适应您的新需求。{cron_msg}\n"
                     f"请重试您的操作。"
                 )
-                if ctx:
-                    await ctx.reply(msg)
                 return msg
             else:
                 return f"⚠️ 技能修复失败: {update_res['error']}"
@@ -224,15 +223,19 @@ class EvolutionRouter:
                         return None
 
                 # Attempt adoption
-                from services.skill_creator import adopt_skill, approve_skill
+                creator = skill_loader.import_skill_module(
+                    "skill_manager", "creator.py"
+                )
+                if not creator:
+                    return None
 
-                result = await adopt_skill(content, user_id)
+                result = await creator.adopt_skill(content, user_id)
 
                 if result["success"]:
                     skill_name = result["skill_name"]
 
                     # 自动批准 (Auto-Approve)
-                    approve_res = await approve_skill(skill_name)
+                    approve_res = await creator.approve_skill(skill_name)
 
                     if approve_res["success"]:
                         skill_loader.reload_skills()
@@ -242,8 +245,7 @@ class EvolutionRouter:
                             f"技能名: `{skill_name}`\n"
                             f"您现在可以直接使用此技能了。"
                         )
-                        if ctx:
-                            await ctx.reply(msg)
+                        # if ctx: await ctx.reply(msg)
                         return msg
                     else:
                         return f"⚠️ 技能下载成功但安装失败: {approve_res.get('error')}"
@@ -318,7 +320,7 @@ class EvolutionRouter:
             }
 
         # 1. Search for similar skills (Repair Candidate Discovery)
-        similar_skills = skill_loader.find_similar_skills(request, threshold=0.6)
+        similar_skills = await skill_loader.find_similar_skills(request, threshold=0.6)
         repair_candidate = None
         if similar_skills:
             top_match = similar_skills[0]
@@ -525,7 +527,11 @@ Return JSON:
                 # Append error hint to help LLM fix itself
                 current_req += f"\n\n(IMPORTANT: The previous generation failed with error: {last_error}. Please ensure valid JSON output and correct code structure.)"
 
-            result = await create_skill(current_req, user_id)
+            creator = skill_loader.import_skill_module("skill_manager", "creator.py")
+            if not creator:
+                return "❌ Skill Manager 加载失败"
+
+            result = await creator.create_skill(current_req, user_id)
 
             if result["success"]:
                 break
@@ -540,9 +546,7 @@ Return JSON:
         skill_md = result.get("skill_md", "")
 
         # 2. Auto-Approve (Direct Activation)
-        from services.skill_creator import approve_skill
-
-        approve_res = await approve_skill(skill_name)
+        approve_res = await creator.approve_skill(skill_name)
 
         if approve_res["success"]:
             skill_loader.reload_skills()
@@ -571,11 +575,11 @@ Return JSON:
         else:
             msg = f"⚠️ 技能生成成功但激活失败: {approve_res.get('error')}"
 
-        if ctx:
-            try:
-                await ctx.reply(msg)
-            except Exception as e:
-                logger.error(f"[Evolution] Failed to send msg: {e}")
+        # if ctx:
+        #     try:
+        #         await ctx.reply(msg)
+        #     except Exception as e:
+        #         logger.error(f"[Evolution] Failed to send msg: {e}")
 
         return msg
 

@@ -11,20 +11,16 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     content = params.get("content", "")
 
     if not time_str or not content:
-        await ctx.reply(
-            "⏰ **设置定时提醒**\n\n"
-            "请告诉我时间和内容，例如：\n"
-            "• 10分钟后提醒我喝水\n"
-            "• 1小时后提醒我开会"
-        )
-        return "❌ 未提供时间或内容"
+        return {
+            "text": "⏰ **设置定时提醒**\n\n请告诉我时间和内容，例如：\n• 10分钟后提醒我喝水\n• 1小时后提醒我开会",
+            "ui": {},
+        }
 
     # 解析时间
     matches = re.findall(r"(\d+)([smhd分秒时天])", time_str.lower())
 
     if not matches:
-        await ctx.reply("❌ 时间格式错误。请使用如 10m, 1h, 30s 等格式。")
-        return "❌ 时间格式错误"
+        return {"text": "❌ 时间格式错误。请使用如 10m, 1h, 30s 等格式。", "ui": {}}
 
     delta_seconds = 0
     for value, unit in matches:
@@ -39,8 +35,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
             delta_seconds += value * 86400
 
     if delta_seconds <= 0:
-        await ctx.reply("❌ 时间必须大于 0。")
-        return "❌ 时间必须大于0"
+        return {"text": "❌ 时间必须大于 0。", "ui": {}}
 
     trigger_time = datetime.datetime.now().astimezone() + datetime.timedelta(
         seconds=delta_seconds
@@ -54,12 +49,14 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     if job_queue:
         await schedule_reminder(job_queue, user_id, chat_id, content, trigger_time)
     else:
-        return "❌ 提醒设置失败: JobQueue 不可用 (Platform limit)"
+        return {"text": "❌ 提醒设置失败: JobQueue 不可用 (Platform limit)", "ui": {}}
 
     display_time = trigger_time.strftime("%H:%M:%S")
     if delta_seconds > 86400:
         display_time = trigger_time.strftime("%Y-%m-%d %H:%M:%S")
 
-    await ctx.reply(f"👌 已设置提醒：{content}\n⏰ 将在 {display_time} 提醒你。")
     await increment_stat(user_id, "reminders_set")
-    return f"✅ 提醒设置成功: {content} at {display_time}"
+    return {
+        "text": f"👌 已设置提醒：{content}\n⏰ 将在 {display_time} 提醒你。",
+        "ui": {},
+    }

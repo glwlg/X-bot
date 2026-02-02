@@ -8,7 +8,7 @@ import urllib.parse
 import feedparser
 import asyncio
 import httpx
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 
 from repositories import (
     get_user_subscriptions,
@@ -30,15 +30,11 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
 
     if action == "refresh":
         msg = await refresh_user_subscriptions(ctx)
-        if msg:
-            await ctx.reply(msg)
-        return "✅ RSS 刷新完成"
+        # if msg: await ctx.reply(msg)
+        return {"text": msg, "ui": {}}
 
     if action == "list":
-        result_text = await list_subs_command(ctx)
-        return (
-            f"✅ 订阅列表已发送。\n[CONTEXT_DATA_ONLY - DO NOT REPEAT]\n{result_text}"
-        )
+        return await list_subs_command(ctx)
 
     if action == "remove":
         if url:
@@ -46,36 +42,16 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
             user_id = int(ctx.message.user.id)
             success = await delete_subscription(user_id, url)
             if success:
-                await ctx.reply(f"🗑️ 已取消订阅：`{url}`")
-                return f"✅ 已取消订阅: {url}"
+                # await ctx.reply(f"🗑️ 已取消订阅：`{url}`")
+                return {"text": f"✅ 已取消订阅: {url}", "ui": {}}
             else:
-                await ctx.reply(f"❌ 取消失败，未找到该订阅：`{url}`")
-                return f"❌ 取消失败: {url}"
-        else:
+                # await ctx.reply(...)
+                return {"text": f"❌ 取消失败，未找到该订阅：`{url}`", "ui": {}}
             # Interactive remove
-            # Note: Interactive UI usually initiated by handler, but if skill called via AI,
-            # we might want to show the interactive menu too.
-            await show_unsubscribe_menu(ctx)
-            return "✅ 进入取消订阅交互模式"
+            return await show_unsubscribe_menu(ctx)
 
     # Default: Add
-    if not url:
-        await ctx.reply(
-            "📢 **订阅 RSS**\n\n"
-            "请提供 RSS 源的链接，例如：\n"
-            "• 订阅 https://example.com/feed.xml\n"
-            "• 帮我订阅这个 RSS https://...\n\n"
-            "或者：\n"
-            "• 订阅列表\n"
-            "• 取消订阅"
-        )
-        return "❌ 未提供 URL"
-
-    # 委托给现有逻辑
-    if await process_subscribe(ctx, url):
-        return f"✅ 订阅成功: {url}"
-    else:
-        return f"❌ 订阅失败: {url}"
+    return await process_subscribe(ctx, url)
 
 
 def register_handlers(adapter_manager):
@@ -86,8 +62,6 @@ def register_handlers(adapter_manager):
     async def cmd_subscribe(ctx):
         if not await is_user_allowed(ctx.message.user.id):
             return
-        # Handle args vs interactive
-        # Handle args vs interactive
         args = []
         if ctx.message.text:
             parts = ctx.message.text.split()
@@ -95,14 +69,9 @@ def register_handlers(adapter_manager):
                 args = parts[1:]
 
         if args:
-            await process_subscribe(ctx, args[0])
+            return await process_subscribe(ctx, args[0])
         else:
-            # Interactive / prompt mode - simple implementation for now
-            # Real conversation handler integration is harder dynamically.
-            # But we can just ask for input or show help.
-            # Since simple state machine is in main.py, moving it here is tricky without full refactor.
-            # For now, let's keep simple command support.
-            await ctx.reply("请使用: /subscribe <URL>")
+            return "请使用: /subscribe <URL>"
 
     async def cmd_monitor(ctx):
         if not await is_user_allowed(ctx.message.user.id):
@@ -114,14 +83,14 @@ def register_handlers(adapter_manager):
                 args = parts[1:]
 
         if args:
-            await process_monitor(ctx, " ".join(args))
+            return await process_monitor(ctx, " ".join(args))
         else:
-            await ctx.reply("请使用: /monitor <关键词>")
+            return "请使用: /monitor <关键词>"
 
     async def cmd_list_subs(ctx):
         if not await is_user_allowed(ctx.message.user.id):
             return
-        await list_subs_command(ctx)
+        return await list_subs_command(ctx)
 
     async def cmd_unsubscribe(ctx):
         if not await is_user_allowed(ctx.message.user.id):
@@ -134,9 +103,9 @@ def register_handlers(adapter_manager):
 
         if args:
             await delete_subscription(ctx.message.user.id, args[0])
-            await ctx.reply(f"🗑️ 已取消订阅：`{args[0]}`")
+            return f"🗑️ 已取消订阅：`{args[0]}`"
         else:
-            await show_unsubscribe_menu(ctx)
+            return await show_unsubscribe_menu(ctx)
 
     adapter_manager.on_command("subscribe", cmd_subscribe)
     adapter_manager.on_command("monitor", cmd_monitor)
@@ -159,8 +128,8 @@ async def fetch_feed_safe(url: str):
         return await loop.run_in_executor(None, feedparser.parse, content)
 
 
-async def process_subscribe(ctx: UnifiedContext, url: str) -> bool:
-    """实际处理订阅逻辑"""
+async def process_subscribe(ctx: UnifiedContext, url: str):
+    """实际处理订阅逻辑 (Returns dict)"""
     try:
         user_id = int(ctx.message.user.id)
     except (ValueError, TypeError):
@@ -176,25 +145,21 @@ async def process_subscribe(ctx: UnifiedContext, url: str) -> bool:
         keywords = [k.strip() for k in keywords if k.strip()]
 
         if not keywords:
-            await ctx.reply("❌ 请输入有效的 HTTP/HTTPS 链接或监控关键词。")
-            return False
+            return {"text": "❌ 请输入有效的 HTTP/HTTPS 链接或监控关键词。", "ui": {}}
 
         # 如果是多个关键词，直接调用 process_monitor 批量处理
         return await process_monitor(ctx, url)
 
     try:
-        msg = await ctx.reply("🔍 正在验证 RSS 源...")
+        # msg = await ctx.reply("🔍 正在验证 RSS 源...")
 
         # Use safe async fetch
         try:
             feed = await fetch_feed_safe(url)
         except Exception as e:
             logger.error(f"Feed fetch failed: {e}")
-            await ctx.edit_message(
-                getattr(msg, "message_id", getattr(msg, "id", None)),
-                f"❌ 无法连接到 RSS 源: {e}",
-            )
-            return False
+            # await ctx.edit_message(...)
+            return {"text": f"❌ 无法连接到 RSS 源: {e}", "ui": {}}
 
         title = feed.feed.get("title", url)
         if not title:
@@ -203,51 +168,40 @@ async def process_subscribe(ctx: UnifiedContext, url: str) -> bool:
         try:
             platform = ctx.message.platform if ctx.message.platform else "telegram"
             await add_subscription(user_id, url, title, platform=platform)
-            await ctx.edit_message(
-                getattr(msg, "message_id", getattr(msg, "id", None)),
-                f"✅ **订阅成功！**\n\n源：{title}\nBot 将每 30 分钟检查一次更新。",
-            )
+            # await ctx.edit_message(...)
             try:
                 uid_int = int(user_id)
                 await increment_stat(uid_int, "subscriptions_added")
             except:
                 pass
-            return True
+            return {
+                "text": f"✅ **订阅成功！**\n\n源：{title}\nBot 将每 30 分钟检查一次更新。",
+                "ui": {},
+            }
         except Exception as e:
             if "UNIQUE constraint failed" in str(e):
-                await ctx.edit_message(
-                    getattr(msg, "message_id", getattr(msg, "id", None)),
-                    "⚠️ 您已经订阅过这个源了。",
-                )
-                return True
+                return {"text": "⚠️ 您已经订阅过这个源了。", "ui": {}}
             else:
-                await ctx.edit_message(
-                    getattr(msg, "message_id", getattr(msg, "id", None)),
-                    f"❌ 订阅失败: {e}",
-                )
-                return False
+                return {"text": f"❌ 订阅失败: {e}", "ui": {}}
 
     except Exception as e:
         logger.error(f"Subscribe error: {e}")
-        await ctx.edit_message(
-            getattr(msg, "message_id", getattr(msg, "id", None)),
-            "❌ 无法访问该 RSS 源。",
-        )
-        return False
+        return {"text": "❌ 无法访问该 RSS 源。", "ui": {}}
 
 
-async def process_monitor(ctx: UnifiedContext, keyword: str) -> bool:
-    """实际处理监控逻辑，支持多关键词"""
+async def process_monitor(ctx: UnifiedContext, keyword: str):
+    """实际处理监控逻辑，支持多关键词 (Returns dict)"""
     user_id = ctx.message.user.id
 
     keywords = re.split(r"[、,，]+", keyword.strip())
     keywords = [k.strip() for k in keywords if k.strip()]
 
     if not keywords:
-        await ctx.reply("❌ 请输入有效的关键词。")
-        return False
+        return {"text": "❌ 请输入有效的关键词。", "ui": {}}
 
-    msg = await ctx.reply(f"🔍 正在配置 {len(keywords)} 个关键词监控...")
+    # msg = await ctx.reply(f"🔍 正在配置 {len(keywords)} 个关键词监控...")
+
+    platform = ctx.message.platform if ctx.message.platform else "telegram"
 
     success_list = []
     failed_list = []
@@ -259,7 +213,7 @@ async def process_monitor(ctx: UnifiedContext, keyword: str) -> bool:
         title = f"监控: {kw}"
 
         try:
-            await add_subscription(user_id, rss_url, title)
+            await add_subscription(user_id, rss_url, title, platform=platform)
             success_list.append(kw)
         except Exception as e:
             if "UNIQUE constraint failed" in str(e):
@@ -270,7 +224,7 @@ async def process_monitor(ctx: UnifiedContext, keyword: str) -> bool:
 
     result_parts = []
     if success_list:
-        result_parts.append(f"✅ 已添加监控：{', '.join(success_list)}")
+        result_parts.append(f"✅ 已添加监控 ({platform})：{', '.join(success_list)}")
     if existed_list:
         result_parts.append(f"⚠️ 已存在：{', '.join(existed_list)}")
     if failed_list:
@@ -282,10 +236,8 @@ async def process_monitor(ctx: UnifiedContext, keyword: str) -> bool:
         + "\n\n来源：Google News\nBot 将每 30 分钟推送相关新闻。"
     )
 
-    await ctx.edit_message(
-        getattr(msg, "message_id", getattr(msg, "id", None)), result_msg
-    )
-    return len(success_list) > 0 or len(existed_list) > 0
+    # await ctx.edit_message(...)
+    return {"text": result_msg, "ui": {}}
 
 
 async def list_subs_command(ctx: UnifiedContext) -> str:
@@ -297,8 +249,8 @@ async def list_subs_command(ctx: UnifiedContext) -> str:
     subs = await get_user_subscriptions(user_id)
 
     if not subs:
-        await ctx.reply("📭 您当前没有订阅任何 RSS 源。")
-        return "📭 无订阅"
+        # await ctx.reply("📭 您当前没有订阅任何 RSS 源。")
+        return {"text": "📭 您当前没有订阅任何 RSS 源。", "ui": {}}
 
     msg = "📋 **您的订阅列表**：\n\n"
     for sub in subs:
@@ -308,27 +260,24 @@ async def list_subs_command(ctx: UnifiedContext) -> str:
 
     msg += "也可以直接点击下方按钮取消订阅："
 
-    keyboard = []
+    actions = []
     temp_row = []
     for sub in subs:
         short_title = (
             sub["title"][:10] + ".." if len(sub["title"]) > 10 else sub["title"]
         )
-        btn = InlineKeyboardButton(
-            f"❌ {short_title}", callback_data=f"unsub_{sub['id']}"
-        )
+        btn = {"text": f"❌ {short_title}", "callback_data": f"unsub_{sub['id']}"}
         temp_row.append(btn)
 
         if len(temp_row) == 2:
-            keyboard.append(temp_row)
+            actions.append(temp_row)
             temp_row = []
 
     if temp_row:
-        keyboard.append(temp_row)
+        actions.append(temp_row)
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await ctx.reply(msg, reply_markup=reply_markup)
-    return msg
+    logger.info(f"list_subs_command text:{msg} actions: {actions}")
+    return {"text": msg, "ui": {"actions": actions}}
 
 
 async def refresh_user_subscriptions(ctx: UnifiedContext) -> str:
@@ -365,20 +314,16 @@ async def show_unsubscribe_menu(ctx: UnifiedContext) -> None:
     subs = await get_user_subscriptions(user_id)
 
     if not subs:
-        await ctx.reply("📭 您当前没有订阅任何内容。")
-        return
+        return {"text": "📭 您当前没有订阅任何内容。", "ui": {}}
 
-    keyboard = []
+    actions = []
     for sub in subs:
         title = sub["title"] or sub["feed_url"][:30]
-        keyboard.append(
-            [InlineKeyboardButton(f"❌ {title}", callback_data=f"unsub_{sub['id']}")]
-        )
+        actions.append([{"text": f"❌ {title}", "callback_data": f"unsub_{sub['id']}"}])
 
-    keyboard.append([InlineKeyboardButton("🚫 取消", callback_data="unsub_cancel")])
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    actions.append([{"text": "🚫 取消", "callback_data": "unsub_cancel"}])
 
-    await ctx.reply("📋 **请选择要取消的订阅**：", reply_markup=reply_markup)
+    return {"text": "📋 **请选择要取消的订阅**：", "ui": {"actions": actions}}
 
 
 async def handle_unsubscribe_callback(ctx: UnifiedContext) -> None:
@@ -390,19 +335,19 @@ async def handle_unsubscribe_callback(ctx: UnifiedContext) -> None:
     await ctx.answer_callback()
 
     if data == "unsub_cancel":
-        await ctx.reply("👌 已取消操作。")
-        return
+        # await ctx.reply("👌 已取消操作。")
+        return "👌 已取消操作。"
 
     try:
         sub_id = int(data.replace("unsub_", ""))
         user_id = ctx.callback_user_id
     except ValueError:
-        await ctx.reply("❌ 无效的操作。")
-        return
+        # await ctx.reply("❌ 无效的操作。")
+        return "❌ 无效的操作。"
 
     success = await delete_subscription_by_id(sub_id, user_id)
 
     if success:
-        await ctx.reply("✅ 订阅已取消。")
+        return "✅ 订阅已取消。"
     else:
-        await ctx.reply("❌ 取消失败，订阅可能已不存在。")
+        return "❌ 取消失败，订阅可能已不存在。"

@@ -3,10 +3,9 @@ Stock Watch Skill Script
 """
 
 import re
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
 
 from repositories import (
-    remove_watchlist_stock,
     remove_watchlist_stock_by_code,
     get_user_watchlist,
     add_watchlist_stock,
@@ -17,6 +16,9 @@ from services.stock_service import (
     search_stock_by_name,
 )
 from core.platform.models import UnifiedContext
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 async def execute(ctx: UnifiedContext, params: dict) -> str:
@@ -47,19 +49,14 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     action = ACTION_MAP.get(raw_action, raw_action)
 
     if action == "refresh":
-        msg = await ctx.reply("⏳ 正在获取最新行情...")
         result = await trigger_manual_stock_check(ctx.platform_ctx, user_id)
         if result:
-            await ctx.edit_message(
-                getattr(msg, "message_id", getattr(msg, "id", None)), result
-            )
-            return f"✅ 股票行情已刷新。\n[CONTEXT_DATA_ONLY - DO NOT REPEAT]\n{result}"
+            return {
+                "text": f"✅ 股票行情已刷新。\n[CONTEXT_DATA_ONLY - DO NOT REPEAT]\n{result}",
+                "ui": {},
+            }
         else:
-            await ctx.edit_message(
-                getattr(msg, "message_id", getattr(msg, "id", None)),
-                "📭 您的自选股列表为空，无法刷新。",
-            )
-            return "❌ 刷新失败: 自选股为空"
+            return {"text": "📭 您的自选股列表为空，无法刷新。", "ui": {}}
 
     if action == "add_stock":
         if "," in stock_name or " " in stock_name or "，" in stock_name:
@@ -82,7 +79,7 @@ def register_handlers(adapter_manager):
     async def cmd_watchlist(ctx):
         if not await is_user_allowed(ctx.message.user.id):
             return
-        await show_watchlist(ctx, ctx.message.user.id)
+        return await show_watchlist(ctx, ctx.message.user.id)
 
     async def cmd_add_stock(ctx):
         if not await is_user_allowed(ctx.message.user.id):
@@ -98,11 +95,11 @@ def register_handlers(adapter_manager):
             name = " ".join(args)
             if "," in name or " " in name or "，" in name:
                 names = [n.strip() for n in re.split(r"[,，\s]+", name) if n.strip()]
-                await add_multiple_stocks(ctx, ctx.message.user.id, names)
+                return await add_multiple_stocks(ctx, ctx.message.user.id, names)
             else:
-                await add_single_stock(ctx, ctx.message.user.id, name)
+                return await add_single_stock(ctx, ctx.message.user.id, name)
         else:
-            await ctx.reply("请使用: /add_stock <股票名称>")
+            return "请使用: /add_stock <股票名称>"
 
     # Aliases
     adapter_manager.on_command("watchlist", cmd_watchlist)
@@ -123,9 +120,9 @@ def register_handlers(adapter_manager):
 
         if args:
             name = " ".join(args)
-            await remove_stock(ctx, ctx.message.user.id, name)
+            return await remove_stock(ctx, ctx.message.user.id, name)
         else:
-            await ctx.reply("请使用: /delstock <股票名称>")
+            return "请使用: /delstock <股票名称>"
 
     adapter_manager.on_command("delstock", cmd_del_stock)
     # Optional implicit add via message? No, keep explicit commands for now
@@ -147,10 +144,10 @@ async def show_watchlist(ctx: UnifiedContext, user_id: int) -> str:
     watchlist = await get_user_watchlist(user_id, platform=platform)
 
     if not watchlist:
-        await ctx.reply(
-            "📭 **您的自选股为空**\n\n发送「帮我关注 XX股票」可添加自选股。"
-        )
-        return "📭 自选股为空"
+        return {
+            "text": "📭 **您的自选股为空**\n\n发送「帮我关注 XX股票」可添加自选股。",
+            "ui": {},
+        }
 
     stock_codes = [item["stock_code"] for item in watchlist]
     quotes = await fetch_stock_quotes(stock_codes)
@@ -163,25 +160,23 @@ async def show_watchlist(ctx: UnifiedContext, user_id: int) -> str:
             lines.append(f"• {item['stock_name']} ({item['stock_code']})")
         message = "\n".join(lines)
 
-    keyboard = []
+    actions = []
     temp_row = []
     for item in watchlist:
-        btn = InlineKeyboardButton(
-            f"❌ {item['stock_name']}",
-            callback_data=f"stock_del_{item['stock_code']}",
-        )
+        btn = {
+            "text": f"❌ {item['stock_name']}",
+            "callback_data": f"stock_del_{item['stock_code']}",
+        }
         temp_row.append(btn)
 
         if len(temp_row) == 2:
-            keyboard.append(temp_row)
+            actions.append(temp_row)
             temp_row = []
 
     if temp_row:
-        keyboard.append(temp_row)
+        actions.append(temp_row)
 
-    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-    await ctx.reply(message, reply_markup=reply_markup)
-    return f"✅ 自选股列表已发送。\n[CONTEXT_DATA_ONLY - DO NOT REPEAT]\n{message}"
+    return {"text": message, "ui": {"actions": actions}}
 
 
 async def remove_stock(ctx: UnifiedContext, user_id: int, stock_name: str) -> str:
@@ -191,17 +186,14 @@ async def remove_stock(ctx: UnifiedContext, user_id: int, stock_name: str) -> st
     for item in watchlist:
         if stock_name.lower() in item["stock_name"].lower():
             await remove_watchlist_stock_by_code(user_id, item["stock_code"])
-            await ctx.reply(f"✅ 已取消关注 **{item['stock_name']}**")
-            return f"✅ 取消关注成功: {item['stock_name']}"
-    await ctx.reply(f"⚠️ 未找到匹配「{stock_name}」的自选股")
-    return f"❌ 未找到匹配股票: {stock_name}"
+            return {"text": f"✅ 已取消关注 **{item['stock_name']}**", "ui": {}}
+    return {"text": f"⚠️ 未找到匹配「{stock_name}」的自选股", "ui": {}}
 
 
 async def add_multiple_stocks(
     ctx: UnifiedContext, user_id: int, stock_names: list[str]
 ) -> str:
     """添加多个股票"""
-    msg = await ctx.reply(f"🔍 正在搜索 {len(stock_names)} 只股票...")
 
     success_list = []
     failed_list = []
@@ -247,26 +239,26 @@ async def add_multiple_stocks(
         + "\n\n交易时段将每 10 分钟推送行情。"
     )
 
-    await ctx.edit_message(
-        getattr(msg, "message_id", getattr(msg, "id", None)), result_msg
-    )
-    return result_msg
+    # await ctx.edit_message(
+    #    getattr(msg, "message_id", getattr(msg, "id", None)), result_msg
+    # )
+    # For Agent flow, we return result. For native (if used), we rely on return.
+    # Note: add_multiple_stocks is called by cmd_add_stock too.
+    # We should return the dict.
+
+    return {"text": result_msg, "ui": {}}
 
 
 async def add_single_stock(ctx: UnifiedContext, user_id: int, stock_name: str) -> str:
     """添加单个股票"""
-    msg = await ctx.reply(f"🔍 正在搜索「{stock_name}」...")
 
     results = await search_stock_by_name(stock_name)
     platform = ctx.message.platform if ctx.message.platform else "telegram"
+    logger.info(f"Adding single stock for user {user_id} on platform: {platform}")
 
     if not results:
         msg_text = f"❌ 未找到匹配「{stock_name}」的股票"
-        await ctx.edit_message(
-            getattr(msg, "message_id", getattr(msg, "id", None)),
-            msg_text,
-        )
-        return msg_text
+        return {"text": msg_text, "ui": {}}
 
     if len(results) == 1:
         stock = results[0]
@@ -275,43 +267,34 @@ async def add_single_stock(ctx: UnifiedContext, user_id: int, stock_name: str) -
         )
         if success:
             msg_text = (
-                f"✅ 已添加自选股\n\n"
+                f"✅ 已添加自选股 ({platform})\n\n"
                 f"**{stock['name']}** ({stock['code']})\n\n"
                 f"交易时段将每 10 分钟推送行情。"
             )
-            await ctx.edit_message(
-                getattr(msg, "message_id", getattr(msg, "id", None)),
-                msg_text,
-            )
-            return msg_text
+            # await ctx.edit_message(
+            #    getattr(msg, "message_id", getattr(msg, "id", None)),
+            #    msg_text,
+            # )
+            return {"text": msg_text, "ui": {}}
         else:
             msg_text = f"⚠️ **{stock['name']}** 已在您的自选股中"
-            await ctx.edit_message(
-                getattr(msg, "message_id", getattr(msg, "id", None)),
-                msg_text,
-            )
-            return msg_text
+            return {"text": msg_text, "ui": {}}
 
-    keyboard = []
+    actions = []
     for stock in results[:8]:
-        keyboard.append(
+        actions.append(
             [
-                InlineKeyboardButton(
-                    f"{stock['name']} ({stock['code']}) - {stock['market']}",
-                    callback_data=f"stock_add_{stock['code']}_{stock['name']}",
-                )
+                {
+                    "text": f"{stock['name']} ({stock['code']}) - {stock['market']}",
+                    "callback_data": f"stock_add_{stock['code']}_{stock['name']}",
+                }
             ]
         )
-    keyboard.append([InlineKeyboardButton("🚫 取消", callback_data="stock_cancel")])
+    actions.append([{"text": "🚫 取消", "callback_data": "stock_cancel"}])
 
-    reply_markup = InlineKeyboardMarkup(keyboard)
     msg_text = f"🔍 找到多个匹配「{stock_name}」的股票，请选择："
-    await ctx.edit_message(
-        getattr(msg, "message_id", getattr(msg, "id", None)),
-        msg_text,
-        reply_markup=reply_markup,
-    )
-    return msg_text
+
+    return {"text": msg_text, "ui": {"actions": actions}}
 
 
 async def handle_stock_select_callback(ctx: UnifiedContext) -> None:

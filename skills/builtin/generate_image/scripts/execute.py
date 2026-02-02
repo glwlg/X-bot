@@ -18,10 +18,9 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     aspect_ratio = params.get("aspect_ratio", "1:1")
 
     if not prompt:
-        await ctx.reply("🎨 请描述你想要生成的画面。")
-        return "❌ 未提供提示词"
+        return {"text": "🎨 请描述你想要生成的画面。", "ui": {}}
 
-    status_msg = await ctx.reply(f"🎨 正在绘图: {prompt} ({aspect_ratio})...")
+    # status_msg = None
 
     try:
         # Construct content object
@@ -85,12 +84,11 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
             logger.error(
                 f"Image Gen Failed. Full Response Candidates: {response.candidates}"
             )
-            msg_id = getattr(status_msg, "message_id", getattr(status_msg, "id", None))
-            await ctx.edit_message(
-                msg_id,
-                "❌ 生成失败: API 未返回图片数据 (Candidates Empty or No Inline Data)。",
-            )
-            return "❌ 生成失败: 无图片数据"
+            # await ctx.edit_message(...)
+            return {
+                "text": "❌ 生成失败: API 未返回图片数据 (Candidates Empty or No Inline Data)。",
+                "ui": {},
+            }
 
         # 发送图片 - Ensure bytes, use BytesIO to avoid "embedded null byte" path logic in Discord
         if isinstance(image_bytes, bytes):
@@ -109,28 +107,50 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
             else:
                 image_io = io.BytesIO(bytes(image_bytes))
 
-        await ctx.reply_photo(
-            photo=image_io,
-            caption=f"🎨 **Prompt**: {prompt}\n📏 **Ratio**: {aspect_ratio}",
-        )
+        # Return as file
 
-        # 删除进度消息
-        try:
-            await status_msg.delete()
-        except:
-            pass
+        # Determine filename based on prompt or random?
+        import time
 
-        return "✅ 图片生成并发送成功"
+        safe_prompt = "".join([c for c in prompt if c.isalnum()])[:20]
+        filename = f"gen_{safe_prompt}_{int(time.time())}.png"
 
-    except Exception as e:
+        # Read byte content
+        image_content = image_io.getvalue()
+
+        return {
+            "text": f"🎨 **Prompt**: {prompt}\n📏 **Ratio**: {aspect_ratio}",
+            "files": {filename: image_content},
+            "ui": {},
+        }
+
+        # The following code is unreachable because of the return statement above.
+        # Removing unreachable code.
+        # # 删除进度消息
+        # try:
+        #     await status_msg.delete()
+        # except Exception:
+        #     pass
+
+        # return {
+        #     "text": "✅ 图片生成成功",  # "File sent via Brain"
+        #     "ui": {},
+        # }
+
+    except (
+        Exception
+    ) as e:  # Keeping as general Exception as specific types are not clear from context
         logger.error(f"Image generation failed: {e}")
         error_msg = str(e)
-        if status_msg:
-            try:
-                msg_id = getattr(
-                    status_msg, "message_id", getattr(status_msg, "id", None)
-                )
-                await ctx.edit_message(msg_id, f"❌ 绘图失败: {error_msg}")
-            except:
-                pass
-        return f"❌ 绘图失败: {error_msg}"
+        # The following code is commented out and refers to an unused variable (status_msg).
+        # Removing commented out code that refers to unused variables.
+        # if status_msg:
+        #     try:
+        #         msg_id = getattr(
+        #             status_msg, "message_id", getattr(status_msg, "id", None)
+        #         )
+        #         # await ctx.edit_message(msg_id, f"❌ 绘图失败: {error_msg}")
+        #         pass
+        #     except Exception:
+        #         pass
+        return {"text": f"❌ 绘图失败: {error_msg}", "ui": {}}

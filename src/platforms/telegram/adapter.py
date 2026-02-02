@@ -1,5 +1,5 @@
 import logging
-from typing import Any, Optional, Union, Callable
+from typing import Any, Optional, Union, Callable, Dict
 from telegram import Update, Bot
 from telegram.ext import (
     Application,
@@ -26,6 +26,38 @@ class TelegramAdapter(BotAdapter):
         self.application = application
         self.bot: Bot = application.bot
 
+    def _render_ui(self, ui: Optional[Dict[str, Any]]) -> Optional[Any]:
+        """Convert standard UI dict to Telegram ReplyMarkup"""
+        if not ui or not isinstance(ui, dict):
+            return None
+
+        actions = ui.get("actions", [])
+        if not actions:
+            return None
+
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        keyboard = []
+        for row in actions:
+            k_row = []
+            for btn in row:
+                # Support both dict and object (legacy)
+                if isinstance(btn, dict):
+                    text = btn.get("text", "Button")
+                    callback_data = btn.get("callback_data")
+                    url = btn.get("url")
+                    k_row.append(
+                        InlineKeyboardButton(
+                            text=text, callback_data=callback_data, url=url
+                        )
+                    )
+                else:
+                    # Assume it's already an InlineKeyboardButton or similar
+                    k_row.append(btn)
+            keyboard.append(k_row)
+
+        return InlineKeyboardMarkup(keyboard)
+
     async def start(self) -> None:
         """
         Start the bot using the configured Application.
@@ -40,16 +72,23 @@ class TelegramAdapter(BotAdapter):
         await self.application.stop()
         await self.application.shutdown()
 
-    async def reply_text(self, context: UnifiedContext, text: str, **kwargs) -> Any:
+    async def reply_text(
+        self, context: UnifiedContext, text: str, ui: Optional[Dict] = None, **kwargs
+    ) -> Any:
         try:
             html_text = markdown_to_telegram_html(text)
             chat_id = context.message.chat.id
+
+            reply_markup = kwargs.pop("reply_markup", None)
+            if not reply_markup and ui:
+                reply_markup = self._render_ui(ui)
 
             return await self.bot.send_message(
                 chat_id=chat_id,
                 text=html_text,
                 parse_mode="HTML",
                 disable_web_page_preview=True,
+                reply_markup=reply_markup,
                 **kwargs,
             )
         except Exception as e:
@@ -57,11 +96,20 @@ class TelegramAdapter(BotAdapter):
             raise MessageSendError(str(e))
 
     async def edit_text(
-        self, context: UnifiedContext, message_id: str, text: str, **kwargs
+        self,
+        context: UnifiedContext,
+        message_id: str,
+        text: str,
+        ui: Optional[Dict] = None,
+        **kwargs,
     ) -> Any:
         try:
             html_text = markdown_to_telegram_html(text)
             chat_id = context.message.chat.id
+
+            reply_markup = kwargs.pop("reply_markup", None)
+            if not reply_markup and ui:
+                reply_markup = self._render_ui(ui)
 
             return await self.bot.edit_message_text(
                 chat_id=chat_id,
@@ -69,6 +117,7 @@ class TelegramAdapter(BotAdapter):
                 text=html_text,
                 parse_mode="HTML",
                 disable_web_page_preview=True,
+                reply_markup=reply_markup,
                 **kwargs,
             )
         except Exception as e:
@@ -223,7 +272,11 @@ class TelegramAdapter(BotAdapter):
                     platform_event=update,
                     _adapter=self,
                 )
-                return await handler_func(unified_ctx)
+                res = await handler_func(unified_ctx)
+                if res is not None:
+                    # Auto-reply if handler returns something
+                    await unified_ctx.reply(res)
+                return res
             except Exception as e:
                 logger.error(f"Error in unified handler wrapper: {e}", exc_info=True)
 
@@ -241,7 +294,10 @@ class TelegramAdapter(BotAdapter):
                     platform_event=update,
                     _adapter=self,
                 )
-                return await handler_func(unified_ctx)
+                res = await handler_func(unified_ctx)
+                if res is not None:
+                    await unified_ctx.reply(res)
+                return res
             except Exception as e:
                 logger.error(
                     f"Error in unified message handler wrapper: {e}", exc_info=True
@@ -263,7 +319,10 @@ class TelegramAdapter(BotAdapter):
                     platform_event=update,
                     _adapter=self,
                 )
-                return await handler_func(unified_ctx)
+                res = await handler_func(unified_ctx)
+                if res is not None:
+                    await unified_ctx.reply(res)
+                return res
             except Exception as e:
                 logger.error(
                     f"Error in unified callback handler wrapper: {e}", exc_info=True
@@ -285,7 +344,10 @@ class TelegramAdapter(BotAdapter):
                     platform_event=update,
                     _adapter=self,
                 )
-                return await handler_func(unified_ctx)
+                res = await handler_func(unified_ctx)
+                if res is not None:
+                    await unified_ctx.reply(res)
+                return res
             except Exception as e:
                 logger.error(f"Error in unified callback wrapper: {e}", exc_info=True)
 
@@ -305,7 +367,10 @@ class TelegramAdapter(BotAdapter):
                     platform_event=update,
                     _adapter=self,
                 )
-                return await handler_func(unified_ctx)
+                res = await handler_func(unified_ctx)
+                if res is not None:
+                    await unified_ctx.reply(res)
+                return res
             except Exception as e:
                 logger.error(f"Error in unified command wrapper: {e}", exc_info=True)
 
@@ -325,7 +390,10 @@ class TelegramAdapter(BotAdapter):
                     platform_event=update,
                     _adapter=self,
                 )
-                return await handler_func(unified_ctx)
+                res = await handler_func(unified_ctx)
+                if res is not None:
+                    await unified_ctx.reply(res)
+                return res
             except Exception as e:
                 logger.error(f"Error in unified message wrapper: {e}", exc_info=True)
 

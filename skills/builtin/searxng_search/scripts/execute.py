@@ -31,23 +31,17 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     # User asked to disable if not configured.
     base_url = os.getenv("SEARXNG_URL")
     if not base_url:
-        await ctx.reply("⚠️ 搜索服务未配置 (SEARXNG_URL missing). 技能暂时不可用。")
-        return "Search service is disabled by configuration."
+        return {
+            "text": "⚠️ 搜索服务未配置 (SEARXNG_URL missing). 技能暂时不可用。",
+            "ui": {},
+        }
 
     if not queries:
-        await ctx.reply("❌ 请提供搜索关键词")
-        return
+        return {"text": "❌ 请提供搜索关键词", "ui": {}}
 
     # Limit queries count
     queries = queries[:5]
     num_results = min(max(1, int(num_results)), 10)
-
-    status_msg = (
-        f"🔍 正在搜索 {len(queries)} 个主题..."
-        if len(queries) > 1
-        else f"🔍 正在搜索: {queries[0]}"
-    )
-    await ctx.reply(status_msg)
 
     async def fetch_results(search_query):
         try:
@@ -103,7 +97,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                         results = data.get("results", [])[:num_results]
 
                 return search_query, results
-        except Exception as e:
+        except Exception:
             return search_query, []
 
     # Concurrent Execution
@@ -171,62 +165,14 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     html_content += "</body></html>"
 
     if not found_any:
-        await ctx.reply("😔 所有查询均未找到结果")
-        return "No results found for any query."
+        return {"text": "No results found for any query.", "ui": {}}
 
-    # Send HTML File
-    try:
-        import io
+    # Prepare HTML File content
+    html_bytes = html_content.encode("utf-8")
 
-        file_obj = io.BytesIO(html_content.encode("utf-8"))
-        file_obj.name = "search_report.html"
+    # Discord text logic (keep it? Brain summarizes anyway, but maybe useful to return logic text)
+    # The original returned summary lines.
 
-        # Platform specific internal logic
-        is_discord = False
-        try:
-            # Try to detect via context (UnifiedContext abstraction can be leaky)
-            if ctx.message.platform == "discord":
-                is_discord = True
-        except:
-            pass
+    final_text = "\n".join(agent_summary_lines)
 
-        await ctx.reply_document(
-            document=file_obj, caption=f"📊 聚合搜索完成 ({len(queries)} 个主题)"
-        )
-
-        # For Discord, also send the content as text chunks because HTML isn't viewable
-        if is_discord:
-            markdown_report = ""
-            for query_text, res_items in results_list:
-                markdown_report += f"**🔎 Results for: {query_text}**\n"
-                if not res_items:
-                    markdown_report += "> *No results found*\n\n"
-                    continue
-
-                for item in res_items:
-                    title = item.get("title", "No Title")
-                    url = item.get("url", "#")
-                    content = item.get("content", "").replace("\n", " ")
-                    markdown_report += f"- **[{title}]({url})**\n"
-                    markdown_report += f"  {content[:200]}...\n\n"
-
-            # Split and send (approx 1900 chars limit for safety)
-            chunks = []
-            current_chunk = ""
-            for line in markdown_report.split("\n"):
-                if len(current_chunk) + len(line) + 1 > 1900:
-                    chunks.append(current_chunk)
-                    current_chunk = line + "\n"
-                else:
-                    current_chunk += line + "\n"
-            if current_chunk:
-                chunks.append(current_chunk)
-
-            for chunk in chunks:
-                if chunk.strip():
-                    await ctx.reply(chunk.strip())
-
-    except Exception as e:
-        await ctx.reply(f"⚠️ 发送报告失败: {e}")
-
-    return "\n".join(agent_summary_lines)
+    return {"text": final_text, "files": {"search_report.html": html_bytes}, "ui": {}}

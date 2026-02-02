@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Protocol, Union
+from typing import Any, Dict, Optional, Protocol, Union
 from enum import Enum
 from datetime import datetime
 from typing import Final
@@ -115,12 +115,22 @@ class UnifiedContext:
     # Add 'user' field to represent the effective user (e.g. clicker) if different from message sender
     user: Optional[User] = None
 
-    async def reply(self, text: str, **kwargs) -> Any:
+    async def reply(self, text: Union[str, Dict[str, Any]], **kwargs) -> Any:
         """
         Unified reply method.
         Supports HTML formatting by default (adapters should handle conversion).
+        Also supports structured dict input: {"text": "...", "ui": {...}}
         """
-        return await self._adapter.reply_text(self, text, **kwargs)
+        ui = None
+        if isinstance(text, dict):
+            ui = text.get("ui")
+            text = text.get("text", "")
+
+        # If ui is passed explicitly in kwargs, it overrides the dict one (or merges? override for simplicity)
+        if "ui" in kwargs:
+            ui = kwargs.pop("ui")
+
+        return await self._adapter.reply_text(self, text, ui=ui, **kwargs)
 
     async def edit_message(self, message_id: str, text: str, **kwargs) -> Any:
         """

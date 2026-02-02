@@ -6,11 +6,19 @@ import shutil
 import httpx
 import urllib.parse
 from typing import Tuple, List, Dict, Any
+import sys
+
+# Ensure we can import local modules (creator.py)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+import creator  # local import
 
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
     """
     Execute skill management operations.
     """
@@ -21,20 +29,20 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
         if not query:
             return "❌ 请提供搜索关键词"
 
-        await ctx.reply(f"🔍 正在搜索技能: '{query}'...")
         # 1. Search Local Index
-        local_matches = skill_loader.find_similar_skills(query)
+        logger.info(f"[SkillManager] Local search query: '{query}'")
+        logger.info("============================================")
+        logger.info("============================================")
+        logger.info("============================================")
+        local_matches = await skill_loader.find_similar_skills(query)
         logger.info(
             f"[SkillManager] Local search query: '{query}', Matches: {len(local_matches)}"
         )
         for m in local_matches:
             logger.info(f" - Found: {m['name']} (score: {m.get('score')})")
 
-        # 2. Search GitHub
-        remote_matches = await _search_skills(query)
-
-        if not local_matches and not remote_matches:
-            return "未找到匹配的技能。您可以尝试提供具体的 GitHub 仓库链接，或直接描述您的需求让我为您开发。"
+        if not local_matches:
+            return "未找到匹配的技能。"
 
         response_parts = []
 
@@ -47,17 +55,17 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                 lines.append(f"• **{s['name']}**{score_str}: {s['description'][:100]}")
             response_parts.append("\n".join(lines))
 
-        if remote_matches:
-            lines = ["🌐 **GitHub 市场**"]
-            for s in remote_matches[:5]:
-                lines.append(
-                    f"• **{s['name']}** (`{s['repo']}`)\n   {s['description'][:100]}"
-                )
-            response_parts.append("\n".join(lines))
-
         response = "\n\n".join(response_parts)
+
+        # Add explicit instruction for Agent to use the best match
+        if local_matches:
+            best_skill = local_matches[0]["name"]
+            response += f"\n\n[SYSTEM HINT] Found high confidence match: '{best_skill}'. You should now call `call_skill(skill_name='{best_skill}', ...)` to fulfill the user's request."
+
         response += "\n\n要安装技能，请说：`安装 <技能名>` 或 `安装 <GitHub 链接>`"
-        return response
+
+        # Return structured
+        return {"text": response, "ui": {}}
 
     elif action == "install":
         skill_name = params.get("skill_name")
@@ -71,8 +79,6 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
         if not target:
             return "❌ 请提供要安装的技能名称或 URL"
 
-        await ctx.reply(f"⬇️ 正在尝试安装: {target}...")
-
         # User ID needed for adoption ownership
         user_id = int(ctx.message.user.id) if ctx.message.user else 0
 
@@ -81,9 +87,10 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
         if success:
             # 重新扫描技能
             skill_loader.reload_skills()
-            return message
+            # skill_loader.reload_skills()
+            return {"text": message, "ui": {}}
         else:
-            return f"❌ 安装失败: {message}"
+            return {"text": f"❌ 安装失败: {message}", "ui": {}}
 
     elif action == "delete":
         skill_name = params.get("skill_name")
@@ -137,9 +144,6 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
         return "⚠️ 技能更新现已由 AI 自动管理。"
 
     elif action == "modify":
-        from services.skill_creator import update_skill
-        from telegram import InlineKeyboardMarkup, InlineKeyboardButton
-
         skill_name = params.get("skill_name")
         instruction = params.get("instruction")
 
@@ -148,10 +152,8 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
 
         user_id = int(ctx.message.user.id)
 
-        await ctx.reply(f"✍️ 正在生成 `{skill_name}` 的修改方案...")
-
         # Use update_skill (AI Refactoring)
-        result = await update_skill(skill_name, instruction, user_id)
+        result = await creator.update_skill(skill_name, instruction, user_id)
 
         if not result["success"]:
             return f"❌ 修改失败: {result.get('error', '未知错误')}"
@@ -165,45 +167,44 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
 
         code_preview = code[:500] + "..." if len(code) > 500 else code
 
-        keyboard = [
+        actions = [
             [
-                InlineKeyboardButton(
-                    "✅ 启用修改", callback_data=f"skill_approve_{skill_name}"
-                ),
-                InlineKeyboardButton(
-                    "❌ 放弃", callback_data=f"skill_reject_{skill_name}"
-                ),
+                {
+                    "text": "✅ 启用修改",
+                    "callback_data": f"skill_approve_{skill_name}",
+                },
+                {
+                    "text": "❌ 放弃",
+                    "callback_data": f"skill_reject_{skill_name}",
+                },
             ],
             [
-                InlineKeyboardButton(
-                    "📝 查看完整代码", callback_data=f"skill_view_{skill_name}"
-                )
+                {
+                    "text": "📝 查看完整代码",
+                    "callback_data": f"skill_view_{skill_name}",
+                }
             ],
         ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
 
-        # Using adapter's reply with reply_markup
-        await ctx.reply(
-            text=(
-                f"📝 **Skill 修改草稿**\n\n"
-                f"**目标**: `{skill_name}`\n"
-                f"**指令**: {instruction}\n\n"
-                f"```python\n{code_preview}\n```\n\n"
-                f"请确认是否应用修改。"
-            ),
-            reply_markup=reply_markup,
+        msg = (
+            f"📝 **Skill 修改草稿**\n\n"
+            f"**目标**: `{skill_name}`\n"
+            f"**指令**: {instruction}\n\n"
+            f"```python\n{code_preview}\n```\n\n"
+            f"请确认是否应用修改。"
         )
 
-        return f"已生成 '{skill_name}' 的修改方案，等待用户审核。"
+        return {"text": msg, "ui": {"actions": actions}}
 
     elif action == "approve":
         skill_name = params.get("skill_name")
         if not skill_name:
             return "❌ 请提供要批准的技能名称"
 
-        from services.skill_creator import approve_skill
+        if not skill_name:
+            return "❌ 请提供要批准的技能名称"
 
-        result = await approve_skill(skill_name)
+        result = await creator.approve_skill(skill_name)
         if result["success"]:
             skill_loader.reload_skills()
             return f"✅ 技能 '{skill_name}' 已审核通过并生效！"
@@ -215,9 +216,10 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
         if not skill_name:
             return "❌ 请提供要拒绝的技能名称"
 
-        from services.skill_creator import reject_skill
+        if not skill_name:
+            return "❌ 请提供要拒绝的技能名称"
 
-        result = await reject_skill(skill_name)
+        result = await creator.reject_skill(skill_name)
         if result["success"]:
             return f"✅ 技能 '{skill_name}' 修改已驳回（删除 pending）。"
         else:
@@ -231,51 +233,20 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
 
         user_id = int(ctx.message.user.id)
 
-        await ctx.reply(f"🧠 正在构思并生成新能力: {requirement}...")
-
         # Use Evolution Router to decide Strategy (Create vs Reuse vs Config)
         from core.evolution_router import evolution_router
 
-        # Evolution Router handles creation, approval, and messaging
+        # result_msg = await evolution_router.evolve(requirement, user_id, ctx)
+        # ctx passed might trigger log error but no reply now
         result_msg = await evolution_router.evolve(requirement, user_id, ctx)
 
-        return result_msg
+        return {"text": result_msg, "ui": {}}
 
     else:
         return f"❌ 未知操作: {action}。支持的操作: search, install, create, delete, list, modify, approve, reject, config, tasks, delete_task"
 
 
 # --- Helper Functions ---
-
-
-async def _search_skills(query: str) -> List[Dict[str, Any]]:
-    """Search for skills on GitHub"""
-    results = []
-    try:
-        logger.info(f"Searching GitHub for skills: {query}")
-
-        # Query for files named SKILL.md
-        encoded_query = urllib.parse.quote(f"{query} filename:SKILL.md")
-        url = f"https://api.github.com/search/code?q={encoded_query}&per_page=5"
-
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.get(url)
-            if response.status_code == 200:
-                data = response.json()
-                for item in data.get("items", []):
-                    repo = item.get("repository", {})
-                    results.append(
-                        {
-                            "name": item.get("name", "Unknown"),
-                            "repo": repo.get("full_name", "Unknown"),
-                            "description": f"Found in {repo.get('html_url')}",
-                            "url": item.get("html_url"),
-                        }
-                    )
-    except Exception as e:
-        logger.error(f"Error searching skills: {e}")
-
-    return results
 
 
 async def _install_skill(target: str, user_id: int) -> Tuple[bool, str]:
@@ -317,17 +288,13 @@ async def _install_skill(target: str, user_id: int) -> Tuple[bool, str]:
                 )
 
             # Adopt
-            from services.skill_creator import adopt_skill
-
-            result = await adopt_skill(content, user_id)
+            result = await creator.adopt_skill(content, user_id)
 
             if result["success"]:
                 # Update/Approve interaction
                 # We simply adopt it to pending. But since this is an explicit install command,
                 # we should probably auto-approve it.
-                from services.skill_creator import approve_skill
-
-                approve_res = await approve_skill(result["skill_name"])
+                approve_res = await creator.approve_skill(result["skill_name"])
 
                 if approve_res["success"]:
                     return True, f"技能 '{result['skill_name']}' 已成功安装！"

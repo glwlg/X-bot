@@ -10,12 +10,6 @@ from core.platform.models import UnifiedContext
 
 from core.config import is_user_admin
 from core.skill_loader import skill_loader
-from services.skill_creator import (
-    create_skill,
-    approve_skill,
-    reject_skill,
-    list_pending_skills,
-)
 from handlers.base_handlers import check_permission_unified, CONVERSATION_END
 
 logger = logging.getLogger(__name__)
@@ -67,7 +61,12 @@ async def process_teach(ctx: UnifiedContext, requirement: str) -> int:
 
     msg = await ctx.reply("🤔 正在理解您的需求并生成技能...")
 
-    result = await create_skill(requirement, user_id)
+    creator = skill_loader.import_skill_module("skill_manager", "creator.py")
+    if not creator:
+        await ctx.reply("❌ Skill Manager 加载失败")
+        return CONVERSATION_END
+
+    result = await creator.create_skill(requirement, user_id)
 
     if not result["success"]:
         await ctx.edit_message(
@@ -131,7 +130,12 @@ async def handle_skill_callback(ctx: UnifiedContext) -> None:
 
     if data.startswith("skill_approve_"):
         skill_name = data.replace("skill_approve_", "")
-        result = await approve_skill(skill_name)
+        creator = skill_loader.import_skill_module("skill_manager", "creator.py")
+        if not creator:
+            await ctx.reply("❌ Skill Manager 加载失败")
+            return
+
+        result = await creator.approve_skill(skill_name)
 
         msg_text = (
             (f"✅ 新能力 `{skill_name}` 已启用！\n\n现在您可以通过触发词使用它了。")
@@ -144,7 +148,12 @@ async def handle_skill_callback(ctx: UnifiedContext) -> None:
 
     if data.startswith("skill_reject_"):
         skill_name = data.replace("skill_reject_", "")
-        result = await reject_skill(skill_name)
+        creator = skill_loader.import_skill_module("skill_manager", "creator.py")
+        if not creator:
+            await ctx.reply("❌ Skill Manager 加载失败")
+            return
+
+        result = await creator.reject_skill(skill_name)
 
         msg_text = (
             f"🗑️ 已取消创建 `{skill_name}`"
@@ -275,7 +284,8 @@ async def skills_command(ctx: UnifiedContext) -> None:
         msg_parts.append("\n**已学习**:\n" + "\n".join(learned))
 
     # 待审核
-    pending = list_pending_skills()
+    creator = skill_loader.import_skill_module("skill_manager", "creator.py")
+    pending = creator.list_pending_skills() if creator else []
     if pending and is_user_admin(ctx.message.user.id):
         pending_names = [p["name"] for p in pending]
         msg_parts.append(

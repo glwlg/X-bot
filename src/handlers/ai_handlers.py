@@ -268,9 +268,22 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             )
 
         # 获取历史上下文
+        # HACK: Because 'add_message' only saves TEXT to DB, we lose the media info if we just fetch from DB.
+        # So we need to:
+        # 1. Fetch history from DB (which now includes the latest text-only message)
+        # 2. POP the last message from history (which is our text-only version)
+        # 3. Append our rich 'current_msg_parts' (with Text + Media)
+
         history = await get_user_context(ctx, user_id)  # Returns list of dicts
 
-        # 拼接: History + Current
+        if history and len(history) > 0 and history[-1]["role"] == "user":
+            # Check if the last DB message matches our current text (sanity check)
+            last_db_text = history[-1]["parts"][0]["text"]
+            if last_db_text == final_user_message:
+                # Remove it, so we can replace it with the Rich version
+                history.pop()
+
+        # 拼接: History + Current Rich Message
         message_history.extend(history)
         message_history.append({"role": "user", "parts": current_msg_parts})
 
@@ -301,8 +314,38 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             # 用户体验优化：为了避免工具产生的中间消息导致最终结果被顶上去需要翻页，
             # 这里改为发送一条新消息作为最终结果，并删除原本的"思考中"消息。
 
-            # 1. 发送新消息
-            sent_msg = await ctx.reply(final_text_response)
+            # 1. 检查是否有 Skill 返回的 UI 组件/按钮
+            reply_markup = None
+            pending_ui = ctx.user_data.pop("pending_ui", None)
+            if pending_ui:
+                from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+                keyboard = []
+                for ui_block in pending_ui:
+                    if "actions" in ui_block:
+                        # actions should be list of lists (rows)
+                        for row in ui_block["actions"]:
+                            current_row = []
+                            for btn in row:
+                                # Start with supporting dict (JSON) format
+                                if isinstance(btn, dict):
+                                    current_row.append(
+                                        InlineKeyboardButton(
+                                            text=btn["text"],
+                                            callback_data=btn.get("callback_data"),
+                                            url=btn.get("url"),
+                                        )
+                                    )
+                                else:
+                                    # Fallback for raw objects if mixed
+                                    current_row.append(btn)
+                            keyboard.append(current_row)
+
+                if keyboard:
+                    reply_markup = InlineKeyboardMarkup(keyboard)
+
+            # 2. 发送新消息
+            sent_msg = await ctx.reply(final_text_response, reply_markup=reply_markup)
 
             # 2. 尝试删除旧的思考消息 (如果发送成功)
             if sent_msg:

@@ -26,7 +26,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
 
         # 解析证书信息
         not_after_str = cert.get("notAfter", "")
-        not_before_str = cert.get("notBefore", "")
+        # not_before_str = cert.get("notBefore", "")
         issuer = dict(x[0] for x in cert.get("issuer", []))
         subject = dict(x[0] for x in cert.get("subject", []))
 
@@ -62,26 +62,23 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
             f"**状态**: {status}"
         )
 
-        await ctx.reply(message)
-
-        return f"SSL证书查询结果: 域名 {domain} 的证书将于 {not_after.strftime('%Y-%m-%d')} 到期，剩余 {days_left} 天，状态: {status}"
+        return {
+            "text": message,
+            "ui": {},
+        }
 
     except socket.timeout:
         error_msg = f"❌ 连接超时: 无法连接到 {domain}:{port}"
-        await ctx.reply(error_msg)
-        return f"Error: 连接 {domain} 超时"
+        return {"text": error_msg, "ui": {}}
 
     except socket.gaierror:
         error_msg = f"❌ 域名解析失败: {domain} 可能不存在"
-        await ctx.reply(error_msg)
-        return f"Error: 域名 {domain} 解析失败"
+        return {"text": error_msg, "ui": {}}
 
     except ssl.SSLCertVerificationError as e:
         error_msg = f"❌ SSL 证书验证失败: {str(e)}"
-        await ctx.reply(error_msg)
-        return f"Error: SSL证书验证失败 - {str(e)}"
+        return {"text": error_msg, "ui": {}}
 
     except Exception as e:
         error_msg = f"❌ 查询失败: {str(e)}"
-        await ctx.reply(error_msg)
-        return f"Error: {str(e)}"
+        return {"text": error_msg, "ui": {}}
