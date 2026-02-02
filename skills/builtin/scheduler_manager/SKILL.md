@@ -30,9 +30,8 @@ triggers:
 | 参数名 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `action` | string | 是 | `add`, `list`, `delete` |
-| `skill_name` | string | add 时必填 | 要运行的技能名称 (如 `moltbook`, `weather`) |
 | `crontab` | string | add 时必填 | Cron 表达式 (5位, `min hour day month week`) |
-| `instruction` | string | add 时必填 | 给该技能的具体指令 (请尽量保留用户原始意图和原文，不要过度总结) |
+| `instruction` | string | add 时必填 | 该任务的具体指令 (请尽量保留用户原始意图和原文，不要过度总结) |
 | `push` | boolean | 可选 | 是否推送结果给创建人 (默认 true) |
 | `task_id` | int | delete 时必填 | 任务 ID |
 
@@ -44,7 +43,6 @@ triggers:
   ```json
   {
     "action": "add",
-    "skill_name": "weather",
     "crontab": "0 8 * * *",
     "instruction": "查询北京天气",
     "push": true
@@ -56,8 +54,7 @@ triggers:
   ```json
   {
     "action": "add",
-    "skill_name": "ssl_checker",
-    "instruction": "检查google.com的证书",
+    "instruction": "使用ssl_checker检查google.com的证书",
     "crontab": "0 * * * *",
     "push": false
   }

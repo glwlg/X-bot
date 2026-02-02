@@ -56,7 +56,7 @@ class AiService:
                     logger.info(
                         f"🤖 [AiService] Sending prompt to AI (Tools Mode):\n{current_history}"
                     )
-                    logger.info(
+                    logger.debug(
                         f"🤖 [AiService] Sending config to AI (Tools Mode):\n{config}"
                     )
                     response = await gemini_client.aio.models.generate_content(

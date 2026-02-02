@@ -228,7 +228,7 @@ class SkillAgent:
             else:
                 result = module.execute(ctx, params)
 
-            logger.info(f"Skill {skill_name} output: {result}")
+            # logger.info(f"Skill {skill_name} output: {result}")
             if isinstance(result, str):
                 yield result, None, None
             elif isinstance(result, dict) and (

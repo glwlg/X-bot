@@ -132,24 +132,12 @@ def register_handlers(adapter_manager: Any):
   "skill_md": "SKILL.md 的完整内容,包含 YAML frontmatter",
   "scripts": {{
     "execute.py": "Python 代码内容"
-  }},
-  "suggested_crontab": "0 8 * * * (可选,仅当需要定时任务时)",
-  "suggested_cron_instruction": "Run weather check (可选,仅当需要定时任务时)"
+  }}
 }}
 ```
 
 如果不需要代码,scripts 可以为空对象 {{}}.
 
-## 完整示例 (代码技能 + 定时)
-```json
-{{
-  "skill_md": "---\\nname: weather_notify\\ndescription: 每天早上8点推送北京天气\\n---\\n\\n# 天气推送\\n\\n每天自动检查天气并推送。",
-  "scripts": {{
-    "execute.py": "..."
-  }},
-  "suggested_crontab": "0 8 * * *",
-  "suggested_cron_instruction": "Check Beijing weather and send notification"
-}}
 ```
 
 现在,根据用户需求生成技能。返回严格的 JSON 格式,不要添加任何 markdown 代码块标记。"""
@@ -203,8 +191,6 @@ async def create_skill(
 
         skill_md = data.get("skill_md", "")
         scripts = data.get("scripts", {})
-        suggested_crontab = data.get("suggested_crontab")
-        suggested_cron_instruction = data.get("suggested_cron_instruction")
 
         if not skill_md:
             return {"success": False, "error": "生成的技能缺少 SKILL.md 内容"}
@@ -269,8 +255,6 @@ async def create_skill(
             "skill_dir": pending_dir,
             "skill_md": skill_md,
             "has_scripts": bool(scripts),
-            "suggested_crontab": suggested_crontab,
-            "suggested_cron_instruction": suggested_cron_instruction,
         }
 
     except Exception as e:
@@ -296,11 +280,10 @@ UPDATE_PROMPT = """你是一个 X-Bot Skill 维护者。请根据用户需求修
 
 ## 规则
 1. **优先修改 SKILL.md**: 修改描述、触发词等。
-2. **定时任务配置**: 如果用户要求修改定时任务，请在返回 JSON 的顶层字段 `suggested_crontab` 中指定。
-3. **代码修改**: 只有在业务逻辑需要变更时才修改 Python 代码。
-4. **保持完整性**: The returned `skill_md` will replace the file. Keep existing fields.
-5. **安全规则**: 遵循 Python 安全编码规范。
-6. **Streaming Standard**: 确保 `execute` 函数是 `Async Generator`，通过 `yield` 返回进度和结果。
+2. **代码修改**: 只有在业务逻辑需要变更时才修改 Python 代码。
+3. **保持完整性**: The returned `skill_md` will replace the file. Keep existing fields.
+4. **安全规则**: 遵循 Python 安全编码规范。
+5. **Streaming Standard**: 确保 `execute` 函数是 `Async Generator`，通过 `yield` 返回进度和结果。
 
 ## 输出格式
 请返回 JSON 格式:
@@ -309,9 +292,7 @@ UPDATE_PROMPT = """你是一个 X-Bot Skill 维护者。请根据用户需求修
   "skill_md": "修改后的 SKILL.md 完整内容 (YAML 中不应有 crotab)",
   "scripts": {{
       "execute.py": "修改后的 Python 代码 (如果不需要代码可为空字符串或省略)"
-  }},
-  "suggested_crontab": "0 * * * * (Optional, if cron needs update)",
-  "suggested_cron_instruction": "Task instruction"
+  }}
 }}
 ```
 """
@@ -389,8 +370,6 @@ async def update_skill(skill_name: str, requirement: str, user_id: int) -> dict:
 
         new_skill_md = data.get("skill_md", "")
         new_scripts = data.get("scripts", {})
-        suggested_crontab = data.get("suggested_crontab")
-        suggested_cron_instruction = data.get("suggested_cron_instruction")
 
         if not new_skill_md:
             pass
@@ -454,8 +433,6 @@ async def update_skill(skill_name: str, requirement: str, user_id: int) -> dict:
             "code": code_preview
             if "code_preview" in locals()
             else "Updated successfully.",
-            "suggested_crontab": suggested_crontab,
-            "suggested_cron_instruction": suggested_cron_instruction,
         }
 
     except Exception as e:

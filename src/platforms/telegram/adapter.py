@@ -25,6 +25,7 @@ class TelegramAdapter(BotAdapter):
         super().__init__("telegram")
         self.application = application
         self.bot: Bot = application.bot
+        self._registered_commands = []
 
     def _render_ui(self, ui: Optional[Dict[str, Any]]) -> Optional[Any]:
         """Convert standard UI dict to Telegram ReplyMarkup"""
@@ -64,6 +65,25 @@ class TelegramAdapter(BotAdapter):
         Note: logic often handled by run_polling in main, but we can wrap it.
         """
         await self.application.initialize()
+
+        # Sync commands to Telegram UI
+        if self._registered_commands:
+            try:
+                from telegram import BotCommand
+
+                commands = []
+                for cmd, desc in self._registered_commands:
+                    # Description must be 3-256 chars
+                    safe_desc = desc if desc else "Execute command"
+                    if len(safe_desc) < 3:
+                        safe_desc = "Execute command"
+                    commands.append(BotCommand(cmd, safe_desc[:256]))
+
+                await self.bot.set_my_commands(commands)
+                logger.info(f"✅ Set {len(commands)} Telegram commands in menu")
+            except Exception as e:
+                logger.error(f"Failed to set Telegram commands: {e}")
+
         await self.application.start()
         await self.application.updater.start_polling()
 
@@ -260,8 +280,15 @@ class TelegramAdapter(BotAdapter):
             logger.error(f"Telegram download_file failed: {e}")
             raise MessageSendError(f"Failed to download file: {e}")
 
-    def on_command(self, command: str, handler_func: Callable):
+    def on_command(self, command: str, handler_func: Callable, description: str = None):
         """Register a command handler safely wrapping it"""
+
+        # Store for menu sync
+        if not description:
+            # Try to get docstring
+            description = handler_func.__doc__
+
+        self._registered_commands.append((command, description))
 
         async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
             try:

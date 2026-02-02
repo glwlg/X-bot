@@ -420,6 +420,11 @@ class DiscordAdapter(BotAdapter):
     ) -> Any:
         try:
             channel = context.platform_event.channel
+            import io
+
+            if isinstance(photo, bytes):
+                photo = io.BytesIO(photo)
+
             file = discord.File(fp=photo, filename="image.jpg")
             return await channel.send(content=caption, file=file)
         except Exception as e:
@@ -430,7 +435,11 @@ class DiscordAdapter(BotAdapter):
     ) -> Any:
         try:
             channel = context.platform_event.channel
-            # Check supports_streaming? Discord handles it automatically if format is right.
+            import io
+
+            if isinstance(video, bytes):
+                video = io.BytesIO(video)
+
             file = discord.File(fp=video, filename="video.mp4")
             return await channel.send(content=caption, file=file)
         except Exception as e:
@@ -441,6 +450,11 @@ class DiscordAdapter(BotAdapter):
     ) -> Any:
         try:
             channel = context.platform_event.channel
+            import io
+
+            if isinstance(audio, bytes):
+                audio = io.BytesIO(audio)
+
             file = discord.File(fp=audio, filename="audio.mp3")
             return await channel.send(content=caption, file=file)
         except Exception as e:
@@ -456,6 +470,11 @@ class DiscordAdapter(BotAdapter):
     ) -> Any:
         try:
             channel = context.platform_event.channel
+            import io
+
+            if isinstance(document, bytes):
+                document = io.BytesIO(document)
+
             file = discord.File(fp=document, filename=filename)
             return await channel.send(content=caption, file=file)
         except Exception as e:

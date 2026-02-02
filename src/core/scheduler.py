@@ -475,7 +475,7 @@ def start_rss_scheduler():
         check_rss_updates_job,
         "interval",
         seconds=interval,
-        next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=10),
+        next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=300),
         id="rss_check",
         replace_existing=True,
     )

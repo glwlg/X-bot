@@ -106,30 +106,9 @@ class EvolutionRouter:
                 await creator.approve_skill(skill_name)
                 skill_loader.reload_skills()
 
-                # Handle Scheduled Tasks (if suggested)
-                suggested_crontab = update_res.get("suggested_crontab")
-                cron_msg = ""
-                if suggested_crontab:
-                    try:
-                        from repositories.task_repo import add_scheduled_task
-
-                        instruction = (
-                            update_res.get("suggested_cron_instruction")
-                            or f"Run {skill_name}"
-                        )
-                        await add_scheduled_task(
-                            skill_name, suggested_crontab, instruction
-                        )
-                        cron_msg = f"\n⏰ **定时任务已自动配置**: `{suggested_crontab}`"
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to auto-schedule task for {skill_name}: {e}"
-                        )
-                        cron_msg = f"\n⚠️ 定时任务配置失败: {e}"
-
                 msg = (
                     f"🔧 **技能修复/更新完成！**\n\n"
-                    f"已对技能 `{skill_name}` 进行了调整，以适应您的新需求。{cron_msg}\n"
+                    f"已对技能 `{skill_name}` 进行了调整，以适应您的新需求。\n"
                     f"请重试您的操作。"
                 )
                 return msg
@@ -551,26 +530,10 @@ Return JSON:
         if approve_res["success"]:
             skill_loader.reload_skills()
 
-            # 3. Handle Scheduled Tasks (if suggested)
-            suggested_crontab = result.get("suggested_crontab")
-            cron_msg = ""
-            if suggested_crontab:
-                try:
-                    from repositories.task_repo import add_scheduled_task
-
-                    instruction = (
-                        result.get("suggested_cron_instruction") or f"Run {skill_name}"
-                    )
-                    await add_scheduled_task(skill_name, suggested_crontab, instruction)
-                    cron_msg = f"\n⏰ **定时任务已自动配置**: `{suggested_crontab}`"
-                except Exception as e:
-                    logger.error(f"Failed to auto-schedule task for {skill_name}: {e}")
-                    cron_msg = f"\n⚠️ 定时任务配置失败: {e}"
-
             msg = (
                 f"🛠️ **新技能已生成并激活！**\n\n"
                 f"技能名: `{skill_name}`\n"
-                f"我已经学会了这项新能力，您可以立即测试。{cron_msg}"
+                f"我已经学会了这项新能力，您可以立即测试。"
             )
         else:
             msg = f"⚠️ 技能生成成功但激活失败: {approve_res.get('error')}"

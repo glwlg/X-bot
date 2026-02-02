@@ -11,7 +11,6 @@ logger = logging.getLogger(__name__)
 
 
 async def add_scheduled_task(
-    skill_name: str,
     crontab: str,
     instruction: str,
     user_id: int = 0,
@@ -22,11 +21,10 @@ async def add_scheduled_task(
     async with await get_db() as db:
         cursor = await db.execute(
             """
-            INSERT INTO scheduled_tasks (skill_name, crontab, instruction, user_id, platform, need_push, is_active)
+            INSERT INTO scheduled_tasks (crontab, instruction, user_id, platform, need_push, is_active)
             VALUES (?, ?, ?, ?, ?, ?, 1)
             """,
             (
-                skill_name,
                 crontab,
                 instruction,
                 user_id,
@@ -64,14 +62,3 @@ async def delete_task(task_id: int):
     async with await get_db() as db:
         await db.execute("DELETE FROM scheduled_tasks WHERE id = ?", (task_id,))
         await db.commit()
-
-
-async def get_tasks_by_skill(skill_name: str) -> List[Dict]:
-    """Get tasks for a specific skill"""
-    async with await get_db() as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM scheduled_tasks WHERE skill_name = ?", (skill_name,)
-        ) as cursor:
-            rows = await cursor.fetchall()
-            return [dict(row) for row in rows]

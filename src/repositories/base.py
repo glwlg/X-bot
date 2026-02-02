@@ -153,7 +153,6 @@ async def init_db():
         await db.execute("""
             CREATE TABLE IF NOT EXISTS scheduled_tasks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                skill_name TEXT NOT NULL,
                 crontab TEXT NOT NULL,         -- e.g. '0 8 * * *'
                 instruction TEXT NOT NULL,     -- The prompt/instruction to execute
                 user_id INTEGER DEFAULT 0,

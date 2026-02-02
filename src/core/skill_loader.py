@@ -162,7 +162,7 @@ class SkillLoader:
         查找相似技能 (AI Semantic Search)
         使用 LLM 语义匹配，支持本地兜底
         """
-        from core.config import gemini_client, GEMINI_MODEL
+        from core.config import gemini_client, ROUTING_MODEL
         import json
         import difflib
 
@@ -206,7 +206,7 @@ Return JSON:
 """
 
             response = await gemini_client.aio.models.generate_content(
-                model=GEMINI_MODEL,
+                model=ROUTING_MODEL,
                 contents=prompt,
                 config={"response_mime_type": "application/json"},
             )

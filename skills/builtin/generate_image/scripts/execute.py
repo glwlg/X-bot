@@ -119,38 +119,11 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
         image_content = image_io.getvalue()
 
         return {
-            "text": f"🎨 **Prompt**: {prompt}\n📏 **Ratio**: {aspect_ratio}",
+            "text": f"🎨 **Prompt**: {prompt}\n📏 **Ratio**: {aspect_ratio}\n✅ 图片已发送。",
             "files": {filename: image_content},
-            "ui": {},
         }
 
-        # The following code is unreachable because of the return statement above.
-        # Removing unreachable code.
-        # # 删除进度消息
-        # try:
-        #     await status_msg.delete()
-        # except Exception:
-        #     pass
-
-        # return {
-        #     "text": "✅ 图片生成成功",  # "File sent via Brain"
-        #     "ui": {},
-        # }
-
-    except (
-        Exception
-    ) as e:  # Keeping as general Exception as specific types are not clear from context
+    except Exception as e:
         logger.error(f"Image generation failed: {e}")
         error_msg = str(e)
-        # The following code is commented out and refers to an unused variable (status_msg).
-        # Removing commented out code that refers to unused variables.
-        # if status_msg:
-        #     try:
-        #         msg_id = getattr(
-        #             status_msg, "message_id", getattr(status_msg, "id", None)
-        #         )
-        #         # await ctx.edit_message(msg_id, f"❌ 绘图失败: {error_msg}")
-        #         pass
-        #     except Exception:
-        #         pass
         return {"text": f"❌ 绘图失败: {error_msg}", "ui": {}}

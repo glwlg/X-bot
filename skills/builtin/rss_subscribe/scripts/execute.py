@@ -107,10 +107,14 @@ def register_handlers(adapter_manager):
         else:
             return await show_unsubscribe_menu(ctx)
 
-    adapter_manager.on_command("subscribe", cmd_subscribe)
-    adapter_manager.on_command("monitor", cmd_monitor)
-    adapter_manager.on_command("list_subs", cmd_list_subs)
-    adapter_manager.on_command("unsubscribe", cmd_unsubscribe)
+    adapter_manager.on_command("subscribe", cmd_subscribe, description="订阅 RSS 源")
+    adapter_manager.on_command(
+        "monitor", cmd_monitor, description="监控关键词更新 (Google News)"
+    )
+    adapter_manager.on_command(
+        "list_subs", cmd_list_subs, description="查看我的订阅列表"
+    )
+    adapter_manager.on_command("unsubscribe", cmd_unsubscribe, description="取消订阅")
 
     # Callbacks
     adapter_manager.on_callback_query("^unsub_", handle_unsubscribe_callback)

@@ -55,9 +55,10 @@ class AgentOrchestrator:
         matched_skills = []
         if last_user_text:
             # Use a lower threshold to catch more potential candidates
-            matched_skills = await skill_loader.find_similar_skills(
-                last_user_text, threshold=0.4
-            )
+            # matched_skills = await skill_loader.find_similar_skills(
+            #     last_user_text, threshold=0.4
+            # )
+            pass
 
         if matched_skills:
             logger.info(
@@ -95,7 +96,8 @@ class AgentOrchestrator:
                     else:
                         # Dynamic tool: skill_rss_subscribe -> rss_subscribe
                         # Remove prefix "skill_"
-                        safe_name = name[6:]
+                        # skill_manager -> skill_manager
+                        safe_name = name[6:] if name != "skill_manager" else name
 
                         from core.skill_loader import skill_loader
 
@@ -151,7 +153,7 @@ class AgentOrchestrator:
                                     isinstance(result_obj, dict) and "ui" in result_obj
                                 )
                                 # logger.info(f"agent reply chunk: {chunk}")
-                                logger.info(f"agent reply result_obj: {result_obj}")
+                                # logger.info(f"agent reply result_obj: {result_obj}")
 
                                 if not is_structured_ui:
                                     await ctx.reply(chunk)
