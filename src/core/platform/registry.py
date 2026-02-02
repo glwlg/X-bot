@@ -42,11 +42,15 @@ class AdapterManager:
             logger.info(f"Stopping adapter: {name}")
             await adapter.stop()
 
-    def on_command(self, command: str, handler_func: Callable):
+    def on_command(self, command: str, handler_func: Callable, **kwargs):
         """Register a command handler across all adapters"""
         for adapter in self._adapters.values():
             if hasattr(adapter, "on_command"):
-                adapter.on_command(command, handler_func)
+                try:
+                    adapter.on_command(command, handler_func, **kwargs)
+                except TypeError:
+                    # Fallback for adapters that don't support kwargs (like description)
+                    adapter.on_command(command, handler_func)
 
     def on_message(self, filters_obj: Any, handler_func: Callable):
         """Register a message handler across all adapters"""
