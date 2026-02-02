@@ -35,8 +35,6 @@ from handlers import (
     handle_video_download,
     cancel,
     handle_large_file_action,
-    handle_unsubscribe_callback,
-    handle_stock_select_callback,
     handle_video_actions,
     stats_command,
     handle_ai_chat,
@@ -57,11 +55,12 @@ from handlers.skill_handlers import (
 )
 from handlers.voice_handler import handle_voice_message
 from handlers.document_handler import handle_document
-from handlers.callback_handlers import handle_subscription_callback
+from handlers.document_handler import handle_document
 from handlers.deployment_handlers import deploy_command
 
 # Multi-Channel Imports
 from core.platform.registry import adapter_manager
+from core.platform.models import MessageType
 from platforms.telegram.adapter import TelegramAdapter
 from platforms.discord.adapter import DiscordAdapter
 
@@ -215,13 +214,18 @@ async def main():
     adapter_manager.on_command("translate", toggle_translation_command)
 
     # Legacy/Admin commands (Broadcast to all? Or just TG?)
-    # For now broadcast, assuming adapter handles permission checks inside handler if generic
     adapter_manager.on_command("deploy", deploy_command)
 
-    # 4. Register Platform-Specific Handlers (Telegram Complex Flows)
-    # These rely on python-telegram-bot features (ConversationHandler)
-    # So we attach them directly to tg_adapter/application logic via existing code
+    # ----------------------------------------------
+    # 3.1 DYNAMIC SKILL HANDLER REGISTRATION
+    # ----------------------------------------------
+    from core.skill_loader import skill_loader
 
+    logger.info("🔌 Registering dynamic skill handlers...")
+    skill_loader.register_skill_handlers(adapter_manager)
+    # ----------------------------------------------
+
+    # 4. Register Platform-Specific Handlers (Telegram Complex Flows)
     if tg_adapter:
         # Telegram Buttons & Callbacks
         tg_adapter.on_callback_query("^action_.*", handle_video_actions)
@@ -230,13 +234,7 @@ async def main():
         common_pattern = "^(?!download_video$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_|skill_|del_rss_|del_stock_).*$"
         tg_adapter.on_callback_query(common_pattern, button_callback)
         tg_adapter.on_callback_query("^skill_", handle_skill_callback)
-        tg_adapter.on_callback_query("^unsub_", handle_unsubscribe_callback)
-        tg_adapter.on_callback_query("^stock_", handle_stock_select_callback)
-        tg_app.add_handler(
-            CallbackQueryHandler(
-                handle_subscription_callback, pattern="^(del_rss_|del_stock_)"
-            )
-        )
+        # Note: stock_ & unsub_ are now registered via register_skill_handlers dynamically
 
         # Telegram Conversations
         back_handler = tg_adapter.create_callback_handler(
@@ -308,38 +306,17 @@ async def main():
         )
         tg_app.add_handler(teach_conv_handler)
 
-        # 5. Media Handlers (Register to AdapterManager for broadcast where supported)
-        # Telegram supports Photo/Video/Voice/Doc specific filters.
-        # Discord adapter maps these to Message + Type check.
-        # We should add `on_message` support to AdapterManager to broadcast generic content handlers.
-
-        # For now, register to TG explicitly, and Discord explicitly if simple
+        # 5. Media Handlers
         tg_adapter.on_message(filters.PHOTO, handle_ai_photo)
         tg_adapter.on_message(filters.VIDEO, handle_ai_video)
         tg_adapter.on_message(filters.VOICE | filters.AUDIO, handle_voice_message)
         tg_adapter.on_message(filters.Document.ALL, handle_document)
         tg_adapter.on_message(filters.TEXT & ~filters.COMMAND, handle_ai_chat)
     else:
-        # Need to init DB if Telegram is not present, because initialize_data was bound to tg_app.post_init
-        # We need a manual init here.
-        from repositories import init_db
-
-        await init_db()
-
-        # Load skills
-        from core.skill_loader import skill_loader
-
-        skill_loader.scan_skills()
-        logger.info(f"Loaded {len(skill_loader.get_skill_index())} skills")
+        pass
 
     # Register Discord equivalents (Manual mapping for now)
     if DISCORD_BOT_TOKEN:
-        # DiscordAdapter handles type internally in `_map_message` and we can route in `on_message` adapter implementation?
-        # Or we register a general message handler to Discord and let it delegate?
-        # DiscordAdapter.register_message_handler takes (ctx).
-
-        # We need a router for Discord that checks type/content and calls appropriate UC handler.
-        from core.platform.models import MessageType
 
         async def discord_router(ctx):
             msg_type = ctx.message.type
@@ -352,7 +329,6 @@ async def main():
             elif msg_type == MessageType.DOCUMENT:
                 await handle_document(ctx)
             else:
-                # Text or Unknown
                 await handle_ai_chat(ctx)
 
         discord_adapter.register_message_handler(discord_router)
@@ -360,8 +336,7 @@ async def main():
         # Register Discord Callbacks (Unified)
         discord_adapter.on_callback_query("^action_.*", handle_video_actions)
         discord_adapter.on_callback_query("^skill_", handle_skill_callback)
-        discord_adapter.on_callback_query("^unsub_", handle_unsubscribe_callback)
-        discord_adapter.on_callback_query("^stock_", handle_stock_select_callback)
+        # unsubs, stock Handled by dynamic
 
         # Generic Button Callback (Help, Settings, etc.)
         # Note: Discord regex matching might be slightly different if compiled differently, but standard python re works.

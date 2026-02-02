@@ -104,6 +104,8 @@ X-Bot 已完成从"规则路由"到"智能体核心"的进化。现在，所有�
 ```
 src/
 ├── main.py                     # 入口文件
+├── agents/                     # 智能体
+│   ├── skill_agent.py          # 技能智能体
 ├── core/                       # 核心配置与调度
 │   ├── config.py               # 配置中心（环境变量、API Key）
 │   ├── prompts.py              # 系统提示词

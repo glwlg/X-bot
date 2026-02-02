@@ -33,6 +33,17 @@ async def remove_watchlist_stock(stock_id: int) -> bool:
         return cursor.rowcount > 0
 
 
+async def remove_watchlist_stock_by_code(user_id: int, stock_code: str) -> bool:
+    """根据代码删除自选股"""
+    async with await get_db() as db:
+        cursor = await db.execute(
+            "DELETE FROM watchlist WHERE user_id = ? AND stock_code = ?",
+            (user_id, stock_code),
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
 async def get_user_watchlist(user_id: int, platform: str = None) -> list[dict]:
     """获取用户自选股列表"""
     async with await get_db() as db:

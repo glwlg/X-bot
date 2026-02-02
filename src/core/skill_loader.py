@@ -64,6 +64,9 @@ class SkillLoader:
                             logger.info(
                                 f"Indexed standard skill: {skill_info['name']} from {subdir}"
                             )
+        logger.info(
+            f"Total skills indexed: {len(self._skill_index)}. Keys: {list(self._skill_index.keys())}"
+        )
 
         return self._skill_index
 
@@ -216,6 +219,46 @@ class SkillLoader:
             logger.info(f"Unloaded skill: {skill_name}")
             return True
         return False
+
+    def register_skill_handlers(self, adapter_manager: Any):
+        """
+        动态注册所有 Skill 的 Handlers (Commands, Callbacks, etc.)
+        """
+        import importlib.util
+
+        index = self.get_skill_index()
+        for skill_name, info in index.items():
+            scripts = info.get("scripts", [])
+            target_script = "execute.py"
+
+            if target_script not in scripts:
+                continue
+
+            skill_dir = info["skill_dir"]
+            script_path = os.path.join(skill_dir, "scripts", target_script)
+
+            try:
+                # 动态加载模块
+                module_name = f"skills.{info['source']}.{skill_name}.scripts.execute"
+
+                # 如果已经加载过，尝试从缓存获取 (或者强制重新加载)
+                # 这里我们使用 importlib 动态加载文件路径
+                spec = importlib.util.spec_from_file_location(module_name, script_path)
+                if spec and spec.loader:
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+
+                    # 检查是否有 register_handlers 函数
+                    if hasattr(module, "register_handlers"):
+                        logger.info(f"🔌 Registering handlers for skill: {skill_name}")
+                        module.register_handlers(adapter_manager)
+                        self._loaded_modules[skill_name] = module  # 缓存模块
+                    else:
+                        pass
+            except Exception as e:
+                logger.error(
+                    f"❌ Failed to register handlers for skill {skill_name}: {e}"
+                )
 
 
 # 全局单例

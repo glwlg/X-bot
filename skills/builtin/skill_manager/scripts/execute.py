@@ -10,7 +10,7 @@ from typing import Tuple, List, Dict, Any
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict):
+async def execute(ctx: UnifiedContext, params: dict) -> str:
     """
     Execute skill management operations.
     """
@@ -22,18 +22,40 @@ async def execute(ctx: UnifiedContext, params: dict):
             return "❌ 请提供搜索关键词"
 
         await ctx.reply(f"🔍 正在搜索技能: '{query}'...")
-        skills = await _search_skills(query)
+        # 1. Search Local Index
+        local_matches = skill_loader.find_similar_skills(query)
+        logger.info(
+            f"[SkillManager] Local search query: '{query}', Matches: {len(local_matches)}"
+        )
+        for m in local_matches:
+            logger.info(f" - Found: {m['name']} (score: {m.get('score')})")
 
-        if not skills:
+        # 2. Search GitHub
+        remote_matches = await _search_skills(query)
+
+        if not local_matches and not remote_matches:
             return "未找到匹配的技能。您可以尝试提供具体的 GitHub 仓库链接，或直接描述您的需求让我为您开发。"
 
-        results = []
-        for i, s in enumerate(skills[:5]):
-            results.append(
-                f"{i + 1}. **{s['name']}** (`{s['repo']}`)\n   {s['description'][:150]}"
-            )
+        response_parts = []
 
-        response = "找到以下技能：\n\n" + "\n\n".join(results)
+        if local_matches:
+            lines = ["📦 **本地已安装技能**"]
+            for s in local_matches[:3]:
+                score_str = (
+                    f" (匹配度: {s.get('score', 0):.2f})" if s.get("score") else ""
+                )
+                lines.append(f"• **{s['name']}**{score_str}: {s['description'][:100]}")
+            response_parts.append("\n".join(lines))
+
+        if remote_matches:
+            lines = ["🌐 **GitHub 市场**"]
+            for s in remote_matches[:5]:
+                lines.append(
+                    f"• **{s['name']}** (`{s['repo']}`)\n   {s['description'][:100]}"
+                )
+            response_parts.append("\n".join(lines))
+
+        response = "\n\n".join(response_parts)
         response += "\n\n要安装技能，请说：`安装 <技能名>` 或 `安装 <GitHub 链接>`"
         return response
 

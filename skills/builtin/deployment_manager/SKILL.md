@@ -1,6 +1,6 @@
 ---
 name: deployment_manager
-description: **自主部署代理**。用于部署 Docker 应用/服务。这是高级技能，能够自主规划、调试和验证部署过程。
+description: "**自主部署代理**。用于部署 Docker 应用/服务。这是高级技能，能够自主规划、调试和验证部署过程。"
 triggers:
 - manage_deployment
 - deploy

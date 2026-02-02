@@ -1,7 +1,4 @@
 import logging
-import json
-from telegram import Update
-from telegram.ext import ContextTypes
 from core.platform.models import UnifiedContext
 
 from core.config import MCP_MEMORY_ENABLED
@@ -48,7 +45,7 @@ class AgentOrchestrator:
                 # Dispatch to specific handlers
                 # Dispatch to specific handlers
                 if name == "call_skill":
-                    from services.skill_agent import skill_agent, SkillDelegationRequest
+                    from agents.skill_agent import skill_agent, SkillDelegationRequest
 
                     # Notify user about skill invocation (ephemeral, not saved)
                     skill_name = args["skill_name"]
@@ -83,6 +80,8 @@ class AgentOrchestrator:
                             ctx=ctx,
                         ):
                             if chunk:
+                                await ctx.reply(chunk)
+                                logger.info(chunk)
                                 iteration_output += chunk + "\n"
                                 # Stream crucial updates to user? Or maybe just status.
                                 # SkillAgent yields status messages.
@@ -139,7 +138,6 @@ class AgentOrchestrator:
                         return None
 
                     logger.info(f"Skill {skill_name} output length: {len(full_output)}")
-                    logger.info(f"Skill output preview: {full_output[:200]}")
 
                     return f"Skill Execution Output:\n{full_output}"
 

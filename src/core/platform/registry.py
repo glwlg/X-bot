@@ -54,6 +54,12 @@ class AdapterManager:
             if hasattr(adapter, "on_message"):
                 adapter.on_message(filters_obj, handler_func)
 
+    def on_callback_query(self, pattern: str, handler_func: Callable):
+        """Register a callback query handler across all adapters"""
+        for adapter in self._adapters.values():
+            if hasattr(adapter, "on_callback_query"):
+                adapter.on_callback_query(pattern, handler_func)
+
     def register_common_handlers(
         self, command_handlers: Dict[str, Callable], message_handler: Callable = None
     ):
@@ -63,8 +69,6 @@ class AdapterManager:
 
         if message_handler:
             # Universal text handler match
-            # Note: filters_obj is platform specific usually.
-            # We might need to abstract filters or let adapter handle default text.
             # Note: filters_obj is platform specific usually.
             # We might need to abstract filters or let adapter handle default text.
             pass
