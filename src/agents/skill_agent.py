@@ -11,6 +11,7 @@ from core.config import gemini_client, GEMINI_MODEL
 from core.skill_loader import skill_loader
 from services.sandbox_executor import sandbox_executor
 from core.prompts import SKILL_AGENT_DECISION_PROMPT
+from core.tool_registry import tool_registry
 
 logger = logging.getLogger(__name__)
 
@@ -86,10 +87,10 @@ class SkillAgent:
 
             if execute_type == "SCRIPT":
                 # Run execute.py
-                async for msg, files, _ in self._run_script(
+                async for msg, files, result_obj in self._run_script(
                     skill_name, skill_dir, content, ctx
                 ):
-                    yield msg, files, None
+                    yield msg, files, result_obj
 
             elif execute_type == "COMMAND":
                 # Run shell command directly
@@ -208,13 +209,33 @@ class SkillAgent:
                 return
 
             # Execute
+            import inspect
+
+            if inspect.isasyncgenfunction(module.execute):
+                async for chunk in module.execute(ctx, params):
+                    if isinstance(chunk, str):
+                        yield chunk, None, None
+                    elif isinstance(chunk, dict) and (
+                        "text" in chunk or "ui" in chunk or "files" in chunk
+                    ):
+                        yield chunk.get("text", ""), chunk.get("files"), chunk
+                    else:
+                        yield f"{chunk}", None, None
+                return
+
             if asyncio.iscoroutinefunction(module.execute):
                 result = await module.execute(ctx, params)
             else:
                 result = module.execute(ctx, params)
 
+            logger.info(f"Skill {skill_name} output: {result}")
             if isinstance(result, str):
                 yield result, None, None
+            elif isinstance(result, dict) and (
+                "text" in result or "ui" in result or "files" in result
+            ):
+                # Structured result (text + ui + files)
+                yield result.get("text", ""), result.get("files"), result
             else:
                 yield f"✅ 执行结果: {result}", None, None
 

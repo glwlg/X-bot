@@ -67,16 +67,17 @@ class DeploymentManager:
             response = await self._think()
 
             if not response:
-                await self.ctx.reply("❌ 思考中断，请重试。")
+                return {"text": "❌ 思考中断，请重试。", "ui": {}}
                 break
 
-            thought = response.get("thought", "")
+            # thought = response.get("thought", "")
             action = response.get("action", "")
             params = response.get("params", {})
 
             # User feedback
             if action != "finish":
-                await self.ctx.reply(f"🤖 {thought}")
+                # await self.ctx.reply(f"🤖 {thought}")
+                pass
 
             # 2. Execute
             result = await self._execute_tool(action, params)
@@ -87,9 +88,9 @@ class DeploymentManager:
 
             # Check finish
             if action == "finish":
-                return result
+                return {"text": result, "ui": {}}
 
-        return "❌ Max loops reached without success."
+        return {"text": "❌ Max loops reached without success.", "ui": {}}
 
     async def _think(self) -> Dict:
         try:
@@ -128,28 +129,40 @@ class DeploymentManager:
             if action == "deploy":
                 url = params.get("url")
                 # Call docker_ops.execute
-                return await docker_ops_execute(
+                res = await docker_ops_execute(
                     self.ctx, {"action": "deploy", "url": url, "silent": True}
                 )
+                if isinstance(res, dict):
+                    return res.get("text", "")
+                return res
 
             elif action == "execute":
                 cmd = params.get("command")
-                return await docker_ops_execute(
+                res = await docker_ops_execute(
                     self.ctx, {"action": "execute_command", "command": cmd}
                 )
+                if isinstance(res, dict):
+                    return res.get("text", "")
+                return res
 
             elif action == "edit":
                 path = params.get("path")
                 content = params.get("content")
-                return await docker_ops_execute(
+                res = await docker_ops_execute(
                     self.ctx, {"action": "edit_file", "path": path, "content": content}
                 )
+                if isinstance(res, dict):
+                    return res.get("text", "")
+                return res
 
             elif action == "stop":
                 name = params.get("name")
-                return await docker_ops_execute(
+                res = await docker_ops_execute(
                     self.ctx, {"action": "stop", "name": name, "is_compose": True}
                 )
+                if isinstance(res, dict):
+                    return res.get("text", "")
+                return res
 
             elif action == "read_file":
                 path = params.get("path")
@@ -162,8 +175,7 @@ class DeploymentManager:
             elif action == "finish":
                 msg = params.get("message", "Done.")
                 final_text = f"🏁 **任务完成**: {msg}"
-                await self.ctx.reply(final_text)
-                return ""
+                return final_text
 
             else:
                 return f"Unknown action: {action}"

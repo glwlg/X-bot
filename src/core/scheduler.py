@@ -469,8 +469,7 @@ async def trigger_manual_rss_check(user_id: int) -> str:
 
 def start_rss_scheduler():
     """启动 RSS 检查定时任务"""
-    # 测试期间改为 1 分钟
-    interval = 60
+    interval = 60 * 30
 
     scheduler.add_job(
         check_rss_updates_job,

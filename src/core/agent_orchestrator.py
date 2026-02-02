@@ -29,10 +29,53 @@ class AgentOrchestrator:
         """
         user_id = int(ctx.message.user.id)  # Assuming ID is int compatible for now
 
-        # 1. Gather Tools
-        tools = tool_registry.get_all_tools()
+        # 0. Dynamic Skill Search (Context Loading)
+        # Instead of giving the AI all skills or a generic search tool, we pre-search based on user input.
+        # This acts as a "RAG" for tools/skills.
+        from core.skill_loader import skill_loader
 
-        # 2. Add Memory Tools (Lazy Load Definitions)
+        # Extract user text from history (last user message)
+        last_user_text = ""
+        for msg in reversed(message_history):
+            if msg.get("role") == "user":
+                parts = msg.get("parts", [])
+                for p in parts:
+                    if isinstance(p, dict) and "text" in p:
+                        last_user_text = p["text"]
+                break
+
+        # 1. Gather Tools
+        # Start with base tools (e.g. skill_manager for explicitly managing skills)
+        # Note: We might want a simplified skill_manager tool if we are auto-injecting.
+        tools = []
+
+        # Always include skill_manager for explicit "install", "search" etc commands unless handled purely via NLI
+        # For now, let's keep the generic capability logic but prioritizing matched skills.
+
+        matched_skills = []
+        if last_user_text:
+            # Use a lower threshold to catch more potential candidates
+            matched_skills = await skill_loader.find_similar_skills(
+                last_user_text, threshold=0.4
+            )
+
+        if matched_skills:
+            logger.info(
+                f"Dynamic Skill Injection: Found {len(matched_skills)} matches for '{last_user_text[:20]}...'"
+            )
+            # Create specific tools for these skills
+            # We need to ask ToolRegistry to generate tools for these specific skills
+            specific_tools = tool_registry.get_specific_skill_tools(matched_skills)
+            tools.extend(specific_tools)
+
+        # Add the generic 'call_skill' tool as a fallback (but maybe with reduced description to save tokens?)
+        # Or if we trust the search, we might not need it?
+        # Safety: Keep generic tool but maybe prompt emphasizes using specific ones?
+        # Actually, get_all_tools() returns the generic one.
+        # Let's add the generic one LAST as fallback.
+        tools.extend(tool_registry.get_all_tools())
+
+        # 2. Add Memory Tools
         if MCP_MEMORY_ENABLED:
             memory_tools = await self._get_memory_tool_definitions(user_id)
             if memory_tools:
@@ -43,13 +86,31 @@ class AgentOrchestrator:
             logger.info(f"Agent invoking tool: {name} with {args}")
             try:
                 # Dispatch to specific handlers
-                # Dispatch to specific handlers
-                if name == "call_skill":
+                if name == "call_skill" or name.startswith("skill_"):
                     from agents.skill_agent import skill_agent, SkillDelegationRequest
 
+                    if name == "call_skill":
+                        skill_name = args["skill_name"]
+                        instruction = args["instruction"]
+                    else:
+                        # Dynamic tool: skill_rss_subscribe -> rss_subscribe
+                        # Remove prefix "skill_"
+                        safe_name = name[6:]
+
+                        from core.skill_loader import skill_loader
+
+                        # 1. Try exact match (e.g. rss_subscribe)
+                        skill_name = safe_name
+
+                        if not skill_loader.get_skill(skill_name):
+                            # 2. Try hyphenated version (e.g. data_storytelling -> data-storytelling)
+                            alt_name = skill_name.replace("_", "-")
+                            if skill_loader.get_skill(alt_name):
+                                skill_name = alt_name
+
+                        instruction = args["instruction"]
+
                     # Notify user about skill invocation (ephemeral, not saved)
-                    skill_name = args["skill_name"]
-                    instruction = args["instruction"]
 
                     instruction_preview = (
                         instruction[:200] + "..."
@@ -79,20 +140,24 @@ class AgentOrchestrator:
                             extra_context=extra_context,
                             ctx=ctx,
                         ):
+                            # Stream output/chunks
                             if chunk:
-                                await ctx.reply(chunk)
-                                logger.info(chunk)
+                                # Optimization: If result has UI, valid structured output is likely coming.
+                                # To avoid duplication (AgentOrchestrator msg + Final Model msg),
+                                # we SKIP sending the chunk here if it's a structured result with UI.
+                                # The text will be accumulated in 'full_output' and 'final_text_response'
+                                # and sent by ai_handlers with the UI attached.
+                                is_structured_ui = (
+                                    isinstance(result_obj, dict) and "ui" in result_obj
+                                )
+                                # logger.info(f"agent reply chunk: {chunk}")
+                                logger.info(f"agent reply result_obj: {result_obj}")
+
+                                if not is_structured_ui:
+                                    await ctx.reply(chunk)
+                                    logger.info(chunk)
+
                                 iteration_output += chunk + "\n"
-                                # Stream crucial updates to user? Or maybe just status.
-                                # SkillAgent yields status messages.
-                                if (
-                                    "正在" in chunk
-                                    or "完成" in chunk
-                                    or "委托" in chunk
-                                ):
-                                    pass  # Let Agent allow these?
-                                    # Actually AgentOrchestrator usually waits for generator.
-                                    # If we want to stream status, we can.
 
                             if files:
                                 for filename, content in files.items():
@@ -102,6 +167,11 @@ class AgentOrchestrator:
 
                             if isinstance(result_obj, SkillDelegationRequest):
                                 delegation = result_obj
+                            elif isinstance(result_obj, dict) and "ui" in result_obj:
+                                # Capture UI components for the final response
+                                if "pending_ui" not in ctx.user_data:
+                                    ctx.user_data["pending_ui"] = []
+                                ctx.user_data["pending_ui"].append(result_obj["ui"])
 
                         full_output += iteration_output
 
@@ -140,10 +210,6 @@ class AgentOrchestrator:
                     logger.info(f"Skill {skill_name} output length: {len(full_output)}")
 
                     return f"Skill Execution Output:\n{full_output}"
-
-                # elif name == "evolve_capability":
-                #     # REMOVED: Evolution is now handled via skill_manager
-                #     pass
 
                 # Memory Tools (Lazy Connect)
                 else:

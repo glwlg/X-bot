@@ -9,20 +9,18 @@ from core.config import gemini_client, GEMINI_MODEL
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict):
     topic = params.get("topic", "").strip()
     depth = params.get("depth", 3)
     language = params.get("language", "zh-CN")
 
     if not topic:
-        await ctx.reply("❌ 请提供研究主题 (topic)")
-        return "Failed: No topic provided."
+        yield {"text": "❌ 请提供研究主题 (topic)", "ui": {}}
+        return
 
     depth = min(max(1, int(depth)), 5)  # 限制 1-5
 
-    await ctx.reply(
-        f"🧐 正在对 「{topic}」 进行深度研究 (深度: {depth})...\n此过程包含：搜索 -> 爬取网页 -> 深度阅读 -> 综合报告，可能需要 30-60 秒，请耐心等待。"
-    )
+    yield f"🧐 正在对 「{topic}」 进行深度研究 (深度: {depth})...\n此过程包含：搜索 -> 爬取网页 -> 深度阅读 -> 综合报告，可能需要 30-60 秒，请耐心等待。"
 
     # 1. Search Phase
     search_results = []
@@ -31,10 +29,11 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
 
         base_url = os.getenv("SEARXNG_URL")
         if not base_url:
-            await ctx.reply(
-                "❌ 搜索服务未配置 (SEARXNG_URL missing)，无法进行深度研究。"
-            )
-            return "Failed: Search service disabled."
+            yield {
+                "text": "❌ 搜索服务未配置 (SEARXNG_URL missing)，无法进行深度研究。",
+                "ui": {},
+            }
+            return
 
         if not base_url.endswith("/search"):
             if not base_url.endswith("/"):
@@ -51,21 +50,17 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                 data = response.json()
                 search_results = data.get("results", [])[:depth]
             else:
-                await ctx.reply(
-                    f"⚠️ 搜索阶段失败 (Status: {response.status_code})，尝试继续..."
-                )
+                yield f"⚠️ 搜索阶段失败 (Status: {response.status_code})，尝试继续..."
     except Exception as e:
         logger.error(f"Search failed: {e}")
-        await ctx.reply(f"⚠️ 搜索阶段出错: {e}")
+        yield f"⚠️ 搜索阶段出错: {e}"
 
     if not search_results:
-        await ctx.reply("❌ 未找到相关搜索结果，研究终止。")
-        return f"Failed: No search results found for topic '{topic}'."
+        yield {"text": "❌ 未找到相关搜索结果，研究终止。", "ui": {}}
+        return
 
     # 2. Crawl Phase
-    await ctx.reply(f"🕷️ 正在爬取并阅读 {len(search_results)} 个网页...")
-
-    crawled_data = []
+    yield f"🕷️ 正在爬取 {len(search_results)} 个网页..."
 
     async def process_url(item):
         url = item.get("url")
@@ -84,13 +79,14 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     valid_data = [item for item in crawled_results if item]
 
     if not valid_data:
-        await ctx.reply(
-            "❌ 无法读取任何网页内容（可能是因为反爬虫或网络问题），研究终止。"
-        )
-        return f"Failed: Unable to crawl any content for topic '{topic}'."
+        yield {
+            "text": "❌ 无法读取任何网页内容（可能是因为反爬虫或网络问题），研究终止。",
+            "ui": {},
+        }
+        return
 
     # 3. Synthesis Phase
-    await ctx.reply(f"🧠 已获取 {len(valid_data)} 份资料，正在综合分析并撰写报告...")
+    yield f"🧠 已获取 {len(valid_data)} 份资料，正在综合分析并撰写报告..."
 
     # Construct Context
     context_text = f"Research Topic: {topic}\n\nSources Data:\n"
@@ -138,14 +134,14 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
         file_obj = io.BytesIO(report_html.encode("utf-8"))
         file_obj.name = "deep_research_report.html"
 
-        await ctx.reply_document(
-            document=file_obj,
-            caption=f"📚 深度研究报告：{topic}\n\n基于 {len(valid_data)} 个来源的深度综合分析。",
-        )
-
-        return f"Success: Deep research report generated for '{topic}' based on {len(valid_data)} sources."
+        yield {
+            "text": f"Success: Deep research report generated for '{topic}' based on {len(valid_data)} sources.",
+            "files": {"deep_research_report.html": report_html.encode("utf-8")},
+            "ui": {},
+        }
+        return
 
     except Exception as e:
         logger.error(f"Synthesis failed: {e}")
-        await ctx.reply(f"❌ 报告生成阶段失败: {e}")
-        return f"Failed: Synthesis error: {e}"
+        yield {"text": f"❌ 报告生成阶段失败: {e}", "ui": {}}
+        return

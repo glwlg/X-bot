@@ -3,13 +3,9 @@ Skill 加载器 - 支持标准 SKILL.md 协议和旧版 .py 格式
 """
 
 import os
-import ast
 import logging
-import importlib.util
 import yaml
 from typing import Any, Optional, Dict, List
-from pathlib import Path
-from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
 
@@ -151,7 +147,7 @@ class SkillLoader:
         for name, info in index.items():
             skill_summary = {
                 "name": name,
-                "description": info.get("description", "")[:200],
+                "description": info.get("description", "")[:500],
                 "triggers": info.get("triggers", []),  # 添加 triggers
             }
 
@@ -159,48 +155,127 @@ class SkillLoader:
 
         return summary
 
-    def find_similar_skills(self, query: str, threshold: float = 0.4) -> List[Dict]:
+    async def find_similar_skills(
+        self, query: str, threshold: float = 0.4
+    ) -> List[Dict]:
         """
-        查找相似技能 (Fuzzy Match based on name and description)
+        查找相似技能 (AI Semantic Search)
+        使用 LLM 语义匹配，支持本地兜底
         """
+        from core.config import gemini_client, GEMINI_MODEL
+        import json
         import difflib
 
         skills = self.get_skills_summary()
-        matched = []
-        query = query.lower()
+        if not skills:
+            return []
 
+        # 1. 快速检查：精准名称匹配 (Exact Match) - save Token
+        query_lower = query.lower()
         for skill in skills:
-            name = skill["name"].lower()
-            desc = skill["description"].lower() if skill.get("description") else ""
-
-            # 1. Exact or Partial Name Match (High confidence)
-            if query == name or name in query:
+            if skill["name"].lower() == query_lower:
                 skill["score"] = 1.0
-                matched.append(skill)
-                continue
+                return [skill]
 
-            # 2. Description keyword match
-            if query in desc:
-                skill["score"] = 0.8
-                matched.append(skill)
-                continue
+        # 2. AI Semantic Search
+        try:
+            # 构建 Prompt
+            skills_context = "\n".join(
+                [
+                    f"- name: {s['name']}\n  description: {s.get('description', '')}"
+                    for s in skills
+                ]
+            )
 
-            # 3. Sequence Matcher for fuzzy similarity
-            ratio_name = difflib.SequenceMatcher(None, query, name).ratio()
-            ratio_desc = 0
-            # Only check description if it's short enough to be a title-like match,
-            # otherwise it might be noise.
-            if len(desc) < 100:
-                ratio_desc = difflib.SequenceMatcher(None, query, desc).ratio()
+            prompt = f"""
+You are a smart Skill Matcher.
+Identify which skills from the list might match the user's intent.
+Refuse to match if the relevance is low.
 
-            score = max(ratio_name, ratio_desc)
-            if score >= threshold:
-                skill["score"] = score
-                matched.append(skill)
+User Query: "{query}"
 
-        # Sort by score desc
-        matched.sort(key=lambda x: x.get("score", 0), reverse=True)
-        return matched
+Available Skills:
+{skills_context}
+
+Return JSON:
+{{
+  "matches": [
+    {{ "name": "skill_name", "score": 0.0_to_1.0, "reason": "brief explanation" }}
+  ]
+}}
+"""
+
+            response = await gemini_client.aio.models.generate_content(
+                model=GEMINI_MODEL,
+                contents=prompt,
+                config={"response_mime_type": "application/json"},
+            )
+
+            if not response.text:
+                raise ValueError("Empty response from AI")
+
+            try:
+                data = json.loads(response.text)
+                matches_data = data.get("matches", [])
+            except json.JSONDecodeError:
+                text = response.text.replace("```json", "").replace("```", "").strip()
+                data = json.loads(text)
+                matches_data = data.get("matches", [])
+
+            matched_skills = []
+            skill_map = {s["name"]: s for s in skills}
+
+            for m in matches_data:
+                name = m.get("name")
+                score = m.get("score", 0.0)
+                if name in skill_map and score >= threshold:
+                    s = skill_map[name]
+                    s["score"] = score
+                    s["match_reason"] = m.get("reason", "")
+                    matched_skills.append(s)
+
+            matched_skills.sort(key=lambda x: x["score"], reverse=True)
+            return matched_skills
+
+        except Exception as e:
+            logger.warning(
+                f"AI skill search failed ({e}), falling back to local fuzzy search."
+            )
+
+            # Local Fallback
+            matched = []
+            query_parts = query_lower.split()
+
+            for skill in skills:
+                name = skill["name"].lower()
+                desc = skill["description"].lower() if skill.get("description") else ""
+
+                # Keyword match
+                if all(word in name for word in query_parts):
+                    skill["score"] = 1.0
+                    matched.append(skill)
+                    continue
+
+                if all(word in desc for word in query_parts):
+                    skill["score"] = 0.8
+                    matched.append(skill)
+                    continue
+
+                # Fuzzy match (Use original string query for SequenceMatcher)
+                ratio_name = difflib.SequenceMatcher(None, query_lower, name).ratio()
+                ratio_desc = 0
+                if len(desc) < 100:
+                    ratio_desc = difflib.SequenceMatcher(
+                        None, query_lower, desc
+                    ).ratio()
+
+                score = max(ratio_name, ratio_desc)
+                if score >= threshold:
+                    skill["score"] = score
+                    matched.append(skill)
+
+            matched.sort(key=lambda x: x.get("score", 0), reverse=True)
+            return matched
 
     def get_skill(self, skill_name: str) -> Optional[Dict]:
         """获取 Skill 完整信息"""
@@ -259,6 +334,51 @@ class SkillLoader:
                 logger.error(
                     f"❌ Failed to register handlers for skill {skill_name}: {e}"
                 )
+
+    def import_skill_module(
+        self, skill_name: str, script_name: str = "execute.py"
+    ) -> Optional[Any]:
+        """
+        Dynamically import a module from a skill's scripts directory.
+        Used to access internal logic of skills without hard dependencies.
+        """
+        skill_info = self.get_skill(skill_name)
+        if not skill_info:
+            logger.warning(f"Skill not found: {skill_name}")
+            return None
+
+        skill_dir = skill_info["skill_dir"]
+        script_path = os.path.join(skill_dir, "scripts", script_name)
+
+        if not os.path.exists(script_path):
+            logger.warning(f"Script not found: {script_path}")
+            return None
+
+        try:
+            import importlib.util
+            import sys
+
+            # Module name must be unique to avoid collisions
+            module_name = (
+                f"skills.dynamic.{skill_name}.{script_name.replace('.py', '')}"
+            )
+
+            spec = importlib.util.spec_from_file_location(module_name, script_path)
+            if spec and spec.loader:
+                module = importlib.util.module_from_spec(spec)
+
+                # Add script dir to sys.path temporarily to allow relative imports (like importing siblings)
+                script_dir = os.path.dirname(script_path)
+                if script_dir not in sys.path:
+                    sys.path.insert(0, script_dir)
+
+                spec.loader.exec_module(module)
+                return module
+        except Exception as e:
+            logger.error(
+                f"Failed to import skill module {skill_name}/{script_name}: {e}"
+            )
+            return None
 
 
 # 全局单例

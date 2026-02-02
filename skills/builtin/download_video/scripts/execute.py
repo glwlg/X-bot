@@ -16,13 +16,16 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
             url = match.group(0)
 
     if not url:
-        await ctx.reply(
-            "📹 **视频下载**\n\n"
-            "请提供视频链接，例如：\n"
-            "• 下载 https://www.youtube.com/watch?v=xxx\n"
-            "• 帮我保存这个视频 https://twitter.com/..."
-        )
-        return "❌ 未提供 URL"
+        return {
+            "text": (
+                "📹 **视频下载**\n\n"
+                "请提供视频链接，例如：\n"
+                "• 下载 https://www.youtube.com/watch?v=xxx\n"
+                "• 帮我保存这个视频 https://twitter.com/..."
+            ),
+            "ui": {},
+        }
 
     await process_video_download(ctx, url, audio_only=(format_type == "audio"))
-    return "✅ 视频已下载并发送"
+    await process_video_download(ctx, url, audio_only=(format_type == "audio"))
+    return {"text": "✅ 视频已下载并发送", "ui": {}}

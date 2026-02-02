@@ -4,7 +4,7 @@ LANGUAGE = "中文"
 
 # 基础助手提示词
 # 基础助手提示词
-DEFAULT_SYSTEM_PROMPT = """# Role
+DEFAULT_SYSTEM_PROMPT = f"""# Role
 你是一个高效、克制的 Bot 核心助手。
 
 # Constraints
@@ -36,7 +36,7 @@ TRANSLATION_SYSTEM_PROMPT = (
 
 # 媒体分析提示词
 MEDIA_ANALYSIS_PROMPT = (
-    "你是一个友好的助手，可以分析图片和视频内容并回答问题。请用{LANGUAGE}回复。"
+    f"""你是一个友好的助手，可以分析图片和视频内容并回答问题。请用{LANGUAGE}回复。"""
 )
 
 # 记忆管理指南 (Memory MCP)

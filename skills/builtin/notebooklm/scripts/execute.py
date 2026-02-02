@@ -7,31 +7,40 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict):
+    result = await _internal_execute(ctx, params)
+    if isinstance(result, str):
+        return {"text": result, "ui": {}}
+    return result
+
+
+async def _internal_execute(ctx: UnifiedContext, params: dict) -> str:
     """执行 NotebookLM 操作"""
     action = params.get("action", "").lower()
     user_id = int(ctx.message.user.id) if str(ctx.message.user.id).isdigit() else 0
 
     if not action:
-        return (
-            "📚 **NotebookLM 可用操作:**\n\n"
-            "• `status` - 查看认证状态\n"
-            "• `login` - 登录指南\n"
-            "• `list` - 列出所有笔记本\n"
-            "• `create` - 创建新笔记本\n"
-            "• `use` - 切换当前笔记本\n"
-            "• `ask` - 向笔记本提问\n"
-            "• `source_add` - 添加来源\n"
-            "• `source_list` - 列出来源\n"
-            "• `source_fulltext` - 获取来源全文\n"
-            "• `source_guide` - 获取来源指南\n"
-            "• `generate_audio` - 生成播客\n"
-            "• `generate_video` - 生成视频\n"
-            "• `generate_quiz` - 生成测验\n"
-            "• `artifact_list` - 列出生成的内容\n"
-            "• `download` - 下载内容\n"
-            "• `delete` - 删除笔记本"
-        )
+        return {
+            "text": (
+                "📚 **NotebookLM 可用操作:**\n\n"
+                "• `status` - 查看认证状态\n"
+                "• `list` - 列出所有笔记本\n"
+                "• `create` - 创建新笔记本\n"
+                "• `use` - 切换当前笔记本\n"
+                "• `ask` - 向笔记本提问\n"
+                "• `source_add` - 添加来源\n"
+                "• `source_list` - 列出来源\n"
+                "• `source_fulltext` - 获取来源全文\n"
+                "• `source_guide` - 获取来源指南\n"
+                "• `generate_audio` - 生成播客\n"
+                "• `generate_video` - 生成视频\n"
+                "• `generate_quiz` - 生成测验\n"
+                "• `artifact_list` - 列出生成的内容\n"
+                "• `download` - 下载内容\n"
+                "• `delete` - 删除笔记本"
+            ),
+            "ui": {},
+        }
 
     # ========== 认证相关 ==========
     if action == "status":
@@ -45,7 +54,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                         return f"✅ 已认证\n📓 当前笔记本: **{nb.get('title', 'Untitled')}**"
                     return "✅ 已认证，尚未选择笔记本"
                 return "❌ 未认证。请使用 `login` 操作查看登录指南。"
-            except:
+            except Exception:
                 return f"📋 状态:\n```\n{stdout}\n```"
         return _parse_error(stdout, stderr)
 
@@ -88,7 +97,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                     lines.append(f"• **{nb.get('title') or '(无标题)'}**")
                     lines.append(f"  ID: `{nb.get('id')}`")
                 return "\n".join(lines)
-            except:
+            except Exception:
                 return f"📋 笔记本列表:\n```\n{stdout}\n```"
         return _parse_error(stdout, stderr)
 
@@ -100,7 +109,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                 data = json.loads(stdout)
                 nb_id = data.get("id", "Unknown")
                 return f"✅ 笔记本创建成功!\n• 标题: **{title}**\n• ID: `{nb_id}`"
-            except:
+            except Exception:
                 return f"✅ 创建成功:\n```\n{stdout}\n```"
         return _parse_error(stdout, stderr)
 
@@ -160,7 +169,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                     return _parse_error(stdout, stderr)
                 answer = data.get("answer", stdout)
                 return f"💬 **回答:**\n\n{answer}"
-            except:
+            except Exception:
                 return f"💬 **回答:**\n\n{stdout}"
         return _parse_error(stdout, stderr)
 
@@ -183,7 +192,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                     return _parse_error(stdout, stderr)
                 src_id = data.get("source_id", "Unknown")
                 return f"✅ 来源添加成功!\n• ID: `{src_id}`\n• 来源: {source_url}"
-            except:
+            except Exception:
                 return f"✅ 来源添加成功:\n```\n{stdout}\n```"
         return _parse_error(stdout, stderr)
 
@@ -208,7 +217,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                     lines.append(f"  ID: `{src.get('id')}`")
                     lines.append(f"  类型: {src.get('type', 'Unknown')}")
                 return "\n".join(lines)
-            except:
+            except Exception:
                 return f"📄 来源列表:\n```\n{stdout}\n```"
         return _parse_error(stdout, stderr)
 
@@ -229,7 +238,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                 if len(text) > 3000:
                     text = text[:3000] + "\n\n... (文本已截断)"
                 return f"📖 **来源全文:**\n\n{text}"
-            except:
+            except Exception:
                 return f"📖 来源全文:\n```\n{stdout[:3000]}\n```"
         return _parse_error(stdout, stderr)
 
@@ -247,7 +256,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                     return _parse_error(stdout, stderr)
                 guide = data.get("guide", stdout)
                 return f"📚 **来源指南:**\n\n{guide}"
-            except:
+            except Exception:
                 return f"📚 来源指南:\n```\n{stdout}\n```"
         return _parse_error(stdout, stderr)
 
@@ -280,7 +289,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                     f"• 预计耗时: 5-15 分钟\n\n"
                     f'⏰ 请稍后询问我："检查播客生成状态" 或 "下载播客"'
                 )
-            except:
+            except Exception:
                 return f"🎙️ 播客生成已启动，请稍后查询状态。\n```\n{stdout}\n```"
         return _parse_error(stdout, stderr)
 
@@ -308,8 +317,8 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                     f"• 预计耗时: 5-15 分钟\n\n"
                     f'⏰ 请稍后询问我："检查视频生成状态" 或 "下载视频"'
                 )
-            except:
-                return f"🎬 视频生成已启动，请稍后查询状态。"
+            except Exception:
+                return "🎬 视频生成已启动，请稍后查询状态。"
         return _parse_error(stdout, stderr)
 
     if action == "generate_quiz":
@@ -325,7 +334,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                 if data.get("error"):
                     return _parse_error(stdout, stderr)
                 return f"📝 测验生成成功!\n```json\n{json.dumps(data, indent=2, ensure_ascii=False)[:2000]}\n```"
-            except:
+            except Exception:
                 return f"📝 测验生成成功:\n```\n{stdout[:2000]}\n```"
         return _parse_error(stdout, stderr)
 
@@ -352,7 +361,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                     )
                     lines.append(f"  ID: `{art.get('id')}`")
                 return "\n".join(lines)
-            except:
+            except Exception:
                 return f"📦 内容列表:\n```\n{stdout}\n```"
         return _parse_error(stdout, stderr)
 
@@ -374,7 +383,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                     return _parse_error(stdout, stderr)
                 status = data.get("status", "Unknown")
                 return f"✅ 内容已完成!\n• 状态: {status}\n\n使用 `download` 操作下载内容。"
-            except:
+            except Exception:
                 return f"✅ 内容已完成:\n```\n{stdout}\n```"
         return _parse_error(stdout, stderr)
 
@@ -419,22 +428,42 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                     if artifact_type in ["audio", "video"]:
                         # 音频/视频使用对应的发送方法
                         if artifact_type == "audio":
-                            await ctx.reply_audio(
-                                audio=open(output_path, "rb"),
-                                caption=f"🎙️ NotebookLM 播客\n文件大小: {file_size / 1024 / 1024:.1f}MB",
-                            )
+                            # await ctx.reply_audio(
+                            #     audio=open(output_path, "rb"),
+                            #     caption=f"🎙️ NotebookLM 播客\n文件大小: {file_size / 1024 / 1024:.1f}MB",
+                            # )
+                            with open(output_path, "rb") as f:
+                                content = f.read()
+                            return {
+                                "text": f"🎙️ NotebookLM 播客\n文件大小: {file_size / 1024 / 1024:.1f}MB",
+                                "files": {os.path.basename(output_path): content},
+                                "ui": {},
+                            }
                         else:
-                            await ctx.reply_video(
-                                video=open(output_path, "rb"),
-                                caption=f"🎬 NotebookLM 视频\n文件大小: {file_size / 1024 / 1024:.1f}MB",
-                            )
+                            # await ctx.reply_video(
+                            #     video=open(output_path, "rb"),
+                            #     caption=f"🎬 NotebookLM 视频\n文件大小: {file_size / 1024 / 1024:.1f}MB",
+                            # )
+                            with open(output_path, "rb") as f:
+                                content = f.read()
+                            return {
+                                "text": f"🎬 NotebookLM 视频\n文件大小: {file_size / 1024 / 1024:.1f}MB",
+                                "files": {os.path.basename(output_path): content},
+                                "ui": {},
+                            }
                     else:
                         # 其他文件作为文档发送
-                        await ctx.reply_document(
-                            document=open(output_path, "rb"),
-                            caption=f"📄 NotebookLM {artifact_type}\n文件大小: {file_size / 1024:.1f}KB",
-                        )
-                    return f"✅ 文件已发送!"
+                        # await ctx.reply_document(
+                        #     document=open(output_path, "rb"),
+                        #     caption=f"📄 NotebookLM {artifact_type}\n文件大小: {file_size / 1024:.1f}KB",
+                        # )
+                        with open(output_path, "rb") as f:
+                            content = f.read()
+                        return {
+                            "text": f"📄 NotebookLM {artifact_type}\n文件大小: {file_size / 1024:.1f}KB",
+                            "files": {os.path.basename(output_path): content},
+                            "ui": {},
+                        }
                 except Exception as e:
                     logger.error(f"Failed to send file: {e}")
                     return (
@@ -461,7 +490,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                 if data.get("error"):
                     return _parse_error(stdout, stderr)
                 return f"🔍 网络研究已启动!\n• 查询: {query}\n• 模式: {mode}"
-            except:
+            except Exception:
                 return f"🔍 网络研究已启动:\n```\n{stdout}\n```"
         return _parse_error(stdout, stderr)
 
@@ -470,8 +499,6 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
         if code == 0:
             return f"🔍 研究状态:\n```\n{stdout}\n```"
         return _parse_error(stdout, stderr)
-
-    return f"❌ 未知操作: {action}"
 
 
 async def _run_cli(args: list, user_id: int, timeout: int = 30):
@@ -515,7 +542,7 @@ async def _run_cli(args: list, user_id: int, timeout: int = 30):
         except asyncio.TimeoutError:
             try:
                 process.kill()
-            except:
+            except Exception:
                 pass
             return -1, "", "Execution timed out"
 
