@@ -1,6 +1,6 @@
 ---
 name: docker_ops
-description: **Docker 底层操作接口**。直接管理容器、网络和文件。通常由 `deployment_manager` 调用，也可用于简单的容器管理。
+description: "**Docker 底层操作接口**。直接管理容器、网络和文件。通常由 `deployment_manager` 调用，也可用于简单的容器管理。"
 triggers:
 - docker
 - 容器

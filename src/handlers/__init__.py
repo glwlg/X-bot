@@ -20,19 +20,11 @@ from .service_handlers import (
     remind_command,
     handle_remind_input,
     toggle_translation_command,
-    subscribe_command,
-    handle_subscribe_input,
-    unsubscribe_command,
-    handle_unsubscribe_callback,
-    monitor_command,
-    handle_monitor_input,
-    list_subs_command,
+)
+from .feature_handlers import (
     feature_command,
     handle_feature_input,
     save_feature_command,
-    watchlist_command,
-    process_stock_watch,
-    handle_stock_select_callback,
 )
 from .ai_handlers import handle_ai_chat, handle_ai_photo, handle_ai_video
 from .mcp_handlers import handle_browser_action

@@ -1,6 +1,6 @@
 ---
 name: rss_subscribe
-description: **RSS 订阅与新闻监控**。订阅 RSS/Atom 源，或监控关键词新闻动态。
+description: "**RSS 订阅与新闻监控**。订阅 RSS/Atom 源，或监控关键词新闻动态。"
 triggers:
 - rss
 - 订阅

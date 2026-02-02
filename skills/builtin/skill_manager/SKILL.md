@@ -33,14 +33,76 @@ triggers:
 ## 核心能力
 
 1.  **列出技能 (Action: list)**: 查看当前已安装的所有技能包 (Builtin + Learned).
-2.  **搜索技能 (Action: search)**: 从 GitHub 或市场搜索可用技能。
+2.  **搜索技能 (Action: search)**: 搜索可用技能 (优先返回**本地已安装**，其次搜索 **GitHub 市场**)。
 3.  **安装技能 (Action: install)**: 从指定 URL 或仓库安装新技能。
 4.  **删除技能 (Action: delete)**: 卸载并删除指定名称的技能。
 5.  **创建技能 (Action: create)**: 根据需求描述，使用 AI 自动编写新技能。
 6.  **修改技能 (Action: modify)**: 修改现有技能的代码逻辑或修复 Bug。
 7.  **配置技能 (Action: config)**: (仅 metadata) 修改技能的 triggers, description 等元数据。
 
-## 执行指令 (SOP)
+## 技能开发标准 (Skill Standard)
+
+X-Bot 采用 **Skill-Centric** 架构，每个能力应尽量封装在独立的 Skill 包中。
+
+### 1. 目录结构
+```
+skills/learned/<skill_name>/
+├── SKILL.md          # 元数据 (YAML Frontmatter + 使用说明)
+└── scripts/
+    └── execute.py    # 核心逻辑与入口
+```
+
+### 2. SKILL.md 规范
+```yaml
+---
+name: my_skill
+description: 技能描述
+triggers:        # 用于自然语言意图路由
+  - 触发词1
+  - 触发词2
+params:          # (可选) 参数定义
+  param1: string
+---
+
+# 使用说明
+Markdown 格式的详细说明...
+```
+
+### 3. execute.py 规范
+
+```python
+from core.platform.models import UnifiedContext
+from typing import Any
+
+# 1. 核心执行入口 (必须)
+async def execute(ctx: UnifiedContext, params: dict) -> str:
+    """
+    当通过 triggers 或 AI agent 调用时执行此函数
+    """
+    user_id = ctx.message.user.id
+    # ... 业务逻辑 ...
+    return "执行结果反馈"
+
+# 2. 动态 Handler 注册 (可选)
+def register_handlers(adapter_manager: Any):
+    """
+    注册特定的 Slash Command 或 Button Callback
+    """
+    # 注册命令 /my_cmd
+    adapter_manager.on_command("my_cmd", my_custom_handler)
+    
+    # 注册回调 (Global)
+    adapter_manager.on_callback_query(r"^my_skill:.*", my_callback_handler)
+
+async def my_custom_handler(ctx: UnifiedContext):
+    await ctx.reply("Hello from Custom Handler!")
+
+async def my_callback_handler(ctx: UnifiedContext):
+    await ctx.answer_callback()
+    await ctx.reply(f"Clicked: {ctx.callback_data}")
+```
+
+## 执行指令 (SOP) -- (Internal)
 
 当用户请求管理技能时，请分析其意图并提取以下参数调用内置脚本：
 

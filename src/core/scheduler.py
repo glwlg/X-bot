@@ -7,6 +7,7 @@ import logging
 import datetime
 import dateutil.parser
 import feedparser
+import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from core.platform.registry import adapter_manager
@@ -243,71 +244,88 @@ async def fetch_formatted_rss_updates(
 
     # 3. 抓取逻辑
     loop = asyncio.get_running_loop()
-    for url, subs in feed_map.items():
-        try:
-            # Use run_in_executor to avoid blocking the event loop with synchronous feedparser
-            feed = await loop.run_in_executor(None, feedparser.parse, url)
-            if feed.bozo and feed.bozo_exception:
-                continue
-            if not feed.entries:
-                continue
 
-            latest_entry = feed.entries[0]
-            entry_id = getattr(latest_entry, "id", getattr(latest_entry, "link", None))
-            if not entry_id:
-                continue
+    # Shared client for all fetches
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+        for url, subs in feed_map.items():
+            try:
+                # 1. Async Fetch
+                try:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    content = response.content
+                except Exception as e:
+                    logger.error(f"Network error checking feed {url}: {e}")
+                    continue
 
-            for sub in subs:
-                last_hash = sub["last_entry_hash"]
-                if entry_id != last_hash:
-                    # Found new content
-                    title = latest_entry.get("title", "无标题")
-                    link = latest_entry.get("link", url)
-                    feed_title = feed.feed.get("title", "RSS 订阅")
+                # 2. Threaded Parse
+                feed = await loop.run_in_executor(None, feedparser.parse, content)
 
-                    # Content summary logic...
-                    content = ""
-                    if hasattr(latest_entry, "summary"):
-                        content = latest_entry.summary
-                    elif hasattr(latest_entry, "content") and latest_entry.content:
-                        content = latest_entry.content[0].get("value", "")
-                    elif hasattr(latest_entry, "description"):
-                        content = latest_entry.description
+                if feed.bozo and feed.bozo_exception:
+                    # Some feeds result in bozo but have entries, log but continue
+                    logger.warning(f"Feed bozo {url}: {feed.bozo_exception}")
 
-                    import re
+                if not feed.entries:
+                    continue
 
-                    content_clean = re.sub(r"<[^>]+>", "", content).strip()
+                latest_entry = feed.entries[0]
+                entry_id = getattr(
+                    latest_entry, "id", getattr(latest_entry, "link", None)
+                )
+                if not entry_id:
+                    continue
 
-                    if content_clean:
-                        summary = await generate_entry_summary(
-                            title, content_clean, link
-                        )
-                    else:
-                        summary = "暂无摘要"
+                for sub in subs:
+                    last_hash = sub["last_entry_hash"]
+                    if entry_id != last_hash:
+                        # Found new content
+                        title = latest_entry.get("title", "无标题")
+                        link = latest_entry.get("link", url)
+                        feed_title = feed.feed.get("title", "RSS 订阅")
 
-                    uid = sub["user_id"]
-                    plat = sub.get("platform", "telegram")
-                    key = (plat, uid)
+                        # Content summary logic...
+                        content = ""
+                        if hasattr(latest_entry, "summary"):
+                            content = latest_entry.summary
+                        elif hasattr(latest_entry, "content") and latest_entry.content:
+                            content = latest_entry.content[0].get("value", "")
+                        elif hasattr(latest_entry, "description"):
+                            content = latest_entry.description
 
-                    if key not in user_updates:
-                        user_updates[key] = []
+                        import re
 
-                    update_item = {
-                        "feed_title": feed_title,
-                        "title": title,
-                        "summary": summary,
-                        "link": link,
-                        "sub_id": sub["id"],
-                        "entry_id": entry_id,
-                        "etag": getattr(feed, "etag", None),
-                        "modified": getattr(feed, "modified", None),
-                    }
+                        content_clean = re.sub(r"<[^>]+>", "", content).strip()
 
-                    user_updates[key].append(update_item)
-                    all_pending_updates.append(update_item)
+                        if content_clean:
+                            summary = await generate_entry_summary(
+                                title, content_clean, link
+                            )
+                        else:
+                            summary = "暂无摘要"
 
-        except Exception as e:
-            logger.error(f"Error checking feed {url}: {e}")
+                        uid = sub["user_id"]
+                        plat = sub.get("platform", "telegram")
+                        key = (plat, uid)
+
+                        if key not in user_updates:
+                            user_updates[key] = []
+
+                        update_item = {
+                            "feed_title": feed_title,
+                            "title": title,
+                            "summary": summary,
+                            "link": link,
+                            "sub_id": sub["id"],
+                            "entry_id": entry_id,
+                            "etag": getattr(feed, "etag", None),
+                            "modified": getattr(feed, "modified", None),
+                        }
+
+                        user_updates[key].append(update_item)
+                        all_pending_updates.append(update_item)
+
+            except Exception as e:
+                logger.error(f"Error checking feed {url}: {e}")
 
     # 4. 格式化输出 (按用户汇总)
     final_output = ""

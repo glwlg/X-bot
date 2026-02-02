@@ -1,6 +1,6 @@
 ---
 name: notebooklm
-description: **Google NotebookLM 客户端**。支持管理笔记本、上传来源(网页/PDF/YouTube)、提问、生成播客/视频。
+description: "**Google NotebookLM 客户端**。支持管理笔记本、上传来源(网页/PDF/YouTube)、提问、生成播客/视频。"
 triggers:
 - notebooklm
 - notebook

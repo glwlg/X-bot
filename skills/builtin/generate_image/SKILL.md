@@ -1,6 +1,6 @@
 ---
 name: generate_image
-description: **文生图 (Image Generation)**。使用 AI 生成高质量图片。
+description: "**文生图 (Image Generation)**。使用 AI 生成高质量图片。"
 triggers:
 - 画图
 - 生成图片

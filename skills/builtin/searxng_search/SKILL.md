@@ -1,6 +1,6 @@
 ---
 name: searxng_search
-description: **聚合网络搜索**。基于 SearXNG，支持 Google/Bing/DuckDuckGo 等多引擎聚合搜索。
+description: "**聚合网络搜索**。基于 SearXNG，支持 Google/Bing/DuckDuckGo 等多引擎聚合搜索。"
 triggers:
 - search
 - 搜索

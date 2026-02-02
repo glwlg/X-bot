@@ -38,6 +38,16 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     
     # Must return a string summarizing the result for the Agent
     return "Execution completed."
+
+
+def register_handlers(adapter_manager: Any):
+    """
+    (可选) 动态注册 Handler
+    如果 Skill 需要自定义 Command (如 /my_cmd) 或 CallbackQueryHandler，在此处注册。
+    """
+    # Example:
+    # adapter_manager.on_command("my_cmd", my_command_handler)
+    pass
 '''
 
 GENERATION_PROMPT = """你是一个 X-Bot Skill 生成器。根据用户需求生成标准 SKILL.md 格式的技能。
@@ -77,11 +87,22 @@ GENERATION_PROMPT = """你是一个 X-Bot Skill 生成器。根据用户需求�
 ## 函数签名 (必须严格遵守)
 ```python
 from core.platform.models import UnifiedContext
+from typing import Any
 
 async def execute(ctx: UnifiedContext, params: dict) -> str:
     # 业务逻辑
     return "Result summary"
+
+def register_handlers(adapter_manager: Any):
+    # (可选) 注册自定义 Command 或 Callback
+    pass
 ```
+
+## 高级功能: 动态注册 (Dynamic Registration)
+如果技能需要监听特定的 Slash Command (不仅仅是文本触发) 或 Button Callback:
+1. 在 `execute.py` 中定义 `register_handlers(adapter_manager)`。
+2. 使用 `adapter_manager.on_command("cmd", handler)` 或 `adapter_manager.on_callback_query(pattern, handler)`。
+3. handler 函数签名: `async def handler(ctx: UnifiedContext)`.
 
 ## 输出格式
 返回 JSON 格式:

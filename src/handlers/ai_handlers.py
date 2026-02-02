@@ -297,7 +297,6 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         animation_task.cancel()  # Ensure it stops immediately
 
         # 5. 发送最终回复并入库
-        # 5. 发送最终回复并入库
         if final_text_response:
             # 用户体验优化：为了避免工具产生的中间消息导致最终结果被顶上去需要翻页，
             # 这里改为发送一条新消息作为最终结果，并删除原本的"思考中"消息。

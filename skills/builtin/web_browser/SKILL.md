@@ -1,6 +1,6 @@
 ---
 name: web_browser
-description: **网页浏览器**。用于访问 URL 获取内容，或生成网页摘要。
+description: "**网页浏览器**。用于访问 URL 获取内容，或生成网页摘要。"
 triggers:
 - 访问
 - browse

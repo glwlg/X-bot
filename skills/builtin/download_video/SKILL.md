@@ -1,6 +1,6 @@
 ---
 name: download_video
-description: **下载视频或音频**。自动识别 URL 下载 YouTube, Bilibili, Twitter, TikTok 等平台的媒体。
+description: "**下载视频或音频**。自动识别 URL 下载 YouTube, Bilibili, Twitter, TikTok 等平台的媒体。"
 triggers:
 - 下载
 - download

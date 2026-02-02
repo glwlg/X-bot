@@ -1,6 +1,6 @@
 ---
 name: stock_watch
-description: **自选股助手**。管理用户的股票关注列表，支持实时行情刷新。
+description: "**自选股助手**。管理用户的股票关注列表，支持实时行情刷新。"
 triggers:
 - stock
 - 股票
