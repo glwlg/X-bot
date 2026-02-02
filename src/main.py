@@ -191,8 +191,8 @@ async def main():
     # --- Global Initialization (Decoupled from TG) ---
     await init_services()
 
-    if tg_app:
-        await setup_telegram_commands(tg_app)
+    # if tg_app:
+    #     await setup_telegram_commands(tg_app)
     # -----------------------------------------------
 
     # B. Discord Adapter
@@ -205,13 +205,18 @@ async def main():
 
     # 3. Register Handlers (Unified)
     # Broadcast common commands
-    adapter_manager.on_command("start", start)
-    adapter_manager.on_command("help", help_command)
-    adapter_manager.on_command("new", handle_new_command)
-    adapter_manager.on_command("stats", stats_command)
-    adapter_manager.on_command("skills", skills_command)
-    adapter_manager.on_command("reload_skills", reload_skills_command)
-    adapter_manager.on_command("translate", toggle_translation_command)
+    # Broadcast common commands
+    adapter_manager.on_command("start", start, description="显示主菜单")
+    adapter_manager.on_command("new", handle_new_command, description="开启新对话")
+    adapter_manager.on_command("help", help_command, description="使用帮助")
+    adapter_manager.on_command("stats", stats_command, description="查看统计信息")
+    adapter_manager.on_command("skills", skills_command, description="查看可用技能")
+    adapter_manager.on_command(
+        "reload_skills", reload_skills_command, description="重载技能"
+    )
+    adapter_manager.on_command(
+        "translate", toggle_translation_command, description="开启/关闭沉浸式翻译"
+    )
 
     # Legacy/Admin commands (Broadcast to all? Or just TG?)
     adapter_manager.on_command("deploy", deploy_command)

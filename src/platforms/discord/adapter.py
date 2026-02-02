@@ -548,15 +548,28 @@ class DiscordAdapter(BotAdapter):
                     f"❌ Error: {e}", ephemeral=True
                 )
 
-    def on_command(self, command: str, handler: Callable[[UnifiedContext], Any]):
+    def on_command(
+        self,
+        command: str,
+        handler: Callable[[UnifiedContext], Any],
+        description: str = None,
+        **kwargs,
+    ):
         self._command_handlers[command] = handler
 
         # Register as Slash Command
         from discord import app_commands
 
         # We need a description. Default generic.
-        # Ideally handler.__doc__?
-        description = "Execute command"
+        if not description:
+            # Try to get docstring
+            description = handler.__doc__ or "Execute command"
+
+        # Ensure description is not empty and fits limits (100 chars for Discord)
+        if len(description) > 100:
+            description = description[:97] + "..."
+        if not description:
+            description = "Execute command"
 
         # We Define the callback dynamically
         # Note: 'args' is the optional parameter string
@@ -576,7 +589,9 @@ class DiscordAdapter(BotAdapter):
 
         self.tree.add_command(discord_cmd)
 
-        logger.info(f"Registered Discord command (Slash+Text): /{command}")
+        logger.info(
+            f"Registered Discord command (Slash+Text): /{command} ({description})"
+        )
 
     # Alias for backward compatibility if needed
     register_command = on_command

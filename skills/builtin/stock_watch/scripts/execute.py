@@ -102,11 +102,13 @@ def register_handlers(adapter_manager):
             return "请使用: /add_stock <股票名称>"
 
     # Aliases
-    adapter_manager.on_command("watchlist", cmd_watchlist)
-    adapter_manager.on_command("stocks", cmd_watchlist)
+    adapter_manager.on_command("watchlist", cmd_watchlist, description="查看自选股行情")
+    adapter_manager.on_command("stocks", cmd_watchlist, description="查看自选股行情")
 
     # Missing commands
-    adapter_manager.on_command("addstock", cmd_add_stock)
+    adapter_manager.on_command(
+        "addstock", cmd_add_stock, description="添加自选股 (例: /addstock 茅台)"
+    )
 
     async def cmd_del_stock(ctx):
         if not await is_user_allowed(ctx.message.user.id):
@@ -124,7 +126,9 @@ def register_handlers(adapter_manager):
         else:
             return "请使用: /delstock <股票名称>"
 
-    adapter_manager.on_command("delstock", cmd_del_stock)
+    adapter_manager.on_command(
+        "delstock", cmd_del_stock, description="删除自选股 (例: /delstock 茅台)"
+    )
     # Optional implicit add via message? No, keep explicit commands for now
 
     # Callback
