@@ -257,34 +257,61 @@ X-Bot 的核心竞争力在于其 **"Always Evolving" (持续进化)** 能力。
 
 ```
 skills/learned/my_awesome_skill/
-├── SKILL.md            # [核心] 元数据 + 使用文档 (SOP)
+├── SKILL.md            # [核心] 元数据 + 智能指南 (AI Principles)
 └── scripts/            # [可选] 执行逻辑
     └── execute.py      # Python 入口函数
 ```
 
 #### 核心文件: SKILL.md
 
-这是技能的"灵魂"，既是给 AI 看的说明书，也是系统的配置表。
+这是技能的"灵魂"，不同于传统的死板 SOP，现在它更像是一份**给 Agent 的行动指南**。
+
+**编写黄金原则**：
+1. **能力而非步骤**：明确列出“你能做什么”（Action），而不是“你必须按顺序做 1,2,3...”。
+2. **原则优先 (Principles over Steps)**：设定硬性约束（如端口范围、必须验证），而非具体路径。
+3. **环境变量**：路径配置必须使用环境变量（支持 `${VAR}` 和 `$VAR` 格式），如 `$X_DEPLOYMENT_STAGING_PATH`。
 
 ```yaml
 ---
-name: my_skill              # 唯一标识
+name: deployment_manager    # 唯一标识
 description: |
-  技能的简要描述 (用于 AI 路由)
-triggers:                   # 触发词 (Intent Router 使用)
-- 关键词1
-- 关键词2
-version: 1.0.0
+  智能部署代理...
+triggers:
+- 部署
+- 卸载
+version: 2.0.0
 ---
 
-# 技能详细文档
+## 核心能力 (Capabilities)
+| 动作 | 说明 |
+| :--- | :--- |
+| `write_file` | 写入配置到 `$X_DEPLOYMENT_STAGING_PATH` |
+| `verify_access` | **(必选)** 验证服务可达性 |
 
-这里是给 Agent 阅读的 SOP (Standard Operating Procedure)。
-如果包含 execute.py，Agent 会根据这里的说明去调用代码。
-如果不包含代码，Agent 会严格遵循这里的文本步骤执行 (纯 SOP 模式)。
+## 核心原则 (Core Principles) - 必须严格遵守！
+1. **验证优先**：启动服务后，**必须**调用 `verify_access` 检查。只有返回 `success: true` 才是真正的成功。
+2. **删除安全**：收到“删除/卸载”指令时，**除非**指令明确包含“清理数据”或“删除文件”，否则**严禁**执行删除目录或文件的操作，只能停止和移除容器。
+
+## 典型场景参考
+(提供 Deploy 和 Uninstall 的参考流程，但允许 Agent 根据实际情况灵活调整)
 ```
 
-### 3.3 Skill Manager: 技能系统的 OS
+### 3.3 Skill Agent: 持续观察与执行 (Continuous ReAct)
+
+`SkillAgent` 演进为了一个具备持续观察能力的智能体：
+
+*   **持续观察 (Continuous Observation)**：
+    *   Agent 执行动作 (Execute/Delegate) 后，**不会退出**，而是获取结果作为 Observation，进入下一轮思考。
+    *   这使得 Agent 能够处理长链条任务（如：Clone -> Modify -> Up -> Verify -> Reply）。
+*   **透明执行 (Transparent Execution)**：
+    *   所有的 Shell 命令和脚本参数在执行前都会**实时广播**给用户，保证过程透明。
+*   **安全熔断 (Circuit Breaker)**：
+    *   **死循环检测**：如果 Agent 连续执行完全相同的操作（且结果相同），触发警告。
+    *   **强制终止**：连续第 3 次重复时，系统强制熔断任务，防止资源耗尽。
+*   **明确终结 (Explicit Termination)**：
+    *   只有当 Agent 确信任务完成并发出 `REPLY` 动作（产生 `SkillFinalReply` 信号）时，循环才会结束。
+
+### 3.4 Skill Manager: 技能系统的 OS
 
 `skill_manager` 是一个特殊的 Builtin Skill，它是管理所有其他技能的"操作系统"。
 
@@ -304,7 +331,7 @@ version: 1.0.0
 *   想让技能每天运行？ -> **Config** (`config crontab`)
 *   想让技能支持新 API？ -> **Modify** (`modify logic`)
 
-### 3.4 定时任务机制 (Cron)
+### 3.5 定时任务机制 (Cron)
 
 X-Bot 拥有内置的分布式兼容调度器 (`src/core/scheduler.py`)：
 
@@ -384,6 +411,28 @@ MCP 模块允许 X-Bot 调用外部 MCP 服务。
 3. **权限控制**: 敏感操作必须检查 `check_permission_unified`
 4. **数据库变更**: 修改表结构需更新 `repositories/base.py` 的 `init_db`
 5. **CallbackQuery**: 新增回调前缀需更新 `main.py` 的 `common_pattern` 正则
+
+---
+
+## 7. 安全与最佳实践 (Safety & Best Practices)
+
+X-Bot 作为一个拥有实际系统操作权限（Docker, Shell）的 Agent，安全性至关重要。
+
+### 7.1 删除操作安全 (Delete Safety)
+所有涉及资源清理的 Skill（如卸载应用、删除文件、清理缓存）必须遵循：
+*   **默认保留数据**：除非用户指令中明确包含“删除文件”、“清理数据”、“彻底删除”等关键词，否则**严禁**自动删除用户的数据目录。
+*   **Prompt 防御**：在 System Prompt 和 Skill Decision Prompt 中，必须包含对“删除”意图的防御性指令。
+*   **最小权限原则**：如果只需要停止服务，不要调用 `rm` 命令。
+
+### 7.2 避免死循环 (Loop Prevention)
+Agent 可能因为幻觉或逻辑错误陷入无限循环（如反复重试失败的操作）。
+*   **系统熔断**：AgentOrchestrator 会检测连续重复的输出，并在第 3 次重复时强制终止任务。
+*   **Skill 设计**：编写 SKILL.md 时，应引导 Agent 在遇到特定错误时**尝试不同的路径**（如查日志、修改配置），而不是盲目重试。
+*   **明确终止**：确保任务成功后立即调用 `REPLY`，不要画蛇添足。
+
+### 7.3 可见性 (Visibility)
+*   **透明执行**：所有高风险操作（Shell, Write File）都应在执行前通知用户。
+*   **日志记录**：关键决策点必须记录 INFO 级别日志。
 
 ---
 

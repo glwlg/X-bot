@@ -13,8 +13,10 @@ services:
     volumes:
       - ./downloads:/app/downloads
       - ./data:/app/data
-      # Manual Host Mount for Deployment Staging (Fix "not a directory" error)
-      - /DATA/x-box/data/deployment_staging:/DATA/x-box/data/deployment_staging
+      # Deployment Staging: 宿主机路径必须与容器内路径一致
+      # 这是因为 x-bot 调度的是宿主机 Docker，docker compose 会使用宿主机路径
+      # 必须在 .env 中设置 X_DEPLOYMENT_STAGING_PATH 为绝对路径！
+      - ${X_DEPLOYMENT_STAGING_PATH}:${X_DEPLOYMENT_STAGING_PATH}
       - ./skills:/app/skills # 持久化学习到的 Skills
       - /mnt/d/media/dlp:/app/media
       - /var/run/docker.sock:/var/run/docker.sock # MCP: 允许启动 MCP 服务容器

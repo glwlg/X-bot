@@ -13,7 +13,7 @@ from stats import increment_stat
 logger = logging.getLogger(__name__)
 
 # 思考提示消息
-THINKING_MESSAGE = "🤔 正在思考中..."
+THINKING_MESSAGE = "🤔 让我想想..."
 
 
 async def handle_ai_chat(ctx: UnifiedContext) -> None:
@@ -164,19 +164,19 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
 
     # 随机选择一种"消息已收到"的提示
     RECEIVED_PHRASES = [
-        "📨 收到！大脑正在飞速运转...",
-        "⚡ 信号接收完毕，正在解析...",
-        "🍪 Bip Bip! 消息已送达核心...",
-        "📡 正在建立神经连接...",
+        "📨 收到！大脑急速运转中...",
+        "⚡ 信号已接收，开始解析...",
+        "🍪 Bip Bip! 消息直达核心...",
+        "📡 神经连接建立中...",
         "💭 正在调取相关记忆...",
-        "🐌 这里有点堵车，马上就好...",
-        "✨ 收到指令，正在施法...",
+        "🐌 稍微有点堵车，马上就好...",
+        "✨ 指令已确认，准备施法...",
     ]
 
     if not has_media:
         thinking_msg = await ctx.reply(random.choice(RECEIVED_PHRASES))
     else:
-        thinking_msg = await ctx.reply("🤔 正在分析引用内容...")
+        thinking_msg = await ctx.reply("🤔 让我看看引用具体内容...")
 
     # 3. 构建消息上下文 (History)
     final_user_message = user_message
@@ -194,21 +194,21 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
 
     # 动态加载词库
     LOADING_PHRASES = [
-        "🤖 正在调用赛博算力...",
-        "💭 让我好好想一想...",
-        "🛁 正在清洗数据管道...",
-        "📡 正在连接火星通讯...",
-        "🍪 正在给 AI 喂饼干...",
-        "🐌 这里有点堵车，稍等...",
-        "📚 正在翻阅百科全书...",
-        "🔨 正在敲代码实现你的需求...",
-        "🌌 正在穿越虫洞寻找答案...",
-        "🧹 正在打扫内存碎片...",
-        "🔌 正在检查网线有没有松...",
-        "🎨 正在绘制思维导图...",
-        "🍕 正在吃口披萨补充能量...",
-        "🧘 正在进行数字冥想...",
-        "🏃 正在全力冲刺...",
+        "🤖 调用赛博算力中...",
+        "💭 此问题稍显深奥...",
+        "🛁 顺手清洗下数据管道...",
+        "📡 正在尝试连接火星通讯...",
+        "🍪 先给 AI 喂块饼干补充体力...",
+        "🐌 稍等，前面有点堵...",
+        "📚 翻阅百科全书中...",
+        "🔨 正在狂敲代码实现需求...",
+        "🌌 试图穿越虫洞寻找答案...",
+        "🧹 清理一下内存碎片...",
+        "🔌 检查下网线接好没...",
+        "🎨 正在为您绘制思维导图...",
+        "🍕 吃口披萨，马上回来...",
+        "🧘 数字冥想中...",
+        "🏃 全力冲刺中...",
     ]
 
     # 共享状态
@@ -419,7 +419,7 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
     await add_message(ctx, user_id, "user", f"【用户发送了一张图片】 {caption}")
 
     # 立即发送"正在分析"提示
-    thinking_msg = await ctx.reply("🔍 正在分析图片...")
+    thinking_msg = await ctx.reply("🔍 让我仔细看看这张图...")
 
     # 发送"正在输入"状态
     await ctx.send_chat_action(action="typing")
@@ -523,7 +523,7 @@ async def handle_ai_video(ctx: UnifiedContext) -> None:
         return
 
     # 立即发送"正在分析"提示
-    thinking_msg = await ctx.reply("🎬 正在分析视频，这可能需要一些时间...")
+    thinking_msg = await ctx.reply("🎬 视频分析中，请稍候片刻...")
 
     # 发送"正在输入"状态
     await ctx.send_chat_action(action="typing")
@@ -595,3 +595,88 @@ async def handle_ai_video(ctx: UnifiedContext) -> None:
             "• 视频时长过长\n"
             "• 服务暂时不可用",
         )
+
+
+async def handle_sticker_message(ctx: UnifiedContext) -> None:
+    """
+    处理表情包消息，将其转换为图片进行分析
+    """
+    user_id = ctx.message.user.id
+    update = ctx.platform_event
+
+    # 检查用户权限
+    from core.config import is_user_allowed
+
+    if not await is_user_allowed(user_id):
+        return  # Silent ignore for stickers if unauthorized? Or reply?
+
+    sticker = update.message.sticker
+    if not sticker:
+        return
+
+    # Check if animated or video sticker (might be harder to handle)
+    is_animated = getattr(sticker, "is_animated", False)
+    is_video = getattr(sticker, "is_video", False)
+
+    caption = "请描述这个表情包的情感和内容"
+
+    # Save to history
+    await add_message(ctx, user_id, "user", f"【用户发送了一个表情包】")
+
+    thinking_msg = await ctx.reply("🤔 这个表情包有点意思...")
+    await ctx.send_chat_action(action="typing")
+
+    try:
+        # Download
+        file_bytes = await ctx.download_file(sticker.file_id)
+
+        mime_type = "image/webp"
+        if is_animated:
+            # TGS format (lottie). API might not support it directly as image.
+            # Maybe treat as document? Or skip?
+            # Start with supporting static webp and video webm
+            pass
+        if is_video:
+            mime_type = "video/webm"
+
+        # 构建内容
+        contents = [
+            {
+                "parts": [
+                    {"text": caption},
+                    {
+                        "inline_data": {
+                            "mime_type": mime_type,
+                            "data": base64.b64encode(bytes(file_bytes)).decode("utf-8"),
+                        }
+                    },
+                ]
+            }
+        ]
+
+        # Call API
+        response = gemini_client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=contents,
+            config={
+                "system_instruction": "你是一个幽默的助手，请分析这个表情包的内容和情感。请用简短有趣的中文回复。",
+            },
+        )
+
+        if response.text:
+            msg_id = getattr(
+                thinking_msg, "message_id", getattr(thinking_msg, "id", None)
+            )
+            await ctx.edit_message(msg_id, response.text)
+            await add_message(ctx, user_id, "model", response.text)
+            await increment_stat(user_id, "photo_analyses")  # Count as photo
+        else:
+            msg_id = getattr(
+                thinking_msg, "message_id", getattr(thinking_msg, "id", None)
+            )
+            await ctx.edit_message(msg_id, "😵 没看懂这个表情包...")
+
+    except Exception as e:
+        logger.error(f"Sticker analysis error: {e}")
+        msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
+        await ctx.edit_message(msg_id, "❌ 表情包分析失败")

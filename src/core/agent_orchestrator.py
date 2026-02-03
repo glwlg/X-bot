@@ -88,7 +88,11 @@ class AgentOrchestrator:
             try:
                 # Dispatch to specific handlers
                 if name == "call_skill" or name.startswith("skill_"):
-                    from agents.skill_agent import skill_agent, SkillDelegationRequest
+                    from agents.skill_agent import (
+                        skill_agent,
+                        SkillDelegationRequest,
+                        SkillFinalReply,
+                    )
 
                     if name == "call_skill":
                         skill_name = args["skill_name"]
@@ -120,44 +124,65 @@ class AgentOrchestrator:
                         else instruction
                     )
                     await ctx.reply(
-                        f"🔧 正在调用技能: `{skill_name}`\n📝 指令: `{instruction_preview}`"
+                        f"⚡ 准备调用 `{skill_name}` 能力，指令：{instruction_preview}"
                     )
 
                     full_output = ""
                     extra_context = ""
-                    current_skill = skill_name
-                    current_instruction = instruction
 
-                    # Delegation Loop (Max depth 3 to prevent infinite loops)
-                    MAX_DEPTH = 3
+                    # Continuous Observation Loop (ReAct Pattern)
+                    # 只有 REPLY 才退出，EXECUTE 和 DELEGATE 都继续循环
+                    MAX_DEPTH = 20
+                    MAX_ROUND_OUTPUT_LEN = 2000  # 每轮结果最大长度
+                    MAX_CONTEXT_LEN = 8000  # 总 context 最大长度
+
+                    # 循环检测变量
+                    last_iteration_output = None
+                    loop_counter = 0
 
                     for depth in range(MAX_DEPTH):
                         delegation = None
+                        execution_result = None
+                        is_final_reply = False
                         iteration_output = ""
 
-                        # Execute Skill
+                        logger.info(f"[ReAct Round {depth + 1}] Executing {skill_name}")
+
+                        # Execute Skill Agent (Think -> Act)
                         async for chunk, files, result_obj in skill_agent.execute_skill(
-                            current_skill,
-                            current_instruction,
+                            skill_name,
+                            instruction,
                             extra_context=extra_context,
                             ctx=ctx,
                         ):
-                            # Stream output/chunks
+                            # 检测返回类型
+                            if isinstance(result_obj, SkillDelegationRequest):
+                                delegation = result_obj
+                            elif isinstance(result_obj, SkillFinalReply):
+                                # Agent 明确返回了最终回复
+                                is_final_reply = True
+                            elif isinstance(result_obj, dict):
+                                if "ui" in result_obj:
+                                    if "pending_ui" not in ctx.user_data:
+                                        ctx.user_data["pending_ui"] = []
+                                    ctx.user_data["pending_ui"].append(result_obj["ui"])
+                                # 捕获执行结果（用于反馈给下一轮）
+                                execution_result = result_obj
+
                             if chunk:
-                                # Optimization: If result has UI, valid structured output is likely coming.
-                                # To avoid duplication (AgentOrchestrator msg + Final Model msg),
-                                # we SKIP sending the chunk here if it's a structured result with UI.
-                                # The text will be accumulated in 'full_output' and 'final_text_response'
-                                # and sent by ai_handlers with the UI attached.
                                 is_structured_ui = (
                                     isinstance(result_obj, dict) and "ui" in result_obj
                                 )
-                                # logger.info(f"agent reply chunk: {chunk}")
-                                # logger.info(f"agent reply result_obj: {result_obj}")
 
-                                if not is_structured_ui:
+                                # 只在非结构化 UI 时发送状态消息
+                                # 避免发送 Agent 的中间思考消息（如 "正在思考..."）
+                                if (
+                                    not is_structured_ui
+                                    and not chunk.startswith("🧠")
+                                    and not is_final_reply
+                                ):
                                     await ctx.reply(chunk)
-                                    logger.info(chunk)
+                                    logger.info(f"[Round {depth + 1}] {chunk}")
 
                                 iteration_output += chunk + "\n"
 
@@ -167,50 +192,144 @@ class AgentOrchestrator:
                                         document=content, filename=filename
                                     )
 
-                            if isinstance(result_obj, SkillDelegationRequest):
-                                delegation = result_obj
-                            elif isinstance(result_obj, dict) and "ui" in result_obj:
-                                # Capture UI components for the final response
-                                if "pending_ui" not in ctx.user_data:
-                                    ctx.user_data["pending_ui"] = []
-                                ctx.user_data["pending_ui"].append(result_obj["ui"])
-
                         full_output += iteration_output
 
+                        # 检查是否是最终回复（Agent 返回 REPLY action）
+                        # 如果 iteration_output 不包含特定的中间状态标记，且没有 delegation，
+                        # 我们需要更精确地判断是否是 REPLY
+                        # 实际上，SkillAgent 在 REPLY 时会直接 yield content 并 return
+                        # 而 EXECUTE 时会 yield 执行结果
+
                         if delegation:
-                            logger.info(f"Delegating to {delegation.target_skill}")
+                            # === DELEGATE: 执行委托并继续循环 ===
+                            logger.info(
+                                f"[Round {depth + 1}] Delegating to {delegation.target_skill}"
+                            )
                             await ctx.reply(
-                                f"🔄 (层级 {depth + 1}) 正在委托给 `{delegation.target_skill}`: {delegation.instruction}"
+                                f"🔄 正在委托给 `{delegation.target_skill}`: {delegation.instruction}"
                             )
 
-                            # Execute Delegated Skill (Capture output for context)
+                            # Execute Delegated Skill
                             delegated_output = ""
-                            async for d_chunk, d_files, _ in skill_agent.execute_skill(
+                            async for (
+                                d_chunk,
+                                d_files,
+                                d_result,
+                            ) in skill_agent.execute_skill(
                                 delegation.target_skill, delegation.instruction, ctx=ctx
                             ):
                                 if d_chunk:
-                                    delegated_output += d_chunk
+                                    delegated_output += d_chunk + "\n"
                                 if d_files:
-                                    # Send files from delegated skill too
                                     for f_name, f_content in d_files.items():
                                         await ctx.reply_document(
                                             document=f_content, filename=f_name
                                         )
 
-                            # Add to context and continue loop (re-execute original skill with new context)
-                            extra_context += f"\n\n[来自 {delegation.target_skill} 的结果]:\n{delegated_output}\n"
-                            # Continue loop: execute current_skill again (it will now see the context and likely EXECUTE)
-                            continue
+                            # 智能截断
+                            if len(delegated_output) > MAX_ROUND_OUTPUT_LEN:
+                                truncated = delegated_output[:MAX_ROUND_OUTPUT_LEN]
+                                truncated += f"\n...[已截断，原长度 {len(delegated_output)} 字符]"
+                            else:
+                                truncated = delegated_output
+
+                            extra_context += f"\n\n【轮次 {depth + 1} 结果 - {delegation.target_skill}】:\n{truncated}"
+
+                        elif execution_result or iteration_output:
+                            # === EXECUTE: 把执行结果加入 context 并继续循环 ===
+
+                            # 如果有具体的执行结果（如 write_file 返回的 success），加入上下文
+                            if execution_result:
+                                result_text = str(execution_result)
+                                if isinstance(execution_result, dict):
+                                    result_text = execution_result.get(
+                                        "text", str(execution_result)
+                                    )
+
+                                    # [新增] 将执行结果发送给用户（增强可见性）
+                                    # 避免发送纯数据对象的字符串表示，只发送有意义的文本
+                                    if "text" in execution_result and result_text:
+                                        await ctx.reply(result_text)
+
+                                if len(result_text) > MAX_ROUND_OUTPUT_LEN:
+                                    result_text = (
+                                        result_text[:MAX_ROUND_OUTPUT_LEN]
+                                        + "...[已截断]"
+                                    )
+
+                                extra_context += (
+                                    f"\n\n【轮次 {depth + 1} 执行结果】:\n{result_text}"
+                                )
+                                logger.info(
+                                    f"[Round {depth + 1}] EXECUTE result captured, continuing..."
+                                )
+                                continue
+
+                            # 如果只有文本输出且不是最终回复（例如 Agent 的思考过程）
+                            elif not is_final_reply and iteration_output.strip():
+                                # 忽略纯状态消息
+                                is_status_msg = any(
+                                    marker in iteration_output
+                                    for marker in [
+                                        "正在执行",
+                                        "正在思考",
+                                        "⚙️",
+                                        "🧠",
+                                        "👉 委托给",
+                                    ]
+                                )
+                                if not is_status_msg:
+                                    extra_context += f"\n\n【轮次 {depth + 1} 输出】:\n{iteration_output[:MAX_ROUND_OUTPUT_LEN]}"
+                                    # 注意：这里不continue，以便进行后续的死循环检测
+
+                        # === 死循环检测 (Loop Circuit Breaker) ===
+                        # 检查当前轮次的输出是否与上一轮完全一致
+                        current_output_signature = iteration_output.strip()
+
+                        if (
+                            last_iteration_output
+                            and current_output_signature == last_iteration_output
+                        ):
+                            loop_counter += 1
+                            logger.warning(
+                                f"[Loop Detector] Detected identical output for {loop_counter} rounds."
+                            )
+
+                            # 放宽阈值：允许连续 2 次重复（即允许重试 1 次）
+                            # 只有当连续第 3 次出现相同输出时（loop_counter=2），才触发熔断
+                            if loop_counter >= 2:
+                                failure_msg = f"\n\n⚠️ **系统保护**: 检测到 Agent 在连续重试相同的操作 ({loop_counter + 1} 次)，任务已强制终止。"
+                                await ctx.reply(failure_msg)
+                                full_output += failure_msg
+                                is_final_reply = True  # 触发循环退出
                         else:
-                            # No delegation, we are done
+                            loop_counter = 0
+
+                        last_iteration_output = current_output_signature
+
+                        if is_final_reply:
+                            logger.info(
+                                f"[Round {depth + 1}] Final REPLY detected, breaking loop"
+                            )
                             break
+
+                        # 上下文长度管理
+                        if len(extra_context) > MAX_CONTEXT_LEN:
+                            keep_len = 6000
+                            summary = f"【早期轮次摘要】: 之前已完成 {depth} 轮操作。\n"
+                            extra_context = summary + extra_context[-keep_len:]
+
+                        logger.debug(
+                            f"[Round {depth + 1}] extra_context 长度: {len(extra_context)}"
+                        )
 
                     if not full_output.strip():
                         logger.warning(f"Skill {skill_name} returned empty output!")
                         return None
 
-                    logger.info(f"Skill {skill_name} output length: {len(full_output)}")
-
+                    logger.info(
+                        f"Skill {skill_name} completed after {depth + 1} rounds, output length: {len(full_output)}"
+                    )
                     return f"Skill Execution Output:\n{full_output}"
 
                 # Memory Tools (Lazy Connect)
@@ -252,7 +371,8 @@ class AgentOrchestrator:
 
         system_instruction = DEFAULT_SYSTEM_PROMPT
         system_instruction += skill_instruction
-        system_instruction += "\n⚠️ **提示**：系统可能安装了其他数百个技能。如果你需要特定的能力（如绘制图表、Docker管理等），请务必先调用 `skill_manager` 的 `search_skills` 或 `list_skills` 来查找，而不是假设自己不能做。"
+        system_instruction += "在你使用call_skill时，你不需要了解skill的详细信息，直接使用自然语言发送指令即可，SkillAgent会处理后续的调用。"
+        # system_instruction += "\n⚠️ **提示**：系统可能安装了其他数百个技能。如果你需要特定的能力（如绘制图表、Docker管理等），请务必先调用 `skill_manager`来查找，而不是假设自己不能做。"
 
         if MCP_MEMORY_ENABLED:
             # Use memory guide if enabled, but we avoid eager connection

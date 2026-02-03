@@ -2,6 +2,8 @@
 Skill Agent - 智能执行代理
 """
 
+import os
+
 import logging
 import asyncio
 import json
@@ -25,6 +27,16 @@ class SkillDelegationRequest:
 
     def __str__(self):
         return f"[Delegation -> {self.target_skill}: {self.instruction}]"
+
+
+class SkillFinalReply:
+    """Final Reply Object - marks that the skill has completed all steps"""
+
+    def __init__(self, content: str):
+        self.content = content
+
+    def __str__(self):
+        return f"[Final Reply: {self.content[:50]}...]"
 
 
 class SkillAgent:
@@ -58,6 +70,15 @@ class SkillAgent:
         skill_content = skill_info.get("skill_md_content", "")
         skill_dir = skill_info.get("skill_dir", "")
 
+        # 替换 skill_content 中的非敏感环境变量为实际值
+        for key, value in os.environ.items():
+            if key.startswith("X_"):
+                # 支持 ${X_VAR} 格式
+                skill_content = skill_content.replace(f"${{{key}}}", value)
+                # 支持 $X_VAR 格式
+                skill_content = skill_content.replace(f"${key}", value)
+
+        logger.debug(f"skill_content: {skill_content}")
         # 2. Think (Decision Making)
         yield f"🧠 SkillAgent ({skill_name}) 正在思考...", None, None
 
@@ -71,7 +92,8 @@ class SkillAgent:
         # 3. Act based on decision
         if action == "REPLY":
             content = decision.get("content", "")
-            yield content, None, None
+            # 使用 SkillFinalReply 标识这是最终回复
+            yield content, None, SkillFinalReply(content)
             return
 
         elif action == "DELEGATE":
@@ -87,6 +109,9 @@ class SkillAgent:
 
             if execute_type == "SCRIPT":
                 # Run execute.py
+                # 增强可见性：显示脚本参数
+                yield f"📜 正在运行脚本，参数: `{content}`", None, None
+
                 async for msg, files, result_obj in self._run_script(
                     skill_name, skill_dir, content, ctx
                 ):
@@ -94,7 +119,8 @@ class SkillAgent:
 
             elif execute_type == "COMMAND":
                 # Run shell command directly
-                yield f"⚙️ 正在执行 Shell 命令...", None, None
+                # 增强可见性：显示具体命令
+                yield f"⚙️ 我正在执行 Shell 命令: `{content}`", None, None
 
                 success, output = await sandbox_executor.execute_shell_command(
                     command=content, skill_dir=skill_dir
@@ -107,7 +133,7 @@ class SkillAgent:
 
             elif execute_type == "CODE":
                 # Run generated python code
-                yield f"⚙️ 正在执行代码 (CODE)...", None, None
+                yield f"⚙️ 我正在执行代码 (CODE)...", None, None
 
                 success, output, output_files = await sandbox_executor.execute_code(
                     code=content, input_files=input_files, skill_dir=skill_dir

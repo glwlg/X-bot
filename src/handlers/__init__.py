@@ -26,5 +26,10 @@ from .feature_handlers import (
     handle_feature_input,
     save_feature_command,
 )
-from .ai_handlers import handle_ai_chat, handle_ai_photo, handle_ai_video
+from .ai_handlers import (
+    handle_ai_chat,
+    handle_ai_photo,
+    handle_ai_video,
+    handle_sticker_message,
+)
 from .mcp_handlers import handle_browser_action
