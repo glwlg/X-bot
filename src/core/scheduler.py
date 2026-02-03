@@ -603,7 +603,7 @@ def start_stock_scheduler():
         stock_push_job,
         "interval",
         seconds=interval,
-        next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=30),
+        next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=5),
         id="stock_push",
         replace_existing=True,
     )
@@ -775,5 +775,5 @@ def start_dynamic_skill_scheduler():
     scheduler.add_job(
         reload_scheduler_jobs,
         "date",
-        run_date=datetime.datetime.now() + datetime.timedelta(seconds=1),
+        run_date=datetime.datetime.now() + datetime.timedelta(seconds=0.1),
     )

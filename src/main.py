@@ -40,6 +40,7 @@ from handlers import (
     handle_ai_chat,
     handle_ai_photo,
     handle_ai_video,
+    handle_sticker_message,
     feature_command,
     handle_feature_input,
     save_feature_command,
@@ -55,8 +56,6 @@ from handlers.skill_handlers import (
 )
 from handlers.voice_handler import handle_voice_message
 from handlers.document_handler import handle_document
-from handlers.document_handler import handle_document
-from handlers.deployment_handlers import deploy_command
 
 # Multi-Channel Imports
 from core.platform.registry import adapter_manager
@@ -218,9 +217,6 @@ async def main():
         "translate", toggle_translation_command, description="开启/关闭沉浸式翻译"
     )
 
-    # Legacy/Admin commands (Broadcast to all? Or just TG?)
-    adapter_manager.on_command("deploy", deploy_command)
-
     # ----------------------------------------------
     # 3.1 DYNAMIC SKILL HANDLER REGISTRATION
     # ----------------------------------------------
@@ -316,6 +312,7 @@ async def main():
         tg_adapter.on_message(filters.VIDEO, handle_ai_video)
         tg_adapter.on_message(filters.VOICE | filters.AUDIO, handle_voice_message)
         tg_adapter.on_message(filters.Document.ALL, handle_document)
+        tg_adapter.on_message(filters.Sticker.ALL, handle_sticker_message)
         tg_adapter.on_message(filters.TEXT & ~filters.COMMAND, handle_ai_chat)
     else:
         pass

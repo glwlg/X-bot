@@ -140,6 +140,11 @@ SKILL_INJECTION_MODE = os.getenv("SKILL_INJECTION_MODE", "full")
 # Server IP Override (Optional, for fixed deployment)
 SERVER_IP = os.getenv("SERVER_IP")
 
+# Deployment Staging Path (Optional, for Docker deployment feature)
+# This path is used for cloning and building repositories
+# Must be an absolute path that matches the Docker volume mount
+X_DEPLOYMENT_STAGING_PATH = os.getenv("X_DEPLOYMENT_STAGING_PATH")
+
 # 确保目录存在
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 os.makedirs(DATA_DIR, exist_ok=True)

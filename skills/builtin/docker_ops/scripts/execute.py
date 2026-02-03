@@ -1,5 +1,21 @@
-from core.platform.models import UnifiedContext
+"""
+Docker Ops Skill - 容器操作模块
+
+提供 Docker 容器管理的底层操作：
+- 列出服务/容器
+- 停止/删除容器
+- 执行 shell 命令
+- 编辑配置文件
+- 在指定目录执行 docker compose
+"""
+
 import asyncio
+import logging
+from pathlib import Path
+
+from core.platform.models import UnifiedContext
+
+logger = logging.getLogger(__name__)
 
 
 async def execute(ctx: UnifiedContext, params: dict):
@@ -8,9 +24,8 @@ async def execute(ctx: UnifiedContext, params: dict):
     """
     action = params.get("action")
 
-    # Lazy import to avoid circular dependency issues at module level
+    # Lazy import to avoid circular dependency
     from services.container_service import container_service
-    from services.deployment_service import docker_deployment_service
 
     if action == "list_services":
         res = await container_service.get_active_services()
@@ -24,10 +39,9 @@ async def execute(ctx: UnifiedContext, params: dict):
 
     # Alias 'remove'/'delete' to 'stop' with cleanup
     elif action in ["remove", "delete"]:
-        # Mutate params to use 'stop' logic
         action = "stop"
         params["remove"] = True
-        params["clean_volumes"] = True  # Default to clean volumes for explicit delete
+        params["clean_volumes"] = True
 
     if action == "stop":
         name = params.get("name")
@@ -51,80 +65,112 @@ async def execute(ctx: UnifiedContext, params: dict):
         yield {"text": "Command executed.\n" + result, "ui": {}}
         return
 
-    elif action == "deploy":
-        url = params.get("url")
-        if not url:
-            yield "❌ Missing parameter: 'url' is required for deployment."
+    elif action == "compose_up":
+        # 在指定目录执行 docker compose up
+        cwd = params.get("cwd") or params.get("path")
+        if not cwd:
+            yield "❌ Missing parameter: 'cwd' is required for compose_up."
             return
 
-        # Queue for streaming logs
-        log_queue = asyncio.Queue()
+        cwd_path = Path(cwd)
+        if not cwd_path.exists():
+            yield f"❌ Directory does not exist: {cwd}"
+            return
 
-        # Phase Update
-        async def update_status(msg: str):
-            await log_queue.put(f"🚀 {msg}")
+        build = params.get("build", True)
+        detach = params.get("detach", True)
 
-        # Log Streaming
-        log_buffer = []
+        cmd = "docker compose up"
+        if build:
+            cmd += " --build"
+        if detach:
+            cmd += " -d"
 
-        async def agent_progress_callback(chunk: str):
-            nonlocal log_buffer
-            try:
-                lines = chunk.splitlines()
-                log_buffer.extend(lines)
+        yield f"🚀 执行: `{cmd}` in `{cwd}`..."
 
-                # Send a new message every 60 lines
-                if len(log_buffer) > 60:
-                    content = "\n".join(log_buffer)
-                    await log_queue.put(f"📋 **日志:**\n```\n{content}\n```")
-                    log_buffer = []
-            except Exception:
-                pass
-
-        # Run deployment in background task
-        deploy_task = asyncio.create_task(
-            docker_deployment_service.deploy_repository(
-                url,
-                update_callback=update_status,
-                progress_callback=agent_progress_callback,
+        try:
+            process = await asyncio.create_subprocess_shell(
+                cmd,
+                cwd=str(cwd_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
             )
-        )
 
-        # Consume queue while task runs
-        while not deploy_task.done():
-            try:
-                # Wait for next log or task completion (polling with short timeout)
-                # Using wait might be better but timeout is simple for now
-                msg = await asyncio.wait_for(log_queue.get(), timeout=0.5)
-                yield msg
-            except asyncio.TimeoutError:
-                continue
+            output_lines = []
+            while True:
+                line = await process.stdout.readline()
+                if not line:
+                    break
+                decoded = line.decode("utf-8", errors="replace").rstrip()
+                output_lines.append(decoded)
 
-        # Drain remaining logs
-        while not log_queue.empty():
-            msg = await log_queue.get()
-            yield msg
+            await process.wait()
 
-        # Flush buffer
-        if log_buffer:
-            content = "\n".join(log_buffer)
-            yield f"📋 **日志:**\n```\n{content}\n```"
+            output = "\n".join(output_lines[-50:])  # Last 50 lines
 
-        success, result = await deploy_task
+            if process.returncode == 0:
+                yield {
+                    "text": f"✅ Docker Compose 启动成功!\n\n```\n{output}\n```",
+                    "ui": {},
+                }
+            else:
+                yield {
+                    "text": f"❌ Docker Compose 启动失败:\n\n```\n{output}\n```",
+                    "ui": {},
+                }
 
-        # Final result
-        if params.get("silent", False):
-            yield result
+        except Exception as e:
+            yield f"❌ 执行失败: {e}"
+        return
+
+    elif action == "compose_down":
+        # 在指定目录执行 docker compose down
+        cwd = params.get("cwd") or params.get("path")
+        if not cwd:
+            yield "❌ Missing parameter: 'cwd' is required for compose_down."
             return
 
-        final_msg = (
-            f"✅ 部署成功!\n\n{result}" if success else f"❌ Deploy Failed:\n{result}"
-        )
-        yield {"text": final_msg, "ui": {}}
+        cwd_path = Path(cwd)
+        if not cwd_path.exists():
+            yield f"❌ Directory does not exist: {cwd}"
+            return
+
+        volumes = params.get("volumes", False)
+        cmd = "docker compose down"
+        if volumes:
+            cmd += " -v"
+
+        yield f"🛑 执行: `{cmd}` in `{cwd}`..."
+
+        try:
+            process = await asyncio.create_subprocess_shell(
+                cmd,
+                cwd=str(cwd_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await process.communicate()
+            output = stdout.decode() + stderr.decode()
+
+            if process.returncode == 0:
+                yield {
+                    "text": f"✅ Docker Compose 已停止\n\n```\n{output}\n```",
+                    "ui": {},
+                }
+            else:
+                yield {
+                    "text": f"❌ Docker Compose 停止失败:\n\n```\n{output}\n```",
+                    "ui": {},
+                }
+
+        except Exception as e:
+            yield f"❌ 执行失败: {e}"
         return
 
     elif action == "execute_command":
         command = params.get("command")
+        cwd = params.get("cwd")  # Optional working directory
+
         if not command:
             yield "❌ Missing parameter: 'command' is required."
             return
@@ -142,14 +188,15 @@ async def execute(ctx: UnifiedContext, params: dict):
             "pwd",
             "sed",
             "awk",
+            "head",
+            "tail",
         ]
         if cmd_start not in allowed_cmds:
             yield f"❌ Security Restriction: Command '{cmd_start}' is not allowed. Allowed: {', '.join(allowed_cmds)}"
             return
 
-        # Security check: Block commands that could leak sensitive info (API keys, tokens)
+        # Security check: Block commands that could leak sensitive info
         cmd_lower = command.lower()
-        # Only apply sensitive check for docker commands that explicitly read env/secrets
         if cmd_start == "docker":
             docker_parts = command.split()
             # Block: docker inspect (can show all env vars)
@@ -194,7 +241,10 @@ async def execute(ctx: UnifiedContext, params: dict):
 
         try:
             process = await asyncio.create_subprocess_shell(
-                command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                command,
+                cwd=cwd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             stdout, stderr = await process.communicate()
 
@@ -224,12 +274,9 @@ async def execute(ctx: UnifiedContext, params: dict):
             yield "❌ Missing parameter: 'path' and 'content' are required."
             return
 
-        from pathlib import Path
-
         file_path = Path(path)
 
         try:
-            # Create parent dirs
             file_path.parent.mkdir(parents=True, exist_ok=True)
             file_path.write_text(content, encoding="utf-8")
             yield f"✅ File written: {path}"
