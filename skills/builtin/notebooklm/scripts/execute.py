@@ -179,7 +179,66 @@ async def _internal_execute(ctx: UnifiedContext, params: dict) -> str:
         if not source_url:
             return "❌ 请提供 source_url 参数（URL、YouTube链接或文件路径）"
 
-        args = ["source", "add", source_url, "--json"]
+        # 检测是否是微信公众号文章
+        is_wechat_article = "mp.weixin.qq.com" in source_url
+
+        if is_wechat_article:
+            # 公众号文章需要先抓取内容
+            logger.info(
+                f"Detected WeChat article: {source_url}, fetching content first..."
+            )
+
+            # 委托 web_browser 抓取内容
+            from agents.skill_agent import skill_agent
+
+            full_content = ""
+            try:
+                async for chunk, files, result_obj in skill_agent.execute_skill(
+                    "web_browser",
+                    f"访问并获取完整内容：{source_url}",
+                    ctx=ctx,
+                ):
+                    if isinstance(result_obj, dict) and "text" in result_obj:
+                        # 提取文本内容（去除 🔇🔇🔇 前缀）
+                        text = result_obj["text"]
+                        if text.startswith("🔇🔇🔇"):
+                            text = text[6:]  # 移除前缀
+                        full_content = text
+
+                if not full_content or "❌" in full_content:
+                    return f"❌ 无法抓取公众号文章内容：{source_url}\n\n{full_content}"
+
+                # 将内容保存为临时文件
+                import os
+
+                # 创建用户专属的临时目录
+                user_temp_dir = f"/tmp/notebooklm_{user_id}"
+                os.makedirs(user_temp_dir, exist_ok=True)
+
+                # 生成文件名（从 URL 提取标题或使用时间戳）
+                import time
+
+                timestamp = int(time.time())
+                temp_file = os.path.join(
+                    user_temp_dir, f"wechat_article_{timestamp}.txt"
+                )
+
+                # 写入内容
+                with open(temp_file, "w", encoding="utf-8") as f:
+                    f.write(f"来源: {source_url}\n\n")
+                    f.write(full_content)
+
+                # 使用文件路径添加来源
+                args = ["source", "add", temp_file, "--json"]
+                logger.info(f"Adding WeChat article as file: {temp_file}")
+
+            except Exception as e:
+                logger.error(f"Failed to fetch WeChat article: {e}", exc_info=True)
+                return f"❌ 抓取公众号文章失败: {str(e)}"
+        else:
+            # 普通 URL，直接添加
+            args = ["source", "add", source_url, "--json"]
+
         notebook_id = params.get("notebook_id")
         if notebook_id:
             args.extend(["--notebook", notebook_id])
@@ -191,7 +250,11 @@ async def _internal_execute(ctx: UnifiedContext, params: dict) -> str:
                 if data.get("error"):
                     return _parse_error(stdout, stderr)
                 src_id = data.get("source_id", "Unknown")
-                return f"✅ 来源添加成功!\n• ID: `{src_id}`\n• 来源: {source_url}"
+
+                if is_wechat_article:
+                    return f"✅ 公众号文章已成功添加到笔记本!\n• ID: `{src_id}`\n• 来源: {source_url}\n• 📌 已自动抓取完整内容"
+                else:
+                    return f"✅ 来源添加成功!\n• ID: `{src_id}`\n• 来源: {source_url}"
             except Exception:
                 return f"✅ 来源添加成功:\n```\n{stdout}\n```"
         return _parse_error(stdout, stderr)
@@ -237,9 +300,9 @@ async def _internal_execute(ctx: UnifiedContext, params: dict) -> str:
                 # 截断过长的文本
                 if len(text) > 3000:
                     text = text[:3000] + "\n\n... (文本已截断)"
-                return f"📖 **来源全文:**\n\n{text}"
+                return f"🔇🔇🔇📖 **来源全文:**\n\n{text}"
             except Exception:
-                return f"📖 来源全文:\n```\n{stdout[:3000]}\n```"
+                return f"🔇🔇🔇📖 来源全文:\n```\n{stdout[:3000]}\n```"
         return _parse_error(stdout, stderr)
 
     if action == "source_guide":
@@ -255,9 +318,9 @@ async def _internal_execute(ctx: UnifiedContext, params: dict) -> str:
                 if data.get("error"):
                     return _parse_error(stdout, stderr)
                 guide = data.get("guide", stdout)
-                return f"📚 **来源指南:**\n\n{guide}"
+                return f"🔇🔇🔇📚 **来源指南:**\n\n{guide}"
             except Exception:
-                return f"📚 来源指南:\n```\n{stdout}\n```"
+                return f"🔇🔇🔇📚 来源指南:\n```\n{stdout}\n```"
         return _parse_error(stdout, stderr)
 
     # ========== 内容生成 ==========

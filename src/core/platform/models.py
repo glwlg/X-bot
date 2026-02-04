@@ -120,6 +120,8 @@ class UnifiedContext:
         Unified reply method.
         Supports HTML formatting by default (adapters should handle conversion).
         Also supports structured dict input: {"text": "...", "ui": {...}}
+
+        Auto-converts long text (>1000 chars) to document if appropriate.
         """
         ui = None
         if isinstance(text, dict):
@@ -129,6 +131,48 @@ class UnifiedContext:
         # If ui is passed explicitly in kwargs, it overrides the dict one (or merges? override for simplicity)
         if "ui" in kwargs:
             ui = kwargs.pop("ui")
+
+        # Auto-convert long text to file
+        if text and len(text) > 1000:
+            # Detect format
+            text_lower = text.lower().strip()
+
+            # Check if it's HTML
+            if text_lower.startswith("<!doctype html") or text_lower.startswith(
+                "<html"
+            ):
+                filename = "content.html"
+                file_content = text.encode("utf-8")
+                caption = "📄 内容已转为 HTML 文件发送"
+
+                await self.reply_document(
+                    document=file_content, filename=filename, caption=caption
+                )
+                return
+
+            # Check if it's Markdown (contains markdown syntax)
+            elif any(
+                marker in text for marker in ["##", "```", "**", "- ", "1. ", "[", "]("]
+            ):
+                filename = "content.md"
+                file_content = text.encode("utf-8")
+                caption = "📄 内容已转为 Markdown 文件发送"
+
+                await self.reply_document(
+                    document=file_content, filename=filename, caption=caption
+                )
+                return
+
+            # Plain text
+            else:
+                filename = "content.txt"
+                file_content = text.encode("utf-8")
+                caption = "📄 内容过长，已转为文本文件发送"
+
+                await self.reply_document(
+                    document=file_content, filename=filename, caption=caption
+                )
+                return
 
         return await self._adapter.reply_text(self, text, ui=ui, **kwargs)
 

@@ -205,7 +205,7 @@ async def _read_file(params: dict) -> dict:
             content = content[:10000] + "\n\n... (内容过长，已截断)"
 
         return {
-            "text": f"📄 文件内容 (`{file_path}`):\n\n```\n{content}\n```",
+            "text": f"🔇🔇🔇📄 文件内容 (`{file_path}`):\n\n```\n{content}\n```",
             "ui": {},
             "content": content,
         }

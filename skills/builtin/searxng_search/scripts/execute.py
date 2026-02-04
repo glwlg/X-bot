@@ -173,6 +173,6 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     # Discord text logic (keep it? Brain summarizes anyway, but maybe useful to return logic text)
     # The original returned summary lines.
 
-    final_text = "\n".join(agent_summary_lines)
+    final_text = "🔇🔇🔇【搜索结果摘要】\n\n" + "\n".join(agent_summary_lines)
 
     return {"text": final_text, "files": {"search_report.html": html_bytes}, "ui": {}}

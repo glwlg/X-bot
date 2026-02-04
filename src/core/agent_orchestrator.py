@@ -150,52 +150,78 @@ class AgentOrchestrator:
                         logger.info(
                             "=============================1================================="
                         )
-                        # Execute Skill Agent (Think -> Act)
-                        async for chunk, files, result_obj in skill_agent.execute_skill(
-                            skill_name,
-                            instruction,
-                            extra_context=extra_context,
-                            ctx=ctx,
-                        ):
-                            logger.info(
-                                "=============================2================================="
-                            )
-                            # 检测返回类型
-                            if isinstance(result_obj, SkillDelegationRequest):
-                                delegation = result_obj
-                            elif isinstance(result_obj, SkillFinalReply):
-                                # Agent 明确返回了最终回复
-                                is_final_reply = True
-                            elif isinstance(result_obj, dict):
-                                if "ui" in result_obj:
-                                    if "pending_ui" not in ctx.user_data:
-                                        ctx.user_data["pending_ui"] = []
-                                    ctx.user_data["pending_ui"].append(result_obj["ui"])
-                                # 捕获执行结果（用于反馈给下一轮）
-                                execution_result = result_obj
 
-                            if chunk:
-                                is_structured_ui = (
-                                    isinstance(result_obj, dict) and "ui" in result_obj
+                        # 包裹异常捕获，确保错误信息能传递给下一轮
+                        try:
+                            # Execute Skill Agent (Think -> Act)
+                            async for (
+                                chunk,
+                                files,
+                                result_obj,
+                            ) in skill_agent.execute_skill(
+                                skill_name,
+                                instruction,
+                                extra_context=extra_context,
+                                ctx=ctx,
+                            ):
+                                logger.info(
+                                    "=============================2================================="
                                 )
+                                # 检测返回类型
+                                if isinstance(result_obj, SkillDelegationRequest):
+                                    delegation = result_obj
+                                elif isinstance(result_obj, SkillFinalReply):
+                                    # Agent 明确返回了最终回复
+                                    is_final_reply = True
+                                elif isinstance(result_obj, dict):
+                                    if "ui" in result_obj:
+                                        if "pending_ui" not in ctx.user_data:
+                                            ctx.user_data["pending_ui"] = []
+                                        ctx.user_data["pending_ui"].append(
+                                            result_obj["ui"]
+                                        )
+                                    # 捕获执行结果（用于反馈给下一轮）
+                                    execution_result = result_obj
 
-                                # 只在非结构化 UI 时发送状态消息
-                                # 避免发送 Agent 的中间思考消息（如 "正在思考..."）
-                                if (
-                                    not is_structured_ui
-                                    and not chunk.startswith("🧠")
-                                    and not is_final_reply
-                                ):
-                                    await ctx.reply(chunk)
-                                    logger.info(f"[Round {depth + 1}] {chunk}")
-
-                                iteration_output += chunk + "\n"
-
-                            if files:
-                                for filename, content in files.items():
-                                    await ctx.reply_document(
-                                        document=content, filename=filename
+                                if chunk:
+                                    is_structured_ui = (
+                                        isinstance(result_obj, dict)
+                                        and "ui" in result_obj
                                     )
+
+                                    # 只在非结构化 UI 时发送状态消息
+                                    # 避免发送 Agent 的中间思考消息（如 "正在思考..."）
+                                    if (
+                                        not is_structured_ui
+                                        and not chunk.startswith("🧠")
+                                        and not chunk.startswith("🔇🔇🔇")
+                                        and not is_final_reply
+                                    ):
+                                        await ctx.reply(chunk)
+                                        logger.info(f"[Round {depth + 1}] {chunk}")
+
+                                    iteration_output += chunk + "\n"
+
+                                if files:
+                                    for filename, content in files.items():
+                                        await ctx.reply_document(
+                                            document=content, filename=filename
+                                        )
+                        except Exception as e:
+                            # 捕获技能执行过程中的异常
+                            error_msg = f"❌ 执行出错: {str(e)}"
+                            logger.error(
+                                f"[Round {depth + 1}] Skill execution error: {e}",
+                                exc_info=True,
+                            )
+
+                            # 将错误信息发送给用户
+                            await ctx.reply(error_msg)
+
+                            # 将错误信息加入 iteration_output 和 execution_result
+                            iteration_output += error_msg + "\n"
+                            execution_result = {"text": error_msg, "error": str(e)}
+
                         logger.info(
                             "=============================3================================="
                         )
@@ -218,20 +244,32 @@ class AgentOrchestrator:
 
                             # Execute Delegated Skill
                             delegated_output = ""
-                            async for (
-                                d_chunk,
-                                d_files,
-                                d_result,
-                            ) in skill_agent.execute_skill(
-                                delegation.target_skill, delegation.instruction, ctx=ctx
-                            ):
-                                if d_chunk:
-                                    delegated_output += d_chunk + "\n"
-                                if d_files:
-                                    for f_name, f_content in d_files.items():
-                                        await ctx.reply_document(
-                                            document=f_content, filename=f_name
-                                        )
+                            try:
+                                async for (
+                                    d_chunk,
+                                    d_files,
+                                    d_result,
+                                ) in skill_agent.execute_skill(
+                                    delegation.target_skill,
+                                    delegation.instruction,
+                                    ctx=ctx,
+                                ):
+                                    if d_chunk:
+                                        delegated_output += d_chunk + "\n"
+                                    if d_files:
+                                        for f_name, f_content in d_files.items():
+                                            await ctx.reply_document(
+                                                document=f_content, filename=f_name
+                                            )
+                            except Exception as e:
+                                # 捕获委托执行过程中的异常
+                                error_msg = f"❌ 委托执行出错: {str(e)}"
+                                logger.error(
+                                    f"[Round {depth + 1}] Delegation error: {e}",
+                                    exc_info=True,
+                                )
+                                await ctx.reply(error_msg)
+                                delegated_output = error_msg + "\n"
 
                             # 智能截断
                             if len(delegated_output) > MAX_ROUND_OUTPUT_LEN:

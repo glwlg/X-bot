@@ -9,7 +9,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict) -> dict:
     """
     Execute scheduler management operations.
     """
@@ -27,7 +27,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
         need_push = push_param == "true" or push_param == "1"
 
         if not instruction:
-            return "❌ 请提供 `instruction`"
+            return {"text": "❌ 请提供 `instruction`"}
 
         try:
             task_id = await add_scheduled_task(
@@ -39,15 +39,17 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
 
             await reload_scheduler_jobs()
 
-            return (
-                f"✅ 定时任务已添加 (ID: {task_id})\n"
-                f"Cron: `{crontab}`\n"
-                f"Instruction: `{instruction}`\n"
-                f"Push: `{'Yes' if need_push else 'No'}`\n"
-                f"状态: 已立即生效"
-            )
+            return {
+                "text": (
+                    f"✅ 定时任务已添加 (ID: {task_id})\n"
+                    f"Cron: `{crontab}`\n"
+                    f"Instruction: `{instruction}`\n"
+                    f"Push: `{'Yes' if need_push else 'No'}`\n"
+                    f"状态: 已立即生效"
+                )
+            }
         except Exception as e:
-            return f"❌ 添加失败: {e}"
+            return {"text": f"❌ 添加失败: {e}"}
 
     elif action == "list":
         return await list_tasks_command(ctx)
@@ -55,18 +57,18 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     elif action == "delete":
         task_id = params.get("task_id")
         if not task_id:
-            return "❌ 请提供 `task_id`"
+            return {"text": "❌ 请提供 `task_id`"}
 
         try:
             await delete_task(int(task_id))
             from core.scheduler import reload_scheduler_jobs
 
             await reload_scheduler_jobs()
-            return f"✅ 任务 {task_id} 已删除并立即生效。"
+            return {"text": f"✅ 任务 {task_id} 已删除并立即生效。"}
         except Exception as e:
-            return f"❌ 删除失败: {e}"
+            return {"text": f"❌ 删除失败: {e}"}
 
-    return f"❌ 未知操作: {action}"
+    return {"text": f"❌ 未知操作: {action}"}
 
 
 def register_handlers(adapter_manager):

@@ -135,7 +135,7 @@ async def execute(ctx: UnifiedContext, params: dict):
         file_obj.name = "deep_research_report.html"
 
         yield {
-            "text": f"Success: Deep research report generated for '{topic}' based on {len(valid_data)} sources.",
+            "text": f"🔇🔇🔇【深度研究报告】\n\nSuccess: Deep research report generated for '{topic}' based on {len(valid_data)} sources.",
             "files": {"deep_research_report.html": report_html.encode("utf-8")},
             "ui": {},
         }

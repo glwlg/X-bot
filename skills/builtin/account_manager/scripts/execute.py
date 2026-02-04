@@ -12,7 +12,7 @@ except ImportError:
     pyotp = None
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict) -> dict:
     """执行账号管理"""
     action = params.get("action", "list")
     service = params.get("service", "").lower().strip()
@@ -28,24 +28,24 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     if action in ["list", "list_all"]:
         accounts = await list_accounts(user_id)
         if not accounts:
-            return "📭 您还没有保存任何账号。"
+            return {"text": "📭 您还没有保存任何账号。"}
 
         msg = "📋 **已保存的账号**：\n\n"
         for acc in accounts:
             msg += f"• `{acc}`\n"
         msg += "\n发送 `账号 <名称>` 查看详情。"
         # In a real app we might return markup buttons here
-        return msg
+        return {"text": msg}
 
     if action == "get":
         if not service:
             # Try to guess service from data or leftovers
             # But for strictness:
-            return "❌ 请指定要查看的服务名称 (例如: 账号 google)"
+            return {"text": "❌ 请指定要查看的服务名称 (例如: 账号 google)"}
 
         account = await get_account(user_id, service)
         if not account:
-            return f"❌ 未找到服务 `{service}` 的账号信息。"
+            return {"text": f"❌ 未找到服务 `{service}` 的账号信息。"}
 
         # Format output
         msg = f"🔐 **{service}**\n\n"
@@ -70,13 +70,13 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
         if mfa_code:
             msg += f"\n点击复制 MFA: `{mfa_code}`"
 
-        return msg
+        return {"text": msg}
 
     if action == "add":
         if not service:
-            return "❌ 请指定服务名称 (service=xxx)"
+            return {"text": "❌ 请指定服务名称 (service=xxx)"}
         if not data_raw:
-            return "❌ 请提供账号数据 (data=... 或 key=value)"
+            return {"text": "❌ 请提供账号数据 (data=... 或 key=value)"}
 
         # Parse data
         # Support JSON or key=value string
@@ -98,22 +98,22 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                     break
 
         if not parsed_data:
-            return "❌ 数据格式无法解析，请使用 key=value 格式。"
+            return {"text": "❌ 数据格式无法解析，请使用 key=value 格式。"}
 
         success = await add_account(user_id, service, parsed_data)
         if success:
-            return f"✅ 账号 `{service}` 已保存。"
+            return {"text": f"✅ 账号 `{service}` 已保存。"}
         else:
-            return "❌ 保存失败。"
+            return {"text": "❌ 保存失败。"}
 
     if action == "remove":
         if not service:
-            return "❌ 请指定要删除的服务名称。"
+            return {"text": "❌ 请指定要删除的服务名称。"}
 
         success = await delete_account(user_id, service)
         if success:
-            return f"🗑️ 账号 `{service}` 已删除。"
+            return {"text": f"🗑️ 账号 `{service}` 已删除。"}
         else:
-            return "❌ 删除失败。"
+            return {"text": "❌ 删除失败。"}
 
-    return f"❌ 未知操作: {action}"
+    return {"text": f"❌ 未知操作: {action}"}
