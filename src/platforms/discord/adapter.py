@@ -301,6 +301,48 @@ class DiscordAdapter(BotAdapter):
     async def stop(self):
         await self.client.close()
 
+    async def send_message(self, chat_id: int | str, text: str, **kwargs) -> Any:
+        """
+        主动发送消息（用于调度器推送）。
+        chat_id 可以是：
+        - 用户 ID：会尝试创建 DM 通道并发送
+        - 频道 ID：直接发送到该频道
+        """
+        from .formatter import markdown_to_discord_compat
+
+        text = markdown_to_discord_compat(text)
+        chat_id = int(chat_id)
+
+        try:
+            # 1. 尝试作为频道 ID 获取
+            channel = self.client.get_channel(chat_id)
+            if channel:
+                return await channel.send(text)
+
+            # 2. 如果不是频道，尝试作为用户 ID 获取并创建 DM
+            user = self.client.get_user(chat_id)
+            if not user:
+                # 尝试 fetch（可能不在缓存中）
+                try:
+                    user = await self.client.fetch_user(chat_id)
+                except discord.NotFound:
+                    logger.error(f"Discord user {chat_id} not found")
+                    return None
+
+            if user:
+                dm_channel = await user.create_dm()
+                return await dm_channel.send(text)
+
+            logger.error(f"Could not resolve Discord chat_id: {chat_id}")
+            return None
+
+        except discord.Forbidden:
+            logger.error(f"Discord: Cannot send message to {chat_id} (Forbidden)")
+            return None
+        except Exception as e:
+            logger.error(f"Discord send_message error: {e}", exc_info=True)
+            raise
+
     async def reply_text(self, context: UnifiedContext, text: str, **kwargs) -> Any:
         try:
             channel = context.platform_event.channel
