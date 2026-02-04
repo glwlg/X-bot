@@ -66,7 +66,7 @@ MEMORY_MANAGEMENT_GUIDE = (
 )
 
 # Skill Agent 决策提示词
-SKILL_AGENT_DECISION_PROMPT = """你是一个智能的 Skill 执行代理，正在执行一个**多步骤任务**。
+SKILL_AGENT_DECISION_PROMPT = """你是一个智能的 Skill 执行代理，正在执行一个任务。
 
 ## 【重要：你可以随时结束】
 - 如果上一步的执行结果显示**成功**（如 "Container Removed" 或 "File Written"），且符合用户预期，请**立即使用 REPLY 结束任务**。
@@ -79,11 +79,13 @@ SKILL_AGENT_DECISION_PROMPT = """你是一个智能的 Skill 执行代理，正�
 ## 【用户请求】
 {user_request}
 
-## 【之前的执行结果】
+## 【已执行的结果】
 {extra_context}
 
+！！！请特别注意最后一轮的结果！！！
+
 ## 【决策逻辑】
-请根据 Skill 文档中的 SOP（标准作业程序），决定**下一步**应该做什么。
+请根据【Skill 文档】和【已执行的结果】，决定**下一步**应该做什么。
 
 1. **EXECUTE (执行操作)**: 当需要执行当前 Skill 的某个操作时。
    - `execute_type`:
@@ -104,7 +106,6 @@ SKILL_AGENT_DECISION_PROMPT = """你是一个智能的 Skill 执行代理，正�
 
 ## 【通用规则】
 - **凭据隔离**：涉及账号信息的保存与读取，必须委托至 `account_manager`。
-- **SOP 遵循**：严格按照 Skill 文档中定义的步骤顺序执行。
 - **验证优先**：部署类任务必须执行验证步骤（如 verify_access）后才能 REPLY。
 - **删除安全**：收到“删除/卸载”指令时，**除非**指令明确包含“清理数据”或“删除文件”，否则**严禁**执行删除目录或文件的操作，只能停止和移除容器。
 

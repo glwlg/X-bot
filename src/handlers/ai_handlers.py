@@ -43,9 +43,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
 
     if not await is_user_allowed(user_id):
         await ctx.reply(
-            f"⛔ 抱歉，您没有使用 AI 对话功能的权限。\n"
-            f"您的 ID 是: `{user_id}`\n\n"
-            "如需下载视频，请使用 /download 命令。"
+            f"⛔ 抱歉，您没有使用 AI 对话功能的权限。\n您的 ID 是: `{user_id}`\n\n"
         )
         return
 
@@ -247,8 +245,13 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                 # Update time to avoid spamming edits (waiting another cycle)
                 state["last_update_time"] = time.time()
 
-    # 启动动画任务
-    animation_task = asyncio.create_task(loading_animation())
+    # Default to True for backward compatibility or if adapter missing
+    can_update = getattr(ctx._adapter, "can_update_message", True)
+
+    # 启动动画任务 (仅当支持消息更新时，也就是非 DingTalk)
+    animation_task = None
+    if can_update:
+        animation_task = asyncio.create_task(loading_animation())
 
     try:
         message_history = []
@@ -296,18 +299,20 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             state["final_text"] = final_text_response
             state["last_update_time"] = time.time()
 
-            # Update UI (Standard Stream)
-            now = time.time()
-            if now - last_stream_update > 1.0:  # Reduce frequency slightly
-                msg_id = getattr(
-                    thinking_msg, "message_id", getattr(thinking_msg, "id", None)
-                )
-                await ctx.edit_message(msg_id, final_text_response)
-                last_stream_update = now
+            # Update UI (Standard Stream) - ONLY if supported
+            if can_update:
+                now = time.time()
+                if now - last_stream_update > 1.0:  # Reduce frequency slightly
+                    msg_id = getattr(
+                        thinking_msg, "message_id", getattr(thinking_msg, "id", None)
+                    )
+                    await ctx.edit_message(msg_id, final_text_response)
+                    last_stream_update = now
 
         # 停止动画
         state["running"] = False
-        animation_task.cancel()  # Ensure it stops immediately
+        if animation_task:
+            animation_task.cancel()  # Ensure it stops immediately
 
         # 5. 发送最终回复并入库
         if final_text_response:
@@ -348,12 +353,14 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             sent_msg = await ctx.reply(final_text_response, reply_markup=reply_markup)
 
             # 2. 尝试删除旧的思考消息 (如果发送成功)
-            if sent_msg:
+            # 如果支持编辑（Telegram/Discord），尝试删除思考中消息
+            # 如果不支持（DingTalk），思考中消息可能会留着，或者尝试删除（返回 False）
+            if sent_msg and can_update:
                 try:
                     await thinking_msg.delete()
                 except Exception as del_e:
                     logger.warning(f"Failed to delete thinking_msg: {del_e}")
-            else:
+            elif not sent_msg and can_update:  # Fallback edit
                 # 如果发送失败（极少见），则降级为编辑旧消息
                 msg_id = getattr(
                     thinking_msg, "message_id", getattr(thinking_msg, "id", None)
@@ -368,7 +375,8 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                 ctx, final_text_response
             )
 
-            if sent_msg and final_display_text != final_text_response:
+            if sent_msg and final_display_text != final_text_response and can_update:
+                # Only update again if supported
                 msg_id = getattr(sent_msg, "message_id", getattr(sent_msg, "id", None))
                 await ctx.edit_message(msg_id, final_display_text)
 
@@ -376,7 +384,8 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             await increment_stat(user_id, "ai_chats")
     except Exception as e:
         state["running"] = False
-        animation_task.cancel()
+        if animation_task:
+            animation_task.cancel()
         logger.error(f"Agent error: {e}", exc_info=True)
 
         if str(e) == "Message is not modified":

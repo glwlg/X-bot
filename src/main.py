@@ -19,6 +19,8 @@ from telegram import Update
 from core.config import (
     TELEGRAM_BOT_TOKEN,
     DISCORD_BOT_TOKEN,
+    DINGTALK_CLIENT_ID,
+    DINGTALK_CLIENT_SECRET,
     LOG_LEVEL,
     WAITING_FOR_VIDEO_URL,
     WAITING_FOR_FEATURE_INPUT,
@@ -68,6 +70,8 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=getattr(logging, LOG_LEVEL, logging.INFO),
 )
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -162,7 +166,10 @@ async def main():
     logger.info("Starting X-Bot (Universal Mode)...")
 
     # 1. Setup Telegram Application
-    # 1. Setup Telegram Application
+    # 调整第三方库日志级别，避免刷屏 (Moved to main for reliability)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+
     tg_app = None
     tg_adapter = None
     if TELEGRAM_BOT_TOKEN:
@@ -201,6 +208,16 @@ async def main():
         logger.info("✅ Discord Adapter enabled.")
     else:
         logger.info("ℹ️ Discord Adapter skipped (no token).")
+
+    # C. DingTalk Adapter
+    if DINGTALK_CLIENT_ID and DINGTALK_CLIENT_SECRET:
+        from platforms.dingtalk.adapter import DingTalkAdapter
+
+        dingtalk_adapter = DingTalkAdapter(DINGTALK_CLIENT_ID, DINGTALK_CLIENT_SECRET)
+        adapter_manager.register_adapter(dingtalk_adapter)
+        logger.info("✅ DingTalk Adapter enabled (Stream Mode).")
+    else:
+        logger.info("ℹ️ DingTalk Adapter skipped (missing credentials).")
 
     # 3. Register Handlers (Unified)
     # Broadcast common commands
@@ -349,6 +366,32 @@ async def main():
         # Note: ConversationHandler logic not yet fully ported to DiscordAdapter
         # So /download command state machine won't work perfectly on Discord yet
         # But stateless actions will.
+
+    # Register DingTalk handlers
+    if DINGTALK_CLIENT_ID and DINGTALK_CLIENT_SECRET:
+
+        async def dingtalk_router(ctx):
+            msg_type = ctx.message.type
+            if msg_type == MessageType.IMAGE:
+                await handle_ai_photo(ctx)
+            elif msg_type == MessageType.VIDEO:
+                await handle_ai_video(ctx)
+            elif msg_type == MessageType.AUDIO or msg_type == MessageType.VOICE:
+                await handle_voice_message(ctx)
+            elif msg_type == MessageType.DOCUMENT:
+                await handle_document(ctx)
+            else:
+                await handle_ai_chat(ctx)
+
+        dingtalk_adapter.register_message_handler(dingtalk_router)
+
+        # Register DingTalk Callbacks (Unified)
+        dingtalk_adapter.on_callback_query("^action_.*", handle_video_actions)
+        dingtalk_adapter.on_callback_query("^skill_", handle_skill_callback)
+
+        # Generic Button Callback
+        common_pattern = "^(?!download_video$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_|skill_|del_rss_|del_stock_).*$"
+        dingtalk_adapter.on_callback_query(common_pattern, button_callback)
 
     # 6. Start Engines
     stop_event = asyncio.Event()

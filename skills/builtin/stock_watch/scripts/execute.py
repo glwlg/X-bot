@@ -25,7 +25,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     """执行自选股操作"""
     from core.scheduler import trigger_manual_stock_check
 
-    user_id = int(ctx.message.user.id)
+    user_id = ctx.message.user.id
     raw_action = params.get("action", "list")
     stock_name = params.get("stock_name", "")
 

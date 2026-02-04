@@ -1,4 +1,7 @@
 import logging
+import re
+import os
+import aiofiles
 
 from core.platform.models import UnifiedContext
 from services.web_summary_service import extract_urls
@@ -23,7 +26,6 @@ async def process_reply_message(ctx: UnifiedContext) -> tuple[bool, str, bytes, 
     media_data = None
     mime_type = None
     extra_context = ""
-    chat_id = ctx.message.chat.id
 
     # 1. 尝试提取引用消息中的 URL 并获取内容
     reply_urls = []
@@ -158,12 +160,6 @@ async def process_reply_message(ctx: UnifiedContext) -> tuple[bool, str, bytes, 
     return has_media, extra_context, media_data, mime_type
 
 
-import re
-import os
-import aiofiles
-from telegram.constants import ParseMode
-
-
 async def process_and_send_code_files(ctx: UnifiedContext, text: str) -> str:
     """
     1. Scan text for code blocks.
@@ -245,10 +241,12 @@ async def process_and_send_code_files(ctx: UnifiedContext, text: str) -> str:
             async with aiofiles.open(filepath, "w", encoding="utf-8") as f:
                 await f.write(code_content)
 
-            # Send document
-            chat_id = ctx.message.chat.id
+            # Send document - 读取文件内容为 bytes 以确保跨平台兼容性
+            async with aiofiles.open(filepath, "rb") as f:
+                file_bytes = await f.read()
+
             await ctx.reply_document(
-                document=open(filepath, "rb"),
+                document=file_bytes,
                 filename=filename,
                 caption=f"📝 {language} 代码片段",
                 reply_to_message_id=ctx.message.message_id,

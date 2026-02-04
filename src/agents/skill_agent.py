@@ -166,6 +166,7 @@ class SkillAgent:
             user_request=user_request,
             extra_context=extra_context,
         )
+        logger.info(f"SkillAgent Decision Prompt: {prompt}")
 
         try:
             response = gemini_client.models.generate_content(
@@ -174,6 +175,7 @@ class SkillAgent:
                 config={"response_mime_type": "application/json"},
             )
             text = response.text
+            logger.info(f"SkillAgent Decision Response: {text}")
             if not text:
                 logger.error("Thinking failed: Empty response from AI")
                 return {"action": "REPLY", "content": "决策系统故障: AI 返回了空响应。"}

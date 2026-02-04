@@ -14,7 +14,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     Execute scheduler management operations.
     """
     action = params.get("action", "list")
-    user_id = int(ctx.message.user.id) if ctx.message and ctx.message.user else 0
+    user_id = ctx.message.user.id if ctx.message and ctx.message.user else "0"
     platform = (
         ctx.message.platform if ctx.message and ctx.message.platform else "telegram"
     )
@@ -111,7 +111,7 @@ def register_handlers(adapter_manager):
 
 async def list_tasks_command(ctx: UnifiedContext):
     """处理 /tasks 命令，显示带按钮的列表"""
-    user_id = int(ctx.message.user.id) if ctx.message.user else 0
+    user_id = ctx.message.user.id if ctx.message.user else "0"
     tasks = await get_all_active_tasks()
 
     if not tasks:

@@ -8,12 +8,9 @@ logger = logging.getLogger(__name__)
 async def check_permission_unified(context: UnifiedContext) -> bool:
     """Unified permission check"""
 
-    user_id = (
-        int(context.message.user.id) if context.message.user.id.isdigit() else 0
-    )  # Simple fix for now
-    # Note: is_user_allowed expects int for telegram ID usually.
-    # If we have string IDs, config needs update.
-    # For now assume Telegram ID is int.
+    user_id = context.message.user.id
+    # Note: is_user_allowed now supports both int and str IDs
+    # If we have string IDs (like DingTalk), this will work correctly.
 
     if context.callback_user_id:
         user_id = context.callback_user_id

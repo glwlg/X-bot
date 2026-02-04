@@ -249,7 +249,7 @@ async def process_video_download(
                 from stats import increment_stat
 
                 try:
-                    await increment_stat(int(user_id), "downloads")
+                    await increment_stat(user_id, "downloads")
                 except:
                     pass
 
@@ -387,7 +387,7 @@ async def handle_video_actions(ctx: UnifiedContext) -> None:
                 from stats import increment_stat
 
                 try:
-                    await increment_stat(int(user_id), "downloads")
+                    await increment_stat(user_id, "downloads")
                 except:
                     pass
 
@@ -424,7 +424,7 @@ async def handle_video_actions(ctx: UnifiedContext) -> None:
 
         # Save summary to history
         try:
-            await add_message(ctx.platform_ctx, int(user_id), "model", summary)
+            await add_message(ctx.platform_ctx, user_id, "model", summary)
         except:
             pass
 
@@ -432,7 +432,7 @@ async def handle_video_actions(ctx: UnifiedContext) -> None:
         from stats import increment_stat
 
         try:
-            await increment_stat(int(user_id), "video_summaries")
+            await increment_stat(user_id, "video_summaries")
         except:
             pass
 
@@ -614,7 +614,7 @@ async def handle_large_file_action(ctx: UnifiedContext) -> None:
                 summary_text = f"📝 **视频内容摘要**\n\n{response.text}"
                 await ctx.reply(summary_text)
                 await add_message(
-                    ctx.platform_ctx, int(ctx.message.user.id), "model", summary_text
+                    ctx.platform_ctx, ctx.message.user.id, "model", summary_text
                 )
                 try:
                     await ctx.delete_message(message_id=ctx.message.id)

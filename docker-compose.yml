@@ -9,7 +9,7 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
-      - SEARXNG_URL=http://localhost:28080
+      - SEARXNG_URL=http://127.0.0.1:28080
     network_mode: "host"
     volumes:
       - ./downloads:/app/downloads
@@ -24,7 +24,7 @@ services:
 
   searxng-redis:
     container_name: searxng-redis
-    image: docker.io/valkey/valkey:8-alpine
+    image: valkey/valkey:8-alpine
     command: valkey-server --save 30 1 --loglevel warning
     restart: unless-stopped
     volumes:
@@ -39,7 +39,7 @@ services:
 
   searxng:
     container_name: searxng
-    image: docker.io/searxng/searxng:latest
+    image: searxng/searxng:latest
     restart: unless-stopped
     ports:
       - "127.0.0.1:28080:8080"

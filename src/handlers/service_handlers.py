@@ -36,8 +36,7 @@ async def stats_command(ctx: UnifiedContext) -> None:
 
     user_id = ctx.message.user.id
     try:
-        uid_int = int(user_id)
-        stats_text = await get_user_stats_text(uid_int)
+        stats_text = await get_user_stats_text(user_id)
     except:
         stats_text = "Stats not available for non-numeric ID yet"
 
@@ -52,7 +51,7 @@ async def toggle_translation_command(ctx: UnifiedContext) -> None:
     if not await check_permission_unified(ctx):
         return
 
-    user_id = int(ctx.message.user.id)  # Settings use int IDs
+    user_id = ctx.message.user.id  # Settings now support str IDs
 
     settings = await get_user_settings(user_id)
     current_status = settings.get("auto_translate", 0)

@@ -41,7 +41,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
         seconds=delta_seconds
     )
 
-    user_id = int(ctx.message.user.id)
+    user_id = ctx.message.user.id
     chat_id = int(ctx.message.chat.id)
 
     # Get job_queue from platform context

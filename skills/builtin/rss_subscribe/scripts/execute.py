@@ -39,7 +39,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     if action == "remove":
         if url:
             # Direct remove if URL is provided
-            user_id = int(ctx.message.user.id)
+            user_id = ctx.message.user.id
             success = await delete_subscription(user_id, url)
             if success:
                 # await ctx.reply(f"🗑️ 已取消订阅：`{url}`")
@@ -58,6 +58,14 @@ def register_handlers(adapter_manager):
     """注册 RSS 相关的 Command 和 Callback"""
     from core.config import is_user_allowed
 
+    async def handle_tool_result(ctx, result):
+        if isinstance(result, dict):
+            text = result.get("text", "")
+            ui = result.get("ui")
+            await ctx.reply(text, ui=ui)
+        elif result:
+            await ctx.reply(str(result))
+
     # 封装 command handler 以检查权限
     async def cmd_subscribe(ctx):
         if not await is_user_allowed(ctx.message.user.id):
@@ -69,9 +77,10 @@ def register_handlers(adapter_manager):
                 args = parts[1:]
 
         if args:
-            return await process_subscribe(ctx, args[0])
+            res = await process_subscribe(ctx, args[0])
+            await handle_tool_result(ctx, res)
         else:
-            return "请使用: /subscribe <URL>"
+            await ctx.reply("请使用: /subscribe <URL>")
 
     async def cmd_monitor(ctx):
         if not await is_user_allowed(ctx.message.user.id):
@@ -83,14 +92,16 @@ def register_handlers(adapter_manager):
                 args = parts[1:]
 
         if args:
-            return await process_monitor(ctx, " ".join(args))
+            res = await process_monitor(ctx, " ".join(args))
+            await handle_tool_result(ctx, res)
         else:
-            return "请使用: /monitor <关键词>"
+            await ctx.reply("请使用: /monitor <关键词>")
 
     async def cmd_list_subs(ctx):
         if not await is_user_allowed(ctx.message.user.id):
             return
-        return await list_subs_command(ctx)
+        res = await list_subs_command(ctx)
+        await handle_tool_result(ctx, res)
 
     async def cmd_unsubscribe(ctx):
         if not await is_user_allowed(ctx.message.user.id):
@@ -103,9 +114,10 @@ def register_handlers(adapter_manager):
 
         if args:
             await delete_subscription(ctx.message.user.id, args[0])
-            return f"🗑️ 已取消订阅：`{args[0]}`"
+            await ctx.reply(f"🗑️ 已取消订阅：`{args[0]}`")
         else:
-            return await show_unsubscribe_menu(ctx)
+            res = await show_unsubscribe_menu(ctx)
+            await handle_tool_result(ctx, res)
 
     adapter_manager.on_command("subscribe", cmd_subscribe, description="订阅 RSS 源")
     adapter_manager.on_command(
@@ -135,8 +147,8 @@ async def fetch_feed_safe(url: str):
 async def process_subscribe(ctx: UnifiedContext, url: str):
     """实际处理订阅逻辑 (Returns dict)"""
     try:
-        user_id = int(ctx.message.user.id)
-    except (ValueError, TypeError):
+        user_id = ctx.message.user.id
+    except ValueError, TypeError:
         user_id = ctx.message.user.id
         logger.warning(f"Failed to cast user_id {user_id} to int")
 

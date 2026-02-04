@@ -108,6 +108,20 @@ class DiscordAdapter(BotAdapter):
             except Exception as e:
                 logger.error(f"Error processing Discord message: {e}", exc_info=True)
 
+        @self.client.event
+        async def on_interaction(interaction: discord.Interaction):
+            """Handle all interactions including button clicks"""
+            # Only handle component interactions (buttons)
+            if interaction.type != discord.InteractionType.component:
+                return
+
+            custom_id = interaction.data.get("custom_id") if interaction.data else None
+            if not custom_id:
+                return
+
+            # Route to our callback handler
+            await self._handle_button_interaction(interaction, custom_id)
+
     # Rest of the class...
 
     async def _map_message(self, message: discord.Message) -> UnifiedMessage:
@@ -193,10 +207,42 @@ class DiscordAdapter(BotAdapter):
                     custom_id=str(callback_data) if not url else None,
                 )
 
-                # Attach callback if not a link
-                if not url:
-                    discord_btn.callback = self._generic_button_callback
+                # Note: callbacks are handled via on_interaction event
+                view.add_item(discord_btn)
 
+        return view
+
+    def _actions_to_discord_view(self, actions: list) -> Optional[discord.ui.View]:
+        """
+        Convert unified actions format to Discord View.
+        actions format: [[{"text": "Label", "callback_data": "data"}, ...], ...]
+        """
+        if not actions:
+            return None
+
+        view = discord.ui.View(timeout=None)
+
+        for row in actions:
+            for button in row:
+                label = button.get("text", "Button")
+                callback_data = button.get("callback_data")
+                url = button.get("url")
+
+                style = discord.ButtonStyle.secondary
+                if url:
+                    style = discord.ButtonStyle.link
+                else:
+                    style = discord.ButtonStyle.primary
+
+                # Create Discord Button
+                discord_btn = discord.ui.Button(
+                    style=style,
+                    label=label,
+                    url=url,
+                    custom_id=str(callback_data) if not url else None,
+                )
+
+                # Note: callbacks are handled via on_interaction event
                 view.add_item(discord_btn)
 
         return view
@@ -288,6 +334,86 @@ class DiscordAdapter(BotAdapter):
                 )
             else:
                 await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+
+    async def _handle_button_interaction(
+        self, interaction: discord.Interaction, custom_id: str
+    ):
+        """Handle button interactions from on_interaction event"""
+        try:
+            # Create a Context for this callback
+            if interaction.message:
+                unified_msg = await self._map_message(interaction.message)
+            else:
+                unified_msg = UnifiedMessage(
+                    id="interaction",
+                    platform="discord",
+                    type=MessageType.TEXT,
+                    user=User(
+                        id=str(interaction.user.id), username=interaction.user.name
+                    ),
+                    chat=Chat(id=str(interaction.channel_id), type="private"),
+                    date=interaction.created_at,
+                )
+
+            effective_user = User(
+                id=str(interaction.user.id),
+                username=interaction.user.name,
+                first_name=interaction.user.display_name,
+                is_bot=interaction.user.bot,
+            )
+
+            context = UnifiedContext(
+                message=unified_msg,
+                platform_event=interaction,
+                platform_ctx=self.client,
+                _adapter=self,
+                user=effective_user,
+            )
+
+            # Find matching handler
+            matched = False
+            for pattern, handler in self._callback_handlers:
+                if pattern.match(custom_id):
+                    if not interaction.response.is_done():
+                        await interaction.response.defer()
+
+                    result = await handler(context)
+
+                    # 处理 handler 返回值
+                    if result:
+                        text = ""
+                        if isinstance(result, dict):
+                            text = result.get("text", "")
+                        elif isinstance(result, str):
+                            text = result
+
+                        if text:
+                            from .formatter import markdown_to_discord_compat
+
+                            text = markdown_to_discord_compat(text)
+                            await interaction.followup.send(text, ephemeral=True)
+
+                    matched = True
+                    break
+
+            if not matched:
+                logger.warning(f"No handler found for callback: {custom_id}")
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        "❌ Unknown action", ephemeral=True
+                    )
+
+        except Exception as e:
+            logger.error(f"Button interaction error: {e}", exc_info=True)
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        f"❌ Error: {e}", ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+            except Exception:
+                pass
 
     async def start(self):
         """Start the bot polling/connection"""
@@ -581,14 +707,39 @@ class DiscordAdapter(BotAdapter):
                 user=effective_user,
             )
 
-            await handler(context)
+            result = await handler(context)
+
+            # 处理 handler 返回值 - 如果有返回则发送响应
+            if result:
+                text = ""
+                view = discord.utils.MISSING
+
+                if isinstance(result, dict):
+                    text = result.get("text", "")
+                    ui = result.get("ui", {})
+                    if ui and ui.get("actions"):
+                        # 转换 actions 为 Discord View
+                        view = self._actions_to_discord_view(ui["actions"])
+                elif isinstance(result, str):
+                    text = result
+
+                if text:
+                    from .formatter import markdown_to_discord_compat
+
+                    text = markdown_to_discord_compat(text)
+                    await interaction.followup.send(text, view=view)
 
         except Exception as e:
             logger.error(f"Slash command error: {e}", exc_info=True)
-            if not interaction.response.is_done():
-                await interaction.response.send_message(
-                    f"❌ Error: {e}", ephemeral=True
-                )
+            try:
+                if not interaction.response.is_done():
+                    await interaction.response.send_message(
+                        f"❌ Error: {e}", ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+            except Exception:
+                pass  # 避免错误处理时再次出错
 
     def on_command(
         self,

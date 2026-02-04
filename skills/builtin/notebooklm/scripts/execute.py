@@ -17,7 +17,7 @@ async def execute(ctx: UnifiedContext, params: dict):
 async def _internal_execute(ctx: UnifiedContext, params: dict) -> str:
     """执行 NotebookLM 操作"""
     action = params.get("action", "").lower()
-    user_id = int(ctx.message.user.id) if str(ctx.message.user.id).isdigit() else 0
+    user_id = ctx.message.user.id
 
     if not action:
         return {
@@ -60,9 +60,9 @@ async def _internal_execute(ctx: UnifiedContext, params: dict) -> str:
 
     if action == "login":
         return (
-            "🔐 **NotebookLM 登录指南**\n\n"
+            "🔇🔇🔇🔐 **NotebookLM 登录指南**\n\n"
             "由于 Google 登录需要浏览器交互，请在**本地电脑**完成以下步骤：\n\n"
-            "**步骤 1：安装 CLI 工具**\n"
+            "**步骤 1：安装 CLI 工具（非常重要）**\n"
             "```bash\n"
             "pip install notebooklm-py[browser]\n"
             "```\n\n"

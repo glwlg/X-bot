@@ -16,6 +16,10 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 # Discord Bot 配置
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 
+# DingTalk (钉钉) Stream Mode 配置
+DINGTALK_CLIENT_ID = os.getenv("DINGTALK_CLIENT_ID")
+DINGTALK_CLIENT_SECRET = os.getenv("DINGTALK_CLIENT_SECRET")
+
 # 日志配置
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
@@ -56,7 +60,7 @@ ADMIN_USER_IDS_STR = os.getenv("ADMIN_USER_IDS") or os.getenv("ALLOWED_USER_IDS"
 ADMIN_USER_IDS = set()
 if ADMIN_USER_IDS_STR.strip():
     ADMIN_USER_IDS = {
-        int(uid.strip()) for uid in ADMIN_USER_IDS_STR.split(",") if uid.strip()
+        uid.strip() for uid in ADMIN_USER_IDS_STR.split(",") if uid.strip()
     }
 
 
@@ -65,29 +69,21 @@ async def is_user_allowed(user_id: int | str) -> bool:
     检查用户是否有权限使用 Bot
     权限逻辑：管理员 OR 在数据库白名单中
     """
-    try:
-        # 尝试转换为 int 以匹配 ADMIN_USER_IDS (set of int)
-        uid_int = int(user_id)
-    except (ValueError, TypeError):
-        return False
+    uid_str = str(user_id).strip()
 
     # 1. 如果是管理员，直接允许
-    if uid_int in ADMIN_USER_IDS:
+    if uid_str in ADMIN_USER_IDS:
         return True
 
     # 2. 如果没有设置任何管理员，且没有启用白名单模式（默认），是否允许所有人？
     # 现在的逻辑是：如果设置了 ADMIN_USER_IDS，则作为白名单基础。
-    # 之前的逻辑：如果 ALLOWED_USER_IDS 为空，允许所有人。
-    # 我们保持兼容：如果 ADMIN_USER_IDS 为空，且数据库白名单也为空，则允许所有人？
-    # 或者如果不设置 Admin，则没人能管理，但大家都能用？
-    # User Request: "Allowed user variable changed to Admin list"
-    # Let's assume strict mode if Admin is set.
 
     # 检查数据库
     from repositories import check_user_allowed_in_db
 
     try:
-        if await check_user_allowed_in_db(uid_int):
+        # DB 现在应该支持 str
+        if await check_user_allowed_in_db(uid_str):
             return True
     except Exception:
         # DB 可能还没初始化或出错
@@ -104,10 +100,7 @@ async def is_user_allowed(user_id: int | str) -> bool:
 
 def is_user_admin(user_id: int | str) -> bool:
     """检查用户是否为管理员"""
-    try:
-        return int(user_id) in ADMIN_USER_IDS
-    except (ValueError, TypeError):
-        return False
+    return str(user_id).strip() in ADMIN_USER_IDS
 
 
 # 下载配置

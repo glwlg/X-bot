@@ -27,7 +27,7 @@ class AgentOrchestrator:
         Main entry point for handling user messages via the Agent.
         Returns a generator of text chunks (streaming response).
         """
-        user_id = int(ctx.message.user.id)  # Assuming ID is int compatible for now
+        user_id = ctx.message.user.id  # Assuming ID is int compatible for now
 
         # 0. Dynamic Skill Search (Context Loading)
         # Instead of giving the AI all skills or a generic search tool, we pre-search based on user input.
@@ -147,7 +147,9 @@ class AgentOrchestrator:
                         iteration_output = ""
 
                         logger.info(f"[ReAct Round {depth + 1}] Executing {skill_name}")
-
+                        logger.info(
+                            "=============================1================================="
+                        )
                         # Execute Skill Agent (Think -> Act)
                         async for chunk, files, result_obj in skill_agent.execute_skill(
                             skill_name,
@@ -155,6 +157,9 @@ class AgentOrchestrator:
                             extra_context=extra_context,
                             ctx=ctx,
                         ):
+                            logger.info(
+                                "=============================2================================="
+                            )
                             # 检测返回类型
                             if isinstance(result_obj, SkillDelegationRequest):
                                 delegation = result_obj
@@ -191,7 +196,9 @@ class AgentOrchestrator:
                                     await ctx.reply_document(
                                         document=content, filename=filename
                                     )
-
+                        logger.info(
+                            "=============================3================================="
+                        )
                         full_output += iteration_output
 
                         # 检查是否是最终回复（Agent 返回 REPLY action）
@@ -237,10 +244,15 @@ class AgentOrchestrator:
 
                         elif execution_result or iteration_output:
                             # === EXECUTE: 把执行结果加入 context 并继续循环 ===
-
+                            logger.info(
+                                "=============================4================================="
+                            )
                             # 如果有具体的执行结果（如 write_file 返回的 success），加入上下文
                             if execution_result:
                                 result_text = str(execution_result)
+                                logger.info(
+                                    "=============================5================================="
+                                )
                                 if isinstance(execution_result, dict):
                                     result_text = execution_result.get(
                                         "text", str(execution_result)
@@ -249,7 +261,8 @@ class AgentOrchestrator:
                                     # [新增] 将执行结果发送给用户（增强可见性）
                                     # 避免发送纯数据对象的字符串表示，只发送有意义的文本
                                     if "text" in execution_result and result_text:
-                                        await ctx.reply(result_text)
+                                        if not result_text.startswith("🔇🔇🔇"):
+                                            await ctx.reply(result_text)
 
                                 if len(result_text) > MAX_ROUND_OUTPUT_LEN:
                                     result_text = (
@@ -263,6 +276,7 @@ class AgentOrchestrator:
                                 logger.info(
                                     f"[Round {depth + 1}] EXECUTE result captured, continuing..."
                                 )
+                                logger.info(f"Extra context: {extra_context}")
                                 continue
 
                             # 如果只有文本输出且不是最终回复（例如 Agent 的思考过程）
@@ -319,7 +333,10 @@ class AgentOrchestrator:
                             summary = f"【早期轮次摘要】: 之前已完成 {depth} 轮操作。\n"
                             extra_context = summary + extra_context[-keep_len:]
 
-                        logger.debug(
+                        logger.info(
+                            f"[Round {depth + 1}] extra_context: {extra_context}"
+                        )
+                        logger.info(
                             f"[Round {depth + 1}] extra_context 长度: {len(extra_context)}"
                         )
 

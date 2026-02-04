@@ -7,7 +7,7 @@ search:
   formats:
     - html
     - json
-redis:
+valkey:
   url: redis://searxng-redis:6379/0
 bot_detection:
   enabled: false

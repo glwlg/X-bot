@@ -80,7 +80,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
             return "❌ 请提供要安装的技能名称或 URL"
 
         # User ID needed for adoption ownership
-        user_id = int(ctx.message.user.id) if ctx.message.user else 0
+        user_id = ctx.message.user.id if ctx.message.user else "0"
 
         success, message = await _install_skill(target, user_id)
 
@@ -150,7 +150,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
         if not skill_name or not instruction:
             return "❌ 需要提供 skill_name 和 instruction"
 
-        user_id = int(ctx.message.user.id)
+        user_id = ctx.message.user.id
 
         # Use update_skill (AI Refactoring)
         result = await creator.update_skill(skill_name, instruction, user_id)
@@ -231,7 +231,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
         if not requirement:
             return "❌ 请提供技能需求描述 (requirement)"
 
-        user_id = int(ctx.message.user.id)
+        user_id = ctx.message.user.id
 
         # Use Evolution Router to decide Strategy (Create vs Reuse vs Config)
         from core.evolution_router import evolution_router

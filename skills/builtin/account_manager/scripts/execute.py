@@ -23,7 +23,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     # If using regex skill trigger: "账号 google" -> action='default'? Need better extraction.
     # Assuming params extraction works well or we fallback.
 
-    user_id = int(ctx.message.user.id)
+    user_id = ctx.message.user.id
 
     if action in ["list", "list_all"]:
         accounts = await list_accounts(user_id)

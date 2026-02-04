@@ -104,8 +104,7 @@ async def process_remind(ctx: UnifiedContext, time_str: str, message: str) -> bo
     await ctx.reply(f"👌 已设置提醒：{message}\n⏰ 将在 {display_time} 提醒你。")
     # Using int ID for tracking stats
     try:
-        uid_int = int(user_id)
-        await increment_stat(uid_int, "reminders_set")
+        await increment_stat(user_id, "reminders_set")
     except:
         pass
     return True
