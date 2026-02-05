@@ -37,11 +37,20 @@ class AgentOrchestrator:
         # Extract user text from history (last user message)
         last_user_text = ""
         for msg in reversed(message_history):
-            if msg.get("role") == "user":
+            # Compatible handle for dict (legacy) or Content object (google.genai.types)
+            if isinstance(msg, dict):
+                role = msg.get("role")
                 parts = msg.get("parts", [])
+            else:
+                role = getattr(msg, "role", None)
+                parts = getattr(msg, "parts", [])
+
+            if role == "user":
                 for p in parts:
                     if isinstance(p, dict) and "text" in p:
                         last_user_text = p["text"]
+                    elif hasattr(p, "text"):
+                        last_user_text = p.text
                 break
 
         # 1. Gather Tools

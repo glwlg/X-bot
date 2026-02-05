@@ -207,7 +207,7 @@ class SkillAgent:
             user_request=user_request,
             extra_context=extra_context,
         )
-        logger.info(f"SkillAgent Decision Prompt: {prompt}")
+        logger.debug(f"SkillAgent Decision Prompt: {prompt}")
 
         try:
             response = gemini_client.models.generate_content(

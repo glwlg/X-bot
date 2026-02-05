@@ -22,22 +22,21 @@ async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
         }
 
     # 复用 parsing logic
-    success, result_msg = await _process_remind_logic(ctx, time_str, content)
+    result_data = await _process_remind_logic(ctx, time_str, content)
 
-    return {
-        "text": result_msg,
-        "ui": {},
-    }
+    # Return structured data (JSON) directly for Agent consumption
+    # Agent will use this data to formulate its own reply.
+    return result_data
 
 
 async def _process_remind_logic(
     ctx: UnifiedContext, time_str: str, message: str
-) -> tuple[bool, str]:
-    """实际处理提醒逻辑 (Returns success, message)"""
+) -> Dict[str, Any]:
+    """实际处理提醒逻辑 (Returns dict with text/ui)"""
     matches = re.findall(r"(\d+)([smhd分秒时天])", time_str.lower())
 
     if not matches:
-        return False, "❌ 时间格式错误。请使用如 10m, 1h, 30s 等格式。"
+        return {"text": "❌ 时间格式错误。请使用如 10m, 1h, 30s 等格式。", "ui": {}}
 
     delta_seconds = 0
     for value, unit in matches:
@@ -52,31 +51,33 @@ async def _process_remind_logic(
             delta_seconds += value * 86400
 
     if delta_seconds <= 0:
-        return False, "❌ 时间必须大于 0。"
+        return {"text": "❌ 时间必须大于 0。", "ui": {}}
 
     trigger_time = datetime.datetime.now().astimezone() + datetime.timedelta(
         seconds=delta_seconds
     )
 
     user_id = ctx.message.user.id
+    logger.info(ctx.message)
     chat_id = int(ctx.message.chat.id)
 
-    # Get job_queue from platform context
-    job_queue = getattr(ctx.platform_ctx, "job_queue", None)
-    if job_queue:
-        await schedule_reminder(job_queue, user_id, chat_id, message, trigger_time)
-    else:
-        # Fallback if job_queue is not directly available (e.g. Discord sometimes)
-        # But core.scheduler might handle it if we use it directly?
-        # Re-check core.scheduler usage. Original uses job_queue.
-        pass
+    # Get platform from context
+    platform = ctx.message.platform or "telegram"
+
+    # Use core.scheduler.schedule_reminder (Global Scheduler)
+    # Correct signature: user_id, chat_id, message, trigger_time, platform
+    await schedule_reminder(user_id, chat_id, message, trigger_time, platform=platform)
 
     display_time = trigger_time.strftime("%H:%M:%S")
     if delta_seconds > 86400:
         display_time = trigger_time.strftime("%Y-%m-%d %H:%M:%S")
 
     await increment_stat(user_id, "reminders_set")
-    return True, f"👌 已设置提醒：{message}\n⏰ 将在 {display_time} 提醒你。"
+
+    return {
+        "text": f"👌 已设置提醒：{message}\n⏰ 将在 {display_time} 提醒你。",
+        "ui": {},
+    }
 
 
 # --- Handlers ---
@@ -100,8 +101,8 @@ async def remind_command(ctx: UnifiedContext) -> int:
     # If standard command "/remind 10m content"
     if len(parts) >= 3:
         # parts[0] is /remind, parts[1] time, parts[2] content
-        success, msg = await _process_remind_logic(ctx, parts[1], parts[2])
-        await ctx.reply({"text": msg, "ui": {}})
+        result = await _process_remind_logic(ctx, parts[1], parts[2])
+        await ctx.reply(result.get("text"))
         return CONVERSATION_END
 
     # Interactive mode
@@ -127,12 +128,14 @@ async def handle_remind_input(ctx: UnifiedContext) -> int:
         )
         return WAITING_FOR_REMIND_INPUT
 
-    success, msg = await _process_remind_logic(ctx, parts[0], parts[1])
-    await ctx.reply({"text": msg, "ui": {}})
+    result = await _process_remind_logic(ctx, parts[0], parts[1])
+    await ctx.reply(result.get("text"))
 
-    if success:
-        return CONVERSATION_END
-    return WAITING_FOR_REMIND_INPUT
+    # Check for success based on text content
+    if "❌" in result.get("text", "") or "⚠️" in result.get("text", ""):
+        return WAITING_FOR_REMIND_INPUT
+
+    return CONVERSATION_END
 
 
 async def cancel(ctx: UnifiedContext) -> int:

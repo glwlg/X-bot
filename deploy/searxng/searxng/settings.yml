@@ -1,13 +1,51 @@
 use_default_settings: true
+
 server:
+  # Secret key (Keep consistent)
   secret_key: "a9b66017e9278207d9141931dca8187040f8e1899915bcb79e25e7eb941071b8"
-  limiter: false
+  limiter: false # Disable rate limiter for the bot
   image_proxy: true
+  
 search:
+  safe_search: 0
   formats:
     - html
     - json
+
+# Network Configuration
+outgoing:
+  request_timeout: 10.0       # Increased from default to handle slow engines
+  max_request_timeout: 20.0
+  pool_connections: 100
+  pool_maxsize: 100
+  enable_http2: true         # Enable HTTP2 to reduce block rates
+
+# Engine Configuration
+engines:
+  # === Core Engines ===
+  - name: google
+    disabled: false
+  - name: bing
+    disabled: false
+  - name: duckduckgo
+    disabled: true
+  - name: qwant
+    disabled: false
+  - name: wikipedia
+    disabled: false
+
+  # === Disabled Failing/Tor Engines ===
+  - name: ahmia
+    disabled: true
+  - name: torch
+    disabled: true
+    
+  # === Optional: Disable if flaky ===
+  # - name: startpage
+  #   disabled: true
+
 valkey:
   url: redis://searxng-redis:6379/0
+
 bot_detection:
   enabled: false

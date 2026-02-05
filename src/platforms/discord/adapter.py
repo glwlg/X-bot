@@ -313,7 +313,11 @@ class DiscordAdapter(BotAdapter):
 
                     # Check if we need to defer?
                     if not interaction.response.is_done():
-                        await interaction.response.defer()
+                        try:
+                            await interaction.response.defer()
+                        except (discord.NotFound, discord.HTTPException) as e:
+                            logger.warning(f"Failed to defer callback {custom_id}: {e}")
+                            return
 
                     await handler(context)
                     matched = True
@@ -375,7 +379,13 @@ class DiscordAdapter(BotAdapter):
             for pattern, handler in self._callback_handlers:
                 if pattern.match(custom_id):
                     if not interaction.response.is_done():
-                        await interaction.response.defer()
+                        try:
+                            await interaction.response.defer()
+                        except (discord.NotFound, discord.HTTPException) as e:
+                            logger.warning(
+                                f"Failed to defer button interaction {custom_id}: {e}"
+                            )
+                            return
 
                     result = await handler(context)
 
@@ -442,6 +452,13 @@ class DiscordAdapter(BotAdapter):
         try:
             # 1. 尝试作为频道 ID 获取
             channel = self.client.get_channel(chat_id)
+            if not channel:
+                # Cache miss, 尝试从 API 获取
+                try:
+                    channel = await self.client.fetch_channel(chat_id)
+                except discord.NotFound, discord.Forbidden:
+                    pass
+
             if channel:
                 return await channel.send(text)
 
@@ -452,7 +469,7 @@ class DiscordAdapter(BotAdapter):
                 try:
                     user = await self.client.fetch_user(chat_id)
                 except discord.NotFound:
-                    logger.error(f"Discord user {chat_id} not found")
+                    logger.error(f"Discord ID {chat_id} not found as Channel or User")
                     return None
 
             if user:
@@ -659,7 +676,13 @@ class DiscordAdapter(BotAdapter):
         try:
             # Defer immediately to prevent "Unknown interaction" (timeout > 3s)
             # This gives us 15 minutes to respond via followup.
-            await interaction.response.defer()
+            try:
+                await interaction.response.defer()
+            except (discord.NotFound, discord.HTTPException) as e:
+                logger.warning(
+                    f"Slash command interaction expired/invalid ({command}): {e}"
+                )
+                return
 
             # Reconstruct text: "/command params"
             text_content = f"/{command}"
