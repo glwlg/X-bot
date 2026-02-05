@@ -13,7 +13,6 @@ from core.config import gemini_client, GEMINI_MODEL
 from core.skill_loader import skill_loader
 from services.sandbox_executor import sandbox_executor
 from core.prompts import SKILL_AGENT_DECISION_PROMPT
-from core.tool_registry import tool_registry
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +26,38 @@ class SkillDelegationRequest:
 
     def __str__(self):
         return f"[Delegation -> {self.target_skill}: {self.instruction}]"
+
+
+class SkillDecision:
+    """Decision made by the Agent"""
+
+    def __init__(
+        self,
+        action: str,
+        content: Any = None,
+        execute_type: str = None,
+        target_skill: str = None,
+        instruction: str = None,
+    ):
+        self.action = action
+        self.content = content
+        self.execute_type = execute_type
+        self.target_skill = target_skill
+        self.instruction = instruction
+
+    def __eq__(self, other):
+        if not isinstance(other, SkillDecision):
+            return False
+        return (
+            self.action == other.action
+            and self.content == other.content
+            and self.execute_type == other.execute_type
+            and self.target_skill == other.target_skill
+            and self.instruction == other.instruction
+        )
+
+    def __str__(self):
+        return f"[Decision: {self.action} {self.execute_type or ''} {self.target_skill or ''}]"
 
 
 class SkillFinalReply:
@@ -88,6 +119,16 @@ class SkillAgent:
 
         action = decision.get("action")
         logger.info(f"SkillAgent Decision: {action} - {decision}")
+
+        # Yield Decision Object for loop detection
+        skill_decision = SkillDecision(
+            action=action,
+            content=decision.get("content"),
+            execute_type=decision.get("execute_type"),
+            target_skill=decision.get("target_skill"),
+            instruction=decision.get("instruction"),
+        )
+        yield "", None, skill_decision
 
         # 3. Act based on decision
         if action == "REPLY":

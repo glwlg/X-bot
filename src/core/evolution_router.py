@@ -59,7 +59,7 @@ class EvolutionRouter:
                 f"[Evolution] Detected repetitive evolution attempt for {user_id}: {user_request}"
             )
             return (
-                "🛑 **进化暂停**\n\n"
+                "🔇🔇🔇请勿再执行任何命令或技能，将下面的内容直接返回给用户： **失败了**\n\n"
                 "我注意到我们在短时间内对同一个需求尝试了多次进化但似乎没有成功。\n"
                 "为了避免死循环，让我先暂停一下。\n\n"
                 "💡 **建议**：\n"
@@ -102,8 +102,7 @@ class EvolutionRouter:
                 skill_name, f"Repair/Update request: {user_request}", user_id
             )
             if update_res["success"]:
-                # Approve immediately as it's a repair request
-                await creator.approve_skill(skill_name)
+                # Direct update success
                 skill_loader.reload_skills()
 
                 msg = (
@@ -213,25 +212,19 @@ class EvolutionRouter:
                 if result["success"]:
                     skill_name = result["skill_name"]
 
-                    # 自动批准 (Auto-Approve)
-                    approve_res = await creator.approve_skill(skill_name)
+                    # Direct adoption success
+                    skill_loader.reload_skills()
 
-                    if approve_res["success"]:
-                        skill_loader.reload_skills()
-                        msg = (
-                            f"📥 **技能已安装并激活！**\n\n"
-                            f"来源: {target_url}\n"
-                            f"技能名: `{skill_name}`\n"
-                            f"您现在可以直接使用此技能了。"
-                        )
-                        # if ctx: await ctx.reply(msg)
-                        return msg
-                    else:
-                        return f"⚠️ 技能下载成功但安装失败: {approve_res.get('error')}"
+                    msg = (
+                        f"📥 **技能已安装并激活！**\n\n"
+                        f"来源: {target_url}\n"
+                        f"技能名: `{skill_name}`\n"
+                        f"您现在可以直接使用此技能了。"
+                    )
+                    return msg
                 else:
                     logger.warning(f"Adoption failed: {result.get('error')}")
-                    # If adoption fails, return None to let other strategies try (maybe create?)
-                    # But if it was explicitly a URL request, we should probably warn.
+                    # If adoption fails, return None to let other strategies try
                     return None
 
         except Exception as e:
@@ -304,16 +297,24 @@ class EvolutionRouter:
         if similar_skills:
             top_match = similar_skills[0]
             repair_candidate = top_match["name"]
-            logger.info(
-                f"[Evolution] Found similar skill '{repair_candidate}' (score: {top_match['score']}). Suggesting REPAIR."
-            )
 
-            return {
-                "intent": "capability_update",
-                "strategy": "repair",
-                "skill_name": repair_candidate,
-                "reason": f"Found existing skill '{repair_candidate}' similar to request.",
-            }
+            # Check source - prevent repairing BUILTIN skills
+            candidate_info = skill_loader.get_skill(repair_candidate)
+            if candidate_info and candidate_info.get("source") == "builtin":
+                logger.info(
+                    f"[Evolution] Found similar skill '{repair_candidate}' but it is BUILTIN. Skipping repair strategy."
+                )
+            else:
+                logger.info(
+                    f"[Evolution] Found similar skill '{repair_candidate}' (score: {top_match['score']}). Suggesting REPAIR."
+                )
+
+                return {
+                    "intent": "capability_update",
+                    "strategy": "repair",
+                    "skill_name": repair_candidate,
+                    "reason": f"Found existing skill '{repair_candidate}' similar to request.",
+                }
 
         # 2. LLM Analysis for Create vs Reuse vs Config
         prompt = f"""Analyze the following user request for a ChatBot capability evolution.
@@ -524,19 +525,14 @@ Return JSON:
         skill_name = result["skill_name"]
         skill_md = result.get("skill_md", "")
 
-        # 2. Auto-Approve (Direct Activation)
-        approve_res = await creator.approve_skill(skill_name)
+        # 2. Already created in learned (Direct Activation)
+        skill_loader.reload_skills()
 
-        if approve_res["success"]:
-            skill_loader.reload_skills()
-
-            msg = (
-                f"🛠️ **新技能已生成并激活！**\n\n"
-                f"技能名: `{skill_name}`\n"
-                f"我已经学会了这项新能力，您可以立即测试。"
-            )
-        else:
-            msg = f"⚠️ 技能生成成功但激活失败: {approve_res.get('error')}"
+        msg = (
+            f"🛠️ **新技能已生成并激活！**\n\n"
+            f"技能名: `{skill_name}`\n"
+            f"我已经学会了这项新能力，您可以立即测试。"
+        )
 
         # if ctx:
         #     try:

@@ -12,11 +12,7 @@ from .base_handlers import check_permission_unified
 from core.platform.models import UnifiedContext
 
 # 从子模块导入
-from .reminder_handlers import (
-    remind_command,
-    handle_remind_input,
-    process_remind,
-)
+
 from .feature_handlers import (
     feature_command,
     handle_feature_input,
@@ -77,9 +73,6 @@ __all__ = [
     "stats_command",
     "toggle_translation_command",
     # Reminder
-    "remind_command",
-    "handle_remind_input",
-    "process_remind",
     # Feature
     "feature_command",
     "handle_feature_input",

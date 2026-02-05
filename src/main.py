@@ -8,7 +8,8 @@ import asyncio
 import signal
 from telegram.ext import (
     Application,
-    CallbackQueryHandler,
+    Application,
+    ContextTypes,
     ConversationHandler,
     PicklePersistence,
     filters,
@@ -22,7 +23,6 @@ from core.config import (
     DINGTALK_CLIENT_ID,
     DINGTALK_CLIENT_SECRET,
     LOG_LEVEL,
-    WAITING_FOR_VIDEO_URL,
     WAITING_FOR_FEATURE_INPUT,
 )
 from handlers import (
@@ -30,14 +30,9 @@ from handlers import (
     handle_new_command,
     help_command,
     button_callback,
-    start_download_video,
+    button_callback,
     back_to_main_and_cancel,
-    handle_download_format,
-    download_command,
-    handle_video_download,
     cancel,
-    handle_large_file_action,
-    handle_video_actions,
     stats_command,
     handle_ai_chat,
     handle_ai_photo,
@@ -246,47 +241,17 @@ async def main():
     # 4. Register Platform-Specific Handlers (Telegram Complex Flows)
     if tg_adapter:
         # Telegram Buttons & Callbacks
-        tg_adapter.on_callback_query("^action_.*", handle_video_actions)
-        tg_adapter.on_callback_query("^large_file_", handle_large_file_action)
 
-        common_pattern = "^(?!download_video$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_|skill_|del_rss_|del_stock_).*$"
+        common_pattern = (
+            "^(?!back_to_main_cancel$|unsub_|stock_|skill_|del_rss_|del_stock_).*$"
+        )
         tg_adapter.on_callback_query(common_pattern, button_callback)
         tg_adapter.on_callback_query("^skill_", handle_skill_callback)
         # Note: stock_ & unsub_ are now registered via register_skill_handlers dynamically
 
         # Telegram Conversations
-        back_handler = tg_adapter.create_callback_handler(
-            "^back_to_main_cancel$", back_to_main_and_cancel
-        )
-        format_handler = tg_adapter.create_callback_handler(
-            "^dl_format_", handle_download_format
-        )
 
-        video_conv_handler = ConversationHandler(
-            entry_points=[
-                tg_adapter.create_callback_handler(
-                    "^download_video$", start_download_video
-                ),
-                tg_adapter.create_command_handler("download", download_command),
-            ],
-            states={
-                WAITING_FOR_VIDEO_URL: [
-                    back_handler,
-                    format_handler,
-                    tg_adapter.create_message_handler(
-                        filters.TEXT & ~filters.COMMAND, handle_video_download
-                    ),
-                ],
-            },
-            fallbacks=[
-                tg_adapter.create_command_handler("cancel", cancel),
-                back_handler,
-                format_handler,
-            ],
-            allow_reentry=True,
-            per_message=False,
-        )
-        tg_app.add_handler(video_conv_handler)
+        # Video Download Handler moved to skills/builtin/download_video
 
         feature_conv_handler = ConversationHandler(
             entry_points=[
@@ -353,14 +318,18 @@ async def main():
         discord_adapter.register_message_handler(discord_router)
 
         # Register Discord Callbacks (Unified)
-        discord_adapter.on_callback_query("^action_.*", handle_video_actions)
         discord_adapter.on_callback_query("^skill_", handle_skill_callback)
         # unsubs, stock Handled by dynamic
 
         # Generic Button Callback (Help, Settings, etc.)
         # Note: Discord regex matching might be slightly different if compiled differently, but standard python re works.
         # We reuse the common pattern from Telegram.
-        common_pattern = "^(?!download_video$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_|skill_|del_rss_|del_stock_).*$"
+        # Generic Button Callback (Help, Settings, etc.)
+        # Note: Discord regex matching might be slightly different if compiled differently, but standard python re works.
+        # We reuse the common pattern from Telegram.
+        common_pattern = (
+            "^(?!back_to_main_cancel$|unsub_|stock_|skill_|del_rss_|del_stock_).*$"
+        )
         discord_adapter.on_callback_query(common_pattern, button_callback)
 
         # Note: ConversationHandler logic not yet fully ported to DiscordAdapter
@@ -386,11 +355,13 @@ async def main():
         dingtalk_adapter.register_message_handler(dingtalk_router)
 
         # Register DingTalk Callbacks (Unified)
-        dingtalk_adapter.on_callback_query("^action_.*", handle_video_actions)
         dingtalk_adapter.on_callback_query("^skill_", handle_skill_callback)
 
         # Generic Button Callback
-        common_pattern = "^(?!download_video$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_|skill_|del_rss_|del_stock_).*$"
+        # Generic Button Callback
+        common_pattern = (
+            "^(?!back_to_main_cancel$|unsub_|stock_|skill_|del_rss_|del_stock_).*$"
+        )
         dingtalk_adapter.on_callback_query(common_pattern, button_callback)
 
     # 6. Start Engines

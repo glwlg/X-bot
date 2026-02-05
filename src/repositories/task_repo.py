@@ -22,7 +22,7 @@ async def add_scheduled_task(
         cursor = await db.execute(
             """
             INSERT INTO scheduled_tasks (crontab, instruction, user_id, platform, need_push, is_active)
-            VALUES (?, ?, ?, ?, ?, ?, 1)
+            VALUES (?, ?, ?, ?, ?, 1)
             """,
             (
                 crontab,

@@ -211,19 +211,97 @@ async def init_db():
         """)
 
         # 定时任务表
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS scheduled_tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                crontab TEXT NOT NULL,
-                instruction TEXT NOT NULL,
-                user_id TEXT DEFAULT '0',
-                platform TEXT DEFAULT 'telegram',
-                need_push BOOLEAN DEFAULT 1,
-                is_active BOOLEAN DEFAULT 1,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        # Migration: Remove skill_name if it exists (legacy column causing NOT NULL errors)
+        try:
+            # Check if skill_name exists
+            async with db.execute("PRAGMA table_info(scheduled_tasks)") as cursor:
+                cols = (
+                    await cursor.fetchall()
+                )  # (cid, name, type, notnull, dflt_value, pk)
+
+            has_skill_name = any(col[1] == "skill_name" for col in cols)
+
+            if has_skill_name:
+                logger.info(
+                    "Migrating scheduled_tasks to remove legacy 'skill_name' column..."
+                )
+                await db.execute(
+                    "ALTER TABLE scheduled_tasks RENAME TO scheduled_tasks_legacy"
+                )
+
+                # Create new table without skill_name
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        crontab TEXT NOT NULL,
+                        instruction TEXT NOT NULL,
+                        user_id TEXT DEFAULT '0',
+                        platform TEXT DEFAULT 'telegram',
+                        need_push BOOLEAN DEFAULT 1,
+                        is_active BOOLEAN DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+                # Copy data from legacy table (only matching columns)
+                # Note: We must ensure we select only columns that exist in both, but here we define the new structure clearly.
+                # The legacy table has skill_name, we skip it.
+                # Assuming id, crontab, instruction, user_id, platform, need_push, is_active, created_at, updated_at match.
+
+                # Get columns from new table to be safe
+                async with db.execute("PRAGMA table_info(scheduled_tasks)") as cursor:
+                    new_cols = [c[1] for c in await cursor.fetchall()]
+
+                # Check legacy columns
+                async with db.execute(
+                    "PRAGMA table_info(scheduled_tasks_legacy)"
+                ) as cursor:
+                    legacy_cols_info = await cursor.fetchall()
+                    legacy_cols = [c[1] for c in legacy_cols_info]
+
+                # Intersect columns
+                common_cols = [col for col in new_cols if col in legacy_cols]
+                cols_str = ", ".join(common_cols)
+
+                await db.execute(
+                    f"INSERT INTO scheduled_tasks ({cols_str}) SELECT {cols_str} FROM scheduled_tasks_legacy"
+                )
+
+                await db.execute("DROP TABLE scheduled_tasks_legacy")
+                logger.info("Migration for scheduled_tasks completed.")
+            else:
+                # Ensure table exists if not present
+                await db.execute("""
+                    CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        crontab TEXT NOT NULL,
+                        instruction TEXT NOT NULL,
+                        user_id TEXT DEFAULT '0',
+                        platform TEXT DEFAULT 'telegram',
+                        need_push BOOLEAN DEFAULT 1,
+                        is_active BOOLEAN DEFAULT 1,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+
+        except Exception as e:
+            logger.error(f"Failed to migrate scheduled_tasks: {e}")
+            # Fallback to ensure create
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS scheduled_tasks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    crontab TEXT NOT NULL,
+                    instruction TEXT NOT NULL,
+                    user_id TEXT DEFAULT '0',
+                    platform TEXT DEFAULT 'telegram',
+                    need_push BOOLEAN DEFAULT 1,
+                    is_active BOOLEAN DEFAULT 1,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
         # 索引创建
         await db.execute(

@@ -79,9 +79,11 @@ async def process_teach(ctx: UnifiedContext, requirement: str) -> int:
     skill_md = result.get("skill_md", "")
     has_scripts = result.get("has_scripts", False)
 
-    # 保存到上下文供后续审核 (needs platform context)
-    if ctx.platform_ctx:
-        ctx.user_data["pending_skill"] = skill_name
+    skill_name = result["skill_name"]
+    skill_md = result.get("skill_md", "")
+    has_scripts = result.get("has_scripts", False)
+
+    skill_loader.reload_skills()
 
     # 显示 SKILL.md 预览
     preview_lines = skill_md.split("\n")[:15]
@@ -94,12 +96,6 @@ async def process_teach(ctx: UnifiedContext, requirement: str) -> int:
     keyboard = [
         [
             InlineKeyboardButton(
-                "✅ 启用", callback_data=f"skill_approve_{skill_name}"
-            ),
-            InlineKeyboardButton("❌ 取消", callback_data=f"skill_reject_{skill_name}"),
-        ],
-        [
-            InlineKeyboardButton(
                 "📝 查看完整内容", callback_data=f"skill_view_{skill_name}"
             )
         ],
@@ -108,10 +104,10 @@ async def process_teach(ctx: UnifiedContext, requirement: str) -> int:
 
     await ctx.edit_message(
         getattr(msg, "message_id", getattr(msg, "id", None)),
-        f"📝 **新技能草稿**\n\n"
+        f"✅ **新技能已激活**\n\n"
         f"**名称**: `{skill_name}`{scripts_info}\n\n"
         f"```markdown\n{preview}\n```\n\n"
-        f"确认启用后,您可以使用这个技能。",
+        f"您现在可以直接使用这个技能了。",
         reply_markup=reply_markup,
     )
 
@@ -128,66 +124,21 @@ async def handle_skill_callback(ctx: UnifiedContext) -> None:
 
     user_id = ctx.message.user.id
 
-    if data.startswith("skill_approve_"):
-        skill_name = data.replace("skill_approve_", "")
-        creator = skill_loader.import_skill_module("skill_manager", "creator.py")
-        if not creator:
-            await ctx.reply("❌ Skill Manager 加载失败")
-            return
-
-        result = await creator.approve_skill(skill_name)
-
-        msg_text = (
-            (f"✅ 新能力 `{skill_name}` 已启用！\n\n现在您可以通过触发词使用它了。")
-            if result["success"]
-            else f"❌ 启用失败：{result.get('error', '未知错误')}"
-        )
-
-        await ctx.reply(msg_text)
-        return
-
-    if data.startswith("skill_reject_"):
-        skill_name = data.replace("skill_reject_", "")
-        creator = skill_loader.import_skill_module("skill_manager", "creator.py")
-        if not creator:
-            await ctx.reply("❌ Skill Manager 加载失败")
-            return
-
-        result = await creator.reject_skill(skill_name)
-
-        msg_text = (
-            f"🗑️ 已取消创建 `{skill_name}`"
-            if result["success"]
-            else f"❌ 取消失败：{result.get('error', '未知错误')}"
-        )
-
-        await ctx.reply(msg_text)
-        return
-
     if data.startswith("skill_view_"):
         skill_name = data.replace("skill_view_", "")
 
-        # 查找技能目录或文件
+        # 查找技能目录或文件 (Directly in learned)
         skills_base = os.path.join(os.path.dirname(__file__), "..", "skills")
-        pending_dir = os.path.join(skills_base, "pending", skill_name)
-        pending_file = os.path.join(skills_base, "pending", f"{skill_name}.py")
+        learned_dir = os.path.join(skills_base, "learned", skill_name)
 
-        keyboard = [
-            [
-                InlineKeyboardButton(
-                    "✅ 启用", callback_data=f"skill_approve_{skill_name}"
-                ),
-                InlineKeyboardButton(
-                    "❌ 取消", callback_data=f"skill_reject_{skill_name}"
-                ),
-            ]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        # Remove approve/reject buttons from view mode too, as it's just viewing now
+        # Or maybe keep "Delete" button? For now just remove buttons.
+        reply_markup = None  # No actions needed for viewing active skill
 
         # 新格式: 目录结构
-        if os.path.isdir(pending_dir):
-            skill_md_path = os.path.join(pending_dir, "SKILL.md")
-            scripts_dir = os.path.join(pending_dir, "scripts")
+        if os.path.isdir(learned_dir):
+            skill_md_path = os.path.join(learned_dir, "SKILL.md")
+            scripts_dir = os.path.join(learned_dir, "scripts")
 
             if os.path.exists(skill_md_path):
                 try:
@@ -198,7 +149,7 @@ async def handle_skill_callback(ctx: UnifiedContext) -> None:
                             chat_id=chat_id,
                             document=open(skill_md_path, "rb"),
                             filename="SKILL.md",
-                            caption=f"📄 **{skill_name}** - SKILL.md\n\n审核后点击下方按钮确认。",
+                            caption=f"📄 **{skill_name}** - SKILL.md",
                             reply_markup=reply_markup,
                         )
 
@@ -224,26 +175,8 @@ async def handle_skill_callback(ctx: UnifiedContext) -> None:
             else:
                 await ctx.edit_message(ctx.message.id, "❌ SKILL.md 文件不存在")
 
-        # 旧格式: 单个 .py 文件
-        elif os.path.exists(pending_file):
-            try:
-                chat_id = ctx.message.chat.id
-                if ctx.platform_ctx:
-                    await ctx.platform_ctx.bot.send_document(
-                        chat_id=chat_id,
-                        document=open(pending_file, "rb"),
-                        filename=f"{skill_name}.py",
-                        caption=f"📄 **{skill_name}.py**\n\n审核后点击下方按钮确认。",
-                        reply_markup=reply_markup,
-                    )
-                await ctx.edit_message(
-                    ctx.message.id, f"📄 代码已发送为文件,请查看上方文档。"
-                )
-            except Exception as e:
-                logger.error(f"Failed to send code file: {e}")
-                await ctx.edit_message(ctx.message.id, f"❌ 发送文件失败:{e}")
         else:
-            await ctx.edit_message(ctx.message.id, "❌ 技能文件不存在")
+            await ctx.edit_message(ctx.message.id, "❌ 技能不存在 (或非目录结构)")
 
 
 async def skills_command(ctx: UnifiedContext) -> None:
@@ -282,15 +215,6 @@ async def skills_command(ctx: UnifiedContext) -> None:
 
     if learned:
         msg_parts.append("\n**已学习**:\n" + "\n".join(learned))
-
-    # 待审核
-    creator = skill_loader.import_skill_module("skill_manager", "creator.py")
-    pending = creator.list_pending_skills() if creator else []
-    if pending and is_user_admin(ctx.message.user.id):
-        pending_names = [p["name"] for p in pending]
-        msg_parts.append(
-            f"\n**待审核** ({len(pending)}):\n• " + "\n• ".join(pending_names)
-        )
 
     await ctx.reply("\n".join(msg_parts))
 
