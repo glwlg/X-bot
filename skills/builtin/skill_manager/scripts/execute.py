@@ -1,12 +1,12 @@
-from core.skill_loader import skill_loader
-from core.platform.models import UnifiedContext
 import logging
 import os
 import shutil
-import httpx
-import urllib.parse
-from typing import Tuple, List, Dict, Any
 import sys
+import httpx
+from typing import Tuple, Dict, Any
+
+from core.platform.models import UnifiedContext
+from core.skill_loader import skill_loader
 
 # Ensure we can import local modules (creator.py)
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -27,7 +27,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
     if action == "search":
         query = params.get("query")
         if not query:
-            return "❌ 请提供搜索关键词"
+            return {"text": "🔇🔇🔇❌ 请提供搜索关键词", "ui": {}}
 
         # 1. Search Local Index
         logger.info(f"[SkillManager] Local search query: '{query}'")
@@ -42,7 +42,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
             logger.info(f" - Found: {m['name']} (score: {m.get('score')})")
 
         if not local_matches:
-            return "未找到匹配的技能。"
+            return {"text": "🔇🔇🔇未找到匹配的技能。", "ui": {}}
 
         response_parts = []
 
@@ -65,7 +65,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
         response += "\n\n要安装技能，请说：`安装 <技能名>` 或 `安装 <GitHub 链接>`"
 
         # Return structured
-        return {"text": response, "ui": {}}
+        return {"text": "🔇🔇🔇" + response, "ui": {}}
 
     elif action == "install":
         skill_name = params.get("skill_name")
@@ -88,24 +88,24 @@ async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
             # 重新扫描技能
             skill_loader.reload_skills()
             # skill_loader.reload_skills()
-            return {"text": message, "ui": {}}
+            return {"text": "🔇🔇🔇" + message, "ui": {}}
         else:
-            return {"text": f"❌ 安装失败: {message}", "ui": {}}
+            return {"text": f"🔇🔇🔇❌ 安装失败: {message}", "ui": {}}
 
     elif action == "delete":
         skill_name = params.get("skill_name")
         if not skill_name:
-            return "❌ 请提供要删除的技能名称"
+            return {"text": "🔇🔇🔇❌ 请提供要删除的技能名称", "ui": {}}
 
         success, message = _delete_skill(skill_name)
-        return message
+        return {"text": "🔇🔇🔇" + message, "ui": {}}
 
     elif action == "list":
         # 列出所有已安装技能
         index = skill_loader.get_skill_index()
 
         if not index:
-            return "当前没有安装任何技能。"
+            return {"text": "🔇🔇🔇当前没有安装任何技能。", "ui": {}}
 
         builtin_skills = []
         learned_skills = []
@@ -133,22 +133,25 @@ async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
         else:
             response += "*暂无已学习技能*"
 
-        return response
+        return {"text": "🔇🔇🔇" + response, "ui": {}}
 
     elif action == "check_updates":
         # Deprecated
-        return "⚠️ 技能更新现已由 AI 自动管理。您可以使用 'modify skill' 或自然语言让 Bot 更新技能。"
+        return {
+            "text": "🔇🔇🔇⚠️ 技能更新现已由 AI 自动管理。您可以使用 'modify skill' 或自然语言让 Bot 更新技能。",
+            "ui": {},
+        }
 
     elif action == "update":
         # Deprecated
-        return "⚠️ 技能更新现已由 AI 自动管理。"
+        return {"text": "🔇🔇🔇⚠️ 技能更新现已由 AI 自动管理。", "ui": {}}
 
     elif action == "modify":
         skill_name = params.get("skill_name")
         instruction = params.get("instruction")
 
         if not skill_name or not instruction:
-            return "❌ 需要提供 skill_name 和 instruction"
+            return {"text": "🔇🔇🔇❌ 需要提供 skill_name 和 instruction", "ui": {}}
 
         user_id = ctx.message.user.id
 
@@ -156,80 +159,30 @@ async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
         result = await creator.update_skill(skill_name, instruction, user_id)
 
         if not result["success"]:
-            return f"❌ 修改失败: {result.get('error', '未知错误')}"
+            return {
+                "text": f"🔇🔇🔇❌ 修改失败: {result.get('error', '未知错误')}",
+                "ui": {},
+            }
 
-        code = result["code"]
-        # filepath = result["filepath"] # Unused
+        # 重新加载技能
+        skill_loader.reload_skills()
 
-        # 存储待审核信息
-        if hasattr(ctx.platform_ctx, "user_data"):
-            ctx.platform_ctx.user_data["pending_skill"] = skill_name
-
-        code_preview = code[:500] + "..." if len(code) > 500 else code
-
-        actions = [
-            [
-                {
-                    "text": "✅ 启用修改",
-                    "callback_data": f"skill_approve_{skill_name}",
-                },
-                {
-                    "text": "❌ 放弃",
-                    "callback_data": f"skill_reject_{skill_name}",
-                },
-            ],
-            [
-                {
-                    "text": "📝 查看完整代码",
-                    "callback_data": f"skill_view_{skill_name}",
-                }
-            ],
-        ]
-
-        msg = (
-            f"📝 **Skill 修改草稿**\n\n"
-            f"**目标**: `{skill_name}`\n"
-            f"**指令**: {instruction}\n\n"
-            f"```python\n{code_preview}\n```\n\n"
-            f"请确认是否应用修改。"
-        )
-
-        return {"text": msg, "ui": {"actions": actions}}
+        return {"text": f"🔇🔇🔇✅ Skill '{skill_name}' 修改成功并已生效！", "ui": {}}
 
     elif action == "approve":
-        skill_name = params.get("skill_name")
-        if not skill_name:
-            return "❌ 请提供要批准的技能名称"
-
-        if not skill_name:
-            return "❌ 请提供要批准的技能名称"
-
-        result = await creator.approve_skill(skill_name)
-        if result["success"]:
-            skill_loader.reload_skills()
-            return f"✅ 技能 '{skill_name}' 已审核通过并生效！"
-        else:
-            return f"❌ 审核失败: {result.get('error')}"
+        return {"text": "🔇🔇🔇⚠️ 技能创建现已自动生效，不再需要手动批准。", "ui": {}}
 
     elif action == "reject":
-        skill_name = params.get("skill_name")
-        if not skill_name:
-            return "❌ 请提供要拒绝的技能名称"
-
-        if not skill_name:
-            return "❌ 请提供要拒绝的技能名称"
-
-        result = await creator.reject_skill(skill_name)
-        if result["success"]:
-            return f"✅ 技能 '{skill_name}' 修改已驳回（删除 pending）。"
-        else:
-            return f"❌ 驳回失败: {result.get('error')}"
+        return {
+            "text": "🔇🔇🔇⚠️ 技能创建流程已变更 (无草稿阶段)。如需删除技能，请使用 `delete skill <name>`。",
+            "ui": {},
+        }
 
     elif action == "create":
         # New capability: Create Skill via Evolution Router (Smart)
         requirement = params.get("requirement") or params.get("instruction")
         if not requirement:
-            return "❌ 请提供技能需求描述 (requirement)"
+            return {"text": "🔇🔇🔇❌ 请提供技能需求描述 (requirement)", "ui": {}}
 
         user_id = ctx.message.user.id
 
@@ -240,10 +193,13 @@ async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
         # ctx passed might trigger log error but no reply now
         result_msg = await evolution_router.evolve(requirement, user_id, ctx)
 
-        return {"text": result_msg, "ui": {}}
+        return {"text": "🔇🔇🔇" + result_msg, "ui": {}}
 
     else:
-        return f"❌ 未知操作: {action}。支持的操作: search, install, create, delete, list, modify, approve, reject, config, tasks, delete_task"
+        return {
+            "text": f"🔇🔇🔇❌ 未知操作: {action}。支持的操作: search, install, create, delete, list, modify, approve, reject, config, tasks, delete_task",
+            "ui": {},
+        }
 
 
 # --- Helper Functions ---
@@ -291,15 +247,8 @@ async def _install_skill(target: str, user_id: int) -> Tuple[bool, str]:
             result = await creator.adopt_skill(content, user_id)
 
             if result["success"]:
-                # Update/Approve interaction
-                # We simply adopt it to pending. But since this is an explicit install command,
-                # we should probably auto-approve it.
-                approve_res = await creator.approve_skill(result["skill_name"])
-
-                if approve_res["success"]:
-                    return True, f"技能 '{result['skill_name']}' 已成功安装！"
-                else:
-                    return False, f"安装失败 (审核阶段): {approve_res.get('error')}"
+                # Skill is directly adopted and active
+                return True, f"技能 '{result['skill_name']}' 已成功安装！"
             else:
                 return False, f"安装失败 (解析阶段): {result.get('error')}"
 

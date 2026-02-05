@@ -63,7 +63,7 @@ params:                 # 可选, 参数定义
 - 用户输入: "..."
 - 提取参数:
   ```json
-  { "action": "...", "param": "..." }
+  {{ "action": "...", "param": "..." }}
   ```
 ```
 
@@ -91,9 +91,9 @@ params:                 # 可选, 参数定义
 5. 异常必须捕获并返回友好的错误消息
 6. **重要**: `execute` 函数现在必须是一个 **Async Generator**。
    - 使用 `yield "Status msg..."` 发送中间进度。
-   - 使用 `yield {"text": "...", "ui": ...}` 返回最终结果。
+   - 使用 `yield {{"text": "🔇🔇🔇Result...", "ui": ...}}` 返回最终结果(注意必须加 🔇🔇🔇 前缀以隐藏原始输出)。
    - **禁止**直接调用 `ctx.reply`。
-7. **UI 定义**: `ui` 字段包含 `actions` (按钮二维数组)。例如 `{"actions": [[{"text":"OK", "callback_data":"ok"}]]}`。
+7. **UI 定义**: `ui` 字段包含 `actions` (按钮二维数组)。例如 `{{ "actions": [[{{ "text":"OK", "callback_data":"ok" }}]] }}`。
 
 ## 函数签名 (必须严格遵守)
 ```python
@@ -104,14 +104,14 @@ async def execute(ctx: UnifiedContext, params: dict) -> AsyncGenerator[str | Dic
     # 业务逻辑
     yield "Start processing..."
     # ...
-    yield {
-        "text": "Result summary",
-        "ui": {
+    yield {{
+        "text": "🔇🔇🔇Result summary",
+        "ui": {{
             "actions": [
-                [{"text": "Text", "callback_data": "data"}]
+                [[{{"text": "Text", "callback_data": "data"}}]]
             ]
-        }
-    }
+        }}
+    }}
     return
 
 def register_handlers(adapter_manager: Any):
@@ -227,19 +227,25 @@ async def create_skill(
                         "error": f"安全检查失败 ({script_name}): {security_check['reason']}",
                     }
 
-        # 创建技能目录结构
+        # 创建技能目录结构 (Direct to learned)
         skills_base = skill_loader.skills_dir
-        pending_dir = os.path.join(skills_base, "pending", extracted_name)
-        os.makedirs(pending_dir, exist_ok=True)
+        skill_dir = os.path.join(skills_base, "learned", extracted_name)
+
+        # Prevent overwriting existing learned skill if creating new (unless name passed explicitly?)
+        # For now, just overwrite or maybe backup?
+        # User said "directly apply", so overwrite is acceptable but let's be careful.
+        # Actually create_skill usually makes new names unless forced.
+
+        os.makedirs(skill_dir, exist_ok=True)
 
         # 写入 SKILL.md
-        skill_md_path = os.path.join(pending_dir, "SKILL.md")
+        skill_md_path = os.path.join(skill_dir, "SKILL.md")
         with open(skill_md_path, "w", encoding="utf-8") as f:
             f.write(skill_md)
 
         # 写入 scripts (如果有)
         if scripts:
-            scripts_dir = os.path.join(pending_dir, "scripts")
+            scripts_dir = os.path.join(skill_dir, "scripts")
             os.makedirs(scripts_dir, exist_ok=True)
 
             for script_name, script_code in scripts.items():
@@ -247,12 +253,29 @@ async def create_skill(
                 with open(script_path, "w", encoding="utf-8") as f:
                     f.write(script_code)
 
-        logger.info(f"Generated skill: {extracted_name} -> {pending_dir}")
+        # Fix permissions (match builtin dir owner)
+        try:
+            builtin_dir = os.path.join(skills_base, "builtin")
+            if os.path.exists(builtin_dir):
+                st = os.stat(builtin_dir)
+                target_uid = st.st_uid
+                target_gid = st.st_gid
+
+                for root, dirs, files in os.walk(skill_dir):
+                    os.chown(root, target_uid, target_gid)
+                    for d in dirs:
+                        os.chown(os.path.join(root, d), target_uid, target_gid)
+                    for f in files:
+                        os.chown(os.path.join(root, f), target_uid, target_gid)
+        except Exception as e:
+            logger.warning(f"Failed to fix permissions for {extracted_name}: {e}")
+
+        logger.info(f"Generated skill (Direct): {extracted_name} -> {skill_dir}")
 
         return {
             "success": True,
             "skill_name": extracted_name,
-            "skill_dir": pending_dir,
+            "skill_dir": skill_dir,
             "skill_md": skill_md,
             "has_scripts": bool(scripts),
         }
@@ -300,7 +323,7 @@ UPDATE_PROMPT = """你是一个 X-Bot Skill 维护者。请根据用户需求修
 
 async def update_skill(skill_name: str, requirement: str, user_id: int) -> dict:
     """
-    更新现有的 Skill (生成新代码并存入 pending)
+    更新现有的 Skill (生成新代码并直接生效)
     仅支持 standard (SKILL.md + optional scripts)
     """
     try:
@@ -384,55 +407,57 @@ async def update_skill(skill_name: str, requirement: str, user_id: int) -> dict:
                     "error": f"安全检查失败: {security_check['reason']}",
                 }
 
-        # 4. 保存到 pending
-        skills_base = skill_loader.skills_dir
-        pending_base = os.path.join(skills_base, "pending")
-        os.makedirs(pending_base, exist_ok=True)
+        # 4. 直接更新 (Overwrite)
+        # skill_dir is already the target directory (e.g. .../learned/skill_name)
 
-        # 标准模式
-        pending_skill_dir = os.path.join(pending_base, skill_name)
-
-        # Clean pending
-        if os.path.exists(pending_skill_dir):
-            import shutil
-
-            shutil.rmtree(pending_skill_dir)
-
-        # Copy original dir first to preserve other assets
-        import shutil
-
-        shutil.copytree(skill_dir, pending_skill_dir, dirs_exist_ok=True)
+        # Backup? Maybe not needed for "direct apply" as per user request.
+        # But we do need to ensure we are writing to the correct place.
 
         # Overwrite SKILL.md
         if new_skill_md:
-            with open(
-                os.path.join(pending_skill_dir, "SKILL.md"), "w", encoding="utf-8"
-            ) as f:
+            with open(os.path.join(skill_dir, "SKILL.md"), "w", encoding="utf-8") as f:
                 f.write(new_skill_md)
 
         # Overwrite execute.py
+        if new_code:
+            # If code is explicitly empty string, maybe delete script?
+            # But prompt says "if no code... empty string".
+            # If "scripts": {} then new_code is None/empty.
+            pass
+
         if new_code and new_code.strip():
-            script_dir = os.path.join(pending_skill_dir, "scripts")
+            script_dir = os.path.join(skill_dir, "scripts")
             os.makedirs(script_dir, exist_ok=True)
             with open(
                 os.path.join(script_dir, "execute.py"), "w", encoding="utf-8"
             ) as f:
                 f.write(new_code)
 
-        filepath = os.path.join(pending_skill_dir, "SKILL.md")
-        code_preview = new_skill_md[:200] + "..."  # Use MD as preview if code is empty
-        if new_code:
-            code_preview = new_code
+        # Fix permissions
+        try:
+            builtin_dir = os.path.join(skill_loader.skills_dir, "builtin")
+            if os.path.exists(builtin_dir):
+                st = os.stat(builtin_dir)
+                target_uid = st.st_uid
+                target_gid = st.st_gid
 
-        logger.info(f"Generated skill update: {skill_name} -> {filepath}")
+                for root, dirs, files in os.walk(skill_dir):
+                    os.chown(root, target_uid, target_gid)
+                    for d in dirs:
+                        os.chown(os.path.join(root, d), target_uid, target_gid)
+                    for f in files:
+                        os.chown(os.path.join(root, f), target_uid, target_gid)
+        except Exception:
+            pass
+        filepath = os.path.join(skill_dir, "SKILL.md")
+
+        logger.info(f"Updated skill (Direct): {skill_name} -> {filepath}")
 
         return {
             "success": True,
             "skill_name": skill_name,
             "filepath": filepath,
-            "code": code_preview
-            if "code_preview" in locals()
-            else "Updated successfully.",
+            "code": "Updated successfully.",
         }
 
     except Exception as e:
@@ -446,13 +471,13 @@ def _security_check(code: str) -> dict:
     """
     # 危险模式
     dangerous_patterns = [
-        (r"\\bos\\.system\\b", "禁止使用 os.system"),
-        (r"\\bsubprocess\\b", "禁止使用 subprocess"),
-        (r"\\beval\\b", "禁止使用 eval"),
-        (r"\\bexec\\b", "禁止使用 exec"),
-        (r"\\b__import__\\b", "禁止使用 __import__"),
-        (r"\\bopen\\s*\\([^)]*[\"\\\']/", "禁止访问绝对路径文件"),
-        (r"\\bshutil\\b", "禁止使用 shutil"),
+        (r"\bos\.system\b", "禁止使用 os.system"),
+        (r"\bsubprocess\b", "禁止使用 subprocess"),
+        (r"\beval\b", "禁止使用 eval"),
+        (r"\bexec\b", "禁止使用 exec"),
+        (r"\b__import__\b", "禁止使用 __import__"),
+        (r"\bopen\s*\([^)]*[\"']/", "禁止访问绝对路径文件"),
+        (r"\bshutil\b", "禁止使用 shutil"),
     ]
 
     for pattern, reason in dangerous_patterns:
@@ -464,105 +489,31 @@ def _security_check(code: str) -> dict:
 
 async def approve_skill(skill_name: str) -> dict:
     """
-    审核通过 Skill，从 pending 移动到 learned
-    仅支持目录结构 (Standard Skill)
-    并修正文件权限以匹配 builtin 目录
+    Deprecated: Skills are now auto-approved on creation.
+    This function remains for compatibility but performs a simple reload.
     """
-    skills_base = skill_loader.skills_dir
-    pending_dir_path = os.path.join(skills_base, "pending", skill_name)
-    builtin_dir = os.path.join(skills_base, "builtin")
+    skill_loader.reload_skills()
 
-    # 检查是否是目录
-    is_directory = os.path.isdir(pending_dir_path)
+    # Verify it exists in learned or builtin
+    if skill_loader.get_skill(skill_name):
+        return {"success": True, "skill_name": skill_name}
 
-    if not is_directory:
-        return {"success": False, "error": f"Skill {skill_name} 不存在或不是有效的目录"}
-
-    # 新格式: 移动整个目录
-    learned_path = os.path.join(skills_base, "learned", skill_name)
-    import shutil
-
-    if os.path.exists(learned_path):
-        shutil.rmtree(learned_path)
-    shutil.move(pending_dir_path, learned_path)
-
-    # 递归修正权限
-    try:
-        if os.path.exists(builtin_dir):
-            st = os.stat(builtin_dir)
-            target_uid = st.st_uid
-            target_gid = st.st_gid
-
-            for root, dirs, files in os.walk(learned_path):
-                os.chown(root, target_uid, target_gid)
-                for d in dirs:
-                    os.chown(os.path.join(root, d), target_uid, target_gid)
-                for f in files:
-                    os.chown(os.path.join(root, f), target_uid, target_gid)
-
-            logger.info(
-                f"Fixed permissions for {skill_name}: {target_uid}:{target_gid}"
-            )
-    except Exception as e:
-        logger.warning(f"Failed to fix permissions for {skill_name}: {e}")
-
-    # 刷新加载器索引
-    skill_loader.scan_skills()
-
-    logger.info(f"Approved skill: {skill_name}")
-    return {"success": True, "path": learned_path}
+    return {"success": False, "error": f"Skill '{skill_name}' not found."}
 
 
 async def reject_skill(skill_name: str) -> dict:
     """
-    拒绝 Skill，删除 pending 目录
+    Deprecated: Skills are auto-approved. Use delete to remove.
     """
-    skills_base = skill_loader.skills_dir
-    pending_dir_path = os.path.join(skills_base, "pending", skill_name)
-
-    if os.path.isdir(pending_dir_path):
-        import shutil
-
-        shutil.rmtree(pending_dir_path)
-        logger.info(f"Rejected skill directory: {skill_name}")
-        return {"success": True}
-    else:
-        return {"success": False, "error": f"Skill {skill_name} 不存在"}
-
-
-def list_pending_skills() -> list[dict]:
-    """
-    列出待审核的 Skills (仅支持目录)
-    """
-    skills_dir = os.path.join(skill_loader.skills_dir, "pending")
-
-    if not os.path.exists(skills_dir):
-        return []
-
-    result = []
-    for entry in os.listdir(skills_dir):
-        if entry.startswith("_"):
-            continue
-
-        entry_path = os.path.join(skills_dir, entry)
-
-        # 目录格式 (新)
-        if os.path.isdir(entry_path):
-            result.append(
-                {
-                    "name": entry,
-                    "path": entry_path,
-                    "type": "directory",
-                    "created_at": datetime.fromtimestamp(os.path.getctime(entry_path)),
-                }
-            )
-
-    return result
+    return {
+        "success": False,
+        "error": "Skills are now auto-approved. please use 'delete skill' to remove.",
+    }
 
 
 async def adopt_skill(content: str, user_id: int) -> dict:
     """
-    Adopt an existing skill content (install from URL) into pending for review.
+    Adopt an existing skill content (install from URL) directly into learned.
     Only supports standard SKILL.md.
     """
     try:
@@ -595,13 +546,9 @@ async def adopt_skill(content: str, user_id: int) -> dict:
                 "error": "Could not extract 'name' from skill content.",
             }
 
-        # 2. Save to Pending
+        # 2. Save directly to Learned
         skills_base = skill_loader.skills_dir
-        pending_base = os.path.join(skills_base, "pending")
-        os.makedirs(pending_base, exist_ok=True)
-
-        # Create directory
-        skill_dir = os.path.join(pending_base, skill_name)
+        skill_dir = os.path.join(skills_base, "learned", skill_name)
         os.makedirs(skill_dir, exist_ok=True)
 
         # Save SKILL.md
@@ -609,9 +556,26 @@ async def adopt_skill(content: str, user_id: int) -> dict:
         with open(md_path, "w", encoding="utf-8") as f:
             f.write(content)
 
+        # Fix permissions
+        try:
+            builtin_dir = os.path.join(skills_base, "builtin")
+            if os.path.exists(builtin_dir):
+                st = os.stat(builtin_dir)
+                target_uid = st.st_uid
+                target_gid = st.st_gid
+
+                for root, dirs, files in os.walk(skill_dir):
+                    os.chown(root, target_uid, target_gid)
+                    for d in dirs:
+                        os.chown(os.path.join(root, d), target_uid, target_gid)
+                    for f in files:
+                        os.chown(os.path.join(root, f), target_uid, target_gid)
+        except Exception:
+            pass
+
         filepath = md_path
 
-        logger.info(f"Adopted skill: {skill_name} -> {filepath}")
+        logger.info(f"Adopted skill (Direct): {skill_name} -> {filepath}")
 
         return {"success": True, "skill_name": skill_name, "path": filepath}
 

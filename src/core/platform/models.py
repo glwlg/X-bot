@@ -121,7 +121,7 @@ class UnifiedContext:
         Supports HTML formatting by default (adapters should handle conversion).
         Also supports structured dict input: {"text": "...", "ui": {...}}
 
-        Auto-converts long text (>1000 chars) to document if appropriate.
+        Auto-converts long text (>1500 chars) to document if appropriate.
         """
         ui = None
         if isinstance(text, dict):
@@ -133,7 +133,7 @@ class UnifiedContext:
             ui = kwargs.pop("ui")
 
         # Auto-convert long text to file
-        if text and len(text) > 1000:
+        if text and len(text) > 1500:
             # Detect format
             text_lower = text.lower().strip()
 

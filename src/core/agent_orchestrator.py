@@ -92,6 +92,7 @@ class AgentOrchestrator:
                         skill_agent,
                         SkillDelegationRequest,
                         SkillFinalReply,
+                        SkillDecision,
                     )
 
                     if name == "call_skill":
@@ -138,6 +139,8 @@ class AgentOrchestrator:
 
                     # 循环检测变量
                     last_iteration_output = None
+                    last_decision = None
+                    decision_loop_counter = 0
                     loop_counter = 0
 
                     for depth in range(MAX_DEPTH):
@@ -145,6 +148,7 @@ class AgentOrchestrator:
                         execution_result = None
                         is_final_reply = False
                         iteration_output = ""
+                        current_decision = None
 
                         logger.info(f"[ReAct Round {depth + 1}] Executing {skill_name}")
                         logger.info(
@@ -170,6 +174,8 @@ class AgentOrchestrator:
                                 # 检测返回类型
                                 if isinstance(result_obj, SkillDelegationRequest):
                                     delegation = result_obj
+                                elif isinstance(result_obj, SkillDecision):
+                                    current_decision = result_obj
                                 elif isinstance(result_obj, SkillFinalReply):
                                     # Agent 明确返回了最终回复
                                     is_final_reply = True
@@ -183,22 +189,18 @@ class AgentOrchestrator:
                                     # 捕获执行结果（用于反馈给下一轮）
                                     execution_result = result_obj
 
-                                if chunk:
-                                    is_structured_ui = (
-                                        isinstance(result_obj, dict)
-                                        and "ui" in result_obj
-                                    )
-
-                                    # 只在非结构化 UI 时发送状态消息
-                                    # 避免发送 Agent 的中间思考消息（如 "正在思考..."）
-                                    if (
-                                        not is_structured_ui
-                                        and not chunk.startswith("🧠")
-                                        and not chunk.startswith("🔇🔇🔇")
-                                        and not is_final_reply
-                                    ):
-                                        await ctx.reply(chunk)
-                                        logger.info(f"[Round {depth + 1}] {chunk}")
+                                    if chunk:
+                                        # 只在 result_obj 为空（普通文本流）时发送消息
+                                        # 如果是 dict (structured result)，会在后续 execution_result 逻辑中统一发送，避免重复
+                                        # 避免发送 Agent 的中间思考消息（如 "正在思考..."）
+                                        if (
+                                            not isinstance(result_obj, dict)
+                                            and not chunk.startswith("🧠")
+                                            and not chunk.startswith("🔇🔇🔇")
+                                            and not is_final_reply
+                                        ):
+                                            await ctx.reply(chunk)
+                                            logger.info(f"[Round {depth + 1}] {chunk}")
 
                                     iteration_output += chunk + "\n"
 
@@ -308,9 +310,23 @@ class AgentOrchestrator:
                                         + "...[已截断]"
                                     )
 
-                                extra_context += (
-                                    f"\n\n【轮次 {depth + 1} 执行结果】:\n{result_text}"
-                                )
+                                command_info = ""
+                                if current_decision:
+                                    cmd_content = str(current_decision.content)
+                                    # Truncate large params in context to save tokens, but keep enough
+                                    if len(cmd_content) > 500:
+                                        cmd_content = (
+                                            cmd_content[:500] + "...[truncated]"
+                                        )
+
+                                    command_info = f"【轮次 {depth + 1} 操作】: {current_decision.action}"
+                                    if current_decision.execute_type:
+                                        command_info += (
+                                            f" ({current_decision.execute_type})"
+                                        )
+                                    command_info += f"\n参数: {cmd_content}\n"
+
+                                extra_context += f"\n\n{command_info}【轮次 {depth + 1} 执行结果】:\n{result_text}"
                                 logger.info(
                                     f"[Round {depth + 1}] EXECUTE result captured, continuing..."
                                 )
@@ -335,6 +351,28 @@ class AgentOrchestrator:
                                     # 注意：这里不continue，以便进行后续的死循环检测
 
                         # === 死循环检测 (Loop Circuit Breaker) ===
+
+                        # 1. Decision-based Check (Semantic Loop)
+                        if (
+                            last_decision
+                            and current_decision
+                            and current_decision == last_decision
+                        ):
+                            decision_loop_counter += 1
+                            logger.warning(
+                                f"[Loop Detector] Detailed Decision repeated: {decision_loop_counter} times"
+                            )
+                            if decision_loop_counter >= 2:
+                                failure_msg = f"\n\n⚠️ **系统保护**: 检测到 Agent 在连续尝试相同的操作 ({decision_loop_counter + 1} 次)，任务已强制终止。"
+                                await ctx.reply(failure_msg)
+                                full_output += failure_msg
+                                is_final_reply = True
+                        else:
+                            decision_loop_counter = 0
+
+                        last_decision = current_decision
+
+                        # 2. Text-based Check (Output Loop)
                         # 检查当前轮次的输出是否与上一轮完全一致
                         current_output_signature = iteration_output.strip()
 
@@ -406,7 +444,6 @@ class AgentOrchestrator:
 
         # 4. Generate Response
         import datetime
-        from core.skill_loader import skill_loader
 
         current_time_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
 

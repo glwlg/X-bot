@@ -614,7 +614,6 @@ def start_stock_scheduler():
 
 
 async def run_skill_cron_job(
-    skill_name: str,
     instruction: str,
     user_id: int = 0,
     platform: str = "telegram",
@@ -623,18 +622,12 @@ async def run_skill_cron_job(
     """
     通用 Skill 定时任务执行器
     """
-    if not skill_name:
-        return
-
     logger.info(
-        f"[Cron] Executing scheduled skill: '{skill_name}' for user {user_id} on {platform}, instruction: {instruction}"
+        f"[Cron] Executing scheduled skill: '{instruction}' for user {user_id} on {platform}"
     )
 
     try:
         from core.platform.models import UnifiedMessage, User, Chat, MessageType
-
-        # 组装消息
-        instruction = f"使用 skill ({skill_name}) 执行任务: {instruction}"
 
         # 构造系统上下文
         # 模拟用户身份以便 SkillAgent 知道是谁触发的任务 (方便权限检查和个性化)
@@ -694,14 +687,14 @@ async def run_skill_cron_job(
                 logger.info(f"[Cron] Pushing result to {user_id} on {platform}")
                 await send_via_adapter(
                     chat_id=user_id,
-                    text=f"⏰ **定时任务执行报告 ({skill_name})**\n\n{full_response}",
+                    text=f"⏰ **定时任务执行报告 ({instruction})**\n\n{full_response}",
                     platform=platform,
                 )
             else:
-                logger.info(f"[Cron] No output to push for {skill_name}")
+                logger.info(f"[Cron] No output to push for {instruction}")
 
     except Exception as e:
-        logger.error(f"[Cron] Failed to run skill {skill_name}: {e}", exc_info=True)
+        logger.error(f"[Cron] Failed to run skill {instruction}: {e}", exc_info=True)
 
 
 async def reload_scheduler_jobs():
@@ -731,7 +724,6 @@ async def reload_scheduler_jobs():
     count = 0
     for task in tasks:
         task_id = task["id"]
-        skill_name = task["skill_name"]
         crontab = task["crontab"]
         instruction = task["instruction"]
         user_id = task.get("user_id", 0)
@@ -753,15 +745,17 @@ async def reload_scheduler_jobs():
                 scheduler.add_job(
                     run_skill_cron_job,
                     trigger,
-                    id=f"cron_db_{task_id}_{skill_name}",
-                    args=[skill_name, instruction, user_id, platform, need_push],
+                    id=f"cron_db_{task_id}",
+                    args=[instruction, user_id, platform, need_push],
                     replace_existing=True,
                 )
                 count += 1
             else:
-                logger.warning(f"Invalid crontab format for task {task_id}: {crontab}")
+                logger.warning(
+                    f"Invalid crontab format for task {instruction}: {crontab}"
+                )
         except Exception as e:
-            logger.error(f"Failed to register DB cron for {skill_name}: {e}")
+            logger.error(f"Failed to register DB cron for task {instruction}: {e}")
 
     logger.info(
         f"Reloaded {count} jobs from Database in {(datetime.datetime.now() - start_time).total_seconds()}s."
