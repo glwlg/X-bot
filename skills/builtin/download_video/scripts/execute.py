@@ -165,8 +165,8 @@ async def handle_video_download(ctx: UnifiedContext) -> int:
         return WAITING_FOR_VIDEO_URL
 
     # Permission check for direct text input in download mode
-    if not await check_permission(ctx):
-        return CONVERSATION_END
+    # if not await check_permission(ctx):
+    #     return CONVERSATION_END
 
     url = extract_video_url(message_text)
     if not url:
@@ -318,12 +318,12 @@ async def process_video_download(
 
 async def handle_video_actions(ctx: UnifiedContext) -> None:
     """处理视频链接的智能选项（下载 vs 摘要）"""
+    logger.info(f"🎬 [DownloadVideo] Received callback action: {ctx.callback_data}")
     await ctx.answer_callback()
-
-    if not await check_permission(ctx):
-        return
+    logger.info(ctx.message)
 
     if not ctx.platform_ctx:
+        logger.error("Platform context not found")
         return
 
     url = ctx.user_data.get("pending_video_url")
@@ -341,7 +341,8 @@ async def handle_video_actions(ctx: UnifiedContext) -> None:
     if action == "action_download_video":
         try:
             await ctx.edit_message(ctx.message.id, "📹 准备下载视频...")
-        except:
+        except Exception as e:
+            logger.error(f"Error editing message in handle_video_actions: {e}")
             pass
 
         await process_video_download(ctx, url, audio_only=False)
@@ -350,7 +351,8 @@ async def handle_video_actions(ctx: UnifiedContext) -> None:
         try:
             await ctx.edit_message(ctx.message.id, "📄 正在获取网页内容并生成摘要...")
             await ctx.send_chat_action(action="typing")
-        except:
+        except Exception as e:
+            logger.error(f"Error editing message in handle_video_actions: {e}")
             pass
 
         from services.web_summary_service import summarize_webpage
@@ -359,7 +361,8 @@ async def handle_video_actions(ctx: UnifiedContext) -> None:
 
         try:
             await ctx.edit_message(ctx.message.id, summary)
-        except:
+        except Exception as e:
+            logger.error(f"Error editing message in handle_video_actions: {e}")
             await ctx.reply(summary)
 
         # Save summary to history
@@ -382,8 +385,8 @@ async def handle_large_file_action(ctx: UnifiedContext) -> None:
     """处理大文件操作的回调"""
     await ctx.answer_callback()
 
-    if not await check_permission(ctx):
-        return
+    # if not await check_permission(ctx):
+    #     return
 
     data = ctx.callback_data
     file_path = ctx.user_data.get("large_file_path")
@@ -574,6 +577,9 @@ def register_handlers(adapter_manager: Any):
     # 1. Telegram
     try:
         tg_adapter = adapter_manager.get_adapter("telegram")
+        logger.info(
+            f"🔌 [DownloadVideo] Registering Telegram handlers to adapter: {tg_adapter}"
+        )
 
         # Callbacks
         tg_adapter.on_callback_query("^action_.*", handle_video_actions)
