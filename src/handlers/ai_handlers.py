@@ -1,4 +1,5 @@
 import time
+import asyncio
 import logging
 import base64
 from core.platform.models import UnifiedContext, MessageType
@@ -101,7 +102,8 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         await ctx.send_chat_action(action="typing")
 
         try:
-            response = gemini_client.models.generate_content(
+            response = await asyncio.to_thread(
+                gemini_client.models.generate_content,
                 model=GEMINI_MODEL,
                 contents=user_message,
                 config={
@@ -185,10 +187,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
     # await add_message(context, user_id, "user", final_user_message)
 
     # 发送"正在输入"状态
-    # 发送"正在输入"状态
     await ctx.send_chat_action(action="typing")
-
-    import asyncio
 
     # 动态加载词库
     LOADING_PHRASES = [
@@ -455,7 +454,8 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
         ]
 
         # 调用 Gemini API
-        response = gemini_client.models.generate_content(
+        response = await asyncio.to_thread(
+            gemini_client.models.generate_content,
             model=GEMINI_MODEL,
             contents=contents,
             config={
@@ -562,7 +562,8 @@ async def handle_ai_video(ctx: UnifiedContext) -> None:
         ]
 
         # 调用 Gemini API
-        response = gemini_client.models.generate_content(
+        response = await asyncio.to_thread(
+            gemini_client.models.generate_content,
             model=GEMINI_MODEL,
             contents=contents,
             config={
@@ -664,7 +665,8 @@ async def handle_sticker_message(ctx: UnifiedContext) -> None:
         ]
 
         # Call API
-        response = gemini_client.models.generate_content(
+        response = await asyncio.to_thread(
+            gemini_client.models.generate_content,
             model=GEMINI_MODEL,
             contents=contents,
             config={

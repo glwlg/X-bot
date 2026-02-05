@@ -3,6 +3,7 @@
 """
 
 import io
+import asyncio
 import logging
 from typing import Any
 from telegram import Update
@@ -283,7 +284,8 @@ async def handle_document(ctx: UnifiedContext) -> None:
         await ctx.edit_message(get_message_id(thinking_msg), "📄 正在分析文档内容...")
 
         # 调用 Gemini 分析
-        response = gemini_client.models.generate_content(
+        response = await asyncio.to_thread(
+            gemini_client.models.generate_content,
             model=GEMINI_MODEL,
             contents=f"用户问题：{caption}\n\n文档内容：\n{text}",
             config={

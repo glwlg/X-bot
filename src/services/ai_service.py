@@ -34,7 +34,7 @@ class AiService:
         Yields:
             str: Text chunks of the final response.
         """
-        MAX_TURNS = 20  # Agent can think for 20 turns
+        MAX_TURNS = 5  # Agent can think for 5 turns
         turn_count = 0
 
         # Clone history to avoid mutating the original reference too early
@@ -53,7 +53,7 @@ class AiService:
                     # Gemini API supports streaming function calls, but the SDK handling might be trickier.
                     # For stability, we use non-stream for the decision phase.
 
-                    logger.info(
+                    logger.debug(
                         f"🤖 [AiService] Sending prompt to AI (Tools Mode):\n{current_history}"
                     )
                     logger.debug(

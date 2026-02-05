@@ -74,6 +74,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
                 response.raise_for_status()
                 data = response.json()
                 results = data.get("results", [])[:num_results]
+                print(f"Search results: {results}")
 
                 # Fallback mechanism: If specific category yields no results, try 'general'
                 if not results and categories and categories != "general":

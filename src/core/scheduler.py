@@ -469,13 +469,13 @@ async def trigger_manual_rss_check(user_id: int) -> str:
 
 def start_rss_scheduler():
     """启动 RSS 检查定时任务"""
-    interval = 60 * 30
+    interval = 30 * 60
 
     scheduler.add_job(
         check_rss_updates_job,
         "interval",
         seconds=interval,
-        next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=300),
+        next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=30),
         id="rss_check",
         replace_existing=True,
     )
@@ -615,13 +615,18 @@ def start_stock_scheduler():
 
 async def run_skill_cron_job(
     instruction: str,
-    user_id: int = 0,
+    user_id: int | str = 0,
     platform: str = "telegram",
     need_push: bool = False,
 ):
     """
     通用 Skill 定时任务执行器
     """
+    try:
+        user_id = int(str(user_id))
+    except ValueError, TypeError:
+        user_id = 0
+
     logger.info(
         f"[Cron] Executing scheduled skill: '{instruction}' for user {user_id} on {platform}"
     )

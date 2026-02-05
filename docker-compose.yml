@@ -42,11 +42,11 @@ services:
     image: searxng/searxng:latest
     restart: unless-stopped
     ports:
-      - "127.0.0.1:28080:8080"
+      - "0.0.0.0:28080:8080"
     volumes:
       - ./deploy/searxng/searxng:/etc/searxng:rw
-    environment:
-      - SEARXNG_BASE_URL=http://localhost:28080/
+    # environment:
+    #   - SEARXNG_BASE_URL=http://localhost:28080/
     depends_on:
       - searxng-redis
     networks:
