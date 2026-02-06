@@ -5,10 +5,11 @@ SSL 证书查询 Skill
 import ssl
 import socket
 from datetime import datetime, timezone
+from typing import Dict, Any
 from core.platform.models import UnifiedContext
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
     """查询域名 SSL 证书信息"""
     domain = params.get("domain", "651971564.xyz")
     port = params.get("port", 443)

@@ -4,6 +4,7 @@ from .start_handlers import (
     back_to_main_and_cancel,
     handle_new_command,
     help_command,
+    stop_command,
 )
 from .admin_handlers import adduser_command, deluser_command
 from .base_handlers import check_permission_unified, cancel

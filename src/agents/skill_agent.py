@@ -172,15 +172,34 @@ class SkillAgent:
                 else:
                     yield "✅ 执行完成 (无输出)。", None, None
 
+                # Return structured result with 🔇🔇🔇 prefix to signal task completion
+                status = "成功" if success else "失败"
+                result_text = f"🔇🔇🔇✅ Shell 命令执行{status}。" + (
+                    f" 输出: {output[:200]}" if output.strip() else ""
+                )
+                yield (
+                    result_text,
+                    None,
+                    {"text": result_text, "ui": {}, "success": success},
+                )
+
             elif execute_type == "CODE":
                 # Run generated python code
-                yield f"⚙️ 我正在执行代码 (CODE)...", None, None
+                yield "⚙️ 我正在执行代码 (CODE)...", None, None
 
                 success, output, output_files = await sandbox_executor.execute_code(
                     code=content, input_files=input_files, skill_dir=skill_dir
                 )
 
+                # Build structured result for agent feedback
+                file_names = list(output_files.keys()) if output_files else []
+                result_summary = []
+
                 if output_files:
+                    result_summary.append(
+                        f"生成了 {len(output_files)} 个文件: {', '.join(file_names)}"
+                    )
+                    # Send files to user
                     yield (
                         f"✅ 执行完成，生成 {len(output_files)} 个文件。",
                         output_files,
@@ -188,9 +207,22 @@ class SkillAgent:
                     )
 
                 if output.strip():
+                    result_summary.append(f"输出:\n{output[:500]}")
                     yield f"📋 执行输出:\n```\n{output}\n```", None, None
-                else:
-                    yield "✅ 执行完成。", None, None
+
+                # Return structured result with 🔇🔇🔇 prefix to signal task completion
+                status = "成功" if success else "失败"
+                result_text = f"🔇🔇🔇✅ 代码执行{status}。" + " ".join(result_summary)
+                yield (
+                    result_text,
+                    None,
+                    {
+                        "text": result_text,
+                        "ui": {},
+                        "success": success,
+                        "files": file_names,
+                    },
+                )
 
             else:
                 yield f"❌ 未知执行类型: {execute_type}", None, None
@@ -210,7 +242,7 @@ class SkillAgent:
         logger.debug(f"SkillAgent Decision Prompt: {prompt}")
 
         try:
-            response = gemini_client.models.generate_content(
+            response = await gemini_client.aio.models.generate_content(
                 model=GEMINI_MODEL,
                 contents=prompt,
                 config={"response_mime_type": "application/json"},

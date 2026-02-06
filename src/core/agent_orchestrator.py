@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from core.platform.models import UnifiedContext
 
 from core.config import MCP_MEMORY_ENABLED
@@ -159,10 +160,18 @@ class AgentOrchestrator:
                         iteration_output = ""
                         current_decision = None
 
-                        logger.info(f"[ReAct Round {depth + 1}] Executing {skill_name}")
                         logger.info(
                             "=============================1================================="
                         )
+
+                        # Check for cancellation
+                        from core.task_manager import task_manager
+
+                        if task_manager.is_cancelled(user_id):
+                            logger.info(
+                                f"Task cancelled by user {user_id} during tool execution loop"
+                            )
+                            raise asyncio.CancelledError()
 
                         # 包裹异常捕获，确保错误信息能传递给下一轮
                         try:
@@ -180,6 +189,10 @@ class AgentOrchestrator:
                                 logger.info(
                                     "=============================2================================="
                                 )
+                                # Check for cancellation during streaming
+                                if task_manager.is_cancelled(user_id):
+                                    raise asyncio.CancelledError()
+
                                 # 检测返回类型
                                 if isinstance(result_obj, SkillDelegationRequest):
                                     delegation = result_obj

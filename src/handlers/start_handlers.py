@@ -55,6 +55,36 @@ async def handle_new_command(ctx: UnifiedContext) -> None:
     )
 
 
+async def stop_command(ctx: UnifiedContext) -> None:
+    """
+    处理 /stop 命令，中断当前正在执行的任务。
+    这个命令应该在任何时候都能响应。
+    """
+    logger.info(f"Received stop command from user {ctx.message.user.id}")
+    await ctx.reply("🛑 正在尝试停止当前任务...")
+    # 权限检查
+    if not await check_permission_unified(ctx):
+        return
+
+    user_id = ctx.message.user.id
+
+    from core.task_manager import task_manager
+
+    # 尝试取消任务
+    cancelled_desc = await task_manager.cancel_task(user_id)
+
+    if cancelled_desc:
+        await ctx.reply(
+            f"🛑 **已中断任务**\n\n"
+            f"任务类型: {cancelled_desc}\n\n"
+            f"如需继续，请重新发送您的请求。"
+        )
+    else:
+        await ctx.reply(
+            "ℹ️ **当前没有正在执行的任务**\n\n您可以直接发送新消息开始对话。"
+        )
+
+
 async def help_command(ctx: UnifiedContext) -> None:
     """处理 /help 命令"""
     if not await check_permission_unified(ctx):

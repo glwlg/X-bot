@@ -42,6 +42,7 @@ from handlers import (
     handle_feature_input,
     save_feature_command,
     toggle_translation_command,
+    stop_command,
 )
 from handlers.skill_handlers import (
     teach_command,
@@ -173,6 +174,7 @@ async def main():
             Application.builder()
             .token(TELEGRAM_BOT_TOKEN)
             .persistence(persistence)
+            .concurrent_updates(True)
             .read_timeout(60)
             .write_timeout(120)
             .build()
@@ -228,6 +230,7 @@ async def main():
     adapter_manager.on_command(
         "translate", toggle_translation_command, description="开启/关闭沉浸式翻译"
     )
+    adapter_manager.on_command("stop", stop_command, description="停止当前任务")
 
     # ----------------------------------------------
     # 3.1 DYNAMIC SKILL HANDLER REGISTRATION

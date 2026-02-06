@@ -102,8 +102,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         await ctx.send_chat_action(action="typing")
 
         try:
-            response = await asyncio.to_thread(
-                gemini_client.models.generate_content,
+            response = await gemini_client.aio.models.generate_content(
                 model=GEMINI_MODEL,
                 contents=user_message,
                 config={
@@ -252,6 +251,12 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
     if can_update:
         animation_task = asyncio.create_task(loading_animation())
 
+    # --- Task Registration ---
+    from core.task_manager import task_manager
+
+    current_task = asyncio.current_task()
+    await task_manager.register_task(user_id, current_task, description="AI 对话")
+
     try:
         message_history = []
 
@@ -294,6 +299,11 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         last_stream_update = 0
 
         async for chunk_text in agent_orchestrator.handle_message(ctx, message_history):
+            # 检查任务是否被取消（虽然 await 会抛出 CancelledError，但主动检查更安全）
+            if task_manager.is_cancelled(user_id):
+                logger.info(f"Task cancelled check hit for user {user_id}")
+                raise asyncio.CancelledError()
+
             final_text_response += chunk_text
             state["final_text"] = final_text_response
             state["last_update_time"] = time.time()
@@ -381,6 +391,15 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
 
             # 记录统计
             await increment_stat(user_id, "ai_chats")
+
+    except asyncio.CancelledError:
+        logger.info(f"AI chat task cancelled for user {user_id}")
+        state["running"] = False
+        if animation_task:
+            animation_task.cancel()
+        # 不发送错误消息，因为 /stop 已经回复了
+        raise
+
     except Exception as e:
         state["running"] = False
         if animation_task:
@@ -396,6 +415,8 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             await ctx.edit_message(
                 msg_id, f"❌ Agent 运行出错：{e}\n\n请尝试 /new 重置对话。"
             )
+    finally:
+        task_manager.unregister_task(user_id)
 
 
 async def handle_ai_photo(ctx: UnifiedContext) -> None:
@@ -454,8 +475,7 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
         ]
 
         # 调用 Gemini API
-        response = await asyncio.to_thread(
-            gemini_client.models.generate_content,
+        response = await gemini_client.aio.models.generate_content(
             model=GEMINI_MODEL,
             contents=contents,
             config={
@@ -562,8 +582,7 @@ async def handle_ai_video(ctx: UnifiedContext) -> None:
         ]
 
         # 调用 Gemini API
-        response = await asyncio.to_thread(
-            gemini_client.models.generate_content,
+        response = await gemini_client.aio.models.generate_content(
             model=GEMINI_MODEL,
             contents=contents,
             config={
@@ -665,8 +684,7 @@ async def handle_sticker_message(ctx: UnifiedContext) -> None:
         ]
 
         # Call API
-        response = await asyncio.to_thread(
-            gemini_client.models.generate_content,
+        response = await gemini_client.aio.models.generate_content(
             model=GEMINI_MODEL,
             contents=contents,
             config={

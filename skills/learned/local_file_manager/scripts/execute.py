@@ -1,7 +1,7 @@
 import os
 import asyncio
 from core.platform.models import UnifiedContext
-from typing import AsyncGenerator, Dict, Any
+from typing import Dict, Any, AsyncGenerator
 
 # 定义允许操作的根目录名称
 ALLOWED_ROOTS = ["data", "downloads"]
@@ -63,11 +63,23 @@ def _list_dir_sync(path: str) -> str:
     return "\n".join(dirs + files)
 
 
+def _delete_file_sync(path: str) -> None:
+    """同步删除文件"""
+    if os.path.exists(path):
+        os.remove(path)
+
+
+def _read_file_bytes_sync(path: str) -> bytes:
+    """同步读取文件为二进制"""
+    with open(path, "rb") as f:
+        return f.read()
+
+
 async def execute(
     ctx: UnifiedContext, params: dict
-) -> AsyncGenerator[str | Dict[str, Any], None]:
+) -> AsyncGenerator[Dict[str, Any], None]:
     """
-    执行文件读写及列表技能
+    执行文件管理技能: Read, Write, List, Delete, Send
     """
     action = params.get("action")
     path = params.get("path")
@@ -75,26 +87,27 @@ async def execute(
 
     # 1. 基础参数校验
     if not action or not path:
-        yield {"text": "🔇🔇🔇❌ 错误: 缺少必要参数 `action` 或 `path`。"}
+        yield {"text": "🔇🔇🔇❌ 错误: 缺少必要参数 `action` 或 `path`。", "ui": {}}
         return
+
+    yield {"text": f"⏳ 正在处理文件请求: `{action}` -> `{path}`...", "ui": {}}
 
     # 2. 安全路径校验 (Rule #2)
     if not is_safe_path(path):
         yield {
-            "text": f"🔇🔇🔇❌ 安全警告: 禁止访问路径 `{path}`。\n为了系统安全，仅允许操作 `data/` 或 `downloads/` 目录下的文件。"
+            "text": f"🔇🔇🔇❌ 安全警告: 禁止访问路径 `{path}`。\n为了系统安全，仅允许操作 `data/` 或 `downloads/` 目录下的文件。",
+            "ui": {},
         }
         return
 
     try:
         if action == "read":
-            yield f"正在读取文件: `{path}`..."
-
             if not os.path.exists(path):
-                yield {"text": f"❌ 错误: 文件 `{path}` 不存在。"}
+                yield {"text": f"❌ 错误: 文件 `{path}` 不存在。", "ui": {}}
                 return
 
             if not os.path.isfile(path):
-                yield {"text": f"❌ 错误: `{path}` 不是一个文件。"}
+                yield {"text": f"❌ 错误: `{path}` 不是一个文件。", "ui": {}}
                 return
 
             file_content = await asyncio.to_thread(_read_file_sync, path)
@@ -103,45 +116,97 @@ async def execute(
                 file_content = "(文件内容为空)"
 
             yield {
-                "text": f"🔇🔇🔇📄 **文件内容 ({path})**:\n\n```text\n{file_content}\n```"
+                "text": f"🔇🔇🔇📄 **文件内容 ({path})**:\n\n```text\n{file_content}\n```",
+                "ui": {},
             }
 
         elif action == "write":
             if content is None:
-                yield {"text": "🔇🔇🔇❌ 错误: 写入操作需要提供 `content` 参数。"}
+                yield {
+                    "text": "🔇🔇🔇❌ 错误: 写入操作需要提供 `content` 参数。",
+                    "ui": {},
+                }
                 return
-
-            yield f"正在写入文件: `{path}`..."
 
             await asyncio.to_thread(_write_file_sync, path, content)
 
-            yield {"text": f"🔇🔇🔇✅ 成功写入文件: `{path}`"}
+            yield {"text": f"🔇🔇🔇✅ 成功写入文件: `{path}`", "ui": {}}
 
         elif action == "list":
-            yield f"正在扫描目录: `{path}`..."
-
             if not os.path.exists(path):
-                yield {"text": f"🔇🔇🔇❌ 错误: 路径 `{path}` 不存在。"}
+                yield {"text": f"🔇🔇🔇❌ 错误: 路径 `{path}` 不存在。", "ui": {}}
                 return
 
             if not os.path.isdir(path):
-                yield {"text": f"🔇🔇🔇❌ 错误: `{path}` 不是一个目录。"}
+                yield {"text": f"🔇🔇🔇❌ 错误: `{path}` 不是一个目录。", "ui": {}}
                 return
 
             dir_content = await asyncio.to_thread(_list_dir_sync, path)
 
-            yield {"text": f"🔇🔇🔇📂 **目录列表 ({path})**:\n\n{dir_content}"}
+            yield {
+                "text": f"🔇🔇🔇📂 **目录列表 ({path})**:\n\n{dir_content}",
+                "ui": {},
+            }
+
+        elif action == "delete":
+            # 删除操作的额外安全校验：仅限 downloads/
+            abs_path = os.path.abspath(path)
+            cwd = os.getcwd()
+            downloads_root = os.path.abspath(os.path.join(cwd, "downloads"))
+
+            if not abs_path.startswith(downloads_root):
+                yield {
+                    "text": f"🔇🔇🔇❌ 权限受限: 删除操作仅允许针对 `downloads/` 目录下的文件。",
+                    "ui": {},
+                }
+                return
+
+            if not os.path.exists(path):
+                yield {"text": f"❌ 错误: 文件 `{path}` 不存在，无法删除。", "ui": {}}
+                return
+
+            if not os.path.isfile(path):
+                yield {
+                    "text": f"❌ 错误: `{path}` 不是一个普通文件，无法删除。",
+                    "ui": {},
+                }
+                return
+
+            await asyncio.to_thread(_delete_file_sync, path)
+            yield {"text": f"🔇🔇🔇🗑️ 成功删除文件: `{path}`", "ui": {}}
+
+        elif action == "send":
+            if not os.path.exists(path) or not os.path.isfile(path):
+                yield {"text": f"❌ 错误: 文件 `{path}` 不存在，无法发送。", "ui": {}}
+                return
+
+            # 读取文件内容
+            file_name = os.path.basename(path)
+            file_content = await asyncio.to_thread(_read_file_bytes_sync, path)
+
+            # 通过 ctx 发送文件给用户
+            await ctx.reply_document(
+                document=file_content,
+                filename=file_name,
+                caption=f"📤 来自本地文件: `{path}`",
+            )
+
+            yield {
+                "text": f"🔇🔇🔇📤 文件 `{file_name}` 已成功发送给用户。",
+                "ui": {},
+            }
 
         else:
             yield {
-                "text": f"❌ 未知操作: `{action}`。仅支持 `read`, `write` 或 `list`。"
+                "text": f"❌ 未知操作: `{action}`。仅支持 `read`, `write`, `list`, `delete`, `send`。",
+                "ui": {},
             }
 
     except PermissionError:
-        yield {"text": f"❌ 权限错误: 无法访问路径 `{path}`。"}
+        yield {"text": f"❌ 权限错误: 无法访问路径 `{path}`。", "ui": {}}
     except Exception as e:
-        yield {"text": f"❌ 系统错误: {str(e)}"}
+        yield {"text": f"❌ 系统错误: {str(e)}", "ui": {}}
 
 
-def register_handlers(adapter_manager: Any):
+def register_handlers(adapter_manager):
     pass

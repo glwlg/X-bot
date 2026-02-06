@@ -114,7 +114,7 @@ async def execute(ctx: UnifiedContext, params: dict):
     """
 
     try:
-        response = gemini_client.models.generate_content(
+        response = await gemini_client.aio.models.generate_content(
             model=GEMINI_MODEL,
             contents=prompt,
         )
