@@ -66,6 +66,12 @@ class UnifiedMessage:
     file_id: Optional[str] = None  # Platform-specific file ID
     file_url: Optional[str] = None  # Direct download URL if available
     file_url: Optional[str] = None  # Direct download URL if available
+    file_name: Optional[str] = None
+    file_size: Optional[int] = None
+    mime_type: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    duration: Optional[int] = None
     reply_to_message_id: Optional[str] = None
     reply_to_message: Optional["UnifiedMessage"] = (
         None  # Full object of replied message

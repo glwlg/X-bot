@@ -1,5 +1,5 @@
 from telegram import Update, Message as TGMessage
-from telegram.ext import ContextTypes
+
 from core.platform.models import UnifiedMessage, User, Chat, MessageType
 import logging
 
@@ -36,25 +36,59 @@ def map_telegram_message(msg: TGMessage) -> UnifiedMessage:
     caption = msg.caption
     file_id = None
 
+    file_size = None
+    mime_type = None
+    file_name = None
+    width = None
+    height = None
+    duration = None
+
     if msg.text:
         msg_type = MessageType.TEXT
     elif msg.photo:
         msg_type = MessageType.IMAGE
-        file_id = msg.photo[-1].file_id  # Get largest photo
+        photo = msg.photo[-1]  # Get largest photo
+        file_id = photo.file_id
+        file_size = photo.file_size
+        width = photo.width
+        height = photo.height
+        mime_type = "image/jpeg"  # Telegram photos are usually JPEGs
     elif msg.video:
         msg_type = MessageType.VIDEO
         file_id = msg.video.file_id
+        file_size = msg.video.file_size
+        mime_type = msg.video.mime_type
+        file_name = msg.video.file_name
+        width = msg.video.width
+        height = msg.video.height
+        duration = msg.video.duration
     elif msg.voice:
         msg_type = MessageType.VOICE
         file_id = msg.voice.file_id
+        file_size = msg.voice.file_size
+        mime_type = msg.voice.mime_type
+        duration = msg.voice.duration
     elif msg.audio:
         msg_type = MessageType.AUDIO
         file_id = msg.audio.file_id
+        file_size = msg.audio.file_size
+        mime_type = msg.audio.mime_type
+        file_name = msg.audio.file_name
+        duration = msg.audio.duration
     elif msg.document:
         msg_type = MessageType.DOCUMENT
         file_id = msg.document.file_id
+        file_size = msg.document.file_size
+        mime_type = msg.document.mime_type
+        file_name = msg.document.file_name
     elif msg.sticker:
         msg_type = MessageType.STICKER
+        file_id = msg.sticker.file_id
+        file_size = msg.sticker.file_size
+        width = msg.sticker.width
+        height = msg.sticker.height
+        if msg.sticker.is_animated:
+            msg_type = MessageType.ANIMATION  # Or keep as sticker
     elif msg.location:
         msg_type = MessageType.LOCATION
     elif msg.contact:
@@ -70,6 +104,12 @@ def map_telegram_message(msg: TGMessage) -> UnifiedMessage:
         text=text,
         caption=caption,
         file_id=file_id,
+        file_size=file_size,
+        mime_type=mime_type,
+        file_name=file_name,
+        width=width,
+        height=height,
+        duration=duration,
         reply_to_message_id=str(msg.reply_to_message.message_id)
         if msg.reply_to_message
         else None,

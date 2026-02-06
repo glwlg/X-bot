@@ -131,8 +131,23 @@ class DiscordAdapter(BotAdapter):
         file_id = None
         file_url = None
 
+        file_size = None
+        mime_type = None
+        file_name = None
+        width = None
+        height = None
+        duration = None
+
         if message.attachments:
             att = message.attachments[0]
+            file_size = att.size
+            file_name = att.filename
+            mime_type = att.content_type
+            width = att.width
+            height = att.height
+            # Duration might be available for voice/audio if scanned, check safe getattr
+            duration = getattr(att, "duration", None)
+
             file_id = str(att.id)
             file_url = att.url
 
@@ -147,6 +162,8 @@ class DiscordAdapter(BotAdapter):
                     msg_type = MessageType.AUDIO
                 else:
                     msg_type = MessageType.DOCUMENT
+            else:
+                msg_type = MessageType.DOCUMENT
 
         return UnifiedMessage(
             id=str(message.id),
@@ -156,6 +173,12 @@ class DiscordAdapter(BotAdapter):
             type=msg_type,
             file_id=file_id,
             file_url=file_url,
+            file_size=file_size,
+            mime_type=mime_type,
+            file_name=file_name,
+            width=width,
+            height=height,
+            duration=int(duration) if duration else None,
             chat=Chat(
                 id=str(message.channel.id),
                 type="group"

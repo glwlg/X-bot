@@ -3,7 +3,7 @@ import re
 import os
 import aiofiles
 
-from core.platform.models import UnifiedContext
+from core.platform.models import UnifiedContext, MessageType
 from services.web_summary_service import extract_urls
 from repositories import get_video_cache
 from services.web_summary_service import fetch_webpage_content
@@ -31,22 +31,31 @@ async def process_reply_message(ctx: UnifiedContext) -> tuple[bool, str, bytes, 
     reply_urls = []
 
     # DEBUG LOG
-    logger.info(f"Checking reply_to message {reply_to.message_id} for URLs")
+    logger.info(f"Checking reply_to message {reply_to.id} for URLs")
 
     # A. 从实体（超链接/文本链接）提取
-    if reply_to.entities:
-        for entity in reply_to.entities:
-            if entity.type == "text_link":
-                reply_urls.append(entity.url)
-            elif entity.type == "url":
-                reply_urls.append(reply_to.parse_entity(entity))
+    # A. 从实体（超链接/文本链接）提取
+    # UnifiedMessage 可能不包含 entities 属性或 helper 方法，先尝试从 raw_data 或忽略
+    # 如果对象也是 Telegram 原生对象 (duck typing)，则保留逻辑，否则跳过
+    if hasattr(reply_to, "entities") and reply_to.entities:
+        try:
+            for entity in reply_to.entities:
+                if entity.type == "text_link":
+                    reply_urls.append(entity.url)
+                elif entity.type == "url" and hasattr(reply_to, "parse_entity"):
+                    reply_urls.append(reply_to.parse_entity(entity))
+        except Exception as e:
+            logger.warning(f"Error parsing entities: {e}")
 
-    if reply_to.caption_entities:
-        for entity in reply_to.caption_entities:
-            if entity.type == "text_link":
-                reply_urls.append(entity.url)
-            elif entity.type == "url":
-                reply_urls.append(reply_to.parse_caption_entity(entity))
+    if hasattr(reply_to, "caption_entities") and reply_to.caption_entities:
+        try:
+            for entity in reply_to.caption_entities:
+                if entity.type == "text_link":
+                    reply_urls.append(entity.url)
+                elif entity.type == "url" and hasattr(reply_to, "parse_caption_entity"):
+                    reply_urls.append(reply_to.parse_caption_entity(entity))
+        except Exception as e:
+            logger.warning(f"Error parsing caption entities: {e}")
 
     # B. 从文本正则提取 (兜底，防止实体未解析)
     if not reply_urls:
@@ -93,11 +102,10 @@ async def process_reply_message(ctx: UnifiedContext) -> tuple[bool, str, bytes, 
             logger.info(f"Extracted reply text context: {len(reply_text)} chars")
 
     # 2. 处理媒体
-    if reply_to.video:
+    if reply_to.type == MessageType.VIDEO:
         has_media = True
-        video = reply_to.video
-        file_id = video.file_id
-        mime_type = video.mime_type or "video/mp4"
+        file_id = reply_to.file_id
+        mime_type = reply_to.mime_type or "video/mp4"
 
         # 优先检查本地缓存
         cache_path = await get_video_cache(file_id)
@@ -116,7 +124,7 @@ async def process_reply_message(ctx: UnifiedContext) -> tuple[bool, str, bytes, 
         # 缓存未命中，通过 Telegram API 下载
         if media_data is None:
             # 检查大小限制（Telegram API 限制 20MB）
-            if video.file_size and video.file_size > 20 * 1024 * 1024:
+            if reply_to.file_size and reply_to.file_size > 20 * 1024 * 1024:
                 await ctx.reply(
                     "⚠️ 引用的视频文件过大（超过 20MB），无法通过 Telegram 下载分析。\n\n"
                     "提示：Bot 下载的视频会被缓存，可以直接分析。"
@@ -124,27 +132,29 @@ async def process_reply_message(ctx: UnifiedContext) -> tuple[bool, str, bytes, 
                 return False, extra_context, None, None  # Abort
 
             await ctx.reply("🎬 正在下载并分析视频...")
-            media_data = await ctx.download_file(video.file_id)
+            media_data = await ctx.download_file(file_id)
 
-    elif reply_to.photo:
+    elif reply_to.type == MessageType.IMAGE:
         has_media = True
-        photo = reply_to.photo[-1]
         mime_type = "image/jpeg"
         await ctx.reply("🔍 正在分析图片...")
-        media_data = await ctx.download_file(photo.file_id)
+        media_data = await ctx.download_file(reply_to.file_id)
 
-    elif reply_to.audio or reply_to.voice:
+    elif reply_to.type in (MessageType.AUDIO, MessageType.VOICE):
         has_media = True
-        if reply_to.audio:
-            file_id = reply_to.audio.file_id
-            mime_type = reply_to.audio.mime_type or "audio/mpeg"
-            file_size = reply_to.audio.file_size
+        file_id = reply_to.file_id
+        mime_type = reply_to.mime_type
+
+        if reply_to.type == MessageType.AUDIO:
+            if not mime_type:
+                mime_type = "audio/mpeg"
             label = "音频"
         else:
-            file_id = reply_to.voice.file_id
-            mime_type = reply_to.voice.mime_type or "audio/ogg"
-            file_size = reply_to.voice.file_size
+            if not mime_type:
+                mime_type = "audio/ogg"
             label = "语音"
+
+        file_size = reply_to.file_size
 
         # Check size limit (20MB)
         if file_size and file_size > 20 * 1024 * 1024:
@@ -249,7 +259,7 @@ async def process_and_send_code_files(ctx: UnifiedContext, text: str) -> str:
                 document=file_bytes,
                 filename=filename,
                 caption=f"📝 {language} 代码片段",
-                reply_to_message_id=ctx.message.message_id,
+                reply_to_message_id=ctx.message.id,
             )
             sent_count += 1
 
