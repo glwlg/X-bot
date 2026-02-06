@@ -187,17 +187,6 @@ def register_handlers(adapter_manager):
     """Register command handlers"""
     from core.config import is_user_allowed
 
-    async def handle_tool_result(ctx, result):
-        if isinstance(result, dict):
-            text = result.get("text", "")
-            ui = result.get("ui")
-            # If text is empty but we seemingly did usage like send file, maybe don't reply text?
-            # But the send_file function returns a success message too.
-            if text:
-                await ctx.reply(text, ui=ui)
-        elif result:
-            await ctx.reply(str(result))
-
     async def cmd_ls(ctx):
         if not await is_user_allowed(ctx.message.user.id):
             return
@@ -206,8 +195,7 @@ def register_handlers(adapter_manager):
             parts = ctx.message.text.split()
             if len(parts) > 1:
                 path = parts[1]
-        res = await list_files(ctx, path)
-        await handle_tool_result(ctx, res)
+        return await list_files(ctx, path)
 
     async def cmd_cat(ctx):
         if not await is_user_allowed(ctx.message.user.id):
@@ -216,8 +204,7 @@ def register_handlers(adapter_manager):
         if len(parts) < 2:
             await ctx.reply("Usage: /cat <file_path>")
             return
-        res = await read_file(ctx, parts[1])
-        await handle_tool_result(ctx, res)
+        return await read_file(ctx, parts[1])
 
     async def cmd_rm(ctx):
         if not await is_user_allowed(ctx.message.user.id):
@@ -226,8 +213,7 @@ def register_handlers(adapter_manager):
         if len(parts) < 2:
             await ctx.reply("Usage: /rm <file_path>")
             return
-        res = await delete_file(ctx, parts[1])
-        await handle_tool_result(ctx, res)
+        return await delete_file(ctx, parts[1])
 
     async def cmd_send(ctx):
         if not await is_user_allowed(ctx.message.user.id):
@@ -236,8 +222,7 @@ def register_handlers(adapter_manager):
         if len(parts) < 2:
             await ctx.reply("Usage: /send_file <file_path>")
             return
-        res = await send_file(ctx, parts[1])
-        await handle_tool_result(ctx, res)
+        return await send_file(ctx, parts[1])
 
     # Register simple alias commands
     adapter_manager.on_command("ls", cmd_ls, description="列出文件")

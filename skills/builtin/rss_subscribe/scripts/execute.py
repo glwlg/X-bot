@@ -58,14 +58,6 @@ def register_handlers(adapter_manager):
     """注册 RSS 相关的 Command 和 Callback"""
     from core.config import is_user_allowed
 
-    async def handle_tool_result(ctx, result):
-        if isinstance(result, dict):
-            text = result.get("text", "")
-            ui = result.get("ui")
-            await ctx.reply(text, ui=ui)
-        elif result:
-            await ctx.reply(str(result))
-
     # 封装 command handler 以检查权限
     async def cmd_subscribe(ctx):
         if not await is_user_allowed(ctx.message.user.id):
@@ -77,8 +69,7 @@ def register_handlers(adapter_manager):
                 args = parts[1:]
 
         if args:
-            res = await process_subscribe(ctx, args[0])
-            await handle_tool_result(ctx, res)
+            return await process_subscribe(ctx, args[0])
         else:
             await ctx.reply("请使用: /subscribe <URL>")
 
@@ -92,16 +83,14 @@ def register_handlers(adapter_manager):
                 args = parts[1:]
 
         if args:
-            res = await process_monitor(ctx, " ".join(args))
-            await handle_tool_result(ctx, res)
+            return await process_monitor(ctx, " ".join(args))
         else:
             await ctx.reply("请使用: /monitor <关键词>")
 
     async def cmd_list_subs(ctx):
         if not await is_user_allowed(ctx.message.user.id):
             return
-        res = await list_subs_command(ctx)
-        await handle_tool_result(ctx, res)
+        return await list_subs_command(ctx)
 
     async def cmd_unsubscribe(ctx):
         if not await is_user_allowed(ctx.message.user.id):
@@ -116,8 +105,7 @@ def register_handlers(adapter_manager):
             await delete_subscription(ctx.message.user.id, args[0])
             await ctx.reply(f"🗑️ 已取消订阅：`{args[0]}`")
         else:
-            res = await show_unsubscribe_menu(ctx)
-            await handle_tool_result(ctx, res)
+            return await show_unsubscribe_menu(ctx)
 
     adapter_manager.on_command("subscribe", cmd_subscribe, description="订阅 RSS 源")
     adapter_manager.on_command(
