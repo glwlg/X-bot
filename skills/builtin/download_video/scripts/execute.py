@@ -1,7 +1,7 @@
 import os
 import asyncio
 import logging
-from typing import Dict, Any, AsyncGenerator
+from typing import Dict, Any
 
 from core.platform.models import UnifiedContext
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup

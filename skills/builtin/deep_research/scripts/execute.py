@@ -11,14 +11,14 @@ logger = logging.getLogger(__name__)
 
 async def execute(ctx: UnifiedContext, params: dict):
     topic = params.get("topic", "").strip()
-    depth = params.get("depth", 3)
+    depth = params.get("depth", 5)
     language = params.get("language", "zh-CN")
 
     if not topic:
         yield {"text": "❌ 请提供研究主题 (topic)", "ui": {}}
         return
 
-    depth = min(max(1, int(depth)), 5)  # 限制 1-5
+    depth = min(max(1, int(depth)), 10)  # 限制 1-5
 
     yield f"🧐 正在对 「{topic}」 进行深度研究 (深度: {depth})...\n此过程包含：搜索 -> 爬取网页 -> 深度阅读 -> 综合报告，可能需要 30-60 秒，请耐心等待。"
 

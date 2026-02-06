@@ -98,9 +98,9 @@ params:                 # 可选, 参数定义
 ## 函数签名 (必须严格遵守)
 ```python
 from core.platform.models import UnifiedContext
-from typing import AsyncGenerator, Dict, Any
+from typing import Dict, Any
 
-async def execute(ctx: UnifiedContext, params: dict) -> AsyncGenerator[str | Dict[str, Any], None]:
+async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
     # 业务逻辑
     yield "Start processing..."
     # ...

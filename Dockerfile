@@ -43,6 +43,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
+RUN uv tool install notebooklm-py[browser] && uv tool install playwright && playwright install
+
 # Set the working directory in the container
 WORKDIR /app
 
@@ -52,16 +54,6 @@ COPY pyproject.toml .
 # Install Python dependencies using uv with cache mount
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system -r pyproject.toml
-
-# Install Playwright/Patchright browsers and system dependencies
-# Using shared cache for browsers to avoid re-downloading when pyproject.toml changes
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    --mount=type=cache,target=/ms-playwright,sharing=locked \
-    apt-get update \
-    && patchright install-deps chromium \
-    && patchright install chromium \
-    && rm -rf /var/lib/apt/lists/*
 
 # Copy the rest of the application's code
 COPY src/ .

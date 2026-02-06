@@ -129,7 +129,7 @@ async def _internal_execute(ctx: UnifiedContext, params: dict) -> str:
         if not notebook_id:
             return "❌ 请提供 notebook_id 参数"
         code, stdout, stderr = await _run_cli(
-            ["notebook", "delete", notebook_id, "--json"], user_id
+            ["delete", "-y", "-n", notebook_id], user_id
         )
         if code == 0:
             return f"✅ 笔记本已删除: `{notebook_id}`"

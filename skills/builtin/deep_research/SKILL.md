@@ -1,6 +1,6 @@
 ---
 name: deep_research
-description: "**深度网络研究**。不仅搜索链接，还会自动访问结果页面，阅读正文，并生成深度整合的综合报告。"
+description: "**深度研究**。深度研究,深入研究,深入分析"
 triggers:
 - deep research
 - 深度研究
