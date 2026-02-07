@@ -87,6 +87,7 @@ async def init_services() -> None:
             start_rss_scheduler,
             start_stock_scheduler,
             start_dynamic_skill_scheduler,
+            start_notebooklm_scheduler,
         )
 
         logger.info("⚡ Starting schedulers...")
@@ -101,6 +102,8 @@ async def init_services() -> None:
         start_stock_scheduler()
         # 启动动态 Skill 定时任务
         start_dynamic_skill_scheduler()
+        # 启动 NotebookLM 定时列表刷新
+        start_notebooklm_scheduler()
         logger.info("✅ Schedulers started.")
 
         # 初始化 Skill 索引
