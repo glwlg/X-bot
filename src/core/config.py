@@ -24,9 +24,7 @@ DINGTALK_CLIENT_SECRET = os.getenv("DINGTALK_CLIENT_SECRET")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
 # Gemini API 配置
-GEMINI_BASE_URL = os.getenv(
-    "GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"
-)
+GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
 ROUTING_MODEL = os.getenv("ROUTING_MODEL", "gemini-2.0-flash")
@@ -39,10 +37,14 @@ IMAGE_MODEL = os.getenv("IMAGE_MODEL", "imagen-3.0-generate-001")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY environment variable not set!")
 
+http_options = {"api_version": "v1beta"}
+if GEMINI_BASE_URL:
+    http_options["base_url"] = GEMINI_BASE_URL
+
 # 初始化 Gemini 客户端
 gemini_client = genai.Client(
     api_key=GEMINI_API_KEY,
-    http_options={"api_version": "v1beta", "base_url": GEMINI_BASE_URL},
+    http_options=http_options,
 )
 
 # 初始化画图专用客户端 (支持单独配置 Official API)

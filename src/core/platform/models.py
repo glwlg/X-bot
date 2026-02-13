@@ -312,3 +312,49 @@ class UnifiedContext:
                     await self.platform_event.response.defer()
         except Exception:
             pass
+
+    async def run_skill(self, skill_name: str, params: Dict[str, Any]) -> Any:
+        """
+        Execute another skill from within a skill.
+        This provides a programmatic way for skills to compose other skills.
+        """
+        try:
+            from core.skill_loader import skill_loader
+            import inspect
+
+            # 1. Get Module
+            module = skill_loader.import_skill_module(skill_name)
+            if not module or not hasattr(module, "execute"):
+                return {
+                    "success": False,
+                    "error": f"Skill {skill_name} not found or has no execute function",
+                }
+
+            # 2. Execute
+            final_result = None
+
+            if inspect.isasyncgenfunction(module.execute):
+                async for chunk in module.execute(self, params):
+                    if isinstance(chunk, dict) and ("text" in chunk or "ui" in chunk):
+                        final_result = chunk
+                    # We currently discard intermediate status messages (strings) in this programmatic call
+                    # If the caller wants them, we'd need a different interface (e.g. callback or returning generator)
+
+            elif inspect.iscoroutinefunction(module.execute):
+                final_result = await module.execute(self, params)
+            else:
+                final_result = module.execute(self, params)
+
+            if final_result is None:
+                return {
+                    "success": True,
+                    "text": f"Skill {skill_name} executed (no return value)",
+                }
+
+            return final_result
+
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Error running skill {skill_name}: {str(e)}",
+            }
