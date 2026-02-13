@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import io
 from core.platform.models import UnifiedContext
@@ -50,17 +51,30 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
             ],
             image_config=types.ImageConfig(
                 aspect_ratio=aspect_ratio,
-                image_size="1K",  # Or whatever default
-                output_mime_type="image/png",
             ),
         )
 
-        # Call generate_content
-        response = image_gen_client.models.generate_content(
-            model=IMAGE_MODEL,
-            contents=contents,
-            config=generate_content_config,
-        )
+        # Avoid blocking the event loop (Discord heartbeat) when image API is slow.
+        timeout_seconds = 180
+        if hasattr(image_gen_client, "aio"):
+            response = await asyncio.wait_for(
+                image_gen_client.aio.models.generate_content(
+                    model=IMAGE_MODEL,
+                    contents=contents,
+                    config=generate_content_config,
+                ),
+                timeout=timeout_seconds,
+            )
+        else:
+            response = await asyncio.wait_for(
+                asyncio.to_thread(
+                    image_gen_client.models.generate_content,
+                    model=IMAGE_MODEL,
+                    contents=contents,
+                    config=generate_content_config,
+                ),
+                timeout=timeout_seconds,
+            )
 
         # DEBUG LOGGING
         logger.info(f"Image API Response Type: {type(response)}")
@@ -123,6 +137,9 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
             "files": {filename: image_content},
         }
 
+    except asyncio.TimeoutError:
+        logger.error("Image generation timed out after 180 seconds")
+        return {"text": "❌ 绘图超时（180 秒），请稍后重试或简化提示词。", "ui": {}}
     except Exception as e:
         logger.error(f"Image generation failed: {e}")
         error_msg = str(e)
