@@ -8,7 +8,7 @@ from core.config import image_gen_client, IMAGE_MODEL
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> str:
     """执行文生图任务"""
     logger.info(f"Executing generate_image with params: {params}")
 

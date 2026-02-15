@@ -182,7 +182,7 @@ class WeChatPublisher:
             raise Exception(f"Failed to add draft: {data}")
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, Any]:
     topic = params.get("topic")
     publish = params.get("publish", False)
 

@@ -8,6 +8,8 @@ import logging
 from typing import Dict, Optional, Any
 from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
+from uuid import uuid4
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +20,13 @@ class ActiveTask:
 
     task: asyncio.Task
     description: str
+    task_id: str = field(default_factory=lambda: uuid4().hex[:12])
     started_at: datetime = field(default_factory=datetime.now)
+    last_heartbeat_at: datetime = field(default_factory=datetime.now)
+    last_heartbeat_note: str = ""
+    todo_path: Optional[str] = None
+    heartbeat_path: Optional[str] = None
+    active_task_id: Optional[str] = None
     cancel_requested: bool = False
 
 
@@ -34,7 +42,13 @@ class TaskManager:
         self._lock = asyncio.Lock()
 
     async def register_task(
-        self, user_id: str, task: asyncio.Task, description: str = "AI 对话"
+        self,
+        user_id: str,
+        task: asyncio.Task,
+        description: str = "AI 对话",
+        todo_path: str | None = None,
+        heartbeat_path: str | None = None,
+        task_id: str | None = None,
     ) -> None:
         """
         注册一个用户的活动任务。
@@ -49,10 +63,18 @@ class TaskManager:
                     old_task.task.cancel()
                     logger.info(f"[TaskManager] Cancelled old task for user {user_id}")
 
-            self._tasks[user_id] = ActiveTask(
+            active_task = ActiveTask(
                 task=task,
                 description=description,
+                todo_path=str(Path(todo_path).resolve()) if todo_path else None,
+                heartbeat_path=(
+                    str(Path(heartbeat_path).resolve()) if heartbeat_path else None
+                ),
             )
+            if task_id:
+                active_task.task_id = str(task_id)
+                active_task.active_task_id = str(task_id)
+            self._tasks[user_id] = active_task
             logger.debug(
                 f"[TaskManager] Registered task for user {user_id}: {description}"
             )
@@ -106,6 +128,44 @@ class TaskManager:
             return False
         return not self._tasks[user_id].task.done()
 
+    def heartbeat(self, user_id: str, note: str = "") -> bool:
+        """
+        更新任务心跳。返回是否更新成功。
+        心跳可用于检测任务是否卡死（例如扩展执行阻塞）。
+        """
+        user_id = str(user_id)
+        active = self._tasks.get(user_id)
+        if not active or active.task.done():
+            return False
+        active.last_heartbeat_at = datetime.now()
+        if note:
+            active.last_heartbeat_note = note
+        return True
+
+    def set_todo_path(self, user_id: str, todo_path: str) -> bool:
+        user_id = str(user_id)
+        active = self._tasks.get(user_id)
+        if not active:
+            return False
+        active.todo_path = str(Path(todo_path).resolve())
+        return True
+
+    def set_heartbeat_path(self, user_id: str, heartbeat_path: str) -> bool:
+        user_id = str(user_id)
+        active = self._tasks.get(user_id)
+        if not active:
+            return False
+        active.heartbeat_path = str(Path(heartbeat_path).resolve())
+        return True
+
+    def set_active_task_id(self, user_id: str, task_id: str) -> bool:
+        user_id = str(user_id)
+        active = self._tasks.get(user_id)
+        if not active:
+            return False
+        active.active_task_id = str(task_id).strip()
+        return True
+
     def get_task_info(self, user_id: str) -> Optional[Dict[str, Any]]:
         """获取用户当前任务的信息"""
         user_id = str(user_id)
@@ -117,9 +177,18 @@ class TaskManager:
             return None
 
         return {
+            "task_id": task.task_id,
             "description": task.description,
             "started_at": task.started_at,
             "running_seconds": (datetime.now() - task.started_at).total_seconds(),
+            "last_heartbeat_at": task.last_heartbeat_at,
+            "heartbeat_age_seconds": (
+                datetime.now() - task.last_heartbeat_at
+            ).total_seconds(),
+            "last_heartbeat_note": task.last_heartbeat_note,
+            "todo_path": task.todo_path,
+            "heartbeat_path": task.heartbeat_path,
+            "active_task_id": task.active_task_id,
         }
 
     async def cleanup_completed(self) -> None:

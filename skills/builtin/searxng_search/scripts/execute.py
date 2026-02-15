@@ -4,7 +4,7 @@ import httpx
 from core.platform.models import UnifiedContext
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> str:
     query = params.get("query", "").strip()
     queries = params.get("queries", [])
     num_results = params.get("num_results", 5)

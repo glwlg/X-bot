@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: generate_image
 description: "**画图** 生成图片，绘图"
 triggers:
@@ -9,6 +10,14 @@ triggers:
 - paint
 - draw
 - imagine
+input_schema:
+  type: object
+  properties: {}
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # Generate Image (AI 绘画)

@@ -12,6 +12,7 @@ from .base_handlers import check_permission_unified, cancel
 from .service_handlers import (
     stats_command,
     toggle_translation_command,
+    chatlog_command,
 )
 from .feature_handlers import (
     feature_command,
@@ -25,3 +26,5 @@ from .ai_handlers import (
     handle_sticker_message,
 )
 from .mcp_handlers import handle_browser_action
+from .heartbeat_handlers import heartbeat_command
+from .worker_handlers import worker_command

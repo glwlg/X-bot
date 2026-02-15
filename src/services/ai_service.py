@@ -1,5 +1,7 @@
 import logging
-import time
+import inspect
+import os
+import json
 from core.config import gemini_client, GEMINI_MODEL
 from google.genai import types
 
@@ -21,6 +23,7 @@ class AiService:
         tools: list = None,
         tool_executor: callable = None,
         system_instruction: str = None,
+        event_callback: callable = None,
     ):
         """
         Generator for streaming responses with support for Function Calling (Agent Loop).
@@ -34,15 +37,51 @@ class AiService:
         Yields:
             str: Text chunks of the final response.
         """
-        MAX_TURNS = 5  # Agent can think for 5 turns
+        try:
+            MAX_TURNS = max(1, int(os.getenv("AI_TOOL_MAX_TURNS", "20")))
+        except ValueError:
+            MAX_TURNS = 20
+        try:
+            TOOL_EXEC_TIMEOUT_SEC = max(
+                30, int(os.getenv("AI_TOOL_EXEC_TIMEOUT_SEC", "420"))
+            )
+        except ValueError:
+            TOOL_EXEC_TIMEOUT_SEC = 420
+        try:
+            MAX_REPEAT_TOOL_CALLS = max(
+                2, int(os.getenv("AI_TOOL_REPEAT_GUARD", "3"))
+            )
+        except ValueError:
+            MAX_REPEAT_TOOL_CALLS = 3
         turn_count = 0
+        completed = False
+        has_tool_call = False
+        pending_tool_failures: list[str] = []
+        last_tool_signature = ""
+        repeat_tool_call_count = 0
+        last_terminal_success_text = ""
+        last_terminal_success_summary = ""
+        last_terminal_tool_name = ""
 
         # Clone history to avoid mutating the original reference too early
         current_history = message_history.copy()
 
         try:
+            async def _emit(event: str, payload: dict):
+                if not event_callback:
+                    return None
+                try:
+                    maybe_coro = event_callback(event, payload)
+                    if inspect.isawaitable(maybe_coro):
+                        return await maybe_coro
+                    return maybe_coro
+                except Exception as exc:
+                    logger.debug("[AiService] event_callback error: %s", exc)
+                    return None
+
             while turn_count < MAX_TURNS:
                 turn_count += 1
+                await _emit("turn_start", {"turn": turn_count})
 
                 config = {"system_instruction": system_instruction}
                 if tools:
@@ -78,6 +117,42 @@ class AiService:
 
                     if function_calls:
                         # Agent decided to act
+                        has_tool_call = True
+                        signature = self._build_tool_signature(function_calls)
+                        if signature == last_tool_signature:
+                            repeat_tool_call_count += 1
+                        else:
+                            last_tool_signature = signature
+                            repeat_tool_call_count = 1
+
+                        if repeat_tool_call_count >= MAX_REPEAT_TOOL_CALLS:
+                            loop_payload = {
+                                "turn": turn_count,
+                                "repeat_count": repeat_tool_call_count,
+                                "tool_names": [fc.name for fc in function_calls],
+                                "signature": signature,
+                            }
+                            directive = await _emit("loop_guard", loop_payload)
+                            forced_reply = (
+                                str((directive or {}).get("final_text", "")).strip()
+                                if isinstance(directive, dict)
+                                else ""
+                            )
+                            if forced_reply:
+                                yield forced_reply
+                            elif last_terminal_success_text or last_terminal_success_summary:
+                                yield (
+                                    last_terminal_success_text
+                                    or f"✅ 任务已完成：{last_terminal_success_summary}"
+                                )
+                            else:
+                                yield (
+                                    "⚠️ 检测到重复工具调用，已自动停止以避免死循环。"
+                                    "请查看当前结果并按需继续。"
+                                )
+                            completed = True
+                            break
+
                         logger.info(
                             f"[AiService] Agent decided to call: {[fc.name for fc in function_calls]}"
                         )
@@ -86,8 +161,15 @@ class AiService:
                         current_history.append(response.candidates[0].content)
 
                         # Execute tools
+                        turn_failures: list[str] = []
+                        terminal_short_circuit_text = ""
+                        should_terminal_stop = False
                         for fc in function_calls:
                             if tool_executor:
+                                await _emit(
+                                    "tool_call_started",
+                                    {"turn": turn_count, "name": fc.name, "args": fc.args},
+                                )
                                 # Yield status update if possible?
                                 # But we can't yield text that isn't part of final response easily without confusing UI?
                                 # We can yield a special marker or just be silent.
@@ -101,16 +183,74 @@ class AiService:
 
                                     # Increase timeout for tool execution (Deep Research can take time)
                                     tool_result = await asyncio.wait_for(
-                                        tool_executor(fc.name, fc.args), timeout=300.0
+                                        tool_executor(fc.name, fc.args),
+                                        timeout=float(TOOL_EXEC_TIMEOUT_SEC),
                                     )
                                 except asyncio.TimeoutError:
                                     logger.error(f"Tool execution timed out: {fc.name}")
-                                    tool_result = f"Error: Tool '{fc.name}' timed out after 300 seconds."
+                                    tool_result = (
+                                        f"Error: Tool '{fc.name}' timed out after "
+                                        f"{TOOL_EXEC_TIMEOUT_SEC} seconds."
+                                    )
                                 except Exception as e:
                                     logger.error(f"Tool execution error: {e}")
                                     tool_result = (
                                         f"Error executing tool {fc.name}: {str(e)}"
                                     )
+
+                                tool_ok = self._tool_result_ok(tool_result)
+                                task_outcome = ""
+                                is_terminal = False
+                                terminal_text = ""
+                                failure_mode = ""
+                                if isinstance(tool_result, dict):
+                                    task_outcome = str(
+                                        tool_result.get("task_outcome") or ""
+                                    ).strip().lower()
+                                    is_terminal = bool(
+                                        tool_result.get("terminal")
+                                    ) or task_outcome == "done"
+                                    terminal_text = str(
+                                        tool_result.get("text")
+                                        or tool_result.get("message")
+                                        or ""
+                                    ).strip()
+                                    failure_mode = str(
+                                        tool_result.get("failure_mode") or ""
+                                    ).strip().lower()
+
+                                if not failure_mode and not tool_ok:
+                                    failure_mode = "recoverable"
+                                if failure_mode not in {"recoverable", "fatal"}:
+                                    failure_mode = "recoverable" if not tool_ok else ""
+
+                                if is_terminal and tool_ok:
+                                    last_terminal_success_text = terminal_text
+                                    last_terminal_success_summary = (
+                                        self._summarize_tool_result(tool_result)
+                                    )
+                                    last_terminal_tool_name = fc.name
+
+                                if not tool_ok:
+                                    turn_failures.append(
+                                        f"{fc.name}: {self._summarize_tool_result(tool_result)}"
+                                    )
+                                directive = await _emit(
+                                    "tool_call_finished",
+                                    {
+                                        "turn": turn_count,
+                                        "name": fc.name,
+                                        "ok": tool_ok,
+                                        "summary": self._summarize_tool_result(tool_result),
+                                        "terminal": is_terminal,
+                                        "task_outcome": task_outcome,
+                                        # Keep full terminal text so orchestrator can
+                                        # deliver complete URLs/commands without truncation.
+                                        "terminal_text": terminal_text,
+                                        "terminal_text_preview": terminal_text[:200],
+                                        "failure_mode": failure_mode,
+                                    },
+                                )
 
                                 # Add tool result to history
                                 # Add tool result to history
@@ -127,21 +267,119 @@ class AiService:
                                         ],
                                     )
                                 )
+
+                                if (
+                                    isinstance(directive, dict)
+                                    and directive.get("stop") is True
+                                ):
+                                    terminal_short_circuit_text = str(
+                                        directive.get("final_text") or ""
+                                    ).strip()
+                                    if not terminal_short_circuit_text:
+                                        terminal_short_circuit_text = (
+                                            terminal_text
+                                            or self._summarize_tool_result(tool_result)
+                                        )
+                                    should_terminal_stop = True
+                                    break
                             else:
                                 logger.error("No tool_executor provided!")
                                 break
+
+                        pending_tool_failures = turn_failures
+
+                        if should_terminal_stop:
+                            preview = terminal_short_circuit_text.replace("\n", " ")[:200]
+                            await _emit(
+                                "final_response",
+                                {
+                                    "turn": turn_count,
+                                    "text_preview": preview,
+                                    "source": "terminal_tool_short_circuit",
+                                },
+                            )
+                            yield terminal_short_circuit_text
+                            completed = True
+                            break
 
                         # Continue to next turn (ReAct loop)
                         continue
 
                     else:
+                        model_text = ""
+                        try:
+                            model_text = response.text or ""
+                        except ValueError:
+                            model_text = ""
+
+                        if (
+                            has_tool_call
+                            and pending_tool_failures
+                            and turn_count < MAX_TURNS
+                        ):
+                            logger.info(
+                                "[AiService] Tool failure detected; forcing another attempt. failures=%s",
+                                pending_tool_failures,
+                            )
+                            if response.candidates and response.candidates[0].content:
+                                current_history.append(response.candidates[0].content)
+                            retry_payload = {
+                                "turn": turn_count,
+                                "failures": pending_tool_failures[:],
+                                "model_text_preview": model_text.replace("\n", " ")[:160],
+                            }
+                            directive = await _emit("retry_after_failure", retry_payload)
+                            recovery_instruction = ""
+                            if isinstance(directive, dict):
+                                recovery_instruction = str(
+                                    directive.get("recovery_instruction") or ""
+                                ).strip()
+                            if not recovery_instruction:
+                                recovery_instruction = (
+                                    "系统提示：上一步工具执行失败，任务尚未完成。"
+                                    "请优先继续调用可用工具尝试修复并完成交付，"
+                                    "不要先向用户提问。失败摘要："
+                                    + "; ".join(pending_tool_failures[:3])
+                                )
+                            current_history.append(
+                                types.Content(
+                                    role="user",
+                                    parts=[
+                                        types.Part(
+                                            text=recovery_instruction
+                                        )
+                                    ],
+                                )
+                            )
+                            continue
+
                         # Agent decided to reply with text (Final Answer)
                         try:
-                            if response.text:
-                                yield response.text
+                            if model_text:
+                                preview = model_text.replace("\n", " ")[:200]
+                                logger.info(
+                                    "[AiService] Model returned final text without tool call (turn=%s): %s",
+                                    turn_count,
+                                    preview,
+                                )
+                                await _emit(
+                                    "final_response",
+                                    {
+                                        "turn": turn_count,
+                                        "text_preview": preview,
+                                    },
+                                )
+                                yield model_text
                             else:
                                 logger.warning(
                                     f"[AiService] Empty text response. Candidates: {response.candidates}"
+                                )
+                                await _emit(
+                                    "final_response",
+                                    {
+                                        "turn": turn_count,
+                                        "text_preview": "",
+                                    },
                                 )
                                 yield "⚠️ 抱歉，模型返回了空响应，可能是触发了安全过滤或内部错误。"
                         except ValueError:
@@ -150,6 +388,7 @@ class AiService:
                                 f"[AiService] Invalid text response. Candidates: {response.candidates}"
                             )
                             yield "⚠️ 抱歉，模型返回了无效响应。"
+                        completed = True
                         break
 
                 else:
@@ -165,8 +404,80 @@ class AiService:
                     async for chunk in stream:
                         if chunk.text:
                             yield chunk.text
+                    completed = True
                     break
+
+            if tools and not completed and turn_count >= MAX_TURNS:
+                logger.warning(
+                    "[AiService] Reached MAX_TURNS (%s) without a final response.",
+                    MAX_TURNS,
+                )
+                await _emit(
+                    "max_turn_limit",
+                    {
+                        "max_turns": MAX_TURNS,
+                        "terminal_tool_name": last_terminal_tool_name,
+                        "terminal_summary": last_terminal_success_summary,
+                        "terminal_text_preview": last_terminal_success_text[:200],
+                    },
+                )
+                if last_terminal_success_text or last_terminal_success_summary:
+                    yield (
+                        last_terminal_success_text
+                        or f"✅ 任务已完成：{last_terminal_success_summary}"
+                    )
+                    return
+                yield (
+                    f"⚠️ 工具调用轮次已达上限（{MAX_TURNS}），任务仍未完成。"
+                    "请把任务拆分为更小步骤后重试。"
+                )
 
         except Exception as e:
             logger.error(f"[AiService] Error: {e}")
             raise e
+
+    @staticmethod
+    def _tool_result_ok(tool_result) -> bool:
+        if isinstance(tool_result, dict):
+            if "ok" in tool_result:
+                return bool(tool_result.get("ok"))
+            if tool_result.get("success") is False:
+                return False
+            text = str(tool_result.get("message") or tool_result.get("text") or "")
+            lowered = text.lower().strip()
+            if lowered.startswith("❌") or lowered.startswith("error"):
+                return False
+            return True
+
+        if isinstance(tool_result, str):
+            lowered = tool_result.lower().strip()
+            if lowered.startswith("❌"):
+                return False
+            if lowered.startswith("error") or "traceback" in lowered:
+                return False
+            return True
+
+        return tool_result is not None
+
+    @staticmethod
+    def _summarize_tool_result(tool_result) -> str:
+        if isinstance(tool_result, dict):
+            if "summary" in tool_result and tool_result["summary"]:
+                return str(tool_result["summary"])[:200]
+            if "message" in tool_result and tool_result["message"]:
+                return str(tool_result["message"])[:200]
+            if "text" in tool_result and tool_result["text"]:
+                return str(tool_result["text"])[:200]
+            return str(tool_result)[:200]
+        return str(tool_result)[:200]
+
+    @staticmethod
+    def _build_tool_signature(function_calls) -> str:
+        signatures: list[str] = []
+        for fc in function_calls:
+            try:
+                args_str = json.dumps(fc.args or {}, ensure_ascii=False, sort_keys=True)
+            except Exception:
+                args_str = str(fc.args)
+            signatures.append(f"{fc.name}:{args_str}")
+        return "|".join(signatures)

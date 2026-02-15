@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional, Protocol, Union
 from enum import Enum
 from datetime import datetime
 from typing import Final
+from core.platform.exceptions import MessageSendError
 
 
 class MessageType(Enum):
@@ -20,6 +21,8 @@ class MessageType(Enum):
 
 
 CONVERSATION_END: Final[int] = -1
+MAX_REPLY_TEXT_CHARS: Final[int] = 3500
+MAX_EDIT_PREVIEW_CHARS: Final[int] = 1800
 
 
 @dataclass
@@ -126,8 +129,6 @@ class UnifiedContext:
         Unified reply method.
         Supports HTML formatting by default (adapters should handle conversion).
         Also supports structured dict input: {"text": "...", "ui": {...}}
-
-        Auto-converts long text (>1500 chars) to document if appropriate.
         """
         ui = None
         if isinstance(text, dict):
@@ -138,56 +139,81 @@ class UnifiedContext:
         if "ui" in kwargs:
             ui = kwargs.pop("ui")
 
-        # Auto-convert long text to file
-        if text and len(text) > 1500:
-            # Detect format
-            text_lower = text.lower().strip()
+        # Defensive normalization: some handlers return conversation state ints.
+        # Adapters expect text payloads, so coerce non-dict payloads to string.
+        if not isinstance(text, str):
+            text = "" if text is None else str(text)
 
-            # Check if it's HTML
-            if text_lower.startswith("<!doctype html") or text_lower.startswith(
-                "<html"
-            ):
-                filename = "content.html"
-                file_content = text.encode("utf-8")
-                caption = "📄 内容已转为 HTML 文件发送"
-
-                await self.reply_document(
-                    document=file_content, filename=filename, caption=caption
+        if isinstance(text, str) and len(text) > MAX_REPLY_TEXT_CHARS:
+            chunks = self._split_reply_text(text, MAX_REPLY_TEXT_CHARS)
+            last_response = None
+            for index, chunk in enumerate(chunks):
+                chunk_kwargs = dict(kwargs)
+                if index > 0:
+                    # Interactive UI only on the first chunk.
+                    chunk_kwargs.pop("reply_markup", None)
+                last_response = await self._adapter.reply_text(
+                    self, chunk, ui=ui if index == 0 else None, **chunk_kwargs
                 )
-                return
-
-            # Check if it's Markdown (contains markdown syntax)
-            elif any(
-                marker in text for marker in ["##", "```", "**", "- ", "1. ", "[", "]("]
-            ):
-                filename = "content.md"
-                file_content = text.encode("utf-8")
-                caption = "📄 内容已转为 Markdown 文件发送"
-
-                await self.reply_document(
-                    document=file_content, filename=filename, caption=caption
-                )
-                return
-
-            # Plain text
-            else:
-                filename = "content.txt"
-                file_content = text.encode("utf-8")
-                caption = "📄 内容过长，已转为文本文件发送"
-
-                await self.reply_document(
-                    document=file_content, filename=filename, caption=caption
-                )
-                return
+            return last_response
 
         return await self._adapter.reply_text(self, text, ui=ui, **kwargs)
+
+    @staticmethod
+    def _split_reply_text(text: str, max_chars: int) -> list[str]:
+        """Split long content into stable chunks to avoid forced file attachments."""
+        if len(text) <= max_chars:
+            return [text]
+
+        chunks: list[str] = []
+        remaining = text
+        while len(remaining) > max_chars:
+            split_pos = remaining.rfind("\n\n", 0, max_chars)
+            if split_pos < max_chars // 2:
+                split_pos = remaining.rfind("\n", 0, max_chars)
+            if split_pos < max_chars // 2:
+                split_pos = remaining.rfind(" ", 0, max_chars)
+            if split_pos < max_chars // 2:
+                split_pos = max_chars
+
+            chunks.append(remaining[:split_pos].rstrip())
+            remaining = remaining[split_pos:].lstrip()
+
+        if remaining:
+            chunks.append(remaining)
+
+        return [chunk for chunk in chunks if chunk]
 
     async def edit_message(self, message_id: str, text: str, **kwargs) -> Any:
         """
         Unified edit method.
         If platform doesn't support editing, it should fallback to sending a new message.
         """
-        return await self._adapter.edit_text(self, message_id, text, **kwargs)
+        safe_text = text
+        if isinstance(text, str) and len(text) > MAX_EDIT_PREVIEW_CHARS:
+            safe_text = self._truncate_edit_preview(text, MAX_EDIT_PREVIEW_CHARS)
+
+        try:
+            return await self._adapter.edit_text(self, message_id, safe_text, **kwargs)
+        except MessageSendError as exc:
+            lowered = str(exc).lower()
+            if isinstance(text, str) and ("too_long" in lowered or "too long" in lowered):
+                fallback_text = self._truncate_edit_preview(text, max(400, MAX_EDIT_PREVIEW_CHARS // 2))
+                return await self._adapter.edit_text(
+                    self, message_id, fallback_text, **kwargs
+                )
+            raise
+
+    @staticmethod
+    def _truncate_edit_preview(text: str, max_chars: int) -> str:
+        if len(text) <= max_chars:
+            return text
+        suffix = "\n\n...（内容较长，完整结果将在后续消息中给出）"
+        budget = max_chars - len(suffix)
+        if budget < 100:
+            budget = max_chars
+            suffix = ""
+        return text[:budget].rstrip() + suffix
 
     async def reply_photo(
         self, photo: Union[str, bytes], caption: Optional[str] = None, **kwargs
@@ -330,20 +356,40 @@ class UnifiedContext:
                     "error": f"Skill {skill_name} not found or has no execute function",
                 }
 
+            def _supports_runtime(fn) -> bool:
+                try:
+                    signature = inspect.signature(fn)
+                    return len(signature.parameters) >= 3
+                except Exception:
+                    return False
+
             # 2. Execute
             final_result = None
+            runtime_arg = None
+            has_runtime = _supports_runtime(module.execute)
 
             if inspect.isasyncgenfunction(module.execute):
-                async for chunk in module.execute(self, params):
+                stream = (
+                    module.execute(self, params, runtime_arg)
+                    if has_runtime
+                    else module.execute(self, params)
+                )
+                async for chunk in stream:
                     if isinstance(chunk, dict) and ("text" in chunk or "ui" in chunk):
                         final_result = chunk
                     # We currently discard intermediate status messages (strings) in this programmatic call
                     # If the caller wants them, we'd need a different interface (e.g. callback or returning generator)
 
             elif inspect.iscoroutinefunction(module.execute):
-                final_result = await module.execute(self, params)
+                if has_runtime:
+                    final_result = await module.execute(self, params, runtime_arg)
+                else:
+                    final_result = await module.execute(self, params)
             else:
-                final_result = module.execute(self, params)
+                if has_runtime:
+                    final_result = module.execute(self, params, runtime_arg)
+                else:
+                    final_result = module.execute(self, params)
 
             if final_result is None:
                 return {

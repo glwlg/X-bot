@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: file_manager
 description: "**本地文件管理**。支持文件的读写、列表查看、删除及发送文件给用户。"
 triggers:
@@ -11,6 +12,14 @@ triggers:
 - cat
 - ls
 - rm
+input_schema:
+  type: object
+  properties: {}
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # File Manager (文件管理器)

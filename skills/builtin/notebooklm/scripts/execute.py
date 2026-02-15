@@ -7,7 +7,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict):
+async def execute(ctx: UnifiedContext, params: dict, runtime=None):
     result = await _internal_execute(ctx, params)
     if isinstance(result, str):
         return {"text": result, "ui": {}}

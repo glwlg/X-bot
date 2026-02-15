@@ -6,13 +6,13 @@ import io
 import asyncio
 import logging
 from typing import Any
-from telegram import Update
-from telegram.ext import ContextTypes
 from telegram.error import BadRequest
 
 from core.config import gemini_client, GEMINI_MODEL, is_user_allowed
+from core.platform.exceptions import MediaProcessingError
 from user_context import add_message
 from core.platform.models import UnifiedContext, MessageType
+from .media_utils import extract_media_input
 
 logger = logging.getLogger(__name__)
 
@@ -71,12 +71,7 @@ async def handle_document(ctx: UnifiedContext) -> None:
     """
     处理文档消息，提取内容并使用 AI 分析
     """
-    chat_id = ctx.message.chat.id
     user_id = ctx.message.user.id
-
-    # Legacy fallbacks
-    update = ctx.platform_event
-    context = ctx.platform_ctx
 
     # 检查用户权限
     if not await is_user_allowed(user_id):
@@ -87,29 +82,26 @@ async def handle_document(ctx: UnifiedContext) -> None:
     if ctx.message.type != MessageType.DOCUMENT:
         return
 
-    # 获取文档信息（跨平台）
-    file_id = ctx.message.file_id
-    file_name = None
-    mime_type = None
-    file_size = None
+    try:
+        media = await extract_media_input(
+            ctx,
+            expected_types={MessageType.DOCUMENT},
+            auto_download=True,
+        )
+    except MediaProcessingError as exc:
+        if exc.error_code == "unsupported_media_on_platform":
+            await ctx.reply("❌ 当前平台暂不支持该文档消息格式。")
+        else:
+            await ctx.reply("❌ 当前平台暂时无法下载文档内容，请稍后重试。")
+        return
 
-    # 从 raw_data 或 platform_event 提取文档信息
-    if ctx.message.platform == "telegram":
-        # Telegram: 从 raw_data 获取 document 对象
-        if "document" in ctx.message.raw_data:
-            doc_data = ctx.message.raw_data["document"]
-            file_name = doc_data.get("file_name")
-            mime_type = doc_data.get("mime_type")
-            file_size = doc_data.get("file_size")
-    elif ctx.message.platform == "discord":
-        # Discord: 从 platform_event.attachments 获取
-        if hasattr(update, "attachments") and update.attachments:
-            att = update.attachments[0]
-            file_name = att.filename
-            mime_type = att.content_type
-            file_size = att.size
+    file_name = media.file_name
+    mime_type = media.mime_type
+    file_size = media.file_size
+    file_bytes = media.content or b""
 
-    if not file_id:
+    if not file_bytes:
+        await ctx.reply("❌ 无法获取文档数据，请重新发送。")
         return
 
     # 获取用户问题（如果有）
@@ -129,7 +121,6 @@ async def handle_document(ctx: UnifiedContext) -> None:
         if is_cookie_file:
             process_msg = await ctx.reply("🍪 检测到 Cookies 文件，正在导入...")
             try:
-                file_bytes = await ctx.download_file(file_id)
                 content = file_bytes.decode("utf-8")
 
                 import json
@@ -242,8 +233,8 @@ async def handle_document(ctx: UnifiedContext) -> None:
     thinking_msg = await ctx.reply("📄 正在读取文档内容...")
 
     # 记录用户文档消息到上下文
-    add_message(
-        context,
+    await add_message(
+        ctx,
         user_id,
         "user",
         f"【用户发送了文档：{file_name or 'document'}】{caption}",
@@ -253,9 +244,6 @@ async def handle_document(ctx: UnifiedContext) -> None:
     await ctx.send_chat_action(action="typing")
 
     try:
-        # 下载文档
-        file_bytes = bytes(await ctx.download_file(file_id))
-
         # 根据类型提取文本
         doc_type = SUPPORTED_MIME_TYPES[mime_type]
         if doc_type == "pdf":
@@ -301,7 +289,7 @@ async def handle_document(ctx: UnifiedContext) -> None:
         if response.text:
             await ctx.edit_message(get_message_id(thinking_msg), response.text)
             # 记录模型回复到上下文
-            add_message(context, user_id, "model", response.text)
+            await add_message(ctx, user_id, "model", response.text)
             # 记录统计
             from stats import increment_stat
 

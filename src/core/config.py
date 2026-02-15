@@ -106,8 +106,28 @@ def is_user_admin(user_id: int | str) -> bool:
 
 
 # 下载配置
+def _is_docker_runtime() -> bool:
+    return os.path.exists("/.dockerenv") or (
+        os.getenv("RUNNING_IN_DOCKER", "").lower() == "true"
+    )
+
+
+def _default_data_dir() -> str:
+    app_root = "/app"
+    app_data = "/app/data"
+    if (
+        _is_docker_runtime()
+        and os.path.isdir(app_root)
+        and os.access(app_root, os.W_OK | os.X_OK)
+    ):
+        return app_data
+    if os.path.isdir(app_data) and os.access(app_data, os.W_OK | os.X_OK):
+        return app_data
+    return "data"
+
+
 DOWNLOAD_DIR = "downloads"
-DATA_DIR = "data"
+DATA_DIR = os.getenv("DATA_DIR", _default_data_dir())
 PERMANENT_STORAGE_DIR = "/app/media"  # For files > 49MB
 UPDATE_INTERVAL_SECONDS = 2  # 进度更新间隔（秒）
 MAX_FILE_SIZE_MB = 49  # Telegram 最大文件大小限制
@@ -139,6 +159,60 @@ SERVER_IP = os.getenv("SERVER_IP")
 # This path is used for cloning and building repositories
 # Must be an absolute path that matches the Docker volume mount
 X_DEPLOYMENT_STAGING_PATH = os.getenv("X_DEPLOYMENT_STAGING_PATH")
+
+# Heartbeat runtime configuration
+HEARTBEAT_ENABLED = os.getenv("HEARTBEAT_ENABLED", "true").lower() == "true"
+HEARTBEAT_EVERY = os.getenv("HEARTBEAT_EVERY", "30m")
+HEARTBEAT_TARGET = os.getenv("HEARTBEAT_TARGET", "last")
+HEARTBEAT_ACTIVE_START = os.getenv("HEARTBEAT_ACTIVE_START", "08:00")
+HEARTBEAT_ACTIVE_END = os.getenv("HEARTBEAT_ACTIVE_END", "22:00")
+HEARTBEAT_TIMEZONE = os.getenv("HEARTBEAT_TIMEZONE", "")
+HEARTBEAT_TICK_SEC = int(os.getenv("HEARTBEAT_TICK_SEC", "30"))
+HEARTBEAT_SUPPRESS_OK = os.getenv("HEARTBEAT_SUPPRESS_OK", "true").lower() == "true"
+HEARTBEAT_MODE = os.getenv("HEARTBEAT_MODE", "readonly").strip().lower() or "readonly"
+HEARTBEAT_READONLY_DISPATCH = os.getenv("HEARTBEAT_READONLY_DISPATCH", "false").lower() == "true"
+
+# Auto recovery budget for terminal/recoverable failures in orchestrator loop
+AUTO_RECOVERY_MAX_ATTEMPTS = int(os.getenv("AUTO_RECOVERY_MAX_ATTEMPTS", "3"))
+
+# Dual-layer worker runtime configuration
+USERLAND_ROOT = os.getenv("USERLAND_ROOT", os.path.join(DATA_DIR, "userland", "workers"))
+WORKER_DEFAULT_BACKEND = os.getenv("WORKER_DEFAULT_BACKEND", "core-agent")
+WORKER_EXEC_TIMEOUT_SEC = int(os.getenv("WORKER_EXEC_TIMEOUT_SEC", "900"))
+WORKER_RUNTIME_MODE = os.getenv("WORKER_RUNTIME_MODE", "local").strip().lower() or "local"
+WORKER_DOCKER_CONTAINER = os.getenv("WORKER_DOCKER_CONTAINER", "x-bot-worker")
+WORKER_DOCKER_DATA_DIR = os.getenv("WORKER_DOCKER_DATA_DIR", "/app/data")
+WORKER_CODEX_COMMAND = os.getenv("WORKER_CODEX_COMMAND", "codex")
+WORKER_GEMINI_CLI_COMMAND = os.getenv("WORKER_GEMINI_CLI_COMMAND", "gemini-cli")
+WORKER_SHELL_COMMAND = os.getenv("WORKER_SHELL_COMMAND", "sh")
+WORKER_CODEX_ARGS_TEMPLATE = os.getenv(
+    "WORKER_CODEX_ARGS_TEMPLATE", "exec {instruction}"
+)
+WORKER_GEMINI_ARGS_TEMPLATE = os.getenv(
+    "WORKER_GEMINI_ARGS_TEMPLATE", "--prompt {instruction}"
+)
+WORKER_AUTH_STATUS_TIMEOUT_SEC = int(os.getenv("WORKER_AUTH_STATUS_TIMEOUT_SEC", "45"))
+WORKER_CODEX_AUTH_START_ARGS = os.getenv("WORKER_CODEX_AUTH_START_ARGS", "auth login")
+WORKER_GEMINI_AUTH_START_ARGS = os.getenv("WORKER_GEMINI_AUTH_START_ARGS", "auth login")
+WORKER_CODEX_AUTH_STATUS_ARGS = os.getenv("WORKER_CODEX_AUTH_STATUS_ARGS", "auth status")
+WORKER_GEMINI_AUTH_STATUS_ARGS = os.getenv("WORKER_GEMINI_AUTH_STATUS_ARGS", "auth status")
+WORKER_FALLBACK_CORE_AGENT = os.getenv("WORKER_FALLBACK_CORE_AGENT", "true").lower() == "true"
+
+# Core chat dispatch policy:
+# - worker_only: always dispatch to worker, no fallback
+# - worker_preferred: dispatch worker first, fallback to core orchestrator on worker failure
+# - orchestrator: keep current core orchestrator execution path
+CORE_CHAT_EXECUTION_MODE = (
+    os.getenv("CORE_CHAT_EXECUTION_MODE", "worker_only").strip().lower()
+    or "worker_only"
+)
+CORE_CHAT_WORKER_BACKEND = (
+    os.getenv("CORE_CHAT_WORKER_BACKEND", "core-agent").strip().lower()
+    or "core-agent"
+)
+
+# Kernel-protected source roots (comma-separated absolute/relative paths)
+KERNEL_PROTECTED_PATHS = os.getenv("KERNEL_PROTECTED_PATHS", "")
 
 # 确保目录存在
 os.makedirs(DOWNLOAD_DIR, exist_ok=True)

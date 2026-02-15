@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: notebooklm
 description: "**Google NotebookLM 客户端**。支持管理笔记本、上传来源(网页/PDF/YouTube)、提问、生成播客/视频。"
 triggers:
@@ -6,6 +7,14 @@ triggers:
 - notebook
 - podcast
 - 播客
+input_schema:
+  type: object
+  properties: {}
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # NotebookLM (AI 笔记助手)

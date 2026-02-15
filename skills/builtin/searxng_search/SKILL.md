@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: searxng_search
 description: "**聚合网络搜索**。基于 SearXNG，支持 Google/Bing/DuckDuckGo 等多引擎聚合搜索。"
 triggers:
@@ -9,6 +10,14 @@ triggers:
 - google
 - 百度
 - 谷歌
+input_schema:
+  type: object
+  properties: {}
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # SearXNG Search (网络搜索)

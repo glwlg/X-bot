@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: web_browser
 description: "**网页浏览器**。用于访问 URL 获取内容，或生成网页摘要。"
 triggers:
@@ -10,6 +11,14 @@ triggers:
 - 阅读
 - read
 - summarize
+input_schema:
+  type: object
+  properties: {}
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # Web Browser (浏览器)

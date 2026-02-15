@@ -9,10 +9,16 @@ from core.config import gemini_client, GEMINI_MODEL
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict):
+async def execute(ctx: UnifiedContext, params: dict, runtime=None):
     topic = params.get("topic", "").strip()
     depth = params.get("depth", 5)
     language = params.get("language", "zh-CN")
+    logger.info(
+        "[deep_research] execute called topic=%r depth=%r language=%r",
+        topic,
+        depth,
+        language,
+    )
 
     if not topic:
         yield {"text": "❌ 请提供研究主题 (topic)", "ui": {}}
@@ -56,6 +62,7 @@ async def execute(ctx: UnifiedContext, params: dict):
         yield f"⚠️ 搜索阶段出错: {e}"
 
     if not search_results:
+        logger.info("[deep_research] no search results for topic=%r", topic)
         yield {"text": "❌ 未找到相关搜索结果，研究终止。", "ui": {}}
         return
 
@@ -77,6 +84,11 @@ async def execute(ctx: UnifiedContext, params: dict):
         *(process_url(item) for item in search_results)
     )
     valid_data = [item for item in crawled_results if item]
+    logger.info(
+        "[deep_research] crawled %s/%s usable pages",
+        len(valid_data),
+        len(search_results),
+    )
 
     if not valid_data:
         yield {
@@ -139,6 +151,11 @@ async def execute(ctx: UnifiedContext, params: dict):
             "files": {"deep_research_report.html": report_html.encode("utf-8")},
             "ui": {},
         }
+        logger.info(
+            "[deep_research] report generated for topic=%r with %s sources",
+            topic,
+            len(valid_data),
+        )
         return
 
     except Exception as e:

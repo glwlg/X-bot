@@ -12,7 +12,7 @@ except ImportError:
     pyotp = None
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> dict:
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> dict:
     """执行账号管理"""
     action = params.get("action", "list")
     service = params.get("service", "").lower().strip()

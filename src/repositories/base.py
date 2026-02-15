@@ -310,6 +310,9 @@ async def init_db():
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_chat_history_user_session ON chat_history(user_id, session_id)"
         )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_chat_history_user_created ON chat_history(user_id, created_at DESC)"
+        )
 
         # 账号管理表 (user_id TEXT)
         await db.execute("""

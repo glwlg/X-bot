@@ -1,7 +1,17 @@
 ---
+api_version: v3
 name: xlsx
 description: 全面的电子表格创建、编辑和分析,支持公式、格式化、数据分析和可视化。适用于处理 .xlsx、.xlsm、.csv、.tsv 等格式的电子表格
 license: Proprietary. LICENSE.txt has complete terms
+input_schema:
+  type: object
+  properties: {}
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
+triggers: []
 ---
 
 # Requirements for Outputs

@@ -30,3 +30,10 @@ from .watchlist_repo import (
     get_user_watchlist,
     get_all_watchlist_users,
 )
+from .chat_repo import (
+    save_message,
+    get_session_messages,
+    get_latest_session_id,
+    search_messages,
+    get_recent_messages_for_user,
+)

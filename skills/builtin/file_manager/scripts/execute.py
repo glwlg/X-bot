@@ -11,7 +11,7 @@ from core.platform.models import UnifiedContext
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> str:
     """执行文件管理操作"""
     action = params.get("action", "list")
     path = params.get("path", ".")

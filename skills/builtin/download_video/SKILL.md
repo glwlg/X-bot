@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: download_video
 description: "**下载视频或音频**。自动识别 URL 下载 YouTube, Bilibili, Twitter, TikTok 等平台的媒体。"
 triggers:
@@ -8,6 +9,14 @@ triggers:
 - 保存视频
 - 视频下载
 - get video
+input_schema:
+  type: object
+  properties: {}
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # Download Video (视频下载)

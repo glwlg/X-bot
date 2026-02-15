@@ -30,7 +30,7 @@ async def check_permission(ctx: UnifiedContext) -> bool:
 # --- Skill Entry Point ---
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, Any]:
     """执行视频下载 (Stateless/AI called)"""
     url = params.get("url", "")
     format_type = params.get("format", "video")

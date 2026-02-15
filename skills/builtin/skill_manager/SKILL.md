@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: skill_manager
 description: "**核心技能中心**。负责管理所有技能（安装、搜索、创造、修改、管理、删除）。"
 triggers:
@@ -8,6 +9,14 @@ triggers:
 - 删除技能
 - 列出技能
 - 创建技能
+input_schema:
+  type: object
+  properties: {}
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # Skill Manager (技能中心)

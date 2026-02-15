@@ -69,15 +69,57 @@ async def stop_command(ctx: UnifiedContext) -> None:
     user_id = ctx.message.user.id
 
     from core.task_manager import task_manager
+    from core.heartbeat_store import heartbeat_store
+
+    active_info = task_manager.get_task_info(user_id)
+    todo_path = (
+        active_info.get("todo_path")
+        if isinstance(active_info, dict)
+        else None
+    )
+    heartbeat_path = (
+        active_info.get("heartbeat_path")
+        if isinstance(active_info, dict)
+        else None
+    )
+    active_task_id = (
+        active_info.get("active_task_id")
+        if isinstance(active_info, dict)
+        else None
+    )
+    if not active_task_id:
+        hb_active = await heartbeat_store.get_session_active_task(str(user_id))
+        if hb_active:
+            active_task_id = str(hb_active.get("id") or "")
+            heartbeat_path = str(heartbeat_store.heartbeat_path(str(user_id)))
 
     # 尝试取消任务
     cancelled_desc = await task_manager.cancel_task(user_id)
+    if active_task_id:
+        await heartbeat_store.update_session_active_task(
+            str(user_id),
+            status="cancelled",
+            needs_confirmation=False,
+            confirmation_deadline="",
+            clear_active=True,
+            result_summary="Cancelled by /stop command.",
+        )
+        await heartbeat_store.release_lock(user_id)
+        await heartbeat_store.append_session_event(
+            str(user_id), f"user_cancelled:{active_task_id}"
+        )
 
-    if cancelled_desc:
+    if cancelled_desc or active_task_id:
+        heartbeat_line = (
+            f"\n💓 心跳文件: `{heartbeat_path}`" if heartbeat_path else ""
+        )
+        todo_line = f"\n📋 旧任务文件: `{todo_path}`" if todo_path else ""
         await ctx.reply(
             f"🛑 **已中断任务**\n\n"
             f"任务类型: {cancelled_desc}\n\n"
             f"如需继续，请重新发送您的请求。"
+            f"{heartbeat_line}"
+            f"{todo_line}"
         )
     else:
         await ctx.reply(
@@ -117,7 +159,7 @@ async def help_command(ctx: UnifiedContext) -> None:
         "• **手动教学**：/teach - 强制触发学习模式\n"
         "• /skills - 查看已安装技能\n\n"
         "**常用命令：**\n"
-        "/start 主菜单 | /new 新对话 | /stats 统计"
+        "/start 主菜单 | /new 新对话 | /stats 统计 | /chatlog 检索 | /heartbeat 心跳 | /worker Worker"
     )
 
 
@@ -156,6 +198,44 @@ async def button_callback(ctx: UnifiedContext) -> int:
     msg_id = ctx.message.id
 
     try:
+        if data in {"task_continue", "task_stop"}:
+            from core.heartbeat_store import heartbeat_store
+
+            hb_user_id = str(ctx.callback_user_id or ctx.message.user.id)
+            active_task = await heartbeat_store.get_session_active_task(hb_user_id)
+            if not active_task or active_task.get("status") != "waiting_user":
+                await ctx.reply("ℹ️ 当前没有等待确认的任务。")
+                return CONVERSATION_END
+
+            task_id = str(active_task.get("id"))
+            if data == "task_continue":
+                await heartbeat_store.update_session_active_task(
+                    hb_user_id,
+                    status="running",
+                    needs_confirmation=False,
+                    confirmation_deadline="",
+                )
+                await heartbeat_store.release_lock(hb_user_id)
+                await heartbeat_store.append_session_event(
+                    hb_user_id, f"user_confirm_continue:{task_id}"
+                )
+                await ctx.reply("✅ 已确认继续执行，请继续发送消息以推进任务。")
+            else:
+                await heartbeat_store.update_session_active_task(
+                    hb_user_id,
+                    status="cancelled",
+                    needs_confirmation=False,
+                    confirmation_deadline="",
+                    clear_active=True,
+                    result_summary="Cancelled during confirmation stage.",
+                )
+                await heartbeat_store.release_lock(hb_user_id)
+                await heartbeat_store.append_session_event(
+                    hb_user_id, f"user_confirm_stop:{task_id}"
+                )
+                await ctx.reply("🛑 已停止该任务。")
+            return CONVERSATION_END
+
         if data == "ai_chat":
             keyboard = [
                 [InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]
@@ -204,7 +284,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                 "• /teach - 教我学会新技能 (自定义代码)\n"
                 "• /skills - 查看已安装技能\n\n"
                 "**常用命令：**\n"
-                "/start 主菜单 | /new 新对话 | /stats 统计",
+                "/start 主菜单 | /new 新对话 | /stats 统计 | /chatlog 检索 | /heartbeat 心跳 | /worker Worker",
                 reply_markup=reply_markup,
             )
             return CONVERSATION_END

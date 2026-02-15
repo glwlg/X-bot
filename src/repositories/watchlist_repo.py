@@ -22,8 +22,17 @@ async def add_watchlist_stock(
             return False
 
 
-async def remove_watchlist_stock(stock_id: int) -> bool:
-    """删除自选股"""
+async def remove_watchlist_stock(stock_id: int, stock_code: str | None = None) -> bool:
+    """
+    删除自选股。
+
+    兼容两种调用方式：
+    - remove_watchlist_stock(stock_id)
+    - remove_watchlist_stock(user_id, stock_code)
+    """
+    if stock_code is not None:
+        return await remove_watchlist_stock_by_code(stock_id, stock_code)
+
     async with await get_db() as db:
         cursor = await db.execute(
             "DELETE FROM watchlist WHERE id = ?",

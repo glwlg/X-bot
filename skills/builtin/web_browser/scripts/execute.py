@@ -2,7 +2,7 @@ from core.platform.models import UnifiedContext
 from services.web_summary_service import fetch_webpage_content, summarize_webpage
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> dict:
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> dict:
     """执行网页浏览任务"""
     action = params.get("action", "visit")
     url = params.get("url")

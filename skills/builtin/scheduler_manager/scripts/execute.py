@@ -9,7 +9,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> dict:
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> dict:
     """
     Execute scheduler management operations.
     """

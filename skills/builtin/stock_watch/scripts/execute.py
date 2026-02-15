@@ -21,7 +21,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> str:
     """执行自选股操作"""
     from core.scheduler import trigger_manual_stock_check
 

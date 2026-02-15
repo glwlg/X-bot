@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: scheduler_manager
 description: "管理系统的定时任务 (Cron)。支持添加、查看、删除任务。任务执行结果可配置推送到用户。"
 triggers:
@@ -11,6 +12,14 @@ triggers:
 - 周期执行
 - 每天
 - 每小时
+input_schema:
+  type: object
+  properties: {}
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # Scheduler Manager (任务调度器)

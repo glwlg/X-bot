@@ -59,6 +59,24 @@ class TelegramAdapter(BotAdapter):
 
         return InlineKeyboardMarkup(keyboard)
 
+    @staticmethod
+    def _is_auto_reply_payload(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return True
+        if isinstance(value, dict):
+            # Structured unified reply payload: {"text": "...", "ui": {...}}
+            return "text" in value
+        return False
+
+    async def _auto_reply_if_needed(
+        self, unified_ctx: UnifiedContext, result: Any
+    ) -> None:
+        if not self._is_auto_reply_payload(result):
+            return
+        await unified_ctx.reply(result)
+
     async def start(self) -> None:
         """
         Start the bot using the configured Application.
@@ -300,9 +318,7 @@ class TelegramAdapter(BotAdapter):
                     _adapter=self,
                 )
                 res = await handler_func(unified_ctx)
-                if res is not None:
-                    # Auto-reply if handler returns something
-                    await unified_ctx.reply(res)
+                await self._auto_reply_if_needed(unified_ctx, res)
                 return res
             except Exception as e:
                 logger.error(f"Error in unified handler wrapper: {e}", exc_info=True)
@@ -322,8 +338,7 @@ class TelegramAdapter(BotAdapter):
                     _adapter=self,
                 )
                 res = await handler_func(unified_ctx)
-                if res is not None:
-                    await unified_ctx.reply(res)
+                await self._auto_reply_if_needed(unified_ctx, res)
                 return res
             except Exception as e:
                 logger.error(
@@ -347,8 +362,7 @@ class TelegramAdapter(BotAdapter):
                     _adapter=self,
                 )
                 res = await handler_func(unified_ctx)
-                if res is not None:
-                    await unified_ctx.reply(res)
+                await self._auto_reply_if_needed(unified_ctx, res)
                 return res
             except Exception as e:
                 logger.error(
@@ -372,8 +386,7 @@ class TelegramAdapter(BotAdapter):
                     _adapter=self,
                 )
                 res = await handler_func(unified_ctx)
-                if res is not None:
-                    await unified_ctx.reply(res)
+                await self._auto_reply_if_needed(unified_ctx, res)
                 return res
             except Exception as e:
                 logger.error(f"Error in unified callback wrapper: {e}", exc_info=True)
@@ -395,8 +408,7 @@ class TelegramAdapter(BotAdapter):
                     _adapter=self,
                 )
                 res = await handler_func(unified_ctx)
-                if res is not None:
-                    await unified_ctx.reply(res)
+                await self._auto_reply_if_needed(unified_ctx, res)
                 return res
             except Exception as e:
                 logger.error(f"Error in unified command wrapper: {e}", exc_info=True)
@@ -418,8 +430,7 @@ class TelegramAdapter(BotAdapter):
                     _adapter=self,
                 )
                 res = await handler_func(unified_ctx)
-                if res is not None:
-                    await unified_ctx.reply(res)
+                await self._auto_reply_if_needed(unified_ctx, res)
                 return res
             except Exception as e:
                 logger.error(f"Error in unified message wrapper: {e}", exc_info=True)

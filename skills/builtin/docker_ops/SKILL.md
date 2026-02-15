@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: docker_ops
 description: "**Docker 底层操作接口**。直接管理容器、网络，不可用于文件操作，文件操作请使用 `local_file_manager`。通常由 `deployment_manager` 调用，也可用于简单的容器管理。"
 triggers:
@@ -9,6 +10,68 @@ triggers:
 - delete
 - 删除
 - 移除
+input_schema:
+  type: object
+  properties:
+    action:
+      type: string
+      description: Docker 操作类型
+      enum:
+      - list_services
+      - list_networks
+      - stop
+      - remove
+      - delete
+      - compose_up
+      - compose_down
+      - execute_command
+      - edit_file
+    name:
+      type: string
+      description: 容器或项目名称（stop/remove/delete）
+    is_compose:
+      type: boolean
+      description: stop 时是否按 compose 项目处理
+      default: false
+    remove:
+      type: boolean
+      description: stop 时是否删除容器
+      default: false
+    clean_volumes:
+      type: boolean
+      description: stop 时是否同时删除卷
+      default: false
+    cwd:
+      type: string
+      description: compose 或命令执行目录
+    path:
+      type: string
+      description: 文件路径（edit_file）或 compose 目录（compose_up/down）
+    build:
+      type: boolean
+      description: compose_up 时是否 build
+      default: true
+    detach:
+      type: boolean
+      description: compose_up 时是否后台运行
+      default: true
+    volumes:
+      type: boolean
+      description: compose_down 时是否删除卷
+      default: false
+    command:
+      type: string
+      description: execute_command 的命令内容
+    content:
+      type: string
+      description: edit_file 写入内容
+  required:
+  - action
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # Docker Ops (容器运维)

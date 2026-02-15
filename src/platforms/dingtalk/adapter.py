@@ -11,7 +11,10 @@ from typing import Any, Optional, Callable, Dict, List, Tuple, Union
 
 from core.platform.adapter import BotAdapter
 from core.platform.models import UnifiedContext, UnifiedMessage
-from core.platform.exceptions import MessageSendError
+from core.platform.exceptions import (
+    MediaDownloadUnavailableError,
+    MessageSendError,
+)
 
 from .mapper import map_chatbot_message
 from .formatter import markdown_to_dingtalk_compat
@@ -399,20 +402,15 @@ class DingTalkAdapter(BotAdapter):
     ) -> Any:
         """回复图片"""
         try:
-            incoming_message = context.platform_event
-            # 钉钉需要先上传图片获取 mediaId，这里简化处理
-            # 如果是 URL，直接发送 Markdown 格式图片
             if isinstance(photo, str) and photo.startswith("http"):
                 text = f"![image]({photo})"
                 if caption:
                     text = f"{caption}\n\n{text}"
-                await self._reply_markdown(incoming_message, text)
             else:
                 # bytes 需要上传，暂不实现
-                logger.warning("DingTalk photo upload from bytes not implemented")
-                if caption:
-                    await self._reply_markdown(incoming_message, caption)
-            return True
+                logger.warning("DingTalk photo upload from bytes not implemented; fallback to text.")
+                text = caption or "⚠️ 当前钉钉通道暂不支持二进制图片上传。"
+            return await self.reply_text(context, text)
         except Exception as e:
             logger.error(f"DingTalk reply_photo error: {e}")
             raise MessageSendError(str(e))
@@ -426,15 +424,14 @@ class DingTalkAdapter(BotAdapter):
     ) -> Any:
         """回复视频 - 钉钉支持有限，发送链接"""
         try:
-            incoming_message = context.platform_event
             if isinstance(video, str) and video.startswith("http"):
                 text = f"🎬 视频链接: {video}"
                 if caption:
                     text = f"{caption}\n\n{text}"
-                await self._reply_markdown(incoming_message, text)
             else:
                 logger.warning("DingTalk video upload from bytes not implemented")
-            return True
+                text = caption or "⚠️ 当前钉钉通道暂不支持二进制视频上传。"
+            return await self.reply_text(context, text)
         except Exception as e:
             logger.error(f"DingTalk reply_video error: {e}")
             raise MessageSendError(str(e))
@@ -448,9 +445,8 @@ class DingTalkAdapter(BotAdapter):
     ) -> Any:
         """回复音频"""
         logger.warning("DingTalk audio reply not fully implemented")
-        if caption:
-            return await self.reply_text(context, caption)
-        return None
+        text = caption or "⚠️ 当前钉钉通道暂不支持二进制音频上传。"
+        return await self.reply_text(context, text)
 
     async def reply_document(
         self,
@@ -462,15 +458,14 @@ class DingTalkAdapter(BotAdapter):
     ) -> Any:
         """回复文档"""
         try:
-            incoming_message = context.platform_event
             if isinstance(document, str) and document.startswith("http"):
                 text = f"📄 文件下载: [{filename or 'document'}]({document})"
                 if caption:
                     text = f"{caption}\n\n{text}"
-                await self._reply_markdown(incoming_message, text)
             else:
-                logger.warning("DingTalk document upload from bytes not implemented")
-            return True
+                logger.warning("DingTalk document upload from bytes not implemented; fallback to text.")
+                text = caption or "⚠️ 当前钉钉通道暂不支持二进制文档上传。"
+            return await self.reply_text(context, text)
         except Exception as e:
             logger.error(f"DingTalk reply_document error: {e}")
             raise MessageSendError(str(e))
@@ -501,9 +496,86 @@ class DingTalkAdapter(BotAdapter):
         self, context: UnifiedContext, file_id: str, **kwargs
     ) -> bytes:
         """下载文件"""
-        # 钉钉文件下载需要使用 OpenAPI
-        logger.warning("DingTalk file download not implemented")
-        raise MessageSendError("DingTalk file download not implemented")
+        candidate = str(file_id or "").strip()
+        file_url = str(getattr(context.message, "file_url", "") or "").strip()
+
+        try:
+            if candidate.startswith("http://") or candidate.startswith("https://"):
+                return await self._download_by_url(candidate)
+            if file_url.startswith("http://") or file_url.startswith("https://"):
+                return await self._download_by_url(file_url)
+
+            # Best-effort OpenAPI resolution for downloadCode/fileId.
+            if candidate:
+                resolved_url = await self._resolve_download_url(candidate)
+                if resolved_url:
+                    return await self._download_by_url(resolved_url)
+        except Exception as exc:
+            raise MediaDownloadUnavailableError(
+                "DingTalk file download failed during transfer."
+            ) from exc
+
+        raise MediaDownloadUnavailableError(
+            "DingTalk file download unavailable for this message. "
+            "Please resend as a direct URL or use Telegram/Discord for media analysis."
+        )
+
+    async def _download_by_url(self, url: str) -> bytes:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(url)
+            response.raise_for_status()
+            return response.content
+
+    async def _resolve_download_url(self, download_code: str) -> Optional[str]:
+        import httpx
+
+        token = await self._fetch_openapi_access_token()
+        if not token:
+            return None
+
+        endpoint = "https://api.dingtalk.com/v1.0/robot/messageFiles/download"
+        payload = {"downloadCode": download_code}
+        headers = {"x-acs-dingtalk-access-token": token}
+
+        try:
+            async with httpx.AsyncClient(timeout=15) as client:
+                response = await client.post(endpoint, json=payload, headers=headers)
+                response.raise_for_status()
+                data = response.json()
+                for key in ("downloadUrl", "download_url", "url"):
+                    value = data.get(key)
+                    if isinstance(value, str) and value.startswith(("http://", "https://")):
+                        return value
+        except Exception as exc:
+            logger.warning("DingTalk resolve download URL failed: %s", exc)
+            return None
+
+        return None
+
+    async def _fetch_openapi_access_token(self) -> Optional[str]:
+        import httpx
+
+        endpoint = "https://api.dingtalk.com/v1.0/oauth2/accessToken"
+        payload = {
+            "appKey": self.client_id,
+            "appSecret": self.client_secret,
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(endpoint, json=payload)
+                response.raise_for_status()
+                data = response.json()
+                token = data.get("accessToken")
+                if isinstance(token, str) and token:
+                    return token
+        except Exception as exc:
+            logger.warning("DingTalk access token fetch failed: %s", exc)
+            return None
+
+        return None
 
     def on_command(
         self,

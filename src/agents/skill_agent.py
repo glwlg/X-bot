@@ -312,8 +312,23 @@ class SkillAgent:
             # Execute
             import inspect
 
+            def _supports_runtime(fn) -> bool:
+                try:
+                    signature = inspect.signature(fn)
+                    return len(signature.parameters) >= 3
+                except Exception:
+                    return False
+
+            runtime_arg = None
+            has_runtime = _supports_runtime(module.execute)
+
             if inspect.isasyncgenfunction(module.execute):
-                async for chunk in module.execute(ctx, params):
+                stream = (
+                    module.execute(ctx, params, runtime_arg)
+                    if has_runtime
+                    else module.execute(ctx, params)
+                )
+                async for chunk in stream:
                     if isinstance(chunk, str):
                         yield chunk, None, None
                     elif isinstance(chunk, dict) and (
@@ -325,9 +340,15 @@ class SkillAgent:
                 return
 
             if asyncio.iscoroutinefunction(module.execute):
-                result = await module.execute(ctx, params)
+                if has_runtime:
+                    result = await module.execute(ctx, params, runtime_arg)
+                else:
+                    result = await module.execute(ctx, params)
             else:
-                result = module.execute(ctx, params)
+                if has_runtime:
+                    result = module.execute(ctx, params, runtime_arg)
+                else:
+                    result = module.execute(ctx, params)
 
             # logger.info(f"Skill {skill_name} output: {result}")
             if isinstance(result, str):

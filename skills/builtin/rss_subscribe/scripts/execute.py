@@ -22,7 +22,7 @@ from core.platform.models import UnifiedContext
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> str:
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> str:
     """执行 RSS 订阅或关键词监控"""
     action = params.get("action", "add")
     # 支持 url 或 keyword 参数
@@ -136,7 +136,7 @@ async def process_subscribe(ctx: UnifiedContext, url: str):
     """实际处理订阅逻辑 (Returns dict)"""
     try:
         user_id = ctx.message.user.id
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         user_id = ctx.message.user.id
         logger.warning(f"Failed to cast user_id {user_id} to int")
 

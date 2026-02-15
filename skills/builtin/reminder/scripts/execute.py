@@ -10,7 +10,7 @@ from typing import Dict, Any
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, Any]:
     """执行提醒设置"""
     time_str = params.get("time", "")
     content = params.get("content", "")
