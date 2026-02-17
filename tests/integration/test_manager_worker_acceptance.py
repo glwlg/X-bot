@@ -11,7 +11,6 @@ from core.agent_orchestrator import AgentOrchestrator
 from core.heartbeat_store import heartbeat_store
 from core.heartbeat_worker import HeartbeatWorker
 from core.markdown_memory_store import markdown_memory_store
-from core.task_inbox import task_inbox
 from core.worker_runtime import WorkerRuntime
 
 
@@ -35,21 +34,6 @@ class _DummyContext:
             (document, {"filename": filename, "caption": caption, **kwargs})
         )
         return SimpleNamespace(id="doc-1")
-
-
-def _reset_task_inbox(tmp_path, monkeypatch) -> None:
-    inbox_root = (tmp_path / "task_inbox").resolve()
-    tasks_root = (inbox_root / "tasks").resolve()
-    events_path = (inbox_root / "events.jsonl").resolve()
-    inbox_root.mkdir(parents=True, exist_ok=True)
-    tasks_root.mkdir(parents=True, exist_ok=True)
-    events_path.write_text("", encoding="utf-8")
-
-    monkeypatch.setattr(task_inbox, "root", inbox_root)
-    monkeypatch.setattr(task_inbox, "tasks_root", tasks_root)
-    monkeypatch.setattr(task_inbox, "events_path", events_path)
-    task_inbox._loaded = True
-    task_inbox._tasks = {}
 
 
 @pytest.mark.asyncio
@@ -271,7 +255,6 @@ async def test_heartbeat_dispatches_to_worker_and_delivers_manager_result(
     runtime_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(heartbeat_store, "root", runtime_root)
     heartbeat_store._locks.clear()
-    _reset_task_inbox(tmp_path, monkeypatch)
 
     user_id = "hb-user"
     await heartbeat_store.set_heartbeat_spec(
@@ -298,13 +281,7 @@ async def test_heartbeat_dispatches_to_worker_and_delivers_manager_result(
         _ = worker_id
         _ = backend
         _ = source
-        inbox_id = str((metadata or {}).get("task_inbox_id") or "")
-        if inbox_id:
-            await task_inbox.assign_worker(
-                inbox_id,
-                worker_id="worker-main",
-                reason="heartbeat_dispatch_test",
-            )
+        _ = metadata
         return {
             "ok": True,
             "worker_id": "worker-main",
@@ -375,11 +352,3 @@ async def test_heartbeat_dispatches_to_worker_and_delivers_manager_result(
     assert sent
     assert sent[0][0] == "target-42"
     assert "Nova Patrol" in sent[0][1]
-
-    recent_tasks = await task_inbox.list_recent(user_id=user_id, limit=10)
-    assert recent_tasks
-    latest = recent_tasks[0]
-    assert latest.source == "heartbeat"
-    assert latest.status == "completed"
-    assert latest.assigned_worker_id == "worker-main"
-    assert "Nova Patrol" in str(latest.final_output or "")

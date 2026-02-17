@@ -470,17 +470,12 @@ class AgentOrchestrator:
         extension_candidates: list,
         intent_text: str = "",
     ) -> str:
+        del extension_candidates
         staging_path = (X_DEPLOYMENT_STAGING_PATH or "").strip()
         if not staging_path:
             return ""
 
-        candidate_names = {
-            getattr(candidate, "name", "") for candidate in (extension_candidates or [])
-        }
-        if (
-            "deployment_manager" not in candidate_names
-            and not self._is_deployment_intent(intent_text)
-        ):
+        if not self._is_deployment_intent(intent_text):
             return ""
 
         resolved = os.path.abspath(os.path.expanduser(staging_path))

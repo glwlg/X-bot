@@ -521,22 +521,6 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             await ctx.edit_message(msg_id, "❌ 翻译服务出错。")
         return
 
-    from core.task_inbox import task_inbox
-
-    inbox_task = await task_inbox.submit(
-        source="user_chat",
-        goal=str(user_message or "").strip(),
-        user_id=str(user_id),
-        payload={
-            "platform": str(platform_name),
-            "chat_id": str(chat_id),
-            "message_id": str(getattr(ctx.message, "id", "") or ""),
-        },
-        priority="high",
-        requires_reply=True,
-    )
-    ctx.user_data["task_inbox_id"] = inbox_task.task_id
-
     memory_snapshot = ""
 
     # --- Agent Orchestration ---
@@ -558,12 +542,6 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         r = ctx.message.reply_to_message
         is_media = r.type in [MessageType.VIDEO, MessageType.AUDIO, MessageType.VOICE]
         if is_media and not has_media:
-            await task_inbox.fail(
-                inbox_task.task_id,
-                error="reply_media_unavailable",
-                result={"error": "reply_media_unavailable"},
-            )
-            ctx.user_data.pop("task_inbox_id", None)
             return
 
     # URL 逻辑已移交给 Agent (skill: web_browser, download_video)
@@ -809,24 +787,11 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             # 记录统计
             await increment_stat(user_id, "ai_chats")
 
-            await task_inbox.complete(
-                inbox_task.task_id,
-                result={"summary": final_text_response[:500]},
-                final_output=final_text_response,
-            )
-            ctx.user_data.pop("task_inbox_id", None)
-
     except asyncio.CancelledError:
         logger.info(f"AI chat task cancelled for user {user_id}")
         state["running"] = False
         if animation_task:
             animation_task.cancel()
-        await task_inbox.fail(
-            inbox_task.task_id,
-            error="cancelled",
-            result={"error": "cancelled"},
-        )
-        ctx.user_data.pop("task_inbox_id", None)
         # 不发送错误消息，因为 /stop 已经回复了
         raise
 
@@ -845,12 +810,6 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             await ctx.edit_message(
                 msg_id, f"❌ Agent 运行出错：{e}\n\n请尝试 /new 重置对话。"
             )
-        await task_inbox.fail(
-            inbox_task.task_id,
-            error=str(e),
-            result={"error": str(e)},
-        )
-        ctx.user_data.pop("task_inbox_id", None)
     finally:
         task_manager.unregister_task(user_id)
 

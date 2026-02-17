@@ -96,14 +96,22 @@ class HeartbeatStore:
     def __init__(self):
         self.root = (Path(DATA_DIR) / "runtime_tasks").resolve()
         self.root.mkdir(parents=True, exist_ok=True)
-        self.lock_timeout_sec = max(1, int(os.getenv("HEARTBEAT_LOCK_TIMEOUT_SEC", "20")))
+        self.lock_timeout_sec = max(
+            1, int(os.getenv("HEARTBEAT_LOCK_TIMEOUT_SEC", "20"))
+        )
         self.default_every = _normalize_every(os.getenv("HEARTBEAT_EVERY", "30m"))
         self.default_target = os.getenv("HEARTBEAT_TARGET", "last").strip() or "last"
-        self.default_active_start = os.getenv("HEARTBEAT_ACTIVE_START", "08:00").strip() or "08:00"
-        self.default_active_end = os.getenv("HEARTBEAT_ACTIVE_END", "22:00").strip() or "22:00"
+        self.default_active_start = (
+            os.getenv("HEARTBEAT_ACTIVE_START", "08:00").strip() or "08:00"
+        )
+        self.default_active_end = (
+            os.getenv("HEARTBEAT_ACTIVE_END", "23:59").strip() or "23:59"
+        )
         self.default_timezone = os.getenv("HEARTBEAT_TIMEZONE", "").strip()
         self.suppress_ok = os.getenv("HEARTBEAT_SUPPRESS_OK", "true").lower() == "true"
-        self.session_event_keep = max(10, int(os.getenv("HEARTBEAT_SESSION_EVENT_KEEP", "40")))
+        self.session_event_keep = max(
+            10, int(os.getenv("HEARTBEAT_SESSION_EVENT_KEEP", "40"))
+        )
         self._locks: Dict[str, asyncio.Lock] = {}
 
     def heartbeat_path(self, user_id: str) -> Path:
@@ -170,7 +178,9 @@ class HeartbeatStore:
             "migration_notes": [],
         }
 
-    def _normalize_active_task(self, task: Dict[str, Any] | None) -> Dict[str, Any] | None:
+    def _normalize_active_task(
+        self, task: Dict[str, Any] | None
+    ) -> Dict[str, Any] | None:
         if not isinstance(task, dict):
             return None
         now = _now_iso()
@@ -183,7 +193,9 @@ class HeartbeatStore:
             "updated_at": _truncate(task.get("updated_at", now), 64) or now,
             "result_summary": _truncate(task.get("result_summary", ""), 2000),
             "needs_confirmation": bool(task.get("needs_confirmation", False)),
-            "confirmation_deadline": _truncate(task.get("confirmation_deadline", ""), 64),
+            "confirmation_deadline": _truncate(
+                task.get("confirmation_deadline", ""), 64
+            ),
         }
         if not normalized["id"]:
             return None
@@ -214,28 +226,33 @@ class HeartbeatStore:
         session = dict(default["session"])
         session.update((data or {}).get("session") or {})
         session["active_task"] = self._normalize_active_task(session.get("active_task"))
-        session["active_worker_id"] = _truncate(session.get("active_worker_id", "worker-main"), 80) or "worker-main"
+        session["active_worker_id"] = (
+            _truncate(session.get("active_worker_id", "worker-main"), 80)
+            or "worker-main"
+        )
         session["last_event"] = _truncate(session.get("last_event", ""), 800)
         raw_events = session.get("events")
         if not isinstance(raw_events, list):
             raw_events = []
-        session["events"] = [_truncate(item, 800) for item in raw_events if str(item or "").strip()][
-            -self.session_event_keep :
-        ]
+        session["events"] = [
+            _truncate(item, 800) for item in raw_events if str(item or "").strip()
+        ][-self.session_event_keep :]
         merged["session"] = session
 
         notes = merged.get("migration_notes")
         if not isinstance(notes, list):
             notes = []
-        merged["migration_notes"] = [_truncate(item, 500) for item in notes if str(item or "").strip()][
-            -20:
-        ]
+        merged["migration_notes"] = [
+            _truncate(item, 500) for item in notes if str(item or "").strip()
+        ][-20:]
 
         merged["version"] = 2
         merged["user_id"] = str(user_id)
         merged["locked_by"] = _truncate(merged.get("locked_by", ""), 200)
         merged["lock_expires_at"] = _truncate(merged.get("lock_expires_at", ""), 64)
-        merged["last_update"] = _truncate(merged.get("last_update", _now_iso()), 64) or _now_iso()
+        merged["last_update"] = (
+            _truncate(merged.get("last_update", _now_iso()), 64) or _now_iso()
+        )
         merged["last_error"] = _truncate(merged.get("last_error", ""), 1000)
         return merged
 
@@ -246,16 +263,27 @@ class HeartbeatStore:
 
         active = dict(default["active_hours"])
         active.update((data or {}).get("active_hours") or {})
-        active["start"] = _truncate(active.get("start", self.default_active_start), 5) or self.default_active_start
-        active["end"] = _truncate(active.get("end", self.default_active_end), 5) or self.default_active_end
+        active["start"] = (
+            _truncate(active.get("start", self.default_active_start), 5)
+            or self.default_active_start
+        )
+        active["end"] = (
+            _truncate(active.get("end", self.default_active_end), 5)
+            or self.default_active_end
+        )
 
         merged["version"] = 2
         merged["user_id"] = str(user_id)
         merged["every"] = _normalize_every(str(merged.get("every", self.default_every)))
-        merged["target"] = _truncate(merged.get("target", self.default_target), 40) or self.default_target
+        merged["target"] = (
+            _truncate(merged.get("target", self.default_target), 40)
+            or self.default_target
+        )
         merged["active_hours"] = active
         merged["paused"] = bool(merged.get("paused", False))
-        merged["updated_at"] = _truncate(merged.get("updated_at", _now_iso()), 64) or _now_iso()
+        merged["updated_at"] = (
+            _truncate(merged.get("updated_at", _now_iso()), 64) or _now_iso()
+        )
         return merged
 
     def _parse_markdown(self, text: str) -> Tuple[Dict[str, Any], List[str]]:
@@ -306,7 +334,9 @@ class HeartbeatStore:
                 if normalized:
                     lines.append(f"- {normalized}")
         else:
-            lines.append("- Check critical updates and only notify when action is needed")
+            lines.append(
+                "- Check critical updates and only notify when action is needed"
+            )
         body = "\n".join(lines).rstrip() + "\n"
         return f"---\n{header}\n---\n\n{body}"
 
@@ -346,7 +376,9 @@ class HeartbeatStore:
         path = self.status_path(user_id)
         if not path.exists():
             data = self._default_status(user_id)
-            path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
             return data
         try:
             loaded = json.loads(path.read_text(encoding="utf-8"))
@@ -355,15 +387,21 @@ class HeartbeatStore:
         except Exception:
             loaded = {}
         normalized = self._normalize_status(user_id, loaded)
-        path.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        path.write_text(
+            json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
         return normalized
 
     def _write_status_unlocked(self, user_id: str, status: Dict[str, Any]) -> None:
         path = self.status_path(user_id)
         normalized = self._normalize_status(user_id, status)
-        path.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        path.write_text(
+            json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
-    def _ensure_user_files_unlocked(self, user_id: str) -> Tuple[Dict[str, Any], List[str], Dict[str, Any]]:
+    def _ensure_user_files_unlocked(
+        self, user_id: str
+    ) -> Tuple[Dict[str, Any], List[str], Dict[str, Any]]:
         hb_path = self.heartbeat_path(user_id)
         status = self._read_status_raw_unlocked(user_id)
 
@@ -462,7 +500,9 @@ class HeartbeatStore:
             if target is not None:
                 spec["target"] = _truncate(target, 40) or self.default_target
             if active_start is not None:
-                spec.setdefault("active_hours", {})["start"] = _truncate(active_start, 5)
+                spec.setdefault("active_hours", {})["start"] = _truncate(
+                    active_start, 5
+                )
             if active_end is not None:
                 spec.setdefault("active_hours", {})["end"] = _truncate(active_end, 5)
             if paused is not None:
@@ -522,7 +562,9 @@ class HeartbeatStore:
             spec, _checklist, status = self._ensure_user_files_unlocked(user_id)
             every_sec = _parse_every_seconds(spec.get("every", self.default_every))
             run_dt = _parse_iso(stamp) or _now_local()
-            next_due = (run_dt + timedelta(seconds=every_sec)).isoformat(timespec="seconds")
+            next_due = (run_dt + timedelta(seconds=every_sec)).isoformat(
+                timespec="seconds"
+            )
             level = self.classify_result(result)
 
             heartbeat = status.get("heartbeat") or {}
@@ -602,7 +644,9 @@ class HeartbeatStore:
             "chat_id": str(delivery.get("last_chat_id", "")).strip(),
         }
 
-    async def set_delivery_target(self, user_id: str, platform: str, chat_id: str) -> None:
+    async def set_delivery_target(
+        self, user_id: str, platform: str, chat_id: str
+    ) -> None:
         async with self._user_lock(user_id):
             _spec, _checklist, status = self._ensure_user_files_unlocked(user_id)
             delivery = status.get("delivery") or {}
@@ -617,7 +661,9 @@ class HeartbeatStore:
         task = (state["status"].get("session") or {}).get("active_task")
         return self._normalize_active_task(task)
 
-    async def set_session_active_task(self, user_id: str, task: Dict[str, Any]) -> Dict[str, Any] | None:
+    async def set_session_active_task(
+        self, user_id: str, task: Dict[str, Any]
+    ) -> Dict[str, Any] | None:
         normalized = self._normalize_active_task(task)
         async with self._user_lock(user_id):
             _spec, _checklist, status = self._ensure_user_files_unlocked(user_id)
@@ -628,7 +674,9 @@ class HeartbeatStore:
             self._write_status_unlocked(user_id, status)
             return normalized
 
-    async def update_session_active_task(self, user_id: str, **fields) -> Dict[str, Any] | None:
+    async def update_session_active_task(
+        self, user_id: str, **fields
+    ) -> Dict[str, Any] | None:
         async with self._user_lock(user_id):
             _spec, _checklist, status = self._ensure_user_files_unlocked(user_id)
             session = status.get("session") or {}
@@ -648,7 +696,9 @@ class HeartbeatStore:
             current["updated_at"] = _now_iso()
             terminal_statuses = {"done", "failed", "cancelled", "timed_out"}
             current_status = str(current.get("status", "")).strip().lower()
-            should_clear = bool(fields.get("clear_active")) or current_status in terminal_statuses
+            should_clear = (
+                bool(fields.get("clear_active")) or current_status in terminal_statuses
+            )
             if should_clear:
                 session["active_task"] = None
             else:
@@ -711,7 +761,9 @@ class HeartbeatStore:
                 status["last_update"] = _now_iso()
                 self._write_status_unlocked(user_id, status)
 
-    async def claim_lock(self, user_id: str, owner: str, ttl_sec: int | None = None) -> bool:
+    async def claim_lock(
+        self, user_id: str, owner: str, ttl_sec: int | None = None
+    ) -> bool:
         lock_ttl = max(1, int(ttl_sec or self.lock_timeout_sec))
         async with self._user_lock(user_id):
             _spec, _checklist, status = self._ensure_user_files_unlocked(user_id)
@@ -729,7 +781,9 @@ class HeartbeatStore:
             self._write_status_unlocked(user_id, status)
             return True
 
-    async def refresh_lock(self, user_id: str, owner: str, ttl_sec: int | None = None) -> bool:
+    async def refresh_lock(
+        self, user_id: str, owner: str, ttl_sec: int | None = None
+    ) -> bool:
         lock_ttl = max(1, int(ttl_sec or self.lock_timeout_sec))
         async with self._user_lock(user_id):
             _spec, _checklist, status = self._ensure_user_files_unlocked(user_id)
@@ -775,8 +829,13 @@ class HeartbeatStore:
 
     def _is_in_active_hours(self, spec: Dict[str, Any], now_dt: datetime) -> bool:
         active = spec.get("active_hours") or {}
-        start_t = _parse_hhmm(str(active.get("start", self.default_active_start)), self.default_active_start)
-        end_t = _parse_hhmm(str(active.get("end", self.default_active_end)), self.default_active_end)
+        start_t = _parse_hhmm(
+            str(active.get("start", self.default_active_start)),
+            self.default_active_start,
+        )
+        end_t = _parse_hhmm(
+            str(active.get("end", self.default_active_end)), self.default_active_end
+        )
         now_t = now_dt.time()
 
         if start_t <= end_t:

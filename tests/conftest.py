@@ -1,27 +1,24 @@
 """
 Pytest 配置文件
 """
+
 import sys
 import os
 import pytest
 
 # 将 src 目录添加到 Python 路径
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 
 @pytest.fixture
 def mock_db(tmp_path, monkeypatch):
-    """使用临时目录创建测试数据库"""
+    """使用临时目录创建测试数据目录"""
     test_data_dir = tmp_path / "data"
     test_data_dir.mkdir()
-    
+
     # 修改 DATA_DIR 为临时目录
     monkeypatch.setenv("DATA_DIR", str(test_data_dir))
-    
-    # 重新加载 config 模块以使用新的 DATA_DIR
-    from repositories import base
-    monkeypatch.setattr(base, "DB_PATH", str(test_data_dir / "bot_data.db"))
-    
+
     return test_data_dir
 
 

@@ -11,7 +11,6 @@ from core.agent_orchestrator import agent_orchestrator
 from core.heartbeat_store import heartbeat_store
 from core.platform.models import Chat, MessageType, UnifiedContext, UnifiedMessage, User
 from core.platform.registry import adapter_manager
-from core.task_inbox import task_inbox
 from core.task_manager import task_manager
 
 logger = logging.getLogger(__name__)
@@ -196,11 +195,16 @@ class HeartbeatWorker:
 
             spec = await heartbeat_store.get_heartbeat_spec(user_id)
             checklist = list(spec.get("checklist") or [])
+            delivery_target = await heartbeat_store.get_delivery_target(user_id)
             final_text = await self._run_heartbeat_task_batch(
                 user_id=user_id,
                 checklist=checklist,
                 owner=owner,
+                delivery_target=delivery_target,
             )
+
+            if "已派发给" in final_text and "完成后会自动把结果发给你" in final_text:
+                final_text = "HEARTBEAT_OK"
 
             level = heartbeat_store.classify_result(final_text)
 
@@ -224,7 +228,7 @@ class HeartbeatWorker:
             if suppress_push:
                 return final_text
 
-            target = await heartbeat_store.get_delivery_target(user_id)
+            target = delivery_target
             platform = target.get("platform", "").strip()
             chat_id = target.get("chat_id", "").strip()
             if not platform or not chat_id:
@@ -267,6 +271,7 @@ class HeartbeatWorker:
         user_id: str,
         checklist: list[str],
         owner: str,
+        delivery_target: dict[str, str] | None = None,
     ) -> str:
         specs = await self._build_heartbeat_task_specs(
             user_id=user_id, checklist=checklist
@@ -275,6 +280,12 @@ class HeartbeatWorker:
             return "HEARTBEAT_OK"
 
         ctx = self._build_headless_context(user_id)
+        target_platform = str((delivery_target or {}).get("platform") or "").strip()
+        target_chat_id = str((delivery_target or {}).get("chat_id") or "").strip()
+        if target_platform:
+            ctx.user_data["worker_delivery_platform"] = target_platform
+        if target_chat_id:
+            ctx.user_data["worker_delivery_chat_id"] = target_chat_id
         if self.mode == "readonly":
             ctx.user_data["execution_policy"] = "heartbeat_readonly_policy"
         else:
@@ -288,26 +299,9 @@ class HeartbeatWorker:
             if not goal:
                 continue
 
-            task = await task_inbox.submit(
-                source="heartbeat",
-                goal=goal,
-                user_id=user_id,
-                payload={
-                    "type": str(spec.get("type") or "heartbeat_item"),
-                    "index": idx,
-                    "title": str(spec.get("title") or f"Heartbeat task {idx}"),
-                },
-                priority="normal",
-                requires_reply=True,
-                metadata={
-                    "heartbeat_mode": self.mode,
-                    "readonly": self.mode == "readonly",
-                },
-            )
-            ctx.user_data["task_inbox_id"] = task.task_id
-
+            task_id = f"hb-{int(datetime.now().timestamp())}-{idx}"
             prompt = self._build_heartbeat_task_prompt(
-                task_id=task.task_id,
+                task_id=task_id,
                 goal=goal,
                 readonly=self.mode == "readonly",
             )
@@ -321,10 +315,6 @@ class HeartbeatWorker:
                 await heartbeat_store.refresh_lock(user_id, owner=owner)
 
             stream_text = "\n".join(chunks).strip()
-            inbox_text = ""
-            current = await task_inbox.get(task.task_id)
-            if current:
-                inbox_text = str(current.final_output or "").strip()
 
             def _quality_score(value: str) -> int:
                 if not value:
@@ -334,25 +324,16 @@ class HeartbeatWorker:
                 )
 
             text = stream_text
-            if _quality_score(inbox_text) > _quality_score(stream_text):
-                text = inbox_text
             if not text:
                 text = "HEARTBEAT_OK"
 
+            if "已派发给" in text and "完成后会自动把结果发给你" in text:
+                text = "HEARTBEAT_OK"
+
             if text.strip() == "HEARTBEAT_OK":
-                await task_inbox.complete(
-                    task.task_id,
-                    result={"summary": "HEARTBEAT_OK", "title": spec.get("title")},
-                    final_output="HEARTBEAT_OK",
-                )
                 continue
 
             sections.append(text.strip())
-            await task_inbox.complete(
-                task.task_id,
-                result={"summary": text[:500], "title": title},
-                final_output=text,
-            )
 
         if not sections:
             return "HEARTBEAT_OK"

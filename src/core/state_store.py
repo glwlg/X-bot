@@ -1,11 +1,10 @@
 """Centralized state store API.
 
-This module is the app-facing storage surface. It currently delegates to the
-filesystem-backed storage implementations in `repositories/*` to keep call
-signatures stable during refactor.
+This module is the app-facing storage surface and delegates to
+filesystem-backed storage implementations in `repositories/*`.
 """
 
-from repositories.base import init_db, get_db, DB_PATH
+from repositories.base import init_db
 from repositories.cache_repo import save_video_cache, get_video_cache
 from repositories.reminder_repo import (
     add_reminder,
@@ -30,7 +29,6 @@ from repositories.allowed_users_repo import (
 from repositories.watchlist_repo import (
     add_watchlist_stock,
     remove_watchlist_stock,
-    remove_watchlist_stock_by_code,
     get_user_watchlist,
     get_all_watchlist_users,
 )

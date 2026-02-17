@@ -3,35 +3,36 @@ Repository 模块单元测试
 """
 
 import pytest
-import asyncio
 
 
 class TestRepositoryBase:
-    """测试数据库基础功能"""
+    """测试 Repository 基础能力"""
 
     @pytest.mark.asyncio
     async def test_init_db(self, mock_db):
-        """测试数据库初始化"""
-        from repositories.base import init_db, DB_PATH
-        import os
+        """测试仓储目录初始化"""
+        from repositories.base import init_db, repo_root, users_root
 
         await init_db()
 
-        # 验证数据库文件已创建
-        assert os.path.exists(DB_PATH)
+        assert repo_root().exists()
+        assert users_root().exists()
 
     @pytest.mark.asyncio
-    async def test_get_db_connection(self, mock_db):
-        """测试数据库连接获取"""
-        from repositories.base import init_db, get_db
+    async def test_next_id_counter(self, mock_db):
+        """测试 ID 计数器递增"""
+        from repositories.base import init_db, next_id, read_json, system_path
 
         await init_db()
 
-        async with await get_db() as db:
-            # 验证连接可用
-            async with db.execute("SELECT 1") as cursor:
-                row = await cursor.fetchone()
-                assert row[0] == 1
+        first = await next_id("test_counter", start=10)
+        second = await next_id("test_counter", start=10)
+
+        assert first == 10
+        assert second == 11
+
+        counters = await read_json(system_path("id_counters.md"), {})
+        assert counters.get("test_counter") == 12
 
 
 class TestWatchlistRepo:

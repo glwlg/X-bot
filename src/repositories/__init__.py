@@ -1,10 +1,6 @@
-"""
-Repositories 模块 - 数据访问层
+"""Repositories 模块 - 数据访问层。"""
 
-便于向后兼容，从各子模块导出所有函数
-"""
-
-from .base import init_db, get_db, DB_PATH
+from .base import init_db
 from .cache_repo import save_video_cache, get_video_cache
 from .reminder_repo import add_reminder, delete_reminder, get_pending_reminders
 from .subscription_repo import (
@@ -25,7 +21,6 @@ from .allowed_users_repo import (
 from .watchlist_repo import (
     add_watchlist_stock,
     remove_watchlist_stock,
-    remove_watchlist_stock_by_code,
     get_user_watchlist,
     get_all_watchlist_users,
 )

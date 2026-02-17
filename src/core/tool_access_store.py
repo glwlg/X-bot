@@ -56,9 +56,6 @@ class ToolAccessStore:
     """Agent tool grouping and allow/deny policy store."""
 
     CORE_MANAGER_DEFAULT_ALLOW = [
-        "group:fs",
-        "group:execution",
-        "group:coding",
         "group:management",
     ]
     WORKER_DEFAULT_DENY = [
@@ -134,6 +131,40 @@ class ToolAccessStore:
                 core_allow = list((core_policy.get("tools") or {}).get("allow") or [])
                 core_deny = list((core_policy.get("tools") or {}).get("deny") or [])
                 if core_allow == ["group:all"] and not core_deny:
+                    core_policy["tools"]["allow"] = list(
+                        self.CORE_MANAGER_DEFAULT_ALLOW
+                    )
+                legacy_core_allow_sets = [
+                    {
+                        "group:management",
+                    },
+                    {
+                        "group:fs",
+                        "group:execution",
+                        "group:coding",
+                        "group:management",
+                    },
+                    {
+                        "group:fs",
+                        "group:execution",
+                        "group:coding",
+                        "group:management",
+                        "group:ops",
+                    },
+                    {
+                        "group:fs",
+                        "group:execution",
+                        "group:coding",
+                        "group:management",
+                        "group:ops",
+                        "group:automation",
+                        "group:skills",
+                    },
+                ]
+                if not core_deny and any(
+                    set(core_allow) == item and len(core_allow) == len(item)
+                    for item in legacy_core_allow_sets
+                ):
                     core_policy["tools"]["allow"] = list(
                         self.CORE_MANAGER_DEFAULT_ALLOW
                     )
@@ -219,6 +250,11 @@ class ToolAccessStore:
         if name in {"read", "write", "edit"}:
             groups.add("group:fs")
             groups.add("group:primitives")
+        if name in SKILL_FUNCTION_GROUPS:
+            groups.add("group:skills")
+            groups.add(f"group:skill:{name}")
+            for item in SKILL_FUNCTION_GROUPS.get(name, set()):
+                groups.add(item)
         if name in {"bash", "exec", "process"}:
             groups.add("group:execution")
             groups.add("group:primitives")

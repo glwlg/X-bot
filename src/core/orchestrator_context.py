@@ -62,7 +62,7 @@ class OrchestratorRuntimeContext:
             if isinstance(task_info, dict) and task_info.get("task_id")
             else f"{int(datetime.datetime.now().timestamp())}"
         )
-        task_inbox_id = str(user_data.get("task_inbox_id") or "").strip()
+        task_inbox_id = ""
 
         return cls(
             user_id=user_id,
