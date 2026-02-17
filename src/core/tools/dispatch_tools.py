@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
 
-from core.task_inbox import task_inbox
 from core.worker_runtime import worker_runtime
 from core.worker_store import worker_registry, worker_task_store
+from worker_runtime.task_file_store import worker_task_file_store as worker_job_store
 
 
 def _score_worker(goal: str, worker: Dict[str, Any]) -> int:
@@ -149,18 +150,60 @@ class DispatchTools:
         )
         selected_worker_id = selected.worker_id
         selected_worker = await worker_registry.get_worker(selected_worker_id)
+        selected_worker_obj = dict(selected_worker or {})
         selected_worker_name = (
-            str((selected_worker or {}).get("name") or selected_worker_id).strip()
+            str(selected_worker_obj.get("name") or selected_worker_id).strip()
             or selected_worker_id
         )
 
-        inbox_task_id = str(meta.get("task_inbox_id") or "").strip()
-        if inbox_task_id:
-            await task_inbox.assign_worker(
-                inbox_task_id,
+        dispatch_mode = (
+            os.getenv("WORKER_DISPATCH_MODE", "async").strip().lower() or "async"
+        )
+        if dispatch_mode not in {"sync", "async"}:
+            dispatch_mode = "async"
+
+        if dispatch_mode == "async":
+            job_metadata = cast(Dict[str, Any], dict(meta))
+            job_metadata["worker_id"] = selected_worker_id
+            job_metadata["worker_name"] = selected_worker_name
+            job_metadata["selection_reason"] = selected.reason
+            if "session_id" not in job_metadata:
+                session_id = str(meta.get("session_id") or "").strip()
+                if session_id:
+                    job_metadata["session_id"] = session_id
+
+            queued_job = await worker_job_store.submit(
                 worker_id=selected_worker_id,
-                reason=selected.reason,
+                instruction=task_instruction,
+                source=str(source or "manager_dispatch"),
+                backend=str(backend or "").strip(),
+                metadata=job_metadata,
             )
+            queued_job_id = str(queued_job.get("job_id") or "")
+
+            ack_text = (
+                f"已派发给 {selected_worker_name} 处理（任务 {queued_job_id}）。"
+                "我先继续和你聊天，完成后会自动把结果发给你。"
+            )
+            return {
+                "ok": True,
+                "worker_id": selected_worker_id,
+                "worker_name": selected_worker_name,
+                "task_id": queued_job_id,
+                "backend": str(backend or selected_worker_obj.get("backend") or ""),
+                "result": "",
+                "summary": ack_text[:200],
+                "text": ack_text,
+                "ui": {},
+                "payload": {"text": ack_text},
+                "error": "",
+                "auto_selected": bool(selected.auto_selected),
+                "selection_reason": selected.reason,
+                "runtime_mode": "async_queue",
+                "terminal": True,
+                "task_outcome": "done",
+                "async_dispatch": True,
+            }
 
         result = await worker_runtime.execute_task(
             worker_id=selected_worker_id,
@@ -180,43 +223,14 @@ class DispatchTools:
         worker_ui = result.get("ui")
         if not isinstance(worker_ui, dict):
             worker_ui = {}
-        worker_payload = result.get("payload")
-        if not isinstance(worker_payload, dict):
+        worker_payload_raw = result.get("payload")
+        worker_payload: Dict[str, Any] = {}
+        if isinstance(worker_payload_raw, dict):
+            worker_payload.update(dict(worker_payload_raw))
+        if not worker_payload:
             worker_payload = {"text": worker_text}
             if worker_ui:
                 worker_payload["ui"] = worker_ui
-
-        if inbox_task_id:
-            if result.get("ok"):
-                await task_inbox.update_status(
-                    inbox_task_id,
-                    "running",
-                    event="worker_done",
-                    detail=str(result.get("summary") or "")[:200],
-                    result={
-                        "worker_result": result,
-                        "worker_id": selected_worker_id,
-                        "worker_name": selected_worker_name,
-                        "text": worker_text,
-                        "ui": worker_ui,
-                        "payload": worker_payload,
-                    },
-                )
-            else:
-                await task_inbox.fail(
-                    inbox_task_id,
-                    error=str(
-                        result.get("error") or result.get("summary") or "worker_failed"
-                    ),
-                    result={
-                        "worker_result": result,
-                        "worker_id": selected_worker_id,
-                        "worker_name": selected_worker_name,
-                        "text": worker_text,
-                        "ui": worker_ui,
-                        "payload": worker_payload,
-                    },
-                )
 
         return {
             "ok": bool(result.get("ok")),

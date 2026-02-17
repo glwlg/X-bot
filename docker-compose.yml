@@ -28,7 +28,7 @@ services:
       - .env
     restart: unless-stopped
     network_mode: "host"
-    command: ["sh", "-lc", "while true; do sleep 3600; done"]
+    command: ["python", "-m", "worker_runtime.daemon"]
     volumes:
       - ./data:/app/data
       - ./downloads:/app/downloads

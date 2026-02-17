@@ -15,7 +15,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from core.platform.registry import adapter_manager
 from core.platform.models import UnifiedContext
-from core.task_inbox import task_inbox
 
 from core.state_store import (
     add_reminder,
@@ -805,7 +804,7 @@ async def run_skill_cron_job(
     """
     try:
         user_id = int(str(user_id))
-    except ValueError, TypeError:
+    except (ValueError, TypeError):
         user_id = 0
 
     logger.info(
@@ -845,19 +844,7 @@ async def run_skill_cron_job(
         if not instruction:
             instruction = "Execute scheduled maintenance/run_cron task."
 
-        inbox_task = await task_inbox.submit(
-            source="cron",
-            goal=instruction,
-            user_id=user_id_text,
-            payload={
-                "platform": platform,
-                "need_push": bool(need_push),
-                "type": "scheduled_task",
-            },
-            priority="normal",
-            requires_reply=bool(need_push),
-        )
-        ctx.user_data["task_inbox_id"] = inbox_task.task_id
+        cron_task_id = f"cron-{int(datetime.datetime.now().timestamp())}"
 
         final_output = []
 
@@ -867,7 +854,7 @@ async def run_skill_cron_job(
                 "parts": [
                     {
                         "text": (
-                            f"[CRON TASK id={inbox_task.task_id}]\n"
+                            f"[CRON TASK id={cron_task_id}]\n"
                             f"source=cron\n"
                             f"goal={instruction}"
                         )
@@ -882,19 +869,6 @@ async def run_skill_cron_job(
                 final_output.append(chunk)
 
         full_response = "".join(final_output).strip()
-        if full_response:
-            await task_inbox.complete(
-                inbox_task.task_id,
-                result={"summary": full_response[:500]},
-                final_output=full_response,
-            )
-        else:
-            await task_inbox.complete(
-                inbox_task.task_id,
-                result={"summary": "No output"},
-                final_output="",
-            )
-
         # Push Notification Logic
         if need_push and user_id > 0:
             if full_response:

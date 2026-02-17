@@ -29,7 +29,7 @@ def _to_runtime_rows(
             continue
         runtime.append(
             {
-                "id": index,  # ephemeral id for compatibility
+                "id": index,
                 "user_id": str(user_id),
                 "stock_code": code,
                 "stock_name": str(item.get("stock_name") or code),
@@ -88,36 +88,7 @@ async def add_watchlist_stock(
     return True
 
 
-async def remove_watchlist_stock(
-    stock_id: int | str, stock_code: str | None = None
-) -> bool:
-    """Compatibility wrapper.
-
-    - remove_watchlist_stock(stock_id)
-    - remove_watchlist_stock(user_id, stock_code)
-    """
-    if stock_code is not None:
-        return await remove_watchlist_stock_by_code(stock_id, stock_code)
-
-    sid = int(stock_id)
-    changed_any = False
-    for uid in all_user_ids():
-        rows = await _read_watchlist(uid)
-        runtime = _to_runtime_rows(uid, rows)
-        target = next(
-            (item for item in runtime if int(item.get("id") or 0) == sid), None
-        )
-        if not target:
-            continue
-        code = str(target.get("stock_code") or "")
-        kept = [item for item in rows if str(item.get("stock_code") or "") != code]
-        if len(kept) != len(rows):
-            await _write_watchlist(uid, kept)
-            changed_any = True
-    return changed_any
-
-
-async def remove_watchlist_stock_by_code(user_id: int | str, stock_code: str) -> bool:
+async def remove_watchlist_stock(user_id: int | str, stock_code: str) -> bool:
     rows = await _read_watchlist(user_id)
     code = str(stock_code or "").strip()
     kept = [item for item in rows if str(item.get("stock_code") or "").strip() != code]

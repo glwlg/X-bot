@@ -1,7 +1,7 @@
 # X-Bot DEVELOPMENT
 
-更新时间：2026-02-15  
-状态：`TODO-ONLY`（本文定义目标架构、目录结构与开发待办，不代表已全部实现）
+更新时间：2026-02-17  
+状态：`ACTIVE`（当前实现与维护约束文档）
 
 ## 1. 设计目标
 
@@ -12,7 +12,7 @@ X-Bot 采用“双层操作系统”模型：
 - Core Manager 默认不执行用户业务任务，只做调度者、管理者、维护者。
 - 当进入“修复/治理模式”时，Core Manager 可以对 worker 与工具链进行修复操作。
 
-## 2. 双层架构（目标态）
+## 2. 双层架构（当前实现）
 
 ### 2.1 内核层（Core Manager）
 
@@ -115,9 +115,11 @@ data/
 - 任务事件标准字段：`source` / `status` / `created_at` / `started_at` / `ended_at` / `error` / `retry_count` / `events[]`。
 - `/worker tasks` 查询链路：`handlers/worker_handlers.py -> core.worker_store.WorkerTaskStore.list_recent -> data/WORKER_TASKS.jsonl`。
 - heartbeat 运行态查询链路：`handlers/heartbeat_handlers.py -> core.heartbeat_store.get_state -> data/runtime_tasks/<user_id>/{HEARTBEAT.md,STATUS.json}`。
-- 对话检索链路：`/chatlog -> repositories.chat_repo.search_messages -> chat_history(SQLite)`。
+- 对话检索链路：`/chatlog -> repositories.chat_repo.search_messages -> data/users/<user_id>/chat/<YYYY-MM-DD>/<session_id>.md`。
+- 系统级 repository 状态文件：`data/system/repositories/{allowed_users.md,id_counters.md,video_cache.md}`。
+- `src/repositories/base.py` 仅提供文件读写原语与计数器，不保留数据库兼容接口或迁移逻辑。
 
-## 4. 任务调度模型（目标态）
+## 4. 任务调度模型（当前实现）
 
 ### 4.1 默认调度原则
 
@@ -138,7 +140,7 @@ data/
 - 部分路径仍对编码工具可用性耦合过深，影响简单任务直达执行。
 - `runtime_tasks` 目录层级出现异常膨胀，需做 key 规范与清理策略。
 
-## 5. 工具调度策略（目标态）
+## 5. 工具调度策略（当前实现）
 
 ### 5.1 调用优先级
 
@@ -159,7 +161,7 @@ data/
 - 第 3 段：启用备选工具或备选执行路径。
 - 仅在 `fatal` 或恢复预算耗尽时失败交付。
 
-## 6. SOUL.MD 人格系统（目标态）
+## 6. SOUL.MD 人格系统（当前实现）
 
 每个执行体（包括 Core Manager）都必须持有独立 `SOUL.MD`，其内容注入系统提示词。
 
@@ -174,7 +176,7 @@ data/
 - `data/kernel/core-manager/SOUL.MD`
 - `data/userland/workers/<worker_id>/SOUL.MD`
 
-## 7. 记忆系统（目标态）
+## 7. 记忆系统（当前实现）
 
 Core Manager 采用双层记忆：
 
@@ -196,7 +198,7 @@ Core Manager 采用双层记忆：
   - 用户偏好（写入用户记忆）
 - 记忆条目必须保留来源引用与时间戳。
 
-## 8. Heartbeat 职责（目标态）
+## 8. Heartbeat 职责（当前实现）
 
 - 心跳是周期维护机制，不是即时任务队列。
 - 用于健康检查、对话压缩、记忆固化与治理提醒。

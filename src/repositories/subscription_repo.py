@@ -32,7 +32,7 @@ def _to_runtime_rows(
             continue
         runtime.append(
             {
-                "id": index,  # ephemeral runtime id for callback/UI compatibility
+                "id": index,
                 "user_id": str(user_id),
                 "feed_url": feed_url,
                 "title": str(item.get("title") or feed_url),

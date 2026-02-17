@@ -106,6 +106,10 @@ class ToolCallDispatcher:
         started: float,
     ) -> Dict[str, Any]:
         tool_name = str(name or "").strip()
+        if tool_name and tool_name not in self.available_tool_names:
+            ext_alias = f"ext_{tool_name}"
+            if ext_alias in self.available_tool_names:
+                tool_name = ext_alias
         if tool_name not in self.available_tool_names:
             unknown = {
                 "ok": False,
@@ -159,6 +163,8 @@ class ToolCallDispatcher:
         if tool_name == "dispatch_worker":
             metadata = args.get("metadata")
             metadata_obj = dict(metadata) if isinstance(metadata, dict) else {}
+            ctx_user_data = getattr(self.ctx, "user_data", None)
+            user_data = ctx_user_data if isinstance(ctx_user_data, dict) else {}
             msg = getattr(self.ctx, "message", None)
             msg_user = getattr(msg, "user", None)
             msg_chat = getattr(msg, "chat", None)
@@ -168,8 +174,18 @@ class ToolCallDispatcher:
                 metadata_obj["chat_id"] = str(getattr(msg_chat, "id", "") or "")
             if "platform" not in metadata_obj:
                 metadata_obj["platform"] = str(getattr(msg, "platform", "") or "")
-            if self.task_inbox_id and "task_inbox_id" not in metadata_obj:
-                metadata_obj["task_inbox_id"] = self.task_inbox_id
+
+            forced_platform = str(
+                user_data.get("worker_delivery_platform") or ""
+            ).strip()
+            forced_chat_id = str(user_data.get("worker_delivery_chat_id") or "").strip()
+            if forced_platform:
+                metadata_obj["platform"] = forced_platform
+            if forced_chat_id:
+                metadata_obj["chat_id"] = forced_chat_id
+
+            if "session_id" not in metadata_obj:
+                metadata_obj["session_id"] = str(self.task_id or "")
             result = await dispatch_tools.dispatch_worker(
                 instruction=str(args.get("instruction") or ""),
                 worker_id=str(args.get("worker_id") or ""),

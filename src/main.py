@@ -31,6 +31,7 @@ from core.config import (
     WORKER_RUNTIME_MODE,
 )
 from core.heartbeat_worker import heartbeat_worker
+from worker_runtime.result_relay import worker_result_relay
 from handlers import (
     start,
     handle_new_command,
@@ -386,6 +387,7 @@ async def main():
 
     try:
         await adapter_manager.start_all()
+        await worker_result_relay.start()
 
         # Keep alive
         logger.info("All adapters started. Press Ctrl+C to stop.")
@@ -396,6 +398,7 @@ async def main():
     finally:
         logger.info("Shutting down...")
         await heartbeat_worker.stop()
+        await worker_result_relay.stop()
         await adapter_manager.stop_all()
 
 

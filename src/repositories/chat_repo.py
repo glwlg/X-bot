@@ -13,7 +13,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from .base import read_json, user_path
+from .base import user_path
 
 logger = logging.getLogger(__name__)
 
@@ -104,46 +104,6 @@ async def _resolve_session_file(user_id: int | str, session_id: str) -> Path | N
     return None
 
 
-async def _migrate_legacy_history_if_needed(user_id: int | str) -> None:
-    root = _chat_root(user_id)
-    legacy_path = (root / "history.md").resolve()
-    if not legacy_path.exists():
-        return
-
-    payload = await read_json(legacy_path, [])
-    if not isinstance(payload, list):
-        return
-
-    grouped: dict[tuple[str, str], list[dict[str, str]]] = {}
-    for row in payload:
-        if not isinstance(row, dict):
-            continue
-        role = str(row.get("role") or "user").strip().lower() or "user"
-        content = str(row.get("content") or "").strip()
-        if not content:
-            continue
-        created_at = str(row.get("created_at") or "").strip()
-        session_id = _safe_session_id(str(row.get("session_id") or ""))
-        day = date.today().isoformat()
-        if created_at:
-            with_date = created_at[:10]
-            if re.fullmatch(r"\d{4}-\d{2}-\d{2}", with_date):
-                day = with_date
-        grouped.setdefault((day, session_id), []).append(
-            {"role": role, "content": content}
-        )
-
-    for (day, session_id), rows in grouped.items():
-        target = _session_path(user_id, day, session_id)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(_render_session(day, session_id, rows), encoding="utf-8")
-
-    try:
-        legacy_path.unlink()
-    except Exception:
-        logger.warning("Failed to remove legacy history file: %s", legacy_path)
-
-
 async def save_message(
     user_id: int | str, role: str, content: str, session_id: str
 ) -> bool:
@@ -151,7 +111,6 @@ async def save_message(
     try:
         uid = str(user_id)
         sid = _safe_session_id(session_id)
-        await _migrate_legacy_history_if_needed(uid)
         session_file = await _resolve_session_file(uid, sid)
         if session_file is None:
             session_file = _session_path(uid, date.today().isoformat(), sid)
@@ -183,7 +142,6 @@ async def get_session_messages(
     """Return current session history in Gemini format."""
     try:
         uid = str(user_id)
-        await _migrate_legacy_history_if_needed(uid)
         path = await _resolve_session_file(uid, session_id)
         if not path or not path.exists():
             return []
@@ -205,7 +163,6 @@ async def get_latest_session_id(user_id: int | str) -> str:
     """Get latest session id; create new one if none exists."""
     try:
         uid = str(user_id)
-        await _migrate_legacy_history_if_needed(uid)
         files = await _list_session_files(uid)
         if files:
             return _extract_session_from_path(files[0])
@@ -229,7 +186,6 @@ async def search_messages(
     needle = text.lower()
     try:
         uid = str(user_id)
-        await _migrate_legacy_history_if_needed(uid)
         files = await _list_session_files(uid)
         if session_id:
             sid = _safe_session_id(session_id)
@@ -268,7 +224,6 @@ async def get_recent_messages_for_user(
     """Read recent messages across sessions (newest first)."""
     try:
         uid = str(user_id)
-        await _migrate_legacy_history_if_needed(uid)
         files = await _list_session_files(uid)
         output: list[dict[str, Any]] = []
         for path in files:
@@ -302,7 +257,6 @@ async def get_day_session_transcripts(
     """Return today's session transcripts for daily memory compaction."""
     try:
         uid = str(user_id)
-        await _migrate_legacy_history_if_needed(uid)
         target_day = (day or date.today()).isoformat()
         day_dir = _chat_root(uid) / target_day
         if not day_dir.exists():

@@ -1,5 +1,7 @@
 import asyncio
 import json
+import os
+import shutil
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -119,13 +121,20 @@ class TaskInbox:
     """
 
     def __init__(self) -> None:
+        self.persist = (
+            os.getenv("TASK_INBOX_PERSIST", "false").strip().lower() == "true"
+        )
         self.root = (Path(DATA_DIR) / "task_inbox").resolve()
         self.tasks_root = (self.root / "tasks").resolve()
         self.events_path = (self.root / "events.jsonl").resolve()
-        self.root.mkdir(parents=True, exist_ok=True)
-        self.tasks_root.mkdir(parents=True, exist_ok=True)
-        if not self.events_path.exists():
-            self.events_path.write_text("", encoding="utf-8")
+        if self.persist:
+            self.root.mkdir(parents=True, exist_ok=True)
+            self.tasks_root.mkdir(parents=True, exist_ok=True)
+            if not self.events_path.exists():
+                self.events_path.write_text("", encoding="utf-8")
+        else:
+            if self.root.exists():
+                shutil.rmtree(self.root, ignore_errors=True)
 
         self._lock = asyncio.Lock()
         self._loaded = False
@@ -137,6 +146,9 @@ class TaskInbox:
 
     async def _ensure_loaded(self) -> None:
         if self._loaded:
+            return
+        if not self.persist:
+            self._loaded = True
             return
         async with self._lock:
             if self._loaded:
@@ -162,6 +174,8 @@ class TaskInbox:
             self._loaded = True
 
     async def _persist_task_unlocked(self, task: TaskEnvelope) -> None:
+        if not self.persist:
+            return
         path = self._task_path(task.task_id)
         path.write_text(
             json.dumps(task.as_dict(), ensure_ascii=False, indent=2) + "\n",
@@ -171,6 +185,8 @@ class TaskInbox:
     async def _append_log_unlocked(
         self, task_id: str, event: str, detail: str = ""
     ) -> None:
+        if not self.persist:
+            return
         entry = {
             "at": _now_iso(),
             "task_id": str(task_id or "").strip(),

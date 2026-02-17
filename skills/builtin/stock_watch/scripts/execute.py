@@ -6,7 +6,7 @@ import re
 
 
 from core.state_store import (
-    remove_watchlist_stock_by_code,
+    remove_watchlist_stock,
     get_user_watchlist,
     add_watchlist_stock,
 )
@@ -189,7 +189,7 @@ async def remove_stock(ctx: UnifiedContext, user_id: int, stock_name: str) -> st
     watchlist = await get_user_watchlist(user_id, platform=platform)
     for item in watchlist:
         if stock_name.lower() in item["stock_name"].lower():
-            await remove_watchlist_stock_by_code(user_id, item["stock_code"])
+            await remove_watchlist_stock(user_id, item["stock_code"])
             return {"text": f"✅ 已取消关注 **{item['stock_name']}**", "ui": {}}
     return {"text": f"⚠️ 未找到匹配「{stock_name}」的自选股", "ui": {}}
 
@@ -338,7 +338,7 @@ async def handle_stock_select_callback(ctx: UnifiedContext) -> None:
 
     if data.startswith("stock_del_"):
         stock_code = data.replace("stock_del_", "")
-        success = await remove_watchlist_stock_by_code(user_id, stock_code)
+        success = await remove_watchlist_stock(user_id, stock_code)
         if success:
             await ctx.edit_message(ctx.message.id, f"✅ 已取消关注 {stock_code}")
         else:

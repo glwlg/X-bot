@@ -19,7 +19,7 @@ sys.modules["core.config"] = MagicMock()
 from repositories import (
     get_user_watchlist,
     add_watchlist_stock,
-    remove_watchlist_stock_by_code,
+    remove_watchlist_stock,
 )
 
 
@@ -45,7 +45,7 @@ async def mock_remove_stock(*args, **kwargs):
     return True
 
 
-remove_watchlist_stock_by_code.side_effect = mock_remove_stock
+remove_watchlist_stock.side_effect = mock_remove_stock
 
 from services.stock_service import (
     fetch_stock_quotes,

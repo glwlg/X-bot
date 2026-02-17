@@ -1,10 +1,8 @@
-from pathlib import Path
 import importlib
 
 import pytest
 
 dispatch_tools_module = importlib.import_module("core.tools.dispatch_tools")
-from core.task_inbox import TaskInbox
 
 
 class _FakeRegistry:
@@ -82,37 +80,29 @@ class _FakeTaskStore:
         ][:limit]
 
 
-def _build_isolated_inbox(tmp_path: Path) -> TaskInbox:
-    inbox = TaskInbox()
-    inbox.root = (tmp_path / "task_inbox").resolve()
-    inbox.tasks_root = (inbox.root / "tasks").resolve()
-    inbox.events_path = (inbox.root / "events.jsonl").resolve()
-    inbox.root.mkdir(parents=True, exist_ok=True)
-    inbox.tasks_root.mkdir(parents=True, exist_ok=True)
-    inbox.events_path.write_text("", encoding="utf-8")
-    inbox._loaded = True
-    inbox._tasks = {}
-    return inbox
+class _FakeJobStore:
+    def __init__(self):
+        self.submitted: list[dict] = []
+
+    async def submit(self, **kwargs):
+        self.submitted.append(dict(kwargs))
+        return {
+            "job_id": "wj-1",
+            **kwargs,
+        }
 
 
 @pytest.mark.asyncio
-async def test_dispatch_worker_updates_task_inbox(monkeypatch, tmp_path):
-    fake_inbox = _build_isolated_inbox(tmp_path)
-    task = await fake_inbox.submit(
-        source="heartbeat",
-        goal="检查 RSS 更新",
-        user_id="u-100",
-    )
-
+async def test_dispatch_worker_sync_mode_returns_worker_result(monkeypatch):
+    monkeypatch.setenv("WORKER_DISPATCH_MODE", "sync")
     monkeypatch.setattr(dispatch_tools_module, "worker_registry", _FakeRegistry())
     monkeypatch.setattr(dispatch_tools_module, "worker_runtime", _FakeRuntime())
     monkeypatch.setattr(dispatch_tools_module, "worker_task_store", _FakeTaskStore())
-    monkeypatch.setattr(dispatch_tools_module, "task_inbox", fake_inbox)
 
     tools = dispatch_tools_module.DispatchTools()
     result = await tools.dispatch_worker(
         instruction="请抓取最新 RSS 并摘要",
-        metadata={"task_inbox_id": task.task_id},
+        metadata={"session_id": "session-1"},
     )
 
     assert result["ok"] is True
@@ -121,15 +111,6 @@ async def test_dispatch_worker_updates_task_inbox(monkeypatch, tmp_path):
     assert result["auto_selected"] is True
     assert result["text"] == "executed:请抓取最新 RSS 并摘要"
     assert result["ui"]["actions"][0][0]["text"] == "刷新"
-
-    updated = await fake_inbox.get(task.task_id)
-    assert updated is not None
-    assert updated.status == "running"
-    assert updated.assigned_worker_id == "worker-main"
-    assert updated.result.get("worker_result", {}).get("ok") is True
-    assert updated.result.get("worker_name") == "Main Worker"
-    assert updated.result.get("ui", {}).get("actions")
-    assert updated.output.get("text")
 
 
 @pytest.mark.asyncio
@@ -160,3 +141,42 @@ async def test_list_workers_reports_effective_backend(monkeypatch):
     first = result["workers"][0]
     assert first["backend"] == "core-agent"
     assert first["configured_backend"] == "core-agent"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_worker_async_mode_queues_job_and_returns_ack(
+    monkeypatch,
+):
+    fake_job_store = _FakeJobStore()
+
+    monkeypatch.setenv("WORKER_DISPATCH_MODE", "async")
+    monkeypatch.setattr(dispatch_tools_module, "worker_registry", _FakeRegistry())
+    monkeypatch.setattr(dispatch_tools_module, "worker_runtime", _FakeRuntime())
+    monkeypatch.setattr(dispatch_tools_module, "worker_task_store", _FakeTaskStore())
+    monkeypatch.setattr(dispatch_tools_module, "worker_job_store", fake_job_store)
+
+    tools = dispatch_tools_module.DispatchTools()
+    result = await tools.dispatch_worker(
+        instruction="10秒后提醒我喝水",
+        metadata={
+            "session_id": "session-async-1",
+            "platform": "telegram",
+            "chat_id": "c-1",
+            "user_id": "u-async",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["terminal"] is True
+    assert result["task_outcome"] == "done"
+    assert result["async_dispatch"] is True
+    assert result["task_id"] == "wj-1"
+    assert "自动把结果发给你" in result["text"]
+
+    assert fake_job_store.submitted
+    submitted = fake_job_store.submitted[0]
+    assert submitted["worker_id"] == "worker-main"
+    assert submitted["instruction"] == "10秒后提醒我喝水"
+    assert submitted["metadata"]["worker_name"] == "Main Worker"
+    assert submitted["metadata"]["selection_reason"]
+    assert submitted["metadata"]["session_id"] == "session-async-1"
