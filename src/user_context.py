@@ -1,6 +1,6 @@
 """
 用户对话上下文管理模块
-使用 SQLite 持久化 (替代 PicklePersistence 的 chat_history)
+使用 Markdown 会话文件持久化
 """
 
 import uuid
@@ -8,7 +8,7 @@ import logging
 from typing import Literal
 from telegram.ext import ContextTypes
 
-from repositories.chat_repo import (
+from core.state_store import (
     save_message,
     get_session_messages,
     get_latest_session_id,
@@ -24,20 +24,25 @@ from core.platform.models import UnifiedContext
 
 
 async def get_or_create_session_id(
-    context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext], user_id: int
+    context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext], user_id: int | str
 ) -> str:
     """获取当前 Session ID，如果内存没有，尝试从 DB 获取最新的"""
-    if SESSION_ID_KEY in context.user_data:
-        return context.user_data[SESSION_ID_KEY]
+    store = getattr(context, "user_data", None)
+    if store is None:
+        setattr(context, "user_data", {})
+        store = getattr(context, "user_data", {})
+
+    if SESSION_ID_KEY in store:
+        return str(store[SESSION_ID_KEY])
 
     # 从 DB 获取
     session_id = await get_latest_session_id(user_id)
-    context.user_data[SESSION_ID_KEY] = session_id
+    store[SESSION_ID_KEY] = session_id
     return session_id
 
 
 async def get_user_context(
-    context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext], user_id: int
+    context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext], user_id: int | str
 ) -> list[dict]:
     """
     获取用户的对话上下文 (Async)
@@ -52,7 +57,7 @@ async def get_user_context(
 
 async def add_message(
     context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext],
-    user_id: int,
+    user_id: int | str,
     role: Literal["user", "model"],
     content: str,
 ) -> None:
@@ -69,12 +74,16 @@ def clear_context(context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext]) -> 
     不删除历史记录，只是生成新的 session_id
     """
     new_session_id = str(uuid.uuid4())
-    context.user_data[SESSION_ID_KEY] = new_session_id
+    store = getattr(context, "user_data", None)
+    if store is None:
+        setattr(context, "user_data", {})
+        store = getattr(context, "user_data", {})
+    store[SESSION_ID_KEY] = new_session_id
     logger.info(f"Started new session: {new_session_id}")
 
 
 async def get_context_length(
-    context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext], user_id: int
+    context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext], user_id: int | str
 ) -> int:
     """获取用户当前上下文的消息数量"""
     history = await get_user_context(context, user_id)

@@ -10,7 +10,6 @@ from .admin_handlers import adduser_command, deluser_command
 from .base_handlers import check_permission_unified, cancel
 
 from .service_handlers import (
-    stats_command,
     toggle_translation_command,
     chatlog_command,
 )

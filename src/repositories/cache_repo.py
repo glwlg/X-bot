@@ -1,21 +1,35 @@
-"""
-视频缓存 Repository
-"""
-import aiosqlite
-from .base import get_db
+"""Video cache repository backed by filesystem JSON."""
+
+from __future__ import annotations
+
+from .base import now_iso, read_json, system_path, write_json
+
+
+def _cache_path():
+    return system_path("video_cache.md")
 
 
 async def save_video_cache(file_id: str, file_path: str):
-    async with await get_db() as db:
-        await db.execute(
-            "INSERT OR REPLACE INTO video_cache (file_id, file_path) VALUES (?, ?)",
-            (file_id, file_path)
-        )
-        await db.commit()
+    payload = await read_json(_cache_path(), {})
+    if not isinstance(payload, dict):
+        payload = {}
+    fid = str(file_id or "").strip()
+    if not fid:
+        return
+    payload[fid] = {
+        "file_path": str(file_path or "").strip(),
+        "created_at": now_iso(),
+    }
+    await write_json(_cache_path(), payload)
 
 
 async def get_video_cache(file_id: str) -> str | None:
-    async with await get_db() as db:
-        async with db.execute("SELECT file_path FROM video_cache WHERE file_id = ?", (file_id,)) as cursor:
-            row = await cursor.fetchone()
-            return row[0] if row else None
+    payload = await read_json(_cache_path(), {})
+    if not isinstance(payload, dict):
+        return None
+    item = payload.get(str(file_id or "").strip())
+    if isinstance(item, dict):
+        return str(item.get("file_path") or "") or None
+    if isinstance(item, str):
+        return item or None
+    return None

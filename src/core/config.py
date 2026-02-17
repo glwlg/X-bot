@@ -69,7 +69,7 @@ if ADMIN_USER_IDS_STR.strip():
 async def is_user_allowed(user_id: int | str) -> bool:
     """
     检查用户是否有权限使用 Bot
-    权限逻辑：管理员 OR 在数据库白名单中
+    权限逻辑：管理员 OR 在白名单存储中
     """
     uid_str = str(user_id).strip()
 
@@ -80,15 +80,15 @@ async def is_user_allowed(user_id: int | str) -> bool:
     # 2. 如果没有设置任何管理员，且没有启用白名单模式（默认），是否允许所有人？
     # 现在的逻辑是：如果设置了 ADMIN_USER_IDS，则作为白名单基础。
 
-    # 检查数据库
-    from repositories import check_user_allowed_in_db
+    # 检查白名单存储
+    from core.state_store import check_user_allowed_in_db
 
     try:
-        # DB 现在应该支持 str
+        # 存储层支持 str user_id
         if await check_user_allowed_in_db(uid_str):
             return True
     except Exception:
-        # DB 可能还没初始化或出错
+        # 存储层可能还没初始化或出错
         pass
 
     # 如果管理员列表为空，是否开放？
@@ -145,7 +145,6 @@ MCP_ENABLED = os.getenv("MCP_ENABLED", "true").lower() == "true"
 MCP_PLAYWRIGHT_IMAGE = os.getenv(
     "MCP_PLAYWRIGHT_IMAGE", "mcr.microsoft.com/playwright/mcp:1.51.0-noble"
 )
-MCP_MEMORY_ENABLED = os.getenv("MCP_MEMORY_ENABLED", "true").lower() == "true"
 MCP_TIMEOUT_SECONDS = int(os.getenv("MCP_TIMEOUT_SECONDS", "60"))
 # Internal Search Service URL (SearXNG)
 SEARXNG_URL = os.getenv("SEARXNG_URL")
@@ -170,16 +169,22 @@ HEARTBEAT_TIMEZONE = os.getenv("HEARTBEAT_TIMEZONE", "")
 HEARTBEAT_TICK_SEC = int(os.getenv("HEARTBEAT_TICK_SEC", "30"))
 HEARTBEAT_SUPPRESS_OK = os.getenv("HEARTBEAT_SUPPRESS_OK", "true").lower() == "true"
 HEARTBEAT_MODE = os.getenv("HEARTBEAT_MODE", "readonly").strip().lower() or "readonly"
-HEARTBEAT_READONLY_DISPATCH = os.getenv("HEARTBEAT_READONLY_DISPATCH", "false").lower() == "true"
+HEARTBEAT_READONLY_DISPATCH = (
+    os.getenv("HEARTBEAT_READONLY_DISPATCH", "false").lower() == "true"
+)
 
 # Auto recovery budget for terminal/recoverable failures in orchestrator loop
 AUTO_RECOVERY_MAX_ATTEMPTS = int(os.getenv("AUTO_RECOVERY_MAX_ATTEMPTS", "3"))
 
 # Dual-layer worker runtime configuration
-USERLAND_ROOT = os.getenv("USERLAND_ROOT", os.path.join(DATA_DIR, "userland", "workers"))
+USERLAND_ROOT = os.getenv(
+    "USERLAND_ROOT", os.path.join(DATA_DIR, "userland", "workers")
+)
 WORKER_DEFAULT_BACKEND = os.getenv("WORKER_DEFAULT_BACKEND", "core-agent")
 WORKER_EXEC_TIMEOUT_SEC = int(os.getenv("WORKER_EXEC_TIMEOUT_SEC", "900"))
-WORKER_RUNTIME_MODE = os.getenv("WORKER_RUNTIME_MODE", "local").strip().lower() or "local"
+WORKER_RUNTIME_MODE = (
+    os.getenv("WORKER_RUNTIME_MODE", "local").strip().lower() or "local"
+)
 WORKER_DOCKER_CONTAINER = os.getenv("WORKER_DOCKER_CONTAINER", "x-bot-worker")
 WORKER_DOCKER_DATA_DIR = os.getenv("WORKER_DOCKER_DATA_DIR", "/app/data")
 WORKER_CODEX_COMMAND = os.getenv("WORKER_CODEX_COMMAND", "codex")
@@ -194,9 +199,15 @@ WORKER_GEMINI_ARGS_TEMPLATE = os.getenv(
 WORKER_AUTH_STATUS_TIMEOUT_SEC = int(os.getenv("WORKER_AUTH_STATUS_TIMEOUT_SEC", "45"))
 WORKER_CODEX_AUTH_START_ARGS = os.getenv("WORKER_CODEX_AUTH_START_ARGS", "auth login")
 WORKER_GEMINI_AUTH_START_ARGS = os.getenv("WORKER_GEMINI_AUTH_START_ARGS", "auth login")
-WORKER_CODEX_AUTH_STATUS_ARGS = os.getenv("WORKER_CODEX_AUTH_STATUS_ARGS", "auth status")
-WORKER_GEMINI_AUTH_STATUS_ARGS = os.getenv("WORKER_GEMINI_AUTH_STATUS_ARGS", "auth status")
-WORKER_FALLBACK_CORE_AGENT = os.getenv("WORKER_FALLBACK_CORE_AGENT", "true").lower() == "true"
+WORKER_CODEX_AUTH_STATUS_ARGS = os.getenv(
+    "WORKER_CODEX_AUTH_STATUS_ARGS", "auth status"
+)
+WORKER_GEMINI_AUTH_STATUS_ARGS = os.getenv(
+    "WORKER_GEMINI_AUTH_STATUS_ARGS", "auth status"
+)
+WORKER_FALLBACK_CORE_AGENT = (
+    os.getenv("WORKER_FALLBACK_CORE_AGENT", "true").lower() == "true"
+)
 
 # Core chat dispatch policy:
 # - worker_only: always dispatch to worker, no fallback
@@ -207,8 +218,7 @@ CORE_CHAT_EXECUTION_MODE = (
     or "worker_only"
 )
 CORE_CHAT_WORKER_BACKEND = (
-    os.getenv("CORE_CHAT_WORKER_BACKEND", "core-agent").strip().lower()
-    or "core-agent"
+    os.getenv("CORE_CHAT_WORKER_BACKEND", "core-agent").strip().lower() or "core-agent"
 )
 
 # Kernel-protected source roots (comma-separated absolute/relative paths)

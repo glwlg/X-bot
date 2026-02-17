@@ -15,6 +15,13 @@ class ToolRegistry:
             self._bash_tool(),
         ]
 
+    def get_manager_tools(self) -> List[Dict[str, Any]]:
+        return [
+            self._list_workers_tool(),
+            self._dispatch_worker_tool(),
+            self._worker_status_tool(),
+        ]
+
     def get_extension_tools(
         self, candidates: List[ExtensionCandidate]
     ) -> List[Dict[str, Any]]:
@@ -23,15 +30,15 @@ class ToolRegistry:
             schema = candidate.input_schema or {"type": "object", "properties": {}}
             if "type" not in schema:
                 schema["type"] = "object"
-            trigger_hint = ", ".join(candidate.triggers[:6]) if candidate.triggers else "none"
+            trigger_hint = (
+                ", ".join(candidate.triggers[:6]) if candidate.triggers else "none"
+            )
             profile = tool_profile_store.get_profile(candidate.tool_name)
             attempts = int(profile.get("attempts", 0) or 0)
             avg_latency = float(profile.get("avg_latency_ms", 0.0) or 0.0)
             successes = int(profile.get("successes", 0) or 0)
             success_rate = (successes / attempts) if attempts > 0 else 0.0
-            profile_hint = (
-                f"profile(success_rate={success_rate:.2f}, avg_latency_ms={avg_latency:.1f}, attempts={attempts})"
-            )
+            profile_hint = f"profile(success_rate={success_rate:.2f}, avg_latency_ms={avg_latency:.1f}, attempts={attempts})"
             desc = (
                 f"On-demand extension: {candidate.name}. "
                 f"{candidate.description}\n"
@@ -170,6 +177,100 @@ class ToolRegistry:
                     },
                 },
                 "required": ["command"],
+            },
+        }
+
+    def _list_workers_tool(self) -> Dict[str, Any]:
+        return {
+            "name": "list_workers",
+            "description": "List worker instances and their capabilities/status.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        }
+
+    def _dispatch_worker_tool(self) -> Dict[str, Any]:
+        return {
+            "name": "dispatch_worker",
+            "description": (
+                "Dispatch a concrete execution task to a worker. "
+                "Use when command execution, long-running operations, or specialized execution is needed."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "instruction": {
+                        "type": "string",
+                        "description": "Task instruction for worker execution",
+                    },
+                    "worker_id": {
+                        "type": "string",
+                        "description": "Optional target worker id. Omit to auto-select.",
+                    },
+                    "backend": {
+                        "type": "string",
+                        "description": "Optional backend override when worker policy allows it",
+                    },
+                    "metadata": {
+                        "type": "object",
+                        "description": "Optional metadata for traceability",
+                    },
+                },
+                "required": ["instruction"],
+            },
+        }
+
+    def _worker_status_tool(self) -> Dict[str, Any]:
+        return {
+            "name": "worker_status",
+            "description": "Query recent worker execution status and task history.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "worker_id": {
+                        "type": "string",
+                        "description": "Optional worker id",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Recent task limit (1-50)",
+                        "default": 10,
+                    },
+                },
+            },
+        }
+
+    def _list_extensions_tool(self) -> Dict[str, Any]:
+        return {
+            "name": "list_extensions",
+            "description": "List all available extensions/skills and their input schemas.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        }
+
+    def _run_extension_tool(self) -> Dict[str, Any]:
+        return {
+            "name": "run_extension",
+            "description": (
+                "Execute one extension by skill name with args. "
+                "Use this as the generic extension invocation path."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "Exact skill name, e.g. rss_subscribe / stock_watch",
+                    },
+                    "args": {
+                        "type": "object",
+                        "description": "Extension input args object",
+                    },
+                },
+                "required": ["skill_name", "args"],
             },
         }
 

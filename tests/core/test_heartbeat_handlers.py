@@ -61,11 +61,16 @@ async def test_heartbeat_command_config_and_run(monkeypatch, tmp_path):
     async def _allow(_ctx):
         return True
 
-    async def _fake_run_now(user_id: str):
+    run_calls = []
+
+    async def _fake_run_now(user_id: str, *, suppress_push: bool = False):
+        run_calls.append((str(user_id), bool(suppress_push)))
         return "HEARTBEAT_OK"
 
     monkeypatch.setattr(heartbeat_handlers, "check_permission_unified", _allow)
-    monkeypatch.setattr(heartbeat_handlers.heartbeat_worker, "run_user_now", _fake_run_now)
+    monkeypatch.setattr(
+        heartbeat_handlers.heartbeat_worker, "run_user_now", _fake_run_now
+    )
 
     ctx_every = _DummyContext("u2", "/heartbeat every 45m")
     await heartbeat_handlers.heartbeat_command(ctx_every)
@@ -78,3 +83,4 @@ async def test_heartbeat_command_config_and_run(monkeypatch, tmp_path):
     ctx_run = _DummyContext("u2", "/heartbeat run")
     await heartbeat_handlers.heartbeat_command(ctx_run)
     assert any("HEARTBEAT_OK" in text for text in ctx_run.replies)
+    assert run_calls and run_calls[-1] == ("u2", True)

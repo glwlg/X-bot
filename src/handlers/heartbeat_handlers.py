@@ -31,6 +31,34 @@ def _render_checklist(checklist: list[str]) -> str:
     return "\n".join([f"{idx}. {item}" for idx, item in enumerate(checklist, start=1)])
 
 
+def _split_reply_chunks(text: str, limit: int = 3500) -> list[str]:
+    raw = str(text or "").strip()
+    if not raw:
+        return []
+    if len(raw) <= limit:
+        return [raw]
+
+    chunks: list[str] = []
+    remaining = raw
+    while remaining:
+        if len(remaining) <= limit:
+            chunks.append(remaining)
+            break
+
+        cut = remaining.rfind("\n\n", 0, limit)
+        if cut < int(limit * 0.6):
+            cut = remaining.rfind("\n", 0, limit)
+        if cut < int(limit * 0.4):
+            cut = limit
+
+        part = remaining[:cut].strip()
+        if part:
+            chunks.append(part)
+        remaining = remaining[cut:].strip()
+
+    return chunks
+
+
 async def heartbeat_command(ctx: UnifiedContext) -> None:
     """管理心跳清单与策略: /heartbeat [list|add|remove|pause|resume|run|every|hours]"""
     if not await check_permission_unified(ctx):
@@ -91,10 +119,24 @@ async def heartbeat_command(ctx: UnifiedContext) -> None:
 
     if sub == "run":
         await ctx.reply("🔄 正在手动执行一次 Heartbeat...")
-        result = await heartbeat_worker.run_user_now(user_id)
+        result = await heartbeat_worker.run_user_now(user_id, suppress_push=True)
         state = await heartbeat_store.get_state(user_id)
-        level = str(((state.get("status") or {}).get("heartbeat") or {}).get("last_level", "NOTICE"))
-        await ctx.reply(f"✅ Heartbeat 运行完成（level={level}）：\n{result}")
+        level = str(
+            ((state.get("status") or {}).get("heartbeat") or {}).get(
+                "last_level", "NOTICE"
+            )
+        )
+        full_text = f"✅ Heartbeat 运行完成（level={level}）：\n{result}"
+        chunks = _split_reply_chunks(full_text)
+        if not chunks:
+            await ctx.reply("✅ Heartbeat 运行完成。")
+            return
+        total = len(chunks)
+        for idx, chunk in enumerate(chunks, start=1):
+            payload = chunk
+            if total > 1:
+                payload = f"[{idx}/{total}]\n{chunk}"
+            await ctx.reply(payload)
         return
 
     if sub == "every":

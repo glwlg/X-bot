@@ -6,20 +6,10 @@ import json
 import logging
 import re
 from dataclasses import dataclass
-from enum import Enum
 
 from core.config import ROUTING_MODEL, gemini_client
 
 logger = logging.getLogger(__name__)
-
-
-class UserIntent(str, Enum):
-    CHAT = "chat"
-    GENERAL_CHAT = "general_chat"
-    UNKNOWN = "unknown"
-    DOWNLOAD_VIDEO = "download_video"
-    GENERATE_IMAGE = "generate_image"
-    SET_REMINDER = "set_reminder"
 
 
 @dataclass
@@ -39,7 +29,7 @@ class DispatchDecision:
 
 
 class IntentRouter:
-    """Model-based task/chat classifier with safe fallback."""
+    """Simplified router - LLM decides everything in the main loop."""
 
     def __init__(self):
         self.model = ROUTING_MODEL
@@ -58,19 +48,17 @@ class IntentRouter:
     async def route(self, message: str) -> DispatchDecision:
         text = str(message or "").strip()
         if not text:
-            return DispatchDecision(route="manager_chat", confidence=0.0, reason="empty_message")
+            return DispatchDecision(
+                route="manager_chat", confidence=0.0, reason="empty_message"
+            )
 
         prompt = (
-            "You are a dispatch router for a manager/worker assistant system.\n"
-            "Decide one route for this user message:\n"
-            "- worker_task: executable tasks, research/news lookups, coding, data processing, multi-step delivery\n"
-            "- manager_memory: user-profile/memory questions (who am I, where I live, my preferences/history)\n"
-            "- manager_chat: social small talk, acknowledgements, very short casual chat\n"
-            "If uncertain, choose worker_task.\n"
-            "Return JSON only with keys: route, confidence, reason.\n"
-            "route must be one of: worker_task, manager_memory, manager_chat.\n"
-            "confidence must be 0..1.\n"
-            f"message: {text}"
+            "你是任务派发路由器。判断用户消息是否需要派发给 Worker 执行。\n"
+            "- worker_task: 需要执行命令、搜索、研究、多步骤完成的任务\n"
+            "- manager_chat: 闲聊、简单问答、问候\n"
+            "如果不确定，默认选择 worker_task。\n"
+            '返回 JSON 格式：{"route": "worker_task" 或 "manager_chat", "confidence": 0-1, "reason": "原因"}\n'
+            f"用户消息: {text}"
         )
         try:
             response = await gemini_client.aio.models.generate_content(
@@ -81,7 +69,7 @@ class IntentRouter:
             payload = str(response.text or "").strip()
             parsed = self._parse_json(payload)
             route = str(parsed.get("route", "worker_task")).strip().lower()
-            if route not in {"worker_task", "manager_memory", "manager_chat"}:
+            if route not in {"worker_task", "manager_chat"}:
                 route = "worker_task"
             confidence = parsed.get("confidence", 0.0)
             try:
@@ -89,7 +77,9 @@ class IntentRouter:
             except Exception:
                 conf = 0.0
             reason = str(parsed.get("reason", "") or "").strip()[:200]
-            return DispatchDecision(route=route, confidence=conf, reason=reason, raw=payload[:400])
+            return DispatchDecision(
+                route=route, confidence=conf, reason=reason, raw=payload[:400]
+            )
         except Exception as exc:
             logger.debug("IntentRouter classify failed: %s", exc, exc_info=True)
             return DispatchDecision(

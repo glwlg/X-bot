@@ -5,11 +5,13 @@ import logging
 import os
 from datetime import datetime
 from types import SimpleNamespace
+from typing import Any
 
 from core.agent_orchestrator import agent_orchestrator
 from core.heartbeat_store import heartbeat_store
 from core.platform.models import Chat, MessageType, UnifiedContext, UnifiedMessage, User
 from core.platform.registry import adapter_manager
+from core.task_inbox import task_inbox
 from core.task_manager import task_manager
 
 logger = logging.getLogger(__name__)
@@ -21,10 +23,14 @@ class _HeartbeatSilentAdapter:
     async def reply_text(self, ctx: UnifiedContext, text: str, ui=None, **kwargs):
         return SimpleNamespace(id=f"hb-silent-{int(datetime.now().timestamp())}")
 
-    async def edit_text(self, ctx: UnifiedContext, message_id: str, text: str, **kwargs):
+    async def edit_text(
+        self, ctx: UnifiedContext, message_id: str, text: str, **kwargs
+    ):
         return SimpleNamespace(id=message_id)
 
-    async def reply_document(self, ctx: UnifiedContext, document, filename=None, caption=None, **kwargs):
+    async def reply_document(
+        self, ctx: UnifiedContext, document, filename=None, caption=None, **kwargs
+    ):
         return SimpleNamespace(id=filename or "doc")
 
     async def reply_photo(self, ctx: UnifiedContext, photo, caption=None, **kwargs):
@@ -36,10 +42,14 @@ class _HeartbeatSilentAdapter:
     async def reply_audio(self, ctx: UnifiedContext, audio, caption=None, **kwargs):
         return SimpleNamespace(id="audio")
 
-    async def delete_message(self, ctx: UnifiedContext, message_id: str, chat_id=None, **kwargs):
+    async def delete_message(
+        self, ctx: UnifiedContext, message_id: str, chat_id=None, **kwargs
+    ):
         return True
 
-    async def send_chat_action(self, ctx: UnifiedContext, action: str, chat_id=None, **kwargs):
+    async def send_chat_action(
+        self, ctx: UnifiedContext, action: str, chat_id=None, **kwargs
+    ):
         return True
 
     async def download_file(self, ctx: UnifiedContext, file_id: str, **kwargs) -> bytes:
@@ -57,10 +67,18 @@ class HeartbeatWorker:
         self.tick_sec = max(5, int(tick_raw))
 
         self.suppress_ok = os.getenv("HEARTBEAT_SUPPRESS_OK", "true").lower() == "true"
-        self.mode = (os.getenv("HEARTBEAT_MODE", "readonly").strip().lower() or "readonly")
-        self.readonly_dispatch = os.getenv("HEARTBEAT_READONLY_DISPATCH", "false").lower() == "true"
-        self.enable_rss_signal = os.getenv("HEARTBEAT_RSS_SIGNAL_ENABLED", "true").lower() == "true"
-        self.enable_stock_signal = os.getenv("HEARTBEAT_STOCK_SIGNAL_ENABLED", "true").lower() == "true"
+        self.mode = (
+            os.getenv("HEARTBEAT_MODE", "readonly").strip().lower() or "readonly"
+        )
+        self.readonly_dispatch = (
+            os.getenv("HEARTBEAT_READONLY_DISPATCH", "false").lower() == "true"
+        )
+        self.enable_rss_signal = (
+            os.getenv("HEARTBEAT_RSS_SIGNAL_ENABLED", "true").lower() == "true"
+        )
+        self.enable_stock_signal = (
+            os.getenv("HEARTBEAT_STOCK_SIGNAL_ENABLED", "true").lower() == "true"
+        )
         self._stop_event = asyncio.Event()
         self._loop_task: asyncio.Task | None = None
         self._running: dict[str, asyncio.Task] = {}
@@ -73,10 +91,18 @@ class HeartbeatWorker:
             return
         compacted = await heartbeat_store.compact_all_users()
         if compacted:
-            logger.info("Heartbeat store compacted for %s user(s) on startup.", compacted)
+            logger.info(
+                "Heartbeat store compacted for %s user(s) on startup.", compacted
+            )
         self._stop_event.clear()
-        self._loop_task = asyncio.create_task(self._run_loop(), name="heartbeat-worker-loop")
-        logger.info("Heartbeat worker started. root=%s tick=%ss", heartbeat_store.root, self.tick_sec)
+        self._loop_task = asyncio.create_task(
+            self._run_loop(), name="heartbeat-worker-loop"
+        )
+        logger.info(
+            "Heartbeat worker started. root=%s tick=%ss",
+            heartbeat_store.root,
+            self.tick_sec,
+        )
 
     async def stop(self) -> None:
         self._stop_event.set()
@@ -128,14 +154,24 @@ class HeartbeatWorker:
             self._running[user_id] = task
             task.add_done_callback(lambda _t, uid=user_id: self._running.pop(uid, None))
 
-    async def run_user_now(self, user_id: str) -> str:
+    async def run_user_now(self, user_id: str, *, suppress_push: bool = False) -> str:
         """Manual trigger for /heartbeat run."""
         user_id = str(user_id)
         if user_id in self._running:
             return "Heartbeat already running."
-        return await self._run_heartbeat_for_user(user_id, force=True)
+        return await self._run_heartbeat_for_user(
+            user_id,
+            force=True,
+            suppress_push=bool(suppress_push),
+        )
 
-    async def _run_heartbeat_for_user(self, user_id: str, force: bool) -> str:
+    async def _run_heartbeat_for_user(
+        self,
+        user_id: str,
+        force: bool,
+        *,
+        suppress_push: bool = False,
+    ) -> str:
         user_id = str(user_id)
         owner = f"hb:{user_id}:{int(datetime.now().timestamp())}"
         locked = await heartbeat_store.claim_lock(user_id, owner=owner)
@@ -143,13 +179,14 @@ class HeartbeatWorker:
             return "lock_busy"
 
         current = asyncio.current_task()
-        await task_manager.register_task(
-            user_id,
-            current,
-            description="Heartbeat 周期检查",
-            heartbeat_path=str(heartbeat_store.heartbeat_path(user_id)),
-            task_id=f"hb-{int(datetime.now().timestamp())}",
-        )
+        if current is not None:
+            await task_manager.register_task(
+                user_id,
+                current,
+                description="Heartbeat 周期检查",
+                heartbeat_path=str(heartbeat_store.heartbeat_path(user_id)),
+                task_id=f"hb-{int(datetime.now().timestamp())}",
+            )
 
         try:
             if not force:
@@ -159,9 +196,121 @@ class HeartbeatWorker:
 
             spec = await heartbeat_store.get_heartbeat_spec(user_id)
             checklist = list(spec.get("checklist") or [])
-            prompt = self._build_heartbeat_prompt(checklist)
-            ctx = self._build_headless_context(user_id)
+            final_text = await self._run_heartbeat_task_batch(
+                user_id=user_id,
+                checklist=checklist,
+                owner=owner,
+            )
+
+            level = heartbeat_store.classify_result(final_text)
+
+            heartbeat_meta = await heartbeat_store.mark_heartbeat_run(
+                user_id, final_text
+            )
+            with contextlib.suppress(Exception):
+                from core.markdown_memory_store import markdown_memory_store
+
+                rollup_result = await markdown_memory_store.rollup_today_sessions(
+                    user_id
+                )
+                logger.info(
+                    "Heartbeat daily rollup user=%s result=%s", user_id, rollup_result
+                )
+            await heartbeat_store.clear_last_error(user_id)
+
+            if final_text.strip() == "HEARTBEAT_OK" and self.suppress_ok:
+                return "HEARTBEAT_OK"
+
+            if suppress_push:
+                return final_text
+
+            target = await heartbeat_store.get_delivery_target(user_id)
+            platform = target.get("platform", "").strip()
+            chat_id = target.get("chat_id", "").strip()
+            if not platform or not chat_id:
+                logger.info(
+                    "Heartbeat result skipped push: no delivery target for user=%s",
+                    user_id,
+                )
+                return final_text
+
+            level = str(heartbeat_meta.get("last_level", level)).upper()
+            text_to_push = final_text
+            pushed = await self._push_to_target(
+                platform=platform, chat_id=chat_id, text=text_to_push
+            )
+            if not pushed:
+                logger.warning(
+                    "Heartbeat result push failed. user=%s platform=%s chat=%s",
+                    user_id,
+                    platform,
+                    chat_id,
+                )
+            return final_text
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.error(
+                "Heartbeat user run error: user=%s err=%s", user_id, exc, exc_info=True
+            )
+            await heartbeat_store.set_last_error(user_id, str(exc))
+            await heartbeat_store.mark_heartbeat_run(user_id, f"ERROR: {exc}")
+            return f"ERROR: {exc}"
+        finally:
+            await heartbeat_store.release_lock(user_id, owner=owner)
+            if current is not None:
+                task_manager.unregister_task(user_id)
+
+    async def _run_heartbeat_task_batch(
+        self,
+        *,
+        user_id: str,
+        checklist: list[str],
+        owner: str,
+    ) -> str:
+        specs = await self._build_heartbeat_task_specs(
+            user_id=user_id, checklist=checklist
+        )
+        if not specs:
+            return "HEARTBEAT_OK"
+
+        ctx = self._build_headless_context(user_id)
+        if self.mode == "readonly":
             ctx.user_data["execution_policy"] = "heartbeat_readonly_policy"
+        else:
+            ctx.user_data["execution_policy"] = "worker_execution_policy"
+
+        sections: list[str] = []
+        for idx, spec in enumerate(specs, start=1):
+            await heartbeat_store.refresh_lock(user_id, owner=owner)
+            title = str(spec.get("title") or f"任务 {idx}")
+            goal = str(spec.get("goal") or "").strip()
+            if not goal:
+                continue
+
+            task = await task_inbox.submit(
+                source="heartbeat",
+                goal=goal,
+                user_id=user_id,
+                payload={
+                    "type": str(spec.get("type") or "heartbeat_item"),
+                    "index": idx,
+                    "title": str(spec.get("title") or f"Heartbeat task {idx}"),
+                },
+                priority="normal",
+                requires_reply=True,
+                metadata={
+                    "heartbeat_mode": self.mode,
+                    "readonly": self.mode == "readonly",
+                },
+            )
+            ctx.user_data["task_inbox_id"] = task.task_id
+
+            prompt = self._build_heartbeat_task_prompt(
+                task_id=task.task_id,
+                goal=goal,
+                readonly=self.mode == "readonly",
+            )
             message_history = [{"role": "user", "parts": [{"text": prompt}]}]
 
             chunks: list[str] = []
@@ -171,111 +320,155 @@ class HeartbeatWorker:
                     chunks.append(str(chunk))
                 await heartbeat_store.refresh_lock(user_id, owner=owner)
 
-            final_text = "\n".join(chunks).strip() or "HEARTBEAT_OK"
-            builtin_signals = await self._collect_builtin_skill_signals(user_id)
-            if builtin_signals:
-                if final_text.strip() == "HEARTBEAT_OK":
-                    final_text = builtin_signals
-                else:
-                    final_text = f"{final_text}\n\n{builtin_signals}"
+            stream_text = "\n".join(chunks).strip()
+            inbox_text = ""
+            current = await task_inbox.get(task.task_id)
+            if current:
+                inbox_text = str(current.final_output or "").strip()
 
-            level = heartbeat_store.classify_result(final_text)
+            def _quality_score(value: str) -> int:
+                if not value:
+                    return -1
+                return (
+                    len(value) + (value.count("http") * 200) + (value.count("\n") * 10)
+                )
 
-            if (
-                self.mode == "readonly"
-                and level == "ACTION"
-            ):
-                if self.readonly_dispatch:
-                    logger.warning(
-                        "HEARTBEAT_READONLY_DISPATCH is enabled but ignored: "
-                        "heartbeat readonly mode no longer dispatches repair tasks to workers."
-                    )
-                final_text = self._format_readonly_action_findings(final_text)
-                level = heartbeat_store.classify_result(final_text)
+            text = stream_text
+            if _quality_score(inbox_text) > _quality_score(stream_text):
+                text = inbox_text
+            if not text:
+                text = "HEARTBEAT_OK"
 
-            heartbeat_meta = await heartbeat_store.mark_heartbeat_run(user_id, final_text)
-            await heartbeat_store.clear_last_error(user_id)
+            if text.strip() == "HEARTBEAT_OK":
+                await task_inbox.complete(
+                    task.task_id,
+                    result={"summary": "HEARTBEAT_OK", "title": spec.get("title")},
+                    final_output="HEARTBEAT_OK",
+                )
+                continue
 
-            if final_text.strip() == "HEARTBEAT_OK" and self.suppress_ok:
-                return "HEARTBEAT_OK"
-
-            target = await heartbeat_store.get_delivery_target(user_id)
-            platform = target.get("platform", "").strip()
-            chat_id = target.get("chat_id", "").strip()
-            if not platform or not chat_id:
-                logger.info("Heartbeat result skipped push: no delivery target for user=%s", user_id)
-                return final_text
-
-            level = str(heartbeat_meta.get("last_level", level)).upper()
-            text_to_push = final_text if level == "OK" else f"[{level}] {final_text}"
-            pushed = await self._push_to_target(platform=platform, chat_id=chat_id, text=text_to_push)
-            if not pushed:
-                logger.warning("Heartbeat result push failed. user=%s platform=%s chat=%s", user_id, platform, chat_id)
-            return final_text
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.error("Heartbeat user run error: user=%s err=%s", user_id, exc, exc_info=True)
-            await heartbeat_store.set_last_error(user_id, str(exc))
-            await heartbeat_store.mark_heartbeat_run(user_id, f"ERROR: {exc}")
-            return f"ERROR: {exc}"
-        finally:
-            await heartbeat_store.release_lock(user_id, owner=owner)
-            task_manager.unregister_task(user_id)
-
-    @staticmethod
-    def _build_heartbeat_prompt(checklist: list[str]) -> str:
-        lines = [f"- {item}" for item in checklist if str(item or "").strip()]
-        body = "\n".join(lines) if lines else "- Check important updates and only report action-required items."
-        return (
-            "你正在执行周期心跳检查。\n"
-            "严格按以下 checklist 逐项检查。\n"
-            "如果没有任何需要用户采取行动的事项，只输出：HEARTBEAT_OK\n"
-            "如果有事项，输出精炼摘要（包含行动建议）。\n\n"
-            "# Heartbeat checklist\n"
-            f"{body}"
-        )
-
-    async def _collect_builtin_skill_signals(self, user_id: str) -> str:
-        sections: list[str] = []
-
-        if self.enable_rss_signal:
-            try:
-                from core.scheduler import trigger_manual_rss_check
-
-                rss_text = str(await trigger_manual_rss_check(user_id) or "").strip()
-                if rss_text:
-                    sections.append(
-                        "RSS 信号（heartbeat 驱动，无内置定时器）:\n"
-                        + self._truncate_signal(rss_text, 1400)
-                    )
-            except Exception as exc:
-                logger.debug("Heartbeat RSS signal check failed: %s", exc, exc_info=True)
-
-        if self.enable_stock_signal:
-            try:
-                from core.scheduler import trigger_manual_stock_check, is_trading_time
-
-                if is_trading_time():
-                    stock_text = str(await trigger_manual_stock_check(user_id) or "").strip()
-                    if stock_text:
-                        sections.append(
-                            "股票信号（heartbeat 驱动，无内置定时器）:\n"
-                            + self._truncate_signal(stock_text, 1000)
-                        )
-            except Exception as exc:
-                logger.debug("Heartbeat stock signal check failed: %s", exc, exc_info=True)
+            sections.append(text.strip())
+            await task_inbox.complete(
+                task.task_id,
+                result={"summary": text[:500], "title": title},
+                final_output=text,
+            )
 
         if not sections:
-            return ""
-        return "NOTICE: 心跳检测到以下信息更新（无需修复动作）：\n\n" + "\n\n".join(sections)
+            return "HEARTBEAT_OK"
+        return "\n\n".join(sections)
+
+    async def _build_heartbeat_task_specs(
+        self,
+        *,
+        user_id: str,
+        checklist: list[str],
+    ) -> list[dict[str, Any]]:
+        specs: list[dict[str, Any]] = []
+        normalized = [
+            str(item or "").strip() for item in checklist if str(item or "").strip()
+        ]
+        merged_checklist_text = "\n".join(normalized).lower()
+        has_rss_focus = any(
+            token in merged_checklist_text for token in ("rss", "订阅", "feed")
+        )
+        has_stock_focus = any(
+            token in merged_checklist_text
+            for token in ("股票", "自选股", "行情", "stock", "quote")
+        )
+        for idx, item in enumerate(normalized, start=1):
+            specs.append(
+                {
+                    "type": "checklist",
+                    "title": f"Heartbeat 检查项 {idx}",
+                    "goal": item,
+                }
+            )
+
+        numeric_user_id = 0
+        with contextlib.suppress(Exception):
+            numeric_user_id = int(str(user_id))
+
+        if self.enable_rss_signal and numeric_user_id > 0 and not has_rss_focus:
+            with contextlib.suppress(Exception):
+                from core.state_store import get_user_subscriptions
+
+                subs = await get_user_subscriptions(numeric_user_id)
+                if subs:
+                    specs.append(
+                        {
+                            "type": "rss_signal",
+                            "title": "RSS 更新检查",
+                            "goal": "检查用户 RSS 订阅最新更新。优先调用现有工具并直接交付工具结果，可在末尾补充简短观察。",
+                        }
+                    )
+
+        if self.enable_stock_signal and numeric_user_id > 0 and not has_stock_focus:
+            with contextlib.suppress(Exception):
+                from core.scheduler import is_trading_time
+                from core.state_store import get_user_watchlist
+
+                if is_trading_time():
+                    watchlist = await get_user_watchlist(numeric_user_id)
+                    if watchlist:
+                        specs.append(
+                            {
+                                "type": "stock_signal",
+                                "title": "股票行情检查",
+                                "goal": "获取用户自选股的最新行情并给出重点波动提醒。",
+                            }
+                        )
+
+        return specs
 
     @staticmethod
-    def _truncate_signal(text: str, limit: int = 1200) -> str:
+    def _build_heartbeat_task_prompt(*, task_id: str, goal: str, readonly: bool) -> str:
+        readonly_line = (
+            "当前为 readonly 模式：仅允许检查、查询、总结，不要进行系统级修改。"
+            if readonly
+            else "当前为 execute 模式：可以按需派发 worker 完成任务。"
+        )
+        return (
+            "你正在处理 heartbeat 来源的任务项。\n"
+            f"task_id: {task_id}\n"
+            "source: heartbeat\n"
+            f"goal: {goal}\n"
+            f"{readonly_line}\n"
+            "请自行决定：直接执行、调用扩展、或派发给合适 worker。\n"
+            "若任务涉及外部事实查询（订阅更新/行情/检索/状态），请先调用至少一个可用工具，再基于工具结果作答。\n"
+            "若工具返回可直接交付的结果（尤其链接/列表/命令/数字），请先完整保留工具原文，不要改写或删减。\n"
+            "你可以在工具原文后追加『补充观察』，但必须与原文分段。\n"
+            "最终输出必须是可直接推送给用户的自然语言结果，不要输出系统模板前缀或固定说明。"
+            "若无事项只输出 HEARTBEAT_OK。"
+        )
+
+    @staticmethod
+    def _split_push_chunks(text: str, limit: int = 3500) -> list[str]:
         raw = str(text or "").strip()
+        if not raw:
+            return []
         if len(raw) <= limit:
-            return raw
-        return raw[:limit] + "\n...[truncated]"
+            return [raw]
+
+        chunks: list[str] = []
+        remaining = raw
+        while remaining:
+            if len(remaining) <= limit:
+                chunks.append(remaining)
+                break
+
+            cut = remaining.rfind("\n\n", 0, limit)
+            if cut < int(limit * 0.6):
+                cut = remaining.rfind("\n", 0, limit)
+            if cut < int(limit * 0.4):
+                cut = limit
+
+            part = remaining[:cut].strip()
+            if part:
+                chunks.append(part)
+            remaining = remaining[cut:].strip()
+
+        return chunks
 
     @staticmethod
     def _build_headless_context(user_id: str) -> UnifiedContext:
@@ -315,29 +508,53 @@ class HeartbeatWorker:
             return False
 
         try:
-            if platform == "telegram" and hasattr(adapter, "bot"):
-                await adapter.bot.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    disable_web_page_preview=True,
-                )
+            chunks = self._split_push_chunks(text)
+            if not chunks:
                 return True
 
-            if hasattr(adapter, "send_message"):
-                await adapter.send_message(chat_id=chat_id, text=text)
-                return True
+            total = len(chunks)
+            for idx, chunk in enumerate(chunks, start=1):
+                payload = chunk
+                if total > 1:
+                    payload = f"[{idx}/{total}]\n{chunk}"
+
+                send_message = getattr(adapter, "send_message", None)
+                if callable(send_message):
+                    send_result = send_message(chat_id=chat_id, text=payload)
+                    if inspect.isawaitable(send_result):
+                        await send_result
+                    continue
+
+                bot = getattr(adapter, "bot", None)
+                if platform == "telegram" and bot is not None:
+                    html_payload = payload
+                    with contextlib.suppress(Exception):
+                        from platforms.telegram.formatter import (
+                            markdown_to_telegram_html,
+                        )
+
+                        html_payload = markdown_to_telegram_html(payload)
+                    send_result = bot.send_message(
+                        chat_id=chat_id,
+                        text=html_payload,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+                    if inspect.isawaitable(send_result):
+                        await send_result
+                    continue
+
+                return False
+
+            return True
         except Exception as exc:
-            logger.error("Heartbeat push failed: platform=%s chat=%s err=%s", platform, chat_id, exc)
+            logger.error(
+                "Heartbeat push failed: platform=%s chat=%s err=%s",
+                platform,
+                chat_id,
+                exc,
+            )
         return False
-
-    @staticmethod
-    def _format_readonly_action_findings(findings: str) -> str:
-        return (
-            "🫀 Heartbeat 检测到需要用户处理的维护事项。\n"
-            "- 说明：该事项属于 Core Manager 治理提醒，不会派发 Worker 执行层修复任务。\n"
-            "- 原因：当前为 heartbeat readonly 模式，禁止自动执行系统级变更。\n\n"
-            f"检查发现：\n{str(findings or '').strip()}"
-        )
 
     @staticmethod
     def _create_orchestrator_stream(ctx: UnifiedContext, message_history: list):
@@ -356,6 +573,7 @@ class HeartbeatWorker:
             else:
                 raise
         if not hasattr(stream, "__aiter__") and inspect.isawaitable(stream):
+
             async def _single():
                 result = await stream
                 if result is not None:

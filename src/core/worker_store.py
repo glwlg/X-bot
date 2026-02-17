@@ -21,6 +21,75 @@ def _slugify(value: str, fallback: str = "worker") -> str:
     return slug or fallback
 
 
+def _name_from_worker_soul(workspace_root: str) -> str:
+    root = str(workspace_root or "").strip()
+    if not root:
+        return ""
+    path = (Path(root) / "SOUL.MD").resolve()
+    if not path.exists():
+        return ""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        return ""
+
+    for line in text.splitlines()[:120]:
+        match = re.match(r"^\s*(?:[-*]\s*)?Name\s*:\s*(.+?)\s*$", line, re.IGNORECASE)
+        if not match:
+            continue
+        name = str(match.group(1) or "").strip().strip("`*")
+        if name:
+            return name
+    return ""
+
+
+def _resolve_worker_display_name(
+    *, worker_id: str, stored_name: str, workspace_root: str
+) -> str:
+    current = str(stored_name or "").strip()
+    soul_name = _name_from_worker_soul(workspace_root)
+    if soul_name and (
+        not current
+        or current == worker_id
+        or current.lower() in {"main worker", "worker", "default worker"}
+    ):
+        return soul_name
+    return current or soul_name or worker_id
+
+
+def _normalize_worker_output(
+    output: Any,
+    *,
+    result: Any = "",
+    result_summary: str = "",
+    error: str = "",
+) -> Dict[str, Any]:
+    normalized: Dict[str, Any] = {}
+    if isinstance(output, dict):
+        normalized.update(output)
+
+    text_candidates = [
+        normalized.get("text"),
+        result,
+        result_summary,
+    ]
+    for value in text_candidates:
+        text = str(value or "").strip()
+        if text:
+            normalized["text"] = text
+            break
+
+    if "error" not in normalized:
+        error_text = str(error or "").strip()
+        if error_text:
+            normalized["error"] = error_text
+
+    ui_payload = normalized.get("ui")
+    if not isinstance(ui_payload, dict):
+        normalized.pop("ui", None)
+    return normalized
+
+
 class WorkerRegistry:
     """Persistent worker registry for userland workers."""
 
@@ -51,7 +120,9 @@ class WorkerRegistry:
     def _read_unlocked(self) -> Dict[str, Any]:
         if not self.meta_path.exists():
             data = self._default_payload()
-            self.meta_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+            self.meta_path.write_text(
+                json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
             return data
         try:
             loaded = json.loads(self.meta_path.read_text(encoding="utf-8"))
@@ -69,12 +140,31 @@ class WorkerRegistry:
             if not isinstance(value, dict):
                 continue
             worker_id = _slugify(str(key), fallback="worker")
+            default_workspace = str((self.root / worker_id).resolve())
+            configured_workspace = str(value.get("workspace_root") or "").strip()
+            workspace_root = configured_workspace or default_workspace
+            if configured_workspace:
+                configured_exists = Path(configured_workspace).exists()
+                default_exists = Path(default_workspace).exists()
+                if not configured_exists and default_exists:
+                    workspace_root = default_workspace
             record = {
                 "id": worker_id,
-                "name": str(value.get("name") or worker_id),
-                "backend": str(value.get("backend") or self.default_backend).strip().lower() or self.default_backend,
-                "status": str(value.get("status") or "ready").strip().lower() or "ready",
-                "workspace_root": str(value.get("workspace_root") or (self.root / worker_id)).strip(),
+                "name": _resolve_worker_display_name(
+                    worker_id=worker_id,
+                    stored_name=str(value.get("name") or "").strip(),
+                    workspace_root=workspace_root,
+                ),
+                "backend": str(value.get("backend") or self.default_backend)
+                .strip()
+                .lower()
+                or self.default_backend,
+                "status": str(value.get("status") or "ready").strip().lower()
+                or "ready",
+                "capabilities": value.get("capabilities")
+                if isinstance(value.get("capabilities"), list)
+                else [],
+                "workspace_root": workspace_root,
                 "credentials_root": str(
                     value.get("credentials_root")
                     or (Path(DATA_DIR) / "credentials" / "workers" / worker_id)
@@ -83,7 +173,9 @@ class WorkerRegistry:
                 "updated_at": str(value.get("updated_at") or _now_iso()),
                 "last_task_id": str(value.get("last_task_id") or ""),
                 "last_error": str(value.get("last_error") or ""),
-                "auth": value.get("auth") if isinstance(value.get("auth"), dict) else {},
+                "auth": value.get("auth")
+                if isinstance(value.get("auth"), dict)
+                else {},
             }
             normalized[worker_id] = record
         data["workers"] = normalized
@@ -94,9 +186,13 @@ class WorkerRegistry:
         payload = self._default_payload()
         payload.update(data or {})
         payload["updated_at"] = _now_iso()
-        self.meta_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        self.meta_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
-    async def ensure_default_worker(self, worker_id: str = "worker-main") -> Dict[str, Any]:
+    async def ensure_default_worker(
+        self, worker_id: str = "worker-main"
+    ) -> Dict[str, Any]:
         async with self._lock:
             data = self._read_unlocked()
             workers = data["workers"]
@@ -133,16 +229,22 @@ class WorkerRegistry:
                 return None
             return dict(record)
 
-    def _build_worker_record(self, worker_id: str, name: str, backend: str) -> Dict[str, Any]:
+    def _build_worker_record(
+        self, worker_id: str, name: str, backend: str
+    ) -> Dict[str, Any]:
         now = _now_iso()
         safe_id = _slugify(worker_id, fallback="worker")
         return {
             "id": safe_id,
             "name": str(name or safe_id).strip() or safe_id,
-            "backend": str(backend or self.default_backend).strip().lower() or self.default_backend,
+            "backend": str(backend or self.default_backend).strip().lower()
+            or self.default_backend,
             "status": "ready",
+            "capabilities": [],  # 运行时可动态更新
             "workspace_root": str((self.root / safe_id).resolve()),
-            "credentials_root": str((Path(DATA_DIR) / "credentials" / "workers" / safe_id).resolve()),
+            "credentials_root": str(
+                (Path(DATA_DIR) / "credentials" / "workers" / safe_id).resolve()
+            ),
             "created_at": now,
             "updated_at": now,
             "last_task_id": "",
@@ -170,7 +272,9 @@ class WorkerRegistry:
             while final_id in workers:
                 suffix += 1
                 final_id = f"{base_id}-{suffix}"
-            record = self._build_worker_record(final_id, name=name, backend=backend or self.default_backend)
+            record = self._build_worker_record(
+                final_id, name=name, backend=backend or self.default_backend
+            )
             workers[final_id] = record
             self._ensure_worker_dirs(record)
             self._write_unlocked(data)
@@ -203,15 +307,21 @@ class WorkerRegistry:
                 return None
             for key in ("name", "status", "backend", "last_task_id", "last_error"):
                 if key in fields:
-                    current[key] = str(fields[key] if fields[key] is not None else current.get(key, "")).strip()
+                    current[key] = str(
+                        fields[key] if fields[key] is not None else current.get(key, "")
+                    ).strip()
             if "auth" in fields and isinstance(fields["auth"], dict):
                 current["auth"] = fields["auth"]
+            if "capabilities" in fields and isinstance(fields["capabilities"], list):
+                current["capabilities"] = fields["capabilities"]
             current["updated_at"] = _now_iso()
             workers[safe_id] = current
             self._write_unlocked(data)
             return dict(current)
 
-    async def set_auth_state(self, worker_id: str, provider: str, state: Dict[str, Any]) -> Dict[str, Any] | None:
+    async def set_auth_state(
+        self, worker_id: str, provider: str, state: Dict[str, Any]
+    ) -> Dict[str, Any] | None:
         safe_id = _slugify(worker_id, fallback="")
         if not safe_id:
             return None
@@ -301,6 +411,7 @@ class WorkerTaskStore:
             "started_at": "",
             "ended_at": "",
             "metadata": metadata or {},
+            "output": {},
             "events": [],
         }
         record["events"].append(
@@ -328,6 +439,12 @@ class WorkerTaskStore:
             try:
                 row = json.loads(text)
                 if isinstance(row, dict):
+                    row["output"] = _normalize_worker_output(
+                        row.get("output"),
+                        result=row.get("result"),
+                        result_summary=str(row.get("result_summary") or ""),
+                        error=str(row.get("error") or ""),
+                    )
                     rows.append(row)
             except Exception:
                 continue
@@ -346,6 +463,7 @@ class WorkerTaskStore:
                     "status",
                     "result_summary",
                     "result",
+                    "output",
                     "error",
                     "started_at",
                     "ended_at",
@@ -360,6 +478,12 @@ class WorkerTaskStore:
                         row["retry_count"] = max(0, int(fields["retry_count"]))
                     except Exception:
                         row["retry_count"] = previous_retry
+                row["output"] = _normalize_worker_output(
+                    row.get("output"),
+                    result=row.get("result"),
+                    result_summary=str(row.get("result_summary") or ""),
+                    error=str(row.get("error") or ""),
+                )
 
                 events = row.get("events")
                 if not isinstance(events, list):
@@ -411,12 +535,48 @@ class WorkerTaskStore:
             safe_id = _slugify(worker_id, fallback="")
             rows = [row for row in rows if str(row.get("worker_id")) == safe_id]
         if include_sources:
-            allowed = {self._normalize_source(item) for item in include_sources if str(item).strip()}
-            rows = [row for row in rows if self._normalize_source(str(row.get("source") or "")) in allowed]
+            allowed = {
+                self._normalize_source(item)
+                for item in include_sources
+                if str(item).strip()
+            }
+            rows = [
+                row
+                for row in rows
+                if self._normalize_source(str(row.get("source") or "")) in allowed
+            ]
         if exclude_sources:
-            blocked = {self._normalize_source(item) for item in exclude_sources if str(item).strip()}
-            rows = [row for row in rows if self._normalize_source(str(row.get("source") or "")) not in blocked]
+            blocked = {
+                self._normalize_source(item)
+                for item in exclude_sources
+                if str(item).strip()
+            }
+            rows = [
+                row
+                for row in rows
+                if self._normalize_source(str(row.get("source") or "")) not in blocked
+            ]
         return rows[-max(1, int(limit)) :]
+
+    async def list_recent_outputs(
+        self,
+        *,
+        worker_id: str | None = None,
+        limit: int = 20,
+    ) -> List[Dict[str, Any]]:
+        rows = await self.list_recent(worker_id=worker_id, limit=limit)
+        outputs: List[Dict[str, Any]] = []
+        for row in rows:
+            outputs.append(
+                {
+                    "task_id": str(row.get("task_id") or ""),
+                    "worker_id": str(row.get("worker_id") or ""),
+                    "status": str(row.get("status") or ""),
+                    "ended_at": str(row.get("ended_at") or ""),
+                    "output": dict(row.get("output") or {}),
+                }
+            )
+        return outputs
 
 
 worker_registry = WorkerRegistry()

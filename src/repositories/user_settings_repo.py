@@ -1,35 +1,47 @@
-"""
-用户设置 Repository
-"""
+"""User settings repository backed by filesystem JSON."""
 
-import aiosqlite
-from .base import get_db
+from __future__ import annotations
+
+from .base import now_iso, read_json, user_path, write_json
+
+
+def _settings_path(user_id: int | str):
+    return user_path(user_id, "settings.md")
 
 
 async def set_translation_mode(user_id: int | str, enabled: bool):
-    """设置自动翻译模式开关"""
-    async with await get_db() as db:
-        await db.execute(
-            """
-            INSERT INTO user_settings (user_id, auto_translate) 
-            VALUES (?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET 
-            auto_translate = ?, updated_at = CURRENT_TIMESTAMP
-            """,
-            (user_id, enabled, enabled),
-        )
-        await db.commit()
+    path = _settings_path(user_id)
+    current = await read_json(
+        path,
+        {
+            "user_id": str(user_id),
+            "auto_translate": 0,
+            "target_lang": "zh-CN",
+            "updated_at": now_iso(),
+        },
+    )
+    if not isinstance(current, dict):
+        current = {
+            "user_id": str(user_id),
+            "auto_translate": 0,
+            "target_lang": "zh-CN",
+            "updated_at": now_iso(),
+        }
+    current["user_id"] = str(user_id)
+    current["auto_translate"] = 1 if bool(enabled) else 0
+    current["target_lang"] = str(current.get("target_lang") or "zh-CN")
+    current["updated_at"] = now_iso()
+    await write_json(path, current)
 
 
 async def get_user_settings(user_id: int | str) -> dict:
-    """获取用户设置"""
-    async with await get_db() as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM user_settings WHERE user_id = ?", (user_id,)
-        ) as cursor:
-            row = await cursor.fetchone()
-            if row:
-                return dict(row)
-            # 默认设置
-            return {"user_id": user_id, "auto_translate": 0, "target_lang": "zh-CN"}
+    path = _settings_path(user_id)
+    current = await read_json(path, {})
+    if not isinstance(current, dict):
+        current = {}
+    return {
+        "user_id": str(user_id),
+        "auto_translate": int(current.get("auto_translate") or 0),
+        "target_lang": str(current.get("target_lang") or "zh-CN"),
+        "updated_at": str(current.get("updated_at") or now_iso()),
+    }

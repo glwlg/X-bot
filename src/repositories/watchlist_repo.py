@@ -1,89 +1,156 @@
-"""
-自选股 Repository
-"""
+"""Watchlist repository backed by user-scoped Markdown files."""
 
-import aiosqlite
-from .base import get_db
+from __future__ import annotations
+
+from typing import Any
+
+from .base import all_user_ids, read_json, user_path, write_json
+
+
+def _watchlist_path(user_id: int | str):
+    return user_path(user_id, "stock", "watchlist.md")
+
+
+def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "stock_code": str(raw.get("stock_code") or "").strip(),
+        "stock_name": str(raw.get("stock_name") or "").strip(),
+        "platform": str(raw.get("platform") or "telegram").strip() or "telegram",
+    }
+
+
+def _to_runtime_rows(
+    user_id: int | str, rows: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    runtime: list[dict[str, Any]] = []
+    for index, item in enumerate(rows, start=1):
+        code = str(item.get("stock_code") or "").strip()
+        if not code:
+            continue
+        runtime.append(
+            {
+                "id": index,  # ephemeral id for compatibility
+                "user_id": str(user_id),
+                "stock_code": code,
+                "stock_name": str(item.get("stock_name") or code),
+                "platform": str(item.get("platform") or "telegram"),
+            }
+        )
+    return runtime
+
+
+async def _read_watchlist(user_id: int | str) -> list[dict[str, Any]]:
+    data = await read_json(_watchlist_path(user_id), [])
+    if not isinstance(data, list):
+        return []
+    rows = [_normalize(item) for item in data if isinstance(item, dict)]
+    return [item for item in rows if item.get("stock_code")]
+
+
+async def _write_watchlist(user_id: int | str, rows: list[dict[str, Any]]) -> None:
+    payload: list[dict[str, Any]] = []
+    for row in rows:
+        code = str(row.get("stock_code") or "").strip()
+        if not code:
+            continue
+        payload.append(
+            {
+                "stock_code": code,
+                "stock_name": str(row.get("stock_name") or code).strip(),
+                "platform": str(row.get("platform") or "telegram").strip()
+                or "telegram",
+            }
+        )
+    await write_json(_watchlist_path(user_id), payload)
 
 
 async def add_watchlist_stock(
-    user_id: int, stock_code: str, stock_name: str, platform: str = "telegram"
+    user_id: int | str,
+    stock_code: str,
+    stock_name: str,
+    platform: str = "telegram",
 ) -> bool:
-    """添加自选股"""
-    async with await get_db() as db:
-        try:
-            await db.execute(
-                "INSERT INTO watchlist (user_id, stock_code, stock_name, platform) VALUES (?, ?, ?, ?)",
-                (user_id, stock_code, stock_name, platform),
-            )
-            await db.commit()
-            return True
-        except Exception:
-            return False
+    rows = await _read_watchlist(user_id)
+    code = str(stock_code or "").strip()
+    if not code:
+        return False
+    if any(str(item.get("stock_code") or "").strip() == code for item in rows):
+        return False
+
+    rows.append(
+        {
+            "stock_code": code,
+            "stock_name": str(stock_name or code).strip(),
+            "platform": str(platform or "telegram"),
+        }
+    )
+    await _write_watchlist(user_id, rows)
+    return True
 
 
-async def remove_watchlist_stock(stock_id: int, stock_code: str | None = None) -> bool:
-    """
-    删除自选股。
+async def remove_watchlist_stock(
+    stock_id: int | str, stock_code: str | None = None
+) -> bool:
+    """Compatibility wrapper.
 
-    兼容两种调用方式：
     - remove_watchlist_stock(stock_id)
     - remove_watchlist_stock(user_id, stock_code)
     """
     if stock_code is not None:
         return await remove_watchlist_stock_by_code(stock_id, stock_code)
 
-    async with await get_db() as db:
-        cursor = await db.execute(
-            "DELETE FROM watchlist WHERE id = ?",
-            (stock_id,),
+    sid = int(stock_id)
+    changed_any = False
+    for uid in all_user_ids():
+        rows = await _read_watchlist(uid)
+        runtime = _to_runtime_rows(uid, rows)
+        target = next(
+            (item for item in runtime if int(item.get("id") or 0) == sid), None
         )
-        await db.commit()
-        return cursor.rowcount > 0
+        if not target:
+            continue
+        code = str(target.get("stock_code") or "")
+        kept = [item for item in rows if str(item.get("stock_code") or "") != code]
+        if len(kept) != len(rows):
+            await _write_watchlist(uid, kept)
+            changed_any = True
+    return changed_any
 
 
-async def remove_watchlist_stock_by_code(user_id: int, stock_code: str) -> bool:
-    """根据代码删除自选股"""
-    async with await get_db() as db:
-        cursor = await db.execute(
-            "DELETE FROM watchlist WHERE user_id = ? AND stock_code = ?",
-            (user_id, stock_code),
-        )
-        await db.commit()
-        return cursor.rowcount > 0
+async def remove_watchlist_stock_by_code(user_id: int | str, stock_code: str) -> bool:
+    rows = await _read_watchlist(user_id)
+    code = str(stock_code or "").strip()
+    kept = [item for item in rows if str(item.get("stock_code") or "").strip() != code]
+    changed = len(kept) != len(rows)
+    if changed:
+        await _write_watchlist(user_id, kept)
+    return changed
 
 
-async def get_user_watchlist(user_id: int, platform: str = None) -> list[dict]:
-    """获取用户自选股列表"""
-    async with await get_db() as db:
-        db.row_factory = aiosqlite.Row
-
-        sql = "SELECT * FROM watchlist WHERE user_id = ?"
-        params = [user_id]
-
-        if platform:
-            sql += " AND platform = ?"
-            params.append(platform)
-
-        sql += " ORDER BY created_at DESC"
-
-        async with db.execute(sql, tuple(params)) as cursor:
-            rows = await cursor.fetchall()
-            return [dict(row) for row in rows]
+async def get_user_watchlist(
+    user_id: int | str, platform: str | None = None
+) -> list[dict]:
+    rows = await _read_watchlist(user_id)
+    if platform:
+        target = str(platform).strip().lower()
+        rows = [
+            item
+            for item in rows
+            if str(item.get("platform") or "telegram").strip().lower() == target
+        ]
+    return _to_runtime_rows(user_id, rows)
 
 
-async def get_all_watchlist_users() -> list[tuple[int, str]]:
-    """获取所有有自选股的用户 ID 和平台"""
-    async with await get_db() as db:
-        async with db.execute(
-            "SELECT DISTINCT user_id, platform FROM watchlist"
-        ) as cursor:
-            rows = await cursor.fetchall()
-            # Handle legacy rows where platform might be null (though we set default)
-            # Ensure we return tuple (user_id, platform)
-            results = []
-            for row in rows:
-                uid = row[0]
-                plat = row[1] if len(row) > 1 and row[1] else "telegram"
-                results.append((uid, plat))
-            return results
+async def get_all_watchlist_users() -> list[tuple[int | str, str]]:
+    pairs: list[tuple[int | str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for uid in all_user_ids():
+        rows = await _read_watchlist(uid)
+        for row in rows:
+            plat = str(row.get("platform") or "telegram")
+            key = (str(uid), plat)
+            if key in seen:
+                continue
+            seen.add(key)
+            pairs.append((uid, plat))
+    return pairs

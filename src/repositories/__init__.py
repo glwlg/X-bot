@@ -6,7 +6,6 @@ Repositories 模块 - 数据访问层
 
 from .base import init_db, get_db, DB_PATH
 from .cache_repo import save_video_cache, get_video_cache
-from .user_stats_repo import increment_stat, get_user_stats
 from .reminder_repo import add_reminder, delete_reminder, get_pending_reminders
 from .subscription_repo import (
     add_subscription,

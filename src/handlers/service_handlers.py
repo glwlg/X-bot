@@ -6,9 +6,7 @@
 """
 
 import logging
-from repositories import get_user_settings, set_translation_mode
-from repositories.chat_repo import search_messages
-from stats import get_user_stats_text
+from core.state_store import get_user_settings, set_translation_mode, search_messages
 from .base_handlers import check_permission_unified
 from core.platform.models import UnifiedContext
 
@@ -21,23 +19,6 @@ from .feature_handlers import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# --- Stats (保留在此文件中，较小) ---
-
-
-async def stats_command(ctx: UnifiedContext) -> None:
-    """处理 /stats 命令"""
-    if not await check_permission_unified(ctx):
-        return
-
-    user_id = ctx.message.user.id
-    try:
-        stats_text = await get_user_stats_text(user_id)
-    except:
-        stats_text = "Stats not available for non-numeric ID yet"
-
-    await ctx.reply(stats_text)
 
 
 # --- Translation (保留在此文件中，较小) ---
@@ -96,8 +77,7 @@ async def chatlog_command(ctx: UnifiedContext) -> None:
 
 # 导出所有函数
 __all__ = [
-    # Stats & Translation
-    "stats_command",
+    # Translation
     "toggle_translation_command",
     "chatlog_command",
     # Reminder

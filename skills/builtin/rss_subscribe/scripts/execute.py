@@ -10,7 +10,7 @@ import asyncio
 import httpx
 
 
-from repositories import (
+from core.state_store import (
     get_user_subscriptions,
     add_subscription,
     delete_subscription,
@@ -24,9 +24,90 @@ logger = logging.getLogger(__name__)
 
 async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> str:
     """执行 RSS 订阅或关键词监控"""
-    action = params.get("action", "add")
+    action = str(params.get("action") or "").strip().lower()
+    action = action.replace("-", "_").replace(" ", "_")
+
+    action_alias = {
+        "list_subscriptions": "list",
+        "list_subscription": "list",
+        "list_all_feeds": "list",
+        "list_feeds": "list",
+        "show_subscriptions": "list",
+        "show_list": "list",
+        "check_updates": "refresh",
+        "list_updates": "refresh",
+        "fetch_latest": "refresh",
+        "check_latest": "refresh",
+        "remove_subscription": "remove",
+        "delete_subscription": "remove",
+    }
+    action = action_alias.get(action, action)
+    if action:
+        if any(token in action for token in ("refresh", "check", "update", "latest")):
+            action = "refresh"
+        elif any(token in action for token in ("remove", "delete", "unsub")):
+            action = "remove"
+        elif any(token in action for token in ("list", "subs", "subscription", "feed")):
+            action = "list"
     # 支持 url 或 keyword 参数
-    url = params.get("url") or params.get("keyword", "")
+    raw_target = str(params.get("url") or params.get("keyword", "") or "").strip()
+    url = raw_target
+    command_token = raw_target
+    if command_token.startswith("/"):
+        command_token = command_token[1:]
+    command_token = command_token.strip().lower()
+    message_text = str(getattr(getattr(ctx, "message", None), "text", "") or "").lower()
+
+    if not action and command_token in {
+        "list",
+        "list_subs",
+        "subscriptions",
+        "subs",
+    }:
+        action = "list"
+        url = ""
+    elif not action and command_token in {"refresh", "check", "run", "latest"}:
+        action = "refresh"
+        url = ""
+    elif not action and command_token in {
+        "remove",
+        "unsubscribe",
+        "delete",
+    }:
+        action = "remove"
+        url = ""
+
+    if not action:
+        action = "refresh" if not url else "add"
+
+    if action in {"check", "run", "latest"}:
+        action = "refresh"
+
+    if action == "list":
+        update_tokens = (
+            "更新",
+            "最新",
+            "check",
+            "refresh",
+            "update",
+            "latest",
+            "有没有",
+        )
+        explicit_list_only_tokens = (
+            "只看列表",
+            "仅列表",
+            "list only",
+            "只列出",
+        )
+        has_update_goal = any(token in message_text for token in update_tokens)
+        list_only_goal = any(
+            token in message_text for token in explicit_list_only_tokens
+        )
+        if has_update_goal and not list_only_goal:
+            action = "refresh"
+
+    if action == "list":
+        url = ""
 
     if action == "refresh":
         msg = await refresh_user_subscriptions(ctx)
@@ -300,11 +381,7 @@ async def refresh_user_subscriptions(ctx: UnifiedContext) -> str:
 
     from core.scheduler import trigger_manual_rss_check
 
-    result_text = (
-        await trigger_manual_rss_check(ctx.platform_ctx, user_id)
-        if ctx.platform_ctx
-        else "Platform not supported"
-    )
+    result_text = await trigger_manual_rss_check(user_id)
 
     if result_text:
         return result_text

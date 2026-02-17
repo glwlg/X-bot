@@ -10,7 +10,7 @@ from typing import Dict, Any, List
 from core.platform.models import UnifiedContext
 from services.web_summary_service import fetch_webpage_content
 from core.config import gemini_client, GEMINI_MODEL
-from repositories.account_repo import get_account
+from core.state_store import get_account
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,9 @@ def _normalize_article_data(data: Dict[str, Any], topic: str) -> Dict[str, Any]:
             sections.append({"content": content, "image_prompt": image_prompt})
 
     if not sections:
-        sections = [{"content": "<p>暂无正文内容，请稍后重试。</p>", "image_prompt": None}]
+        sections = [
+            {"content": "<p>暂无正文内容，请稍后重试。</p>", "image_prompt": None}
+        ]
 
     return {
         "title": title,
@@ -203,7 +205,9 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
                 "searxng_search", {"query": topic, "num_results": 8}
             )
             search_summary_text = (
-                search_res.get("text", "") if isinstance(search_res, dict) else str(search_res)
+                search_res.get("text", "")
+                if isinstance(search_res, dict)
+                else str(search_res)
             )
             if not search_summary_text and search_res is not None:
                 search_summary_text = str(search_res)
@@ -319,9 +323,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
             section_images[res_idx] = res_bytes
 
     # 4. 发布 或 组装本地预览
-    final_output_md = (
-        f"# {article_data['title']}\n*By {article_data['author']}*\n\n"
-    )
+    final_output_md = f"# {article_data['title']}\n*By {article_data['author']}*\n\n"
     final_output_md += f"> {article_data['digest']}\n\n"
 
     if cover_bytes:

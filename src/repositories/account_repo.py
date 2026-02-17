@@ -1,74 +1,79 @@
+from __future__ import annotations
+
 import logging
-import json
 from typing import Optional, List, Dict, Any
-from .base import get_db
+
+from .base import now_iso, read_json, user_path, write_json
 
 logger = logging.getLogger(__name__)
 
 
-async def add_account(user_id: int, service: str, data: Dict[str, Any]) -> bool:
-    """添加或更新账号"""
+def _accounts_path(user_id: int | str):
+    return user_path(user_id, "accounts.md")
+
+
+async def _read_accounts(user_id: int | str) -> dict[str, dict[str, Any]]:
+    payload = await read_json(_accounts_path(user_id), {})
+    if not isinstance(payload, dict):
+        return {}
+    result: dict[str, dict[str, Any]] = {}
+    for service, item in payload.items():
+        if not isinstance(item, dict):
+            continue
+        result[str(service)] = {
+            "data": dict(item.get("data") or {}),
+            "updated_at": str(item.get("updated_at") or now_iso()),
+        }
+    return result
+
+
+async def add_account(user_id: int | str, service: str, data: Dict[str, Any]) -> bool:
     try:
-        data_json = json.dumps(data, ensure_ascii=False)
-        async with await get_db() as db:
-            await db.execute(
-                """
-                INSERT INTO accounts (user_id, service, enc_data)
-                VALUES (?, ?, ?)
-                ON CONFLICT(user_id, service) DO UPDATE SET
-                    enc_data = excluded.enc_data,
-                    updated_at = CURRENT_TIMESTAMP
-                """,
-                (user_id, service, data_json),
-            )
-            await db.commit()
+        service_name = str(service or "").strip()
+        if not service_name:
+            return False
+        payload = await _read_accounts(user_id)
+        payload[service_name] = {
+            "data": dict(data or {}),
+            "updated_at": now_iso(),
+        }
+        await write_json(_accounts_path(user_id), payload)
         return True
     except Exception as e:
         logger.error(f"Error adding account: {e}")
         return False
 
 
-async def get_account(user_id: int, service: str) -> Optional[Dict[str, Any]]:
-    """获取账号详情"""
+async def get_account(user_id: int | str, service: str) -> Optional[Dict[str, Any]]:
     try:
-        async with await get_db() as db:
-            async with db.execute(
-                "SELECT enc_data FROM accounts WHERE user_id = ? AND service = ?",
-                (user_id, service),
-            ) as cursor:
-                row = await cursor.fetchone()
-                if row:
-                    return json.loads(row[0])
-        return None
+        payload = await _read_accounts(user_id)
+        item = payload.get(str(service or "").strip())
+        if not isinstance(item, dict):
+            return None
+        data = item.get("data")
+        return dict(data or {})
     except Exception as e:
         logger.error(f"Error getting account: {e}")
         return None
 
 
-async def list_accounts(user_id: int) -> List[str]:
-    """列出所有已保存的账号服务名"""
+async def list_accounts(user_id: int | str) -> List[str]:
     try:
-        async with await get_db() as db:
-            async with db.execute(
-                "SELECT service FROM accounts WHERE user_id = ? ORDER BY service",
-                (user_id,),
-            ) as cursor:
-                rows = await cursor.fetchall()
-                return [row[0] for row in rows]
+        payload = await _read_accounts(user_id)
+        return sorted(payload.keys())
     except Exception as e:
         logger.error(f"Error listing accounts: {e}")
         return []
 
 
-async def delete_account(user_id: int, service: str) -> bool:
-    """删除账号"""
+async def delete_account(user_id: int | str, service: str) -> bool:
     try:
-        async with await get_db() as db:
-            await db.execute(
-                "DELETE FROM accounts WHERE user_id = ? AND service = ?",
-                (user_id, service),
-            )
-            await db.commit()
+        payload = await _read_accounts(user_id)
+        key = str(service or "").strip()
+        if key not in payload:
+            return False
+        payload.pop(key, None)
+        await write_json(_accounts_path(user_id), payload)
         return True
     except Exception as e:
         logger.error(f"Error deleting account: {e}")

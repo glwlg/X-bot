@@ -34,7 +34,7 @@ def test_extension_router_matches_relevant_skills(monkeypatch):
     assert candidates[0].tool_name == "ext_rss_subscribe"
 
 
-def test_extension_router_returns_empty_when_no_match(monkeypatch):
+def test_extension_router_returns_all_candidates_without_keyword_filter(monkeypatch):
     monkeypatch.setattr(
         extension_router_module.skill_loader,
         "get_skills_summary",
@@ -51,7 +51,8 @@ def test_extension_router_returns_empty_when_no_match(monkeypatch):
     router = ExtensionRouter()
     candidates = router.route("请帮我做矩阵特征值分解", max_candidates=3)
 
-    assert candidates == []
+    assert len(candidates) == 1
+    assert candidates[0].name == "rss_subscribe"
 
 
 def test_extension_router_matches_research_keyword_fallback(monkeypatch):

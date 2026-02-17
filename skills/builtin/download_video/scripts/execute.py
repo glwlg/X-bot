@@ -281,7 +281,7 @@ async def process_video_download(
                     file_id = sent_message.document.file_id
 
                 if file_id:
-                    from repositories import save_video_cache
+                    from core.state_store import save_video_cache
 
                     await save_video_cache(file_id, file_path)
                     logger.info(f"Video cached: {file_id} -> {file_path}")

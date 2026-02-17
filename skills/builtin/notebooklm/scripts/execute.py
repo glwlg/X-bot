@@ -188,22 +188,25 @@ async def _internal_execute(ctx: UnifiedContext, params: dict) -> str:
                 f"Detected WeChat article: {source_url}, fetching content first..."
             )
 
-            # 委托 web_browser 抓取内容
-            from agents.skill_agent import skill_agent
+            # 委托通用扩展执行器抓取内容
+            from core.tools.extension_tools import extension_tools
 
             full_content = ""
             try:
-                async for chunk, files, result_obj in skill_agent.execute_skill(
-                    "web_browser",
-                    f"访问并获取完整内容：{source_url}",
+                result_obj = await extension_tools.run_extension(
+                    skill_name="web_browser",
+                    args={"action": "visit", "url": source_url},
                     ctx=ctx,
-                ):
-                    if isinstance(result_obj, dict) and "text" in result_obj:
-                        # 提取文本内容（去除 🔇🔇🔇 前缀）
-                        text = result_obj["text"]
-                        if text.startswith("🔇🔇🔇"):
-                            text = text[6:]  # 移除前缀
-                        full_content = text
+                    runtime=runtime,
+                )
+
+                if isinstance(result_obj, dict):
+                    text = str(
+                        result_obj.get("text") or result_obj.get("result") or ""
+                    ).strip()
+                    if text.startswith("🔇🔇🔇"):
+                        text = text[6:]
+                    full_content = text
 
                 if not full_content or "❌" in full_content:
                     return f"❌ 无法抓取公众号文章内容：{source_url}\n\n{full_content}"

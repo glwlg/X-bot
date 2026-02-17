@@ -10,7 +10,9 @@ from core.skill_loader import skill_loader
 logger = logging.getLogger(__name__)
 EXTENSION_EXEC_TIMEOUT_SEC = int(os.getenv("EXTENSION_EXEC_TIMEOUT_SEC", "600"))
 EXTENSION_MAX_FILES = int(os.getenv("EXTENSION_MAX_FILES", "8"))
-EXTENSION_MAX_FILE_BYTES = int(os.getenv("EXTENSION_MAX_FILE_BYTES", str(5 * 1024 * 1024)))
+EXTENSION_MAX_FILE_BYTES = int(
+    os.getenv("EXTENSION_MAX_FILE_BYTES", str(5 * 1024 * 1024))
+)
 
 
 @dataclass
@@ -27,15 +29,34 @@ class ExtensionRunResult:
     def to_tool_response(self) -> Dict[str, Any]:
         task_outcome = str(self.data.get("task_outcome") or "").strip().lower()
         terminal = bool(self.data.get("terminal")) or task_outcome == "done"
+        ui_payload = self.data.get("ui") if isinstance(self.data, dict) else None
+        if not isinstance(ui_payload, dict):
+            ui_payload = {}
+        if (
+            self.ok
+            and not terminal
+            and not task_outcome
+            and isinstance(ui_payload.get("actions"), list)
+        ):
+            terminal = True
+            task_outcome = "done"
+
         if self.ok:
+            payload: Dict[str, Any] = {"text": self.text}
+            if ui_payload:
+                payload["ui"] = ui_payload
             return {
                 "ok": True,
                 "skill": self.skill_name,
                 "text": self.text,
+                "ui": ui_payload,
+                "payload": payload,
                 "data": self.data,
                 "terminal": terminal,
                 "task_outcome": task_outcome or ("done" if terminal else ""),
-                "summary": self.text[:200] if self.text else f"Extension {self.skill_name} executed",
+                "summary": self.text[:200]
+                if self.text
+                else f"Extension {self.skill_name} executed",
             }
 
         # Preserve terminal semantics from extension payload, so orchestrator can
@@ -44,7 +65,9 @@ class ExtensionRunResult:
             terminal = True
         if not task_outcome and terminal:
             task_outcome = "failed"
-        summary = (self.message or self.text or f"Extension {self.skill_name} failed")[:200]
+        summary = (self.message or self.text or f"Extension {self.skill_name} failed")[
+            :200
+        ]
         failure_mode = (self.failure_mode or "").strip().lower()
         if failure_mode not in {"recoverable", "fatal"}:
             failure_mode = "recoverable"
@@ -54,6 +77,11 @@ class ExtensionRunResult:
             "error_code": self.error_code or "extension_failed",
             "message": self.message or "Extension execution failed",
             "text": self.text or self.message or "",
+            "ui": ui_payload,
+            "payload": {
+                "text": self.text or self.message or "",
+                "ui": ui_payload,
+            },
             "data": self.data,
             "terminal": terminal,
             "task_outcome": task_outcome,
@@ -65,7 +93,9 @@ class ExtensionRunResult:
 class ExtensionExecutor:
     """Deterministic extension executor with minimal schema validation."""
 
-    async def execute(self, skill_name: str, args: Dict[str, Any], ctx: Any, runtime: Any) -> ExtensionRunResult:
+    async def execute(
+        self, skill_name: str, args: Dict[str, Any], ctx: Any, runtime: Any
+    ) -> ExtensionRunResult:
         skill = skill_loader.get_skill(skill_name)
         if not skill:
             return ExtensionRunResult(
@@ -124,13 +154,18 @@ class ExtensionExecutor:
                 failure_mode="recoverable",
             )
 
-    async def _run_execute(self, execute_fn: Any, ctx: Any, args: Dict[str, Any], runtime: Any) -> Any:
+    async def _run_execute(
+        self, execute_fn: Any, ctx: Any, args: Dict[str, Any], runtime: Any
+    ) -> Any:
         if inspect.isasyncgenfunction(execute_fn):
             final_result: Any = None
             async for chunk in execute_fn(ctx, args, runtime):
                 # Keep final structured payload if present, fallback to last non-empty chunk.
                 if isinstance(chunk, dict) and (
-                    "text" in chunk or "ui" in chunk or "files" in chunk or "success" in chunk
+                    "text" in chunk
+                    or "ui" in chunk
+                    or "files" in chunk
+                    or "success" in chunk
                 ):
                     final_result = chunk
                 elif chunk is not None:
@@ -205,7 +240,9 @@ class ExtensionExecutor:
 
         return normalized
 
-    def _validate_args(self, args: Dict[str, Any], schema: Dict[str, Any]) -> tuple[bool, str]:
+    def _validate_args(
+        self, args: Dict[str, Any], schema: Dict[str, Any]
+    ) -> tuple[bool, str]:
         if not isinstance(args, dict):
             return False, "arguments must be an object"
 

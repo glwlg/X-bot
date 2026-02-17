@@ -1,7 +1,7 @@
 ---
 api_version: v3
 name: docker_ops
-description: "**Docker 底层操作接口**。直接管理容器、网络，不可用于文件操作，文件操作请使用 `local_file_manager`。通常由 `deployment_manager` 调用，也可用于简单的容器管理。"
+description: "**Docker 底层操作接口**。直接管理容器、网络，不可用于文件操作；文件操作请使用内置四原语 `read/write/edit`。通常由 `deployment_manager` 调用，也可用于简单的容器管理。"
 triggers:
 - docker
 - 容器

@@ -205,35 +205,6 @@ Core Manager 采用双层记忆：
 
 ## 9. 开发待办（按优先级）
 
-### P0
-
-- [x] `ARCH-001`：落地“Core Manager 默认只调度；修复模式可执行治理任务”。
-- [x] `ARCH-002`：普通聊天默认自动派发到默认 worker。
-- [x] `ARCH-003`：统一术语为“Worker 执行层（Worker Fleet）”，清理旧“用户层”命名。
-- [x] `SCHED-001`：缩短派发链路时延，解决“延迟后才有结果”的体验。
-- [x] `SCHED-002`：任务事件流标准化（来源、状态、时间、错误、重试）。
-- [x] `TOOLS-001`：实现“先四原语，后外部工具”的强制选路。
-- [x] `TOOLS-002`：简单 shell 任务不依赖 codex/gemini-cli 可用性。
-- [x] `SOUL-001`：实现 per-agent `SOUL.MD` 加载、注入、版本化。
-- [x] `MEM-001`：实现 Core Manager 双层记忆（短期 + 长期）。
-- [x] `MEM-002`：长期记忆拆分“自我记忆 / 用户记忆”。
-- [x] `LOG-001`：实现全量对话留存与可检索。
-- [x] `HB-001`：heartbeat 驱动对话压缩与记忆写入。
-
-### P1
-
-- [x] `OBS-001`：补齐任务存储位置与查询链路的可观测说明。
-- [x] `OBS-002`：`/worker tasks` 增加过滤（仅 `user_chat` / 排除 heartbeat）。
-- [x] `HB-002`：heartbeat 结果分级（OK / NOTICE / ACTION）。
-- [x] `SAFE-001`：核心配置、SOUL、记忆文件支持审计与回滚。
-- [x] `CLEAN-001`：治理 `runtime_tasks` 异常层级膨胀。
-
-### P2
-
-- [x] `MEM-003`：用户记忆写入支持“显式确认 + 自动候选”双通道。
-- [x] `MEM-004`：经验去重、冲突合并、置信度评分。
-- [x] `TOOLS-003`：工具能力画像（成本/时延/成功率）驱动智能选路。
-
 ## 10. 验收标准（针对本规划）
 
 - 用户不使用 `/worker` 也能触发默认 worker 执行。
@@ -252,42 +223,13 @@ Core Manager 采用双层记忆：
 
 本节用于交接当前实现状态与遗留问题，供后续接手者快速定位。
 
-### 12.1 本轮已落地（代码层）
 
-- [x] Core Manager / Worker 分角色提示词与 SOUL 文件加载链路已接入。
-- [x] Worker 运行态禁用 memory 工具（策略硬边界）。
-- [x] memory 调用统一走 `src/mcp_client/memory.py`（MCP）。
-- [x] function call 工具注入增加策略过滤，不再只靠提示词约束。
-- [x] Manager 派发后进度播报（10s）与最终回执链路已打通。
-- [x] Manager 派发给 Worker 时可封装近期对话上下文，并按判定附带记忆摘要。
-- [x] 用户记忆读取增加 `open_nodes(User)` -> `read_graph` 兜底与旧数据自修复（补建 `User` 实体）。
-
-### 12.2 线上表现与预期偏差（未闭环）
-
-- [ ] `OPEN-001`：任务派发后，Worker 仍可能返回“缺失地点/上下文”，即使用户记忆已存在地点信息。
-- [ ] `OPEN-002`：Manager 人设在部分轮次仍退化为通用“AI 助手”话术，SOUL 风格稳定性不足。
-- [ ] `OPEN-003`：`task / chat / memory` 分流仍有不稳定，部分本应 Manager 直答的问题被派发到 Worker。
-- [ ] `OPEN-004`：Manager 对 Worker 返回结果的二次治理不足，未稳定执行“缺信息时先补上下文再二次派发”。
-- [ ] `OPEN-005`：当前“是否附带记忆摘要”依赖模型判定，仍存在误判与漂移风险。
-
-### 12.3 复现样例（来自实际对话）
-
-- [ ] `CASE-001`：用户问“明天天气怎么样”时已派发 Worker，但结果仍返回“缺失所在城市/时区”。
-- [ ] `CASE-002`：用户问“你是谁”时，回复偏厂商模板身份，未稳定体现 Core Manager SOUL。
-- [x] `CASE-003`：用户问“我是谁”可检索到“江苏无锡 / 偏好称呼：主人”（该链路当前可用）。
-
-### 12.4 建议接手优先级（给下一位实现者）
-
-1. [ ] 先做“Manager 回执治理闭环”：当 Worker 缺信息且 Manager 已有记忆时，自动二次派发而非直接返回缺失信息。
-2. [ ] 将“是否需要上下文/记忆”从单次模型判定升级为可观测策略（含判定日志与可回放）。
-3. [ ] 对 `你是谁` 这类身份问题建立通用身份策略测试（禁止问句硬编码），保证 SOUL 稳定生效。
-4. [ ] 为天气/本地化/推荐类任务增加端到端集成测试（含 memory 命中、派发、回执）。
 
 ### 12.5 关键代码入口（交接索引）
 
-- `src/handlers/ai_handlers.py`：派发、上下文封装、memory 读写、回执主链路。
+- `src/handlers/ai_handlers.py`：派发、上下文封装、Markdown memory 读写、回执主链路。
 - `src/core/prompt_composer.py`：角色与 SOUL 注入。
 - `src/core/prompts.py`：默认系统提示词与通用约束。
 - `src/core/tool_access_store.py`：工具分组与 worker memory 禁用策略。
 - `src/core/agent_orchestrator.py`：function call 工具注入过滤。
-- `src/mcp_client/memory.py`：MCP memory 实现（保留方案）。
+- `src/core/markdown_memory_store.py`：基于 `MEMORY.md` + `memory/YYYY-MM-DD.md` 的记忆实现。

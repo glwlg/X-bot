@@ -72,20 +72,12 @@ async def stop_command(ctx: UnifiedContext) -> None:
     from core.heartbeat_store import heartbeat_store
 
     active_info = task_manager.get_task_info(user_id)
-    todo_path = (
-        active_info.get("todo_path")
-        if isinstance(active_info, dict)
-        else None
-    )
+    todo_path = active_info.get("todo_path") if isinstance(active_info, dict) else None
     heartbeat_path = (
-        active_info.get("heartbeat_path")
-        if isinstance(active_info, dict)
-        else None
+        active_info.get("heartbeat_path") if isinstance(active_info, dict) else None
     )
     active_task_id = (
-        active_info.get("active_task_id")
-        if isinstance(active_info, dict)
-        else None
+        active_info.get("active_task_id") if isinstance(active_info, dict) else None
     )
     if not active_task_id:
         hb_active = await heartbeat_store.get_session_active_task(str(user_id))
@@ -110,9 +102,7 @@ async def stop_command(ctx: UnifiedContext) -> None:
         )
 
     if cancelled_desc or active_task_id:
-        heartbeat_line = (
-            f"\n💓 心跳文件: `{heartbeat_path}`" if heartbeat_path else ""
-        )
+        heartbeat_line = f"\n💓 心跳文件: `{heartbeat_path}`" if heartbeat_path else ""
         todo_line = f"\n📋 旧任务文件: `{todo_path}`" if todo_path else ""
         await ctx.reply(
             f"🛑 **已中断任务**\n\n"
@@ -159,7 +149,7 @@ async def help_command(ctx: UnifiedContext) -> None:
         "• **手动教学**：/teach - 强制触发学习模式\n"
         "• /skills - 查看已安装技能\n\n"
         "**常用命令：**\n"
-        "/start 主菜单 | /new 新对话 | /stats 统计 | /chatlog 检索 | /heartbeat 心跳 | /worker Worker"
+        "/start 主菜单 | /new 新对话 | /chatlog 检索 | /heartbeat 心跳 | /worker Worker"
     )
 
 
@@ -284,7 +274,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                 "• /teach - 教我学会新技能 (自定义代码)\n"
                 "• /skills - 查看已安装技能\n\n"
                 "**常用命令：**\n"
-                "/start 主菜单 | /new 新对话 | /stats 统计 | /chatlog 检索 | /heartbeat 心跳 | /worker Worker",
+                "/start 主菜单 | /new 新对话 | /chatlog 检索 | /heartbeat 心跳 | /worker Worker",
                 reply_markup=reply_markup,
             )
             return CONVERSATION_END
@@ -329,24 +319,6 @@ async def button_callback(ctx: UnifiedContext) -> int:
             )
             return CONVERSATION_END
 
-        elif data == "stats":
-            keyboard = [
-                [InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            from stats import get_user_stats_text
-
-            user_id = ctx.message.user.id
-            stats_text = await get_user_stats_text(user_id)
-
-            await ctx.edit_message(
-                msg_id,
-                stats_text,
-                reply_markup=reply_markup,
-            )
-            return CONVERSATION_END
-
         elif data == "watchlist":
             keyboard = [
                 [InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]
@@ -354,7 +326,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             user_id = ctx.message.user.id
-            from repositories import get_user_watchlist
+            from core.state_store import get_user_watchlist
             from services.stock_service import fetch_stock_quotes, format_stock_message
 
             watchlist = await get_user_watchlist(user_id)
@@ -392,7 +364,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             user_id = ctx.message.user.id
-            from repositories import get_user_subscriptions
+            from core.state_store import get_user_subscriptions
 
             subs = await get_user_subscriptions(user_id)
 
@@ -423,7 +395,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             user_id = ctx.message.user.id
-            from repositories import get_user_settings, set_translation_mode
+            from core.state_store import get_user_settings, set_translation_mode
 
             settings = await get_user_settings(user_id)
             current_status = settings.get("auto_translate", 0)

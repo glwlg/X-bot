@@ -235,42 +235,17 @@ class EvolutionRouter:
         self, request: str, strategy: str, success: bool, details: str
     ):
         """
-        Record evolution event to System Memory (Global Wisdom)
+        Record evolution event to markdown system memory.
         """
         try:
-            from mcp_client.manager import mcp_manager
-            from mcp_client.memory import register_memory_server
-
-            # Ensure registered
-            register_memory_server()
-
-            # Use "SYSTEM" as user_id for global memory
-            memory = await mcp_manager.get_server("memory", user_id="SYSTEM")
+            from core.markdown_memory_store import markdown_memory_store
 
             outcome = "success" if success else "failure"
             observation = f"Evolution Event - Request: '{request}', Strategy: '{strategy}', Outcome: {outcome}. Details: {details}"
-
-            # Store as observation linked to 'EvolutionSystem' entity
-            await memory.call_tool(
-                "create_entities",
-                {
-                    "entities": [
-                        {"name": "EvolutionSystem", "type": "System"},
-                        {"name": strategy, "type": "Strategy"},
-                    ]
-                },
-            )
-
-            await memory.call_tool(
-                "add_observations",
-                {
-                    "observations": [
-                        {
-                            "entityNames": ["EvolutionSystem", strategy],
-                            "contents": observation,
-                        }
-                    ]
-                },
+            markdown_memory_store.remember(
+                "SYSTEM",
+                observation,
+                source="evolution_router",
             )
             logger.info(f"[Evolution] Recorded event to System Memory: {outcome}")
 

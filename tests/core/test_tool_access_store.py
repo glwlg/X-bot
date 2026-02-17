@@ -42,7 +42,9 @@ def test_tool_access_worker_policy_denies_coding(tmp_path):
     )
     assert ok is True
     assert reason == "updated"
-    allowed_after, _ = store.is_backend_allowed(worker_id="worker-main", backend="codex")
+    allowed_after, _ = store.is_backend_allowed(
+        worker_id="worker-main", backend="codex"
+    )
     assert allowed_after is True
 
 
@@ -57,14 +59,16 @@ def test_tool_access_core_policy_is_readonly(tmp_path):
     assert reason == "core_manager_policy_is_readonly"
 
 
-def test_regular_user_runtime_uses_worker_default_policy(tmp_path):
+def test_regular_user_runtime_uses_core_manager_policy(tmp_path):
     store = ToolAccessStore()
     store.path = (tmp_path / "tool_access.json").resolve()
     store._payload = store._default_payload()
     store._write_unlocked()
 
-    resolved = store.resolve_runtime_policy(runtime_user_id="u-plain-user", platform="telegram")
-    assert resolved["agent_kind"] == "worker-default"
+    resolved = store.resolve_runtime_policy(
+        runtime_user_id="u-plain-user", platform="telegram"
+    )
+    assert resolved["agent_kind"] == "core-manager"
 
     allowed, detail = store.is_tool_allowed(
         runtime_user_id="u-plain-user",
@@ -72,8 +76,8 @@ def test_regular_user_runtime_uses_worker_default_policy(tmp_path):
         tool_name="ext_web_browser",
         kind="tool",
     )
-    assert allowed is True
-    assert detail["reason"] == "allowed"
+    assert allowed is False
+    assert detail["reason"] in {"not_in_allow_list", "matched_deny_list"}
 
 
 def test_worker_runtime_still_uses_worker_policy(tmp_path):
@@ -96,6 +100,23 @@ def test_worker_runtime_still_uses_worker_policy(tmp_path):
         kind="tool",
     )
     assert allowed is True
+
+
+def test_worker_default_policy_denies_management_tools(tmp_path):
+    store = ToolAccessStore()
+    store.path = (tmp_path / "tool_access.json").resolve()
+    store._payload = store._default_payload()
+    store._write_unlocked()
+    store.ensure_worker_policy("worker-main")
+
+    allowed, detail = store.is_tool_allowed(
+        runtime_user_id="worker::worker-main::u-1",
+        platform="worker_runtime",
+        tool_name="dispatch_worker",
+        kind="tool",
+    )
+    assert allowed is False
+    assert detail["reason"] in {"matched_deny_list", "not_in_allow_list"}
 
 
 def test_worker_runtime_memory_is_hard_disabled(tmp_path):

@@ -76,7 +76,7 @@ params:                 # 可选, 参数定义
 简单的提醒、记录、说明类技能不需要 scripts。
 
 ## scripts 中可用工具
-- `from repositories import ...` - 数据库操作
+- `from core.state_store import ...` - 状态存储操作（Markdown）
 - `from services.web_summary_service import fetch_webpage_content` - 网页抓取
 - `import httpx` - HTTP 请求 (优先使用,带 timeout)
 - `import subprocess` - 允许使用 (仅用于 curl/wget 等必要操作)

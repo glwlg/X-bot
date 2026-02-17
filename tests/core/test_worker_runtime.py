@@ -1,7 +1,9 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+import core.agent_orchestrator as orchestrator_module
 import core.worker_runtime as worker_runtime_module
 from core.worker_runtime import WorkerRuntime
 
@@ -111,10 +113,15 @@ async def test_worker_runtime_execute_task_local_mode(monkeypatch, tmp_path):
     assert captured["workspace"].endswith("workers/worker-main")
     assert any(row.get("status") == "running" for row in fake_store.updated)
     assert any(row.get("status") == "done" for row in fake_store.updated)
+    done_rows = [row for row in fake_store.updated if row.get("status") == "done"]
+    assert done_rows
+    assert "done" in str(done_rows[-1].get("output", {}).get("text") or "")
 
 
 @pytest.mark.asyncio
-async def test_worker_runtime_execute_task_docker_prepare_failure(monkeypatch, tmp_path):
+async def test_worker_runtime_execute_task_docker_prepare_failure(
+    monkeypatch, tmp_path
+):
     _allow_all_backends(monkeypatch)
     fake_registry = _FakeRegistry(str(tmp_path / "workers" / "worker-main"))
     fake_store = _FakeTaskStore()
@@ -231,7 +238,9 @@ async def test_worker_runtime_shell_backend_builds_sh_lc(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_worker_runtime_prepare_failed_falls_back_to_core_agent(monkeypatch, tmp_path):
+async def test_worker_runtime_prepare_failed_falls_back_to_core_agent(
+    monkeypatch, tmp_path
+):
     _allow_all_backends(monkeypatch)
     fake_registry = _FakeRegistry(str(tmp_path / "workers" / "worker-main"))
     fake_store = _FakeTaskStore()
@@ -258,6 +267,12 @@ async def test_worker_runtime_prepare_failed_falls_back_to_core_agent(monkeypatc
             "ok": True,
             "summary": "handled by core-agent",
             "result": "final answer",
+            "text": "final answer",
+            "ui": {"actions": [[{"text": "刷新", "callback_data": "rss_refresh"}]]},
+            "payload": {
+                "text": "final answer",
+                "ui": {"actions": [[{"text": "刷新", "callback_data": "rss_refresh"}]]},
+            },
             "error": "",
         }
 
@@ -275,10 +290,17 @@ async def test_worker_runtime_prepare_failed_falls_back_to_core_agent(monkeypatc
     assert result["ok"] is True
     assert result["backend"] == "core-agent"
     assert result["fallback_from_backend"] == "codex"
+    assert result["text"] == "final answer"
+    assert result["ui"]["actions"][0][0]["text"] == "刷新"
+    done_rows = [row for row in fake_store.updated if row.get("status") == "done"]
+    assert done_rows
+    assert done_rows[-1].get("output", {}).get("ui", {}).get("actions")
 
 
 @pytest.mark.asyncio
-async def test_worker_runtime_auto_uses_shell_for_simple_chat_command(monkeypatch, tmp_path):
+async def test_worker_runtime_keeps_explicit_backend_for_simple_chat_command(
+    monkeypatch, tmp_path
+):
     _allow_all_backends(monkeypatch)
     fake_registry = _FakeRegistry(str(tmp_path / "workers" / "worker-main"))
     fake_store = _FakeTaskStore()
@@ -311,9 +333,8 @@ async def test_worker_runtime_auto_uses_shell_for_simple_chat_command(monkeypatc
     )
 
     assert result["ok"] is True
-    assert result["backend"] == "shell"
-    assert captured["cmd"] == "sh"
-    assert captured["args"] == ["-lc", "echo hello"]
+    assert result["backend"] == "codex"
+    assert captured["cmd"] == runtime.codex_cmd
 
 
 @pytest.mark.asyncio
@@ -340,3 +361,75 @@ async def test_worker_runtime_blocks_backend_by_policy(monkeypatch, tmp_path):
     assert result["error"] == "policy_blocked"
     assert any(row.get("status") == "running" for row in fake_store.updated)
     assert any(row.get("status") == "failed" for row in fake_store.updated)
+
+
+@pytest.mark.asyncio
+async def test_worker_runtime_falls_back_to_allowed_backend(monkeypatch, tmp_path):
+    fake_registry = _FakeRegistry(str(tmp_path / "workers" / "worker-main"))
+    fake_store = _FakeTaskStore()
+    monkeypatch.setattr(worker_runtime_module, "worker_registry", fake_registry)
+    monkeypatch.setattr(worker_runtime_module, "worker_task_store", fake_store)
+
+    def _backend_policy(**kwargs):
+        backend = str(kwargs.get("backend") or "")
+        if backend == "core-agent":
+            return True, {"reason": "allowed"}
+        return False, {"reason": "matched_deny_list"}
+
+    monkeypatch.setattr(
+        worker_runtime_module.tool_access_store,
+        "is_backend_allowed",
+        _backend_policy,
+    )
+
+    runtime = WorkerRuntime()
+    runtime.runtime_mode = "local"
+
+    async def _core_agent(**kwargs):
+        _ = kwargs
+        return {
+            "ok": True,
+            "summary": "handled by core-agent",
+            "result": "final answer",
+            "error": "",
+        }
+
+    monkeypatch.setattr(runtime, "_execute_core_agent_task", _core_agent)
+
+    result = await runtime.execute_task(
+        worker_id="worker-main",
+        source="user_cmd",
+        instruction="build this",
+        backend="gemini-cli",
+    )
+
+    assert result["ok"] is True
+    assert result["backend"] == "core-agent"
+    assert any(row.get("status") == "done" for row in fake_store.updated)
+
+
+@pytest.mark.asyncio
+async def test_worker_core_agent_context_keeps_logical_user_id(monkeypatch):
+    runtime = WorkerRuntime()
+    captured = {}
+
+    async def fake_handle_message(ctx, message_history):
+        _ = message_history
+        captured["user_id"] = str(ctx.message.user.id)
+        captured["runtime_user_id"] = str(ctx.user_data.get("runtime_user_id") or "")
+        captured["platform"] = str(ctx.message.platform)
+        yield "ok"
+
+    fake_orchestrator = SimpleNamespace(handle_message=fake_handle_message)
+    monkeypatch.setattr(orchestrator_module, "agent_orchestrator", fake_orchestrator)
+
+    result = await runtime._execute_core_agent_task(
+        worker_id="worker-main",
+        instruction="检查订阅",
+        metadata={"user_id": "42"},
+    )
+
+    assert result["ok"] is True
+    assert captured["user_id"] == "42"
+    assert captured["runtime_user_id"] == "worker::worker-main::42"
+    assert captured["platform"] == "worker_runtime"

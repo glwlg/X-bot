@@ -5,7 +5,7 @@ Stock Watch Skill Script
 import re
 
 
-from repositories import (
+from core.state_store import (
     remove_watchlist_stock_by_code,
     get_user_watchlist,
     add_watchlist_stock,
@@ -49,7 +49,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> str:
     action = ACTION_MAP.get(raw_action, raw_action)
 
     if action == "refresh":
-        result = await trigger_manual_stock_check(ctx.platform_ctx, user_id)
+        result = await trigger_manual_stock_check(user_id)
         if result:
             return {
                 "text": f"✅ 股票行情已刷新。\n[CONTEXT_DATA_ONLY - DO NOT REPEAT]\n{result}",

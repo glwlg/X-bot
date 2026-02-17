@@ -113,7 +113,9 @@ def _audio_mime_candidates(mime_type: str) -> list[str]:
     return candidates
 
 
-def _build_audio_contents(prompt: str, voice_bytes: bytes, mime_type: str) -> list[dict]:
+def _build_audio_contents(
+    prompt: str, voice_bytes: bytes, mime_type: str
+) -> list[dict]:
     return [
         {
             "role": "user",
@@ -125,7 +127,7 @@ def _build_audio_contents(prompt: str, voice_bytes: bytes, mime_type: str) -> li
                         "data": base64.b64encode(bytes(voice_bytes)).decode("utf-8"),
                     }
                 },
-            ]
+            ],
         }
     ]
 
@@ -255,7 +257,7 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
         短语音: 转文字 → 智能路由
         长语音: 直接转写输出
     """
-    from repositories import get_user_settings
+    from core.state_store import get_user_settings
 
     user_id = ctx.message.user.id
 

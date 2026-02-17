@@ -155,5 +155,5 @@ DingTalk is very picky about Markdown.
 2.  **Health Check**: Send `/start` to the bot in DingTalk and verify:
     -   Log receipt in `log_update` (if mapped).
     -   Bot replies with the menu.
-3.  **Command Test**: Test `/new`, `/stats`.
-4.  **Formatting Test**: Send a message with a table (e.g., `/stats`) and verify it doesn't break rendering.
+3.  **Command Test**: Test `/new`, `/help`.
+4.  **Formatting Test**: Send a message with Markdown content (e.g., `/help`) and verify it doesn't break rendering.

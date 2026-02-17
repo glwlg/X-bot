@@ -7,7 +7,7 @@ import shutil
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 from core.worker_store import worker_registry, worker_task_store
 from core.tool_access_store import tool_access_store
@@ -19,35 +19,6 @@ def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
-SHELL_COMMAND_HINTS = {
-    "echo",
-    "ls",
-    "pwd",
-    "cat",
-    "head",
-    "tail",
-    "grep",
-    "rg",
-    "find",
-    "git",
-    "docker",
-    "uv",
-    "python",
-    "python3",
-    "pip",
-    "npm",
-    "pnpm",
-    "yarn",
-    "bash",
-    "sh",
-    "zsh",
-    "curl",
-    "wget",
-    "make",
-    "pytest",
-}
-
-
 class _WorkerSilentAdapter:
     async def reply_text(self, ctx, text: str, ui=None, **kwargs):
         return SimpleNamespace(id=f"worker-silent-{int(datetime.now().timestamp())}")
@@ -55,7 +26,9 @@ class _WorkerSilentAdapter:
     async def edit_text(self, ctx, message_id: str, text: str, **kwargs):
         return SimpleNamespace(id=message_id)
 
-    async def reply_document(self, ctx, document, filename=None, caption=None, **kwargs):
+    async def reply_document(
+        self, ctx, document, filename=None, caption=None, **kwargs
+    ):
         return SimpleNamespace(id=filename or "doc")
 
     async def reply_photo(self, ctx, photo, caption=None, **kwargs):
@@ -81,7 +54,9 @@ class WorkerRuntime:
     """Execute worker tasks in local mode or isolated docker worker mode."""
 
     def __init__(self):
-        self.exec_timeout_sec = max(30, int(os.getenv("WORKER_EXEC_TIMEOUT_SEC", "900")))
+        self.exec_timeout_sec = max(
+            30, int(os.getenv("WORKER_EXEC_TIMEOUT_SEC", "900"))
+        )
         self.auth_status_timeout_sec = max(
             5, int(os.getenv("WORKER_AUTH_STATUS_TIMEOUT_SEC", "45"))
         )
@@ -108,10 +83,12 @@ class WorkerRuntime:
             or "x-bot-worker"
         )
         self.codex_auth_start_args = (
-            os.getenv("WORKER_CODEX_AUTH_START_ARGS", "auth login").strip() or "auth login"
+            os.getenv("WORKER_CODEX_AUTH_START_ARGS", "auth login").strip()
+            or "auth login"
         )
         self.gemini_auth_start_args = (
-            os.getenv("WORKER_GEMINI_AUTH_START_ARGS", "auth login").strip() or "auth login"
+            os.getenv("WORKER_GEMINI_AUTH_START_ARGS", "auth login").strip()
+            or "auth login"
         )
         self.codex_auth_status_args = (
             os.getenv("WORKER_CODEX_AUTH_STATUS_ARGS", "auth status").strip()
@@ -125,13 +102,10 @@ class WorkerRuntime:
             os.getenv("WORKER_FALLBACK_CORE_AGENT", "true").strip().lower() == "true"
         )
         self.data_dir = os.getenv("DATA_DIR", "/app/data").strip() or "/app/data"
-        self.userland_root = (
-            os.getenv(
-                "USERLAND_ROOT",
-                os.path.join(self.data_dir, "userland", "workers"),
-            ).strip()
-            or os.path.join(self.data_dir, "userland", "workers")
-        )
+        self.userland_root = os.getenv(
+            "USERLAND_ROOT",
+            os.path.join(self.data_dir, "userland", "workers"),
+        ).strip() or os.path.join(self.data_dir, "userland", "workers")
         self.docker_data_dir = (
             os.getenv("WORKER_DOCKER_DATA_DIR", "/app/data").strip() or "/app/data"
         )
@@ -154,22 +128,59 @@ class WorkerRuntime:
         return WorkerRuntime._normalize_backend(value)
 
     @staticmethod
-    def _looks_like_shell_command(text: str) -> bool:
-        raw = str(text or "").strip()
-        if not raw or "\n" in raw:
-            return False
-        try:
-            parts = shlex.split(raw)
-        except Exception:
-            return False
-        if not parts:
-            return False
-        first = parts[0]
-        if first in SHELL_COMMAND_HINTS:
-            return True
-        if first.startswith("./") or first.startswith("../") or first.startswith("/"):
-            return True
-        return False
+    def _backend_candidates(
+        *, requested_backend: str | None, configured_backend: str | None
+    ) -> list[str]:
+        ordered: list[str] = []
+        for raw in (
+            requested_backend,
+            configured_backend,
+            "core-agent",
+            "shell",
+            "codex",
+            "gemini-cli",
+        ):
+            normalized = WorkerRuntime._normalize_backend(raw)
+            if normalized not in ordered:
+                ordered.append(normalized)
+        return ordered
+
+    def _select_allowed_backend(
+        self,
+        *,
+        worker_id: str,
+        requested_backend: str | None,
+        configured_backend: str | None,
+    ) -> tuple[str | None, dict[str, Any]]:
+        candidates = self._backend_candidates(
+            requested_backend=requested_backend,
+            configured_backend=configured_backend,
+        )
+        rejected: list[dict[str, str]] = []
+        for candidate in candidates:
+            allowed, detail = tool_access_store.is_backend_allowed(
+                worker_id=worker_id,
+                backend=candidate,
+            )
+            if allowed:
+                return candidate, {
+                    "ok": True,
+                    "backend": candidate,
+                    "candidates": candidates,
+                    "selected_reason": "policy_allowed",
+                }
+            rejected.append(
+                {
+                    "backend": candidate,
+                    "reason": str(detail.get("reason") or "not_allowed"),
+                }
+            )
+        return None, {
+            "ok": False,
+            "candidates": candidates,
+            "rejected": rejected,
+            "selected_reason": "no_allowed_backend",
+        }
 
     def _build_command(self, backend: str, instruction: str) -> tuple[str, list[str]]:
         safe_instruction = str(instruction or "").strip()
@@ -180,7 +191,9 @@ class WorkerRuntime:
                 instruction=shlex.quote(safe_instruction)
             )
             return self.gemini_cmd, shlex.split(args)
-        args = self.codex_args_template.format(instruction=shlex.quote(safe_instruction))
+        args = self.codex_args_template.format(
+            instruction=shlex.quote(safe_instruction)
+        )
         return self.codex_cmd, shlex.split(args)
 
     def _resolve_runtime_workspace(self, worker: Dict[str, Any]) -> Path:
@@ -281,7 +294,10 @@ class WorkerRuntime:
             )
             _stdout, stderr = await process.communicate()
         except Exception as exc:
-            return {"ok": False, "error": f"failed to probe CLI in worker container: {exc}"}
+            return {
+                "ok": False,
+                "error": f"failed to probe CLI in worker container: {exc}",
+            }
         if process.returncode != 0:
             err_text = (stderr or b"").decode("utf-8", errors="replace").strip()
             return {
@@ -326,7 +342,10 @@ class WorkerRuntime:
             )
             return {"ok": True, "process": process}
         except Exception as exc:
-            return {"ok": False, "error": f"failed to spawn docker worker process: {exc}"}
+            return {
+                "ok": False,
+                "error": f"failed to spawn docker worker process: {exc}",
+            }
 
     async def _spawn_worker_process(
         self,
@@ -335,7 +354,9 @@ class WorkerRuntime:
         workspace: Path,
     ) -> Dict[str, Any]:
         if self.runtime_mode == "docker":
-            return await self._spawn_docker_process(cmd=cmd, args=args, workspace=workspace)
+            return await self._spawn_docker_process(
+                cmd=cmd, args=args, workspace=workspace
+            )
         return await self._spawn_local_process(cmd=cmd, args=args, workspace=workspace)
 
     @staticmethod
@@ -343,7 +364,11 @@ class WorkerRuntime:
         out_text = (stdout or b"").decode("utf-8", errors="replace").strip()
         err_text = (stderr or b"").decode("utf-8", errors="replace").strip()
         if err_text:
-            return f"{out_text}\n[stderr]\n{err_text}".strip() if out_text else f"[stderr]\n{err_text}"
+            return (
+                f"{out_text}\n[stderr]\n{err_text}".strip()
+                if out_text
+                else f"[stderr]\n{err_text}"
+            )
         return out_text
 
     def _should_retry_codex_without_instruction_flag(
@@ -367,12 +392,16 @@ class WorkerRuntime:
         workspace: Path,
         timeout_sec: int,
     ) -> Dict[str, Any]:
-        spawn = await self._spawn_worker_process(cmd=cmd, args=args, workspace=workspace)
+        spawn = await self._spawn_worker_process(
+            cmd=cmd, args=args, workspace=workspace
+        )
         if not spawn.get("ok"):
             return {
                 "ok": False,
                 "error": "prepare_failed",
-                "message": str(spawn.get("error") or "failed to prepare worker process"),
+                "message": str(
+                    spawn.get("error") or "failed to prepare worker process"
+                ),
                 "exit_code": -1,
                 "stdout": b"",
                 "stderr": b"",
@@ -380,7 +409,9 @@ class WorkerRuntime:
 
         process = spawn["process"]
         try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=timeout_sec)
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=timeout_sec
+            )
         except asyncio.TimeoutError:
             process.kill()
             with contextlib.suppress(Exception):
@@ -407,13 +438,62 @@ class WorkerRuntime:
         if hasattr(stream, "__aiter__"):
             return stream
         if inspect.isawaitable(stream):
+
             async def _single():
                 result = await stream
                 if result is not None:
                     yield str(result)
 
             return _single()
-        raise TypeError("agent_orchestrator.handle_message must return an async iterator")
+        raise TypeError(
+            "agent_orchestrator.handle_message must return an async iterator"
+        )
+
+    @staticmethod
+    def _extract_pending_ui_payload(raw_pending_ui: Any) -> Dict[str, Any] | None:
+        if not raw_pending_ui:
+            return None
+        if isinstance(raw_pending_ui, dict):
+            raw_actions = raw_pending_ui.get("actions")
+            if isinstance(raw_actions, list) and raw_actions:
+                normalized_actions = list(cast(list[Any], raw_actions))
+                return {"actions": normalized_actions}
+            return None
+        if not isinstance(raw_pending_ui, list):
+            return None
+
+        merged_actions: list[Any] = []
+        for block in raw_pending_ui:
+            if not isinstance(block, dict):
+                continue
+            block_actions = block.get("actions")
+            if isinstance(block_actions, list):
+                merged_actions.extend(block_actions)
+        if not merged_actions:
+            return None
+        return {"actions": merged_actions}
+
+    @staticmethod
+    def _build_task_output(
+        *,
+        text: str = "",
+        ui: Dict[str, Any] | None = None,
+        payload: Dict[str, Any] | None = None,
+        error: str = "",
+    ) -> Dict[str, Any]:
+        output: Dict[str, Any] = {}
+        if isinstance(payload, dict):
+            output.update(payload)
+        text_value = str(text or "").strip()
+        if text_value and "text" not in output:
+            output["text"] = text_value
+        ui_value = ui if isinstance(ui, dict) else {}
+        if ui_value and "ui" not in output:
+            output["ui"] = ui_value
+        error_value = str(error or "").strip()
+        if error_value and "error" not in output:
+            output["error"] = error_value
+        return output
 
     async def _execute_core_agent_task(
         self,
@@ -424,7 +504,13 @@ class WorkerRuntime:
     ) -> Dict[str, Any]:
         try:
             from core.agent_orchestrator import agent_orchestrator
-            from core.platform.models import Chat, MessageType, UnifiedContext, UnifiedMessage, User
+            from core.platform.models import (
+                Chat,
+                MessageType,
+                UnifiedContext,
+                UnifiedMessage,
+                User,
+            )
         except Exception as exc:
             return {
                 "ok": False,
@@ -441,13 +527,13 @@ class WorkerRuntime:
         worker_user_id = f"worker::{worker_id}::{logical_user}"
         now = datetime.now()
         user = User(
-            id=worker_user_id,
+            id=str(logical_user),
             username=f"worker_{worker_id}",
             first_name="Worker",
             last_name="Agent",
         )
         chat = Chat(
-            id=worker_user_id,
+            id=str(logical_user),
             type="private",
             title=f"worker-{worker_id}",
         )
@@ -468,7 +554,10 @@ class WorkerRuntime:
             user=user,
         )
         ctx.user_data["execution_policy"] = "worker_execution_policy"
-        message_history = [{"role": "user", "parts": [{"text": str(instruction or "")}]}]
+        ctx.user_data["runtime_user_id"] = worker_user_id
+        message_history = [
+            {"role": "user", "parts": [{"text": str(instruction or "")}]}
+        ]
 
         try:
             handler = getattr(agent_orchestrator, "handle_message", None)
@@ -483,11 +572,24 @@ class WorkerRuntime:
             final_text = "\n".join(chunks).strip()
             if not final_text:
                 final_text = "Worker core-agent finished with no text output."
+
+            ui_payload = self._extract_pending_ui_payload(
+                ctx.user_data.get("pending_ui")
+            )
+
+            payload: Dict[str, Any] = (
+                {"text": final_text, "ui": ui_payload}
+                if ui_payload
+                else {"text": final_text}
+            )
             return {
                 "ok": True,
                 "error": "",
                 "summary": final_text[:500],
                 "result": final_text,
+                "text": final_text,
+                "ui": ui_payload or {},
+                "payload": payload,
             }
         except Exception as exc:
             return {
@@ -495,6 +597,9 @@ class WorkerRuntime:
                 "error": f"core_agent_exec_error:{exc}",
                 "summary": f"core-agent execution failed: {exc}",
                 "result": "",
+                "text": "",
+                "ui": {},
+                "payload": {},
             }
 
     def _auth_command(self, provider: str, action: str) -> tuple[str, list[str]]:
@@ -508,11 +613,17 @@ class WorkerRuntime:
             )
         else:
             cmd = self.codex_cmd
-            raw_args = self.codex_auth_start_args if action == "start" else self.codex_auth_status_args
+            raw_args = (
+                self.codex_auth_start_args
+                if action == "start"
+                else self.codex_auth_status_args
+            )
         args = shlex.split(raw_args) if raw_args.strip() else []
         return cmd, args
 
-    async def build_auth_start_command(self, worker_id: str, provider: str) -> Dict[str, Any]:
+    async def build_auth_start_command(
+        self, worker_id: str, provider: str
+    ) -> Dict[str, Any]:
         worker = await worker_registry.get_worker(worker_id)
         if not worker:
             return {
@@ -590,7 +701,9 @@ class WorkerRuntime:
         )
 
         is_not_authed = any(token in lowered for token in not_authed_tokens)
-        is_authed = (not is_not_authed) and any(token in lowered for token in authed_tokens)
+        is_authed = (not is_not_authed) and any(
+            token in lowered for token in authed_tokens
+        )
         if is_authed:
             status = "authenticated"
         elif is_not_authed:
@@ -649,31 +762,20 @@ class WorkerRuntime:
             last_error="",
         )
 
-        normalized_source = str(source or "").strip().lower()
-        selected_backend = self._normalize_backend(
-            backend or worker.get("backend") or "core-agent"
-        )
-        if (
-            selected_backend in {"core-agent", "codex", "gemini-cli"}
-            and normalized_source in {"user", "user_cmd", "user_chat"}
-            and self._looks_like_shell_command(instruction)
-        ):
-            selected_backend = "shell"
-        backend_allowed, backend_detail = tool_access_store.is_backend_allowed(
+        selected_backend, backend_pick = self._select_allowed_backend(
             worker_id=str(worker.get("id") or worker_id),
-            backend=selected_backend,
+            requested_backend=backend,
+            configured_backend=str(worker.get("backend") or "core-agent"),
         )
-        if not backend_allowed:
-            msg = (
-                f"backend `{selected_backend}` is blocked by worker tool policy "
-                f"({backend_detail.get('reason')})."
-            )
+        if not selected_backend:
+            msg = "worker has no executable backend under current tool policy."
             await worker_task_store.update_task(
                 task_id,
                 status="failed",
                 error=msg,
                 ended_at=_now_iso(),
                 result_summary=msg,
+                output=self._build_task_output(text=msg, error="policy_blocked"),
                 retry_count=0,
             )
             await worker_registry.update_worker(
@@ -687,9 +789,22 @@ class WorkerRuntime:
                 "error": "policy_blocked",
                 "summary": msg,
                 "task_id": task_id,
-                "backend": selected_backend,
+                "backend": "",
+                "backend_selection": backend_pick,
                 "runtime_mode": self.runtime_mode,
+                "text": msg,
+                "ui": {},
+                "payload": {"text": msg},
             }
+
+        requested_backend_norm = self._normalize_backend(backend)
+        if backend and requested_backend_norm != selected_backend:
+            await worker_registry.update_worker(
+                worker["id"],
+                backend=selected_backend,
+                last_task_id=task_id,
+            )
+            worker["backend"] = selected_backend
         workspace = self._resolve_runtime_workspace(worker)
         workspace.mkdir(parents=True, exist_ok=True)
 
@@ -707,8 +822,17 @@ class WorkerRuntime:
                 task_id,
                 status="done" if ok else "failed",
                 result=combined,
-                result_summary=summary or ("core-agent done" if ok else "core-agent failed"),
+                result_summary=summary
+                or ("core-agent done" if ok else "core-agent failed"),
                 error="" if ok else err or "core_agent_failed",
+                output=self._build_task_output(
+                    text=combined,
+                    ui=core_result.get("ui") if isinstance(core_result, dict) else {},
+                    payload=core_result.get("payload")
+                    if isinstance(core_result, dict)
+                    else {"text": combined},
+                    error="" if ok else err or "core_agent_failed",
+                ),
                 ended_at=_now_iso(),
                 retry_count=0,
             )
@@ -726,6 +850,13 @@ class WorkerRuntime:
                 "summary": summary or combined[:500],
                 "result": combined,
                 "error": "" if ok else (err or "core_agent_failed"),
+                "text": combined,
+                "ui": core_result.get("ui") if isinstance(core_result, dict) else {},
+                "payload": (
+                    core_result.get("payload")
+                    if isinstance(core_result, dict)
+                    else {"text": combined}
+                ),
             }
 
         cmd, args = self._build_command(selected_backend, instruction)
@@ -742,7 +873,9 @@ class WorkerRuntime:
             backend=selected_backend,
             output=combined,
         ):
-            fallback_args = shlex.split(f"exec {shlex.quote(str(instruction or '').strip())}")
+            fallback_args = shlex.split(
+                f"exec {shlex.quote(str(instruction or '').strip())}"
+            )
             rerun = await self._execute_command(
                 cmd=self.codex_cmd,
                 args=fallback_args,
@@ -753,7 +886,10 @@ class WorkerRuntime:
             combined = self._combine_output(run.get("stdout"), run.get("stderr"))
 
         if str(run.get("error")) == "prepare_failed":
-            if self.fallback_to_core_agent and selected_backend in {"codex", "gemini-cli"}:
+            if self.fallback_to_core_agent and selected_backend in {
+                "codex",
+                "gemini-cli",
+            }:
                 core_result = await self._execute_core_agent_task(
                     worker_id=str(worker.get("id") or worker_id),
                     instruction=instruction,
@@ -769,6 +905,15 @@ class WorkerRuntime:
                         result=combined,
                         result_summary=summary,
                         error="",
+                        output=self._build_task_output(
+                            text=combined,
+                            ui=core_result.get("ui")
+                            if isinstance(core_result, dict)
+                            else {},
+                            payload=core_result.get("payload")
+                            if isinstance(core_result, dict)
+                            else {"text": combined},
+                        ),
                         ended_at=_now_iso(),
                         retry_count=1,
                     )
@@ -786,6 +931,15 @@ class WorkerRuntime:
                         "summary": summary,
                         "result": combined,
                         "fallback_from_backend": selected_backend,
+                        "text": combined,
+                        "ui": core_result.get("ui")
+                        if isinstance(core_result, dict)
+                        else {},
+                        "payload": (
+                            core_result.get("payload")
+                            if isinstance(core_result, dict)
+                            else {"text": combined}
+                        ),
                     }
             msg = str(run.get("message") or "worker execution prepare failed")
             await worker_task_store.update_task(
@@ -794,6 +948,10 @@ class WorkerRuntime:
                 error=msg,
                 ended_at=_now_iso(),
                 result_summary=msg,
+                output=self._build_task_output(
+                    text=msg,
+                    error="exec_prepare_failed",
+                ),
                 retry_count=1 if selected_backend == "codex" else 0,
             )
             await worker_registry.update_worker(
@@ -809,16 +967,23 @@ class WorkerRuntime:
                 "task_id": task_id,
                 "backend": selected_backend,
                 "runtime_mode": self.runtime_mode,
+                "text": msg,
+                "ui": {},
+                "payload": {"text": msg},
             }
 
         if str(run.get("error")) == "timeout":
-            msg = str(run.get("message") or f"Worker task timeout after {self.exec_timeout_sec}s")
+            msg = str(
+                run.get("message")
+                or f"Worker task timeout after {self.exec_timeout_sec}s"
+            )
             await worker_task_store.update_task(
                 task_id,
                 status="failed",
                 error=msg,
                 ended_at=_now_iso(),
                 result_summary=msg,
+                output=self._build_task_output(text=msg, error="timeout"),
                 retry_count=1 if selected_backend == "codex" else 0,
             )
             await worker_registry.update_worker(
@@ -834,17 +999,26 @@ class WorkerRuntime:
                 "task_id": task_id,
                 "backend": selected_backend,
                 "runtime_mode": self.runtime_mode,
+                "text": msg,
+                "ui": {},
+                "payload": {"text": msg},
             }
 
         exit_code = int(run.get("exit_code", -1))
         ok = bool(run.get("ok"))
-        summary = (combined[:500] or f"{selected_backend} exited with code {exit_code}").strip()
+        summary = (
+            combined[:500] or f"{selected_backend} exited with code {exit_code}"
+        ).strip()
         await worker_task_store.update_task(
             task_id,
             status="done" if ok else "failed",
             result=combined,
             result_summary=summary,
             error="" if ok else f"exit_code={exit_code}",
+            output=self._build_task_output(
+                text=combined,
+                error="" if ok else f"exit_code={exit_code}",
+            ),
             ended_at=_now_iso(),
             retry_count=1 if selected_backend == "codex" else 0,
         )
@@ -862,6 +1036,9 @@ class WorkerRuntime:
             "summary": summary,
             "result": combined,
             "exit_code": exit_code,
+            "text": combined,
+            "ui": {},
+            "payload": {"text": combined},
         }
 
 

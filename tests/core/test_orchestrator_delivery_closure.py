@@ -59,7 +59,9 @@ async def test_terminal_extension_short_circuit_marks_done(monkeypatch, tmp_path
         event_callback=None,
     ):
         if event_callback:
-            await event_callback("tool_call_started", {"name": "ext_deployment_manager"})
+            await event_callback(
+                "tool_call_started", {"name": "ext_deployment_manager"}
+            )
             directive = await event_callback(
                 "tool_call_finished",
                 {
@@ -69,6 +71,11 @@ async def test_terminal_extension_short_circuit_marks_done(monkeypatch, tmp_path
                     "terminal": True,
                     "task_outcome": "done",
                     "terminal_text": "✅ 部署成功并可访问。",
+                    "terminal_ui": {
+                        "actions": [
+                            [{"text": "查看日志", "callback_data": "deploy_logs"}]
+                        ]
+                    },
                 },
             )
             if isinstance(directive, dict) and directive.get("stop"):
@@ -76,15 +83,23 @@ async def test_terminal_extension_short_circuit_marks_done(monkeypatch, tmp_path
                 return
         yield "should-not-be-returned"
 
-    monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
-    monkeypatch.setattr(orchestrator.extension_router, "route", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(orchestrator_module, "MCP_MEMORY_ENABLED", False)
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
+    monkeypatch.setattr(
+        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
+    )
 
     ctx = DummyContext(user_id=user_id)
     message_history = [{"role": "user", "parts": [{"text": "帮我部署服务"}]}]
-    chunks = [chunk async for chunk in orchestrator.handle_message(ctx, message_history)]
+    chunks = [
+        chunk async for chunk in orchestrator.handle_message(ctx, message_history)
+    ]
 
     assert chunks == ["✅ 部署成功并可访问。"]
+    pending_ui = ctx.user_data.get("pending_ui")
+    assert isinstance(pending_ui, list)
+    assert pending_ui[0]["actions"][0][0]["text"] == "查看日志"
     state = await heartbeat_store.get_state(user_id)
     assert state["status"]["session"]["active_task"] is None
     session_events = state["status"]["session"].get("events") or []
@@ -110,7 +125,9 @@ async def test_terminal_partial_sets_waiting_user(monkeypatch, tmp_path):
         event_callback=None,
     ):
         if event_callback:
-            await event_callback("tool_call_started", {"name": "ext_deployment_manager"})
+            await event_callback(
+                "tool_call_started", {"name": "ext_deployment_manager"}
+            )
             directive = await event_callback(
                 "tool_call_finished",
                 {
@@ -127,13 +144,18 @@ async def test_terminal_partial_sets_waiting_user(monkeypatch, tmp_path):
                 return
         yield "should-not-be-returned"
 
-    monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
-    monkeypatch.setattr(orchestrator.extension_router, "route", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(orchestrator_module, "MCP_MEMORY_ENABLED", False)
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
+    monkeypatch.setattr(
+        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
+    )
 
     ctx = DummyContext(user_id=user_id)
     message_history = [{"role": "user", "parts": [{"text": "帮我部署 n8n"}]}]
-    chunks = [chunk async for chunk in orchestrator.handle_message(ctx, message_history)]
+    chunks = [
+        chunk async for chunk in orchestrator.handle_message(ctx, message_history)
+    ]
 
     assert len(chunks) == 1
     assert "3分钟内有效" in chunks[0]
@@ -146,7 +168,9 @@ async def test_terminal_partial_sets_waiting_user(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_terminal_extension_failure_short_circuits_without_loop(monkeypatch, tmp_path):
+async def test_terminal_extension_failure_short_circuits_without_loop(
+    monkeypatch, tmp_path
+):
     orchestrator = AgentOrchestrator()
     orchestrator.direct_fastpath_enabled = False
     user_id = "u_terminal_failed"
@@ -164,7 +188,9 @@ async def test_terminal_extension_failure_short_circuits_without_loop(monkeypatc
         event_callback=None,
     ):
         if event_callback:
-            await event_callback("tool_call_started", {"name": "ext_deployment_manager"})
+            await event_callback(
+                "tool_call_started", {"name": "ext_deployment_manager"}
+            )
             directive = await event_callback(
                 "tool_call_finished",
                 {
@@ -182,13 +208,18 @@ async def test_terminal_extension_failure_short_circuits_without_loop(monkeypatc
                 return
         yield "should-not-be-returned"
 
-    monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
-    monkeypatch.setattr(orchestrator.extension_router, "route", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(orchestrator_module, "MCP_MEMORY_ENABLED", False)
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
+    monkeypatch.setattr(
+        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
+    )
 
     ctx = DummyContext(user_id=user_id)
     message_history = [{"role": "user", "parts": [{"text": "帮我部署服务"}]}]
-    chunks = [chunk async for chunk in orchestrator.handle_message(ctx, message_history)]
+    chunks = [
+        chunk async for chunk in orchestrator.handle_message(ctx, message_history)
+    ]
 
     assert chunks == ["❌ 部署失败：compose 文件无效。"]
     state = await heartbeat_store.get_state(user_id)
@@ -215,7 +246,9 @@ async def test_recoverable_terminal_failure_allows_auto_recovery(monkeypatch, tm
         event_callback=None,
     ):
         if event_callback:
-            await event_callback("tool_call_started", {"name": "ext_deployment_manager"})
+            await event_callback(
+                "tool_call_started", {"name": "ext_deployment_manager"}
+            )
             directive = await event_callback(
                 "tool_call_finished",
                 {
@@ -230,16 +263,23 @@ async def test_recoverable_terminal_failure_allows_auto_recovery(monkeypatch, tm
             )
             # Recoverable failures should not stop immediately.
             assert not (isinstance(directive, dict) and directive.get("stop"))
-            await event_callback("final_response", {"turn": 2, "text_preview": "已自动修复并完成部署"})
+            await event_callback(
+                "final_response", {"turn": 2, "text_preview": "已自动修复并完成部署"}
+            )
         yield "已自动修复并完成部署"
 
-    monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
-    monkeypatch.setattr(orchestrator.extension_router, "route", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(orchestrator_module, "MCP_MEMORY_ENABLED", False)
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
+    monkeypatch.setattr(
+        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
+    )
 
     ctx = DummyContext(user_id=user_id)
     message_history = [{"role": "user", "parts": [{"text": "帮我部署服务"}]}]
-    chunks = [chunk async for chunk in orchestrator.handle_message(ctx, message_history)]
+    chunks = [
+        chunk async for chunk in orchestrator.handle_message(ctx, message_history)
+    ]
 
     assert chunks == ["已自动修复并完成部署"]
     state = await heartbeat_store.get_state(user_id)
@@ -247,7 +287,9 @@ async def test_recoverable_terminal_failure_allows_auto_recovery(monkeypatch, tm
 
 
 @pytest.mark.asyncio
-async def test_recoverable_terminal_failure_fails_after_recovery_budget(monkeypatch, tmp_path):
+async def test_recoverable_terminal_failure_fails_after_recovery_budget(
+    monkeypatch, tmp_path
+):
     orchestrator = AgentOrchestrator()
     orchestrator.direct_fastpath_enabled = False
     user_id = "u_terminal_recoverable_budget"
@@ -266,7 +308,9 @@ async def test_recoverable_terminal_failure_fails_after_recovery_budget(monkeypa
         event_callback=None,
     ):
         if event_callback:
-            await event_callback("tool_call_started", {"name": "ext_deployment_manager"})
+            await event_callback(
+                "tool_call_started", {"name": "ext_deployment_manager"}
+            )
             directive1 = await event_callback(
                 "tool_call_finished",
                 {
@@ -281,7 +325,9 @@ async def test_recoverable_terminal_failure_fails_after_recovery_budget(monkeypa
             )
             assert not (isinstance(directive1, dict) and directive1.get("stop"))
 
-            await event_callback("tool_call_started", {"name": "ext_deployment_manager"})
+            await event_callback(
+                "tool_call_started", {"name": "ext_deployment_manager"}
+            )
             directive2 = await event_callback(
                 "tool_call_finished",
                 {
@@ -299,13 +345,18 @@ async def test_recoverable_terminal_failure_fails_after_recovery_budget(monkeypa
             return
         yield "should-not-be-returned"
 
-    monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
-    monkeypatch.setattr(orchestrator.extension_router, "route", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(orchestrator_module, "MCP_MEMORY_ENABLED", False)
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
+    monkeypatch.setattr(
+        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
+    )
 
     ctx = DummyContext(user_id=user_id)
     message_history = [{"role": "user", "parts": [{"text": "帮我部署服务"}]}]
-    chunks = [chunk async for chunk in orchestrator.handle_message(ctx, message_history)]
+    chunks = [
+        chunk async for chunk in orchestrator.handle_message(ctx, message_history)
+    ]
 
     assert chunks == ["❌ 端口冲突，自动恢复预算已耗尽。"]
     state = await heartbeat_store.get_state(user_id)
@@ -316,7 +367,9 @@ async def test_recoverable_terminal_failure_fails_after_recovery_budget(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_immediate_session_does_not_write_task_entries_to_heartbeat_md(monkeypatch, tmp_path):
+async def test_immediate_session_does_not_write_task_entries_to_heartbeat_md(
+    monkeypatch, tmp_path
+):
     orchestrator = AgentOrchestrator()
     orchestrator.direct_fastpath_enabled = False
     user_id = "u_no_task_queue"
@@ -334,16 +387,23 @@ async def test_immediate_session_does_not_write_task_entries_to_heartbeat_md(mon
         event_callback=None,
     ):
         if event_callback:
-            await event_callback("final_response", {"turn": 1, "text_preview": "处理完成"})
+            await event_callback(
+                "final_response", {"turn": 1, "text_preview": "处理完成"}
+            )
         yield "处理完成"
 
-    monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
-    monkeypatch.setattr(orchestrator.extension_router, "route", lambda *_args, **_kwargs: [])
-    monkeypatch.setattr(orchestrator_module, "MCP_MEMORY_ENABLED", False)
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
+    monkeypatch.setattr(
+        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
+    )
 
     ctx = DummyContext(user_id=user_id)
     message_history = [{"role": "user", "parts": [{"text": "请立即处理一个普通任务"}]}]
-    chunks = [chunk async for chunk in orchestrator.handle_message(ctx, message_history)]
+    chunks = [
+        chunk async for chunk in orchestrator.handle_message(ctx, message_history)
+    ]
 
     assert chunks == ["处理完成"]
     heartbeat_text = heartbeat_store.heartbeat_path(user_id).read_text(encoding="utf-8")

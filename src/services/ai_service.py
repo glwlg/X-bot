@@ -2,6 +2,7 @@ import logging
 import inspect
 import os
 import json
+import asyncio
 from core.config import gemini_client, GEMINI_MODEL
 from google.genai import types
 
@@ -48,9 +49,7 @@ class AiService:
         except ValueError:
             TOOL_EXEC_TIMEOUT_SEC = 420
         try:
-            MAX_REPEAT_TOOL_CALLS = max(
-                2, int(os.getenv("AI_TOOL_REPEAT_GUARD", "3"))
-            )
+            MAX_REPEAT_TOOL_CALLS = max(2, int(os.getenv("AI_TOOL_REPEAT_GUARD", "3")))
         except ValueError:
             MAX_REPEAT_TOOL_CALLS = 3
         turn_count = 0
@@ -67,6 +66,7 @@ class AiService:
         current_history = message_history.copy()
 
         try:
+
             async def _emit(event: str, payload: dict):
                 if not event_callback:
                     return None
@@ -140,7 +140,10 @@ class AiService:
                             )
                             if forced_reply:
                                 yield forced_reply
-                            elif last_terminal_success_text or last_terminal_success_summary:
+                            elif (
+                                last_terminal_success_text
+                                or last_terminal_success_summary
+                            ):
                                 yield (
                                     last_terminal_success_text
                                     or f"✅ 任务已完成：{last_terminal_success_summary}"
@@ -168,7 +171,11 @@ class AiService:
                             if tool_executor:
                                 await _emit(
                                     "tool_call_started",
-                                    {"turn": turn_count, "name": fc.name, "args": fc.args},
+                                    {
+                                        "turn": turn_count,
+                                        "name": fc.name,
+                                        "args": fc.args,
+                                    },
                                 )
                                 # Yield status update if possible?
                                 # But we can't yield text that isn't part of final response easily without confusing UI?
@@ -179,8 +186,6 @@ class AiService:
                                     logger.info(
                                         f"Executing tool: {fc.name} args={fc.args}"
                                     )
-                                    import asyncio
-
                                     # Increase timeout for tool execution (Deep Research can take time)
                                     tool_result = await asyncio.wait_for(
                                         tool_executor(fc.name, fc.args),
@@ -202,22 +207,32 @@ class AiService:
                                 task_outcome = ""
                                 is_terminal = False
                                 terminal_text = ""
+                                terminal_ui = {}
+                                terminal_payload = {}
                                 failure_mode = ""
                                 if isinstance(tool_result, dict):
-                                    task_outcome = str(
-                                        tool_result.get("task_outcome") or ""
-                                    ).strip().lower()
-                                    is_terminal = bool(
-                                        tool_result.get("terminal")
-                                    ) or task_outcome == "done"
-                                    terminal_text = str(
-                                        tool_result.get("text")
-                                        or tool_result.get("message")
-                                        or ""
-                                    ).strip()
-                                    failure_mode = str(
-                                        tool_result.get("failure_mode") or ""
-                                    ).strip().lower()
+                                    task_outcome = (
+                                        str(tool_result.get("task_outcome") or "")
+                                        .strip()
+                                        .lower()
+                                    )
+                                    is_terminal = (
+                                        bool(tool_result.get("terminal"))
+                                        or task_outcome == "done"
+                                    )
+                                    (
+                                        terminal_text,
+                                        terminal_ui,
+                                        terminal_payload,
+                                    ) = self._extract_terminal_artifacts(tool_result)
+                                    failure_mode = (
+                                        str(tool_result.get("failure_mode") or "")
+                                        .strip()
+                                        .lower()
+                                    )
+                                elif tool_result is not None:
+                                    terminal_text = str(tool_result).strip()
+                                    terminal_payload = {"text": terminal_text}
 
                                 if not failure_mode and not tool_ok:
                                     failure_mode = "recoverable"
@@ -241,13 +256,17 @@ class AiService:
                                         "turn": turn_count,
                                         "name": fc.name,
                                         "ok": tool_ok,
-                                        "summary": self._summarize_tool_result(tool_result),
+                                        "summary": self._summarize_tool_result(
+                                            tool_result
+                                        ),
                                         "terminal": is_terminal,
                                         "task_outcome": task_outcome,
                                         # Keep full terminal text so orchestrator can
                                         # deliver complete URLs/commands without truncation.
                                         "terminal_text": terminal_text,
                                         "terminal_text_preview": terminal_text[:200],
+                                        "terminal_ui": terminal_ui,
+                                        "terminal_payload": terminal_payload,
                                         "failure_mode": failure_mode,
                                     },
                                 )
@@ -289,15 +308,6 @@ class AiService:
                         pending_tool_failures = turn_failures
 
                         if should_terminal_stop:
-                            preview = terminal_short_circuit_text.replace("\n", " ")[:200]
-                            await _emit(
-                                "final_response",
-                                {
-                                    "turn": turn_count,
-                                    "text_preview": preview,
-                                    "source": "terminal_tool_short_circuit",
-                                },
-                            )
                             yield terminal_short_circuit_text
                             completed = True
                             break
@@ -326,9 +336,13 @@ class AiService:
                             retry_payload = {
                                 "turn": turn_count,
                                 "failures": pending_tool_failures[:],
-                                "model_text_preview": model_text.replace("\n", " ")[:160],
+                                "model_text_preview": model_text.replace("\n", " ")[
+                                    :160
+                                ],
                             }
-                            directive = await _emit("retry_after_failure", retry_payload)
+                            directive = await _emit(
+                                "retry_after_failure", retry_payload
+                            )
                             recovery_instruction = ""
                             if isinstance(directive, dict):
                                 recovery_instruction = str(
@@ -344,11 +358,7 @@ class AiService:
                             current_history.append(
                                 types.Content(
                                     role="user",
-                                    parts=[
-                                        types.Part(
-                                            text=recovery_instruction
-                                        )
-                                    ],
+                                    parts=[types.Part(text=recovery_instruction)],
                                 )
                             )
                             continue
@@ -462,14 +472,55 @@ class AiService:
     @staticmethod
     def _summarize_tool_result(tool_result) -> str:
         if isinstance(tool_result, dict):
-            if "summary" in tool_result and tool_result["summary"]:
-                return str(tool_result["summary"])[:200]
-            if "message" in tool_result and tool_result["message"]:
-                return str(tool_result["message"])[:200]
             if "text" in tool_result and tool_result["text"]:
                 return str(tool_result["text"])[:200]
+            if "result" in tool_result and tool_result["result"]:
+                return str(tool_result["result"])[:200]
+            if "message" in tool_result and tool_result["message"]:
+                return str(tool_result["message"])[:200]
+            if "summary" in tool_result and tool_result["summary"]:
+                return str(tool_result["summary"])[:200]
             return str(tool_result)[:200]
         return str(tool_result)[:200]
+
+    @staticmethod
+    def _extract_terminal_artifacts(tool_result) -> tuple[str, dict, dict]:
+        text = ""
+        ui: dict = {}
+        payload: dict = {}
+        if not isinstance(tool_result, dict):
+            text = str(tool_result or "").strip()
+            payload = {"text": text} if text else {}
+            return text, ui, payload
+
+        raw_payload = tool_result.get("payload")
+        if isinstance(raw_payload, dict):
+            payload = dict(raw_payload)
+
+        ui_candidate = tool_result.get("ui")
+        if not isinstance(ui_candidate, dict) and isinstance(payload.get("ui"), dict):
+            ui_candidate = payload.get("ui")
+        if isinstance(ui_candidate, dict):
+            ui = ui_candidate
+
+        text_candidates = [
+            payload.get("text"),
+            tool_result.get("text"),
+            tool_result.get("result"),
+            tool_result.get("message"),
+            tool_result.get("summary"),
+        ]
+        for value in text_candidates:
+            rendered = str(value or "").strip()
+            if rendered:
+                text = rendered
+                break
+
+        if text and "text" not in payload:
+            payload["text"] = text
+        if ui and "ui" not in payload:
+            payload["ui"] = ui
+        return text, ui, payload
 
     @staticmethod
     def _build_tool_signature(function_calls) -> str:

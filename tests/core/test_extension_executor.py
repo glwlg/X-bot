@@ -30,7 +30,9 @@ async def test_extension_executor_runs_skill(monkeypatch):
     monkeypatch.setattr(
         extension_executor_module.skill_loader,
         "import_skill_module",
-        lambda skill_name, script_name="execute.py": SimpleNamespace(execute=fake_execute),
+        lambda skill_name, script_name="execute.py": SimpleNamespace(
+            execute=fake_execute
+        ),
     )
 
     executor = ExtensionExecutor()
@@ -96,7 +98,9 @@ async def test_extension_executor_timeout_isolated(monkeypatch):
     monkeypatch.setattr(
         extension_executor_module.skill_loader,
         "import_skill_module",
-        lambda skill_name, script_name="execute.py": SimpleNamespace(execute=slow_execute),
+        lambda skill_name, script_name="execute.py": SimpleNamespace(
+            execute=slow_execute
+        ),
     )
     monkeypatch.setattr(extension_executor_module, "EXTENSION_EXEC_TIMEOUT_SEC", 0.05)
 
@@ -127,3 +131,27 @@ def test_extension_failed_tool_response_preserves_terminal_flags():
     assert payload["terminal"] is True
     assert payload["task_outcome"] == "failed"
     assert "部署失败" in payload["summary"]
+
+
+def test_extension_ui_response_defaults_to_terminal_done():
+    result = ExtensionRunResult(
+        ok=True,
+        skill_name="rss_subscribe",
+        text="这是你的订阅列表",
+        data={
+            "ui": {
+                "actions": [
+                    [
+                        {"text": "刷新", "callback_data": "rss_refresh"},
+                        {"text": "取消", "callback_data": "rss_cancel"},
+                    ]
+                ]
+            }
+        },
+    )
+
+    payload = result.to_tool_response()
+    assert payload["ok"] is True
+    assert payload["terminal"] is True
+    assert payload["task_outcome"] == "done"
+    assert payload["ui"]["actions"][0][0]["text"] == "刷新"

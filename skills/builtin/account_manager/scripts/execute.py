@@ -1,5 +1,5 @@
 from core.platform.models import UnifiedContext
-from repositories.account_repo import (
+from core.state_store import (
     add_account,
     get_account,
     list_accounts,

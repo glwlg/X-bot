@@ -39,7 +39,6 @@ from handlers import (
     button_callback,
     back_to_main_and_cancel,
     cancel,
-    stats_command,
     handle_ai_chat,
     handle_ai_photo,
     handle_ai_video,
@@ -81,13 +80,13 @@ logger = logging.getLogger(__name__)
 
 
 async def init_services() -> None:
-    """初始化全局服务（数据库、调度器、Skills等）"""
+    """初始化全局服务（文件存储、调度器、Skills等）"""
     logger.info("⚡ Initializing global services...")
     try:
-        from repositories import init_db
+        from core.state_store import init_db
 
         await init_db()
-        logger.info("✅ Database initialized.")
+        logger.info("✅ Repository store initialized.")
 
         # 加载待执行的提醒任务
         from core.scheduler import (
@@ -134,22 +133,6 @@ async def init_services() -> None:
     except Exception as e:
         logger.error(f"❌ Error in init_services: {e}", exc_info=True)
 
-    # Pre-connect MCP Memory for Admin
-    from core.config import ADMIN_USER_IDS
-    from mcp_client.manager import mcp_manager
-    from mcp_client.memory import MemoryMCPServer
-
-    mcp_manager.register_server_class("memory", MemoryMCPServer)
-
-    if ADMIN_USER_IDS:
-        admin_id = list(ADMIN_USER_IDS)[0]
-        logger.info(f"🚀 Pre-connecting MCP Memory for Admin: {admin_id}")
-        try:
-            await mcp_manager.get_server("memory", user_id=admin_id)
-            logger.info("✅ MCP Memory pre-connected.")
-        except Exception as e:
-            logger.error(f"⚠️ MCP Pre-connect failed: {e}")
-
 
 async def setup_telegram_commands(application: Application) -> None:
     """Register Telegram Commands"""
@@ -160,7 +143,6 @@ async def setup_telegram_commands(application: Application) -> None:
             ("teach", "教我新能力"),
             ("skills", "查看 Skills"),
             ("feature", "提交需求"),
-            ("stats", "使用统计"),
             ("chatlog", "检索对话"),
             ("translate", "沉浸式翻译"),
             ("heartbeat", "心跳管理"),
@@ -249,7 +231,6 @@ async def main():
     adapter_manager.on_command("start", start, description="显示主菜单")
     adapter_manager.on_command("new", handle_new_command, description="开启新对话")
     adapter_manager.on_command("help", help_command, description="使用帮助")
-    adapter_manager.on_command("stats", stats_command, description="查看统计信息")
     adapter_manager.on_command("chatlog", chatlog_command, description="检索对话记录")
     adapter_manager.on_command("skills", skills_command, description="查看可用技能")
     adapter_manager.on_command(
@@ -260,7 +241,9 @@ async def main():
     )
     adapter_manager.on_command("stop", stop_command, description="停止当前任务")
     adapter_manager.on_command("heartbeat", heartbeat_command, description="管理心跳")
-    adapter_manager.on_command("worker", worker_command, description="管理 Worker 执行层")
+    adapter_manager.on_command(
+        "worker", worker_command, description="管理 Worker 执行层"
+    )
 
     # ----------------------------------------------
     # 3.1 DYNAMIC SKILL HANDLER REGISTRATION

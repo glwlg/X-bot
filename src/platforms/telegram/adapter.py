@@ -1,4 +1,6 @@
 import logging
+import asyncio
+import inspect
 from typing import Any, Optional, Union, Callable, Dict
 from telegram import Update, Bot
 from telegram.ext import (
@@ -58,6 +60,42 @@ class TelegramAdapter(BotAdapter):
             keyboard.append(k_row)
 
         return InlineKeyboardMarkup(keyboard)
+
+    @staticmethod
+    def _is_timeout_error(exc: Exception) -> bool:
+        text = str(exc or "").lower()
+        if "timed out" in text or "timeout" in text:
+            return True
+        name = exc.__class__.__name__.lower()
+        return "timeout" in name
+
+    async def _send_with_retry(
+        self,
+        sender: Callable[[], Any],
+        *,
+        max_attempts: int = 3,
+        label: str = "send_message",
+    ) -> Any:
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                result = sender()
+                if inspect.isawaitable(result):
+                    return await result
+                return result
+            except Exception as e:
+                if attempt >= max_attempts or not self._is_timeout_error(e):
+                    raise
+                delay = 0.5 * attempt
+                logger.warning(
+                    "Telegram %s timeout, retrying (%s/%s) in %.1fs",
+                    label,
+                    attempt,
+                    max_attempts,
+                    delay,
+                )
+                await asyncio.sleep(delay)
 
     @staticmethod
     def _is_auto_reply_payload(value: Any) -> bool:
@@ -121,16 +159,47 @@ class TelegramAdapter(BotAdapter):
             if not reply_markup and ui:
                 reply_markup = self._render_ui(ui)
 
-            return await self.bot.send_message(
-                chat_id=chat_id,
-                text=html_text,
-                parse_mode="HTML",
-                disable_web_page_preview=True,
-                reply_markup=reply_markup,
-                **kwargs,
+            return await self._send_with_retry(
+                lambda: self.bot.send_message(
+                    chat_id=chat_id,
+                    text=html_text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                    reply_markup=reply_markup,
+                    **kwargs,
+                ),
+                label="reply_text",
             )
         except Exception as e:
             logger.error(f"Telegram reply_text failed: {e}")
+            raise MessageSendError(str(e))
+
+    async def send_message(
+        self,
+        chat_id: int | str,
+        text: str,
+        ui: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> Any:
+        """Out-of-context message push helper used by scheduler/heartbeat."""
+        try:
+            html_text = markdown_to_telegram_html(text)
+            reply_markup = kwargs.pop("reply_markup", None)
+            if not reply_markup and ui:
+                reply_markup = self._render_ui(ui)
+            return await self._send_with_retry(
+                lambda: self.bot.send_message(
+                    chat_id=chat_id,
+                    text=html_text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                    reply_markup=reply_markup,
+                    **kwargs,
+                ),
+                label="send_message",
+            )
+        except Exception as e:
+            logger.error(f"Telegram send_message failed: {e}")
             raise MessageSendError(str(e))
 
     async def edit_text(

@@ -13,7 +13,20 @@ triggers:
 - 关注
 input_schema:
   type: object
-  properties: {}
+  properties:
+    action:
+      type: string
+      enum:
+        - add
+        - list
+        - remove
+        - refresh
+      description: "add=新增订阅/关键词监控，list=查看订阅，remove=取消订阅，refresh=检查最新更新"
+    url:
+      type: string
+      description: "当 action=add/remove 时使用；可传 RSS URL 或监控关键词"
+  required:
+    - action
 permissions:
   filesystem: workspace
   shell: false

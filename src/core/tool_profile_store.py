@@ -12,7 +12,7 @@ def _default_cost(tool_name: str) -> float:
         return 0.2
     if name.startswith("ext_"):
         return 0.8
-    if name.startswith("memory") or name in {"open_nodes", "create_entities", "add_observations"}:
+    if name.startswith("memory"):
         return 0.5
     return 0.6
 
@@ -67,7 +67,9 @@ class ToolProfileStore:
         tools[key] = profile
         return profile
 
-    def record(self, tool_name: str, *, success: bool, latency_ms: float) -> Dict[str, Any]:
+    def record(
+        self, tool_name: str, *, success: bool, latency_ms: float
+    ) -> Dict[str, Any]:
         key = str(tool_name or "").strip()
         if not key:
             return {}
@@ -110,7 +112,9 @@ class ToolProfileStore:
         attempts = max(0, int(profile.get("attempts", 0)))
         successes = max(0, int(profile.get("successes", 0)))
         success_rate = (successes / attempts) if attempts > 0 else 0.6
-        avg_latency_ms = max(1.0, float(profile.get("avg_latency_ms", 1200.0) or 1200.0))
+        avg_latency_ms = max(
+            1.0, float(profile.get("avg_latency_ms", 1200.0) or 1200.0)
+        )
         cost = float(profile.get("cost_score", _default_cost(tool_name)))
         latency_penalty = min(2.0, avg_latency_ms / 2500.0)
         return round((success_rate * 1.3) - (latency_penalty * 0.35) - (cost * 0.35), 6)

@@ -1,5 +1,5 @@
 from core.platform.models import UnifiedContext
-from repositories.task_repo import (
+from core.state_store import (
     add_scheduled_task,
     get_all_active_tasks,
     delete_task,

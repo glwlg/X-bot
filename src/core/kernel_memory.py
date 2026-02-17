@@ -41,7 +41,9 @@ class KernelMemoryStore:
         self.short_root.mkdir(parents=True, exist_ok=True)
         self.user_long_root.mkdir(parents=True, exist_ok=True)
         self.short_keep = max(10, int(os.getenv("KERNEL_SHORT_TERM_KEEP", "80")))
-        self.candidate_keep = max(10, int(os.getenv("KERNEL_MEMORY_CANDIDATE_KEEP", "60")))
+        self.candidate_keep = max(
+            10, int(os.getenv("KERNEL_MEMORY_CANDIDATE_KEEP", "60"))
+        )
 
     def _short_path(self, user_id: str) -> Path:
         return (self.short_root / f"{_safe_key(user_id)}.json").resolve()
@@ -106,7 +108,11 @@ class KernelMemoryStore:
             "status": str(status or "pending").strip()[:30],
             "confidence": round(max(0.0, min(1.0, float(confidence))), 3),
             "tags": [str(t).strip()[:40] for t in (tags or []) if str(t).strip()][:8],
-            "evidence": [str(item).strip()[:200] for item in (evidence or []) if str(item).strip()][:8],
+            "evidence": [
+                str(item).strip()[:200]
+                for item in (evidence or [])
+                if str(item).strip()
+            ][:8],
             "conflicts_with": [],
             "created_at": now,
             "updated_at": now,
@@ -146,10 +152,9 @@ class KernelMemoryStore:
         incoming: Dict[str, Any],
     ) -> Tuple[List[Dict[str, Any]], str, Dict[str, Any]]:
         for item in entries:
-            if (
-                item.get("memory_type") == incoming.get("memory_type")
-                and str(item.get("normalized")) == str(incoming.get("normalized"))
-            ):
+            if item.get("memory_type") == incoming.get("memory_type") and str(
+                item.get("normalized")
+            ) == str(incoming.get("normalized")):
                 old_conf = float(item.get("confidence", 0.5))
                 new_conf = float(incoming.get("confidence", 0.5))
                 item["confidence"] = round(min(0.99, max(old_conf, new_conf) + 0.05), 3)
@@ -167,9 +172,13 @@ class KernelMemoryStore:
                 continue
             if incoming.get("memory_type") not in {"preference", "profile", "goal"}:
                 continue
-            if not self._is_preference_conflict(item.get("text", ""), incoming.get("text", "")):
+            if not self._is_preference_conflict(
+                item.get("text", ""), incoming.get("text", "")
+            ):
                 continue
-            item["confidence"] = round(max(0.1, float(item.get("confidence", 0.5)) * 0.8), 3)
+            item["confidence"] = round(
+                max(0.1, float(item.get("confidence", 0.5)) * 0.8), 3
+            )
             item["updated_at"] = _now_iso()
             item_conflicts = item.get("conflicts_with")
             if not isinstance(item_conflicts, list):
@@ -178,7 +187,9 @@ class KernelMemoryStore:
                 item_conflicts.append(incoming["id"])
             item["conflicts_with"] = item_conflicts[-8:]
 
-            incoming["confidence"] = round(max(0.1, float(incoming.get("confidence", 0.5)) * 0.8), 3)
+            incoming["confidence"] = round(
+                max(0.1, float(incoming.get("confidence", 0.5)) * 0.8), 3
+            )
             incoming_conflicts = incoming.get("conflicts_with")
             if not isinstance(incoming_conflicts, list):
                 incoming_conflicts = []
@@ -340,7 +351,12 @@ class KernelMemoryStore:
         confirmed, _mode, merged = self._merge_or_append(confirmed, incoming)
         payload["confirmed"] = confirmed[-500:]
         payload["updated_at"] = _now_iso()
-        self._write_json(path, payload, actor=str(actor or "user"), reason="add_user_memory_confirmed")
+        self._write_json(
+            path,
+            payload,
+            actor=str(actor or "user"),
+            reason="add_user_memory_confirmed",
+        )
         return merged
 
     def confirm_candidate(
@@ -381,10 +397,14 @@ class KernelMemoryStore:
         payload["candidates"] = remained[-self.candidate_keep :]
         payload["confirmed"] = confirmed[-500:]
         payload["updated_at"] = _now_iso()
-        self._write_json(path, payload, actor=str(actor or "user"), reason="confirm_candidate")
+        self._write_json(
+            path, payload, actor=str(actor or "user"), reason="confirm_candidate"
+        )
         return True
 
-    def reject_candidate(self, user_id: str, *, memory_id: str, actor: str = "user") -> bool:
+    def reject_candidate(
+        self, user_id: str, *, memory_id: str, actor: str = "user"
+    ) -> bool:
         path = self._user_long_path(user_id)
         payload = self._load_user_long(user_id)
         candidates = payload.get("candidates")
@@ -395,7 +415,9 @@ class KernelMemoryStore:
             return False
         payload["candidates"] = kept[-self.candidate_keep :]
         payload["updated_at"] = _now_iso()
-        self._write_json(path, payload, actor=str(actor or "user"), reason="reject_candidate")
+        self._write_json(
+            path, payload, actor=str(actor or "user"), reason="reject_candidate"
+        )
         return True
 
     def list_candidates(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
@@ -422,7 +444,9 @@ class KernelMemoryStore:
         if include_candidates and isinstance(candidates, list):
             pool.extend(candidates)
 
-        query_tokens = set(re.findall(r"[a-zA-Z0-9_\-\u4e00-\u9fff]{2,}", str(query or "").lower()))
+        query_tokens = set(
+            re.findall(r"[a-zA-Z0-9_\-\u4e00-\u9fff]{2,}", str(query or "").lower())
+        )
         if not query_tokens:
             return pool[-max(1, int(limit)) :]
 
@@ -458,8 +482,10 @@ class KernelMemoryStore:
                     found.append((memory_type, content))
         return found[:10]
 
-    async def compact_user_dialogue(self, user_id: str, max_messages: int = 40) -> Dict[str, Any]:
-        from repositories.chat_repo import get_recent_messages_for_user
+    async def compact_user_dialogue(
+        self, user_id: str, max_messages: int = 40
+    ) -> Dict[str, Any]:
+        from core.state_store import get_recent_messages_for_user
 
         rows = await get_recent_messages_for_user(user_id=user_id, limit=max_messages)
         if not rows:
@@ -477,7 +503,9 @@ class KernelMemoryStore:
         user_rows = [row for row in rows if str(row.get("role")) == "user"]
         extracted = 0
         for row in user_rows[-20:]:
-            for memory_type, content in self._extract_candidate_lines(str(row.get("content") or "")):
+            for memory_type, content in self._extract_candidate_lines(
+                str(row.get("content") or "")
+            ):
                 self.propose_user_memory(
                     user_id,
                     text=content,
