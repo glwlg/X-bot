@@ -135,8 +135,8 @@ async def test_ai_service_keeps_full_terminal_text_without_truncation(monkeypatc
         chunks.append(chunk)
 
     assert captured_terminal["value"] == long_text
-    assert chunks[-1] == long_text
-    assert len(chunks[-1]) > 500
+    assert "".join(chunks) == long_text
+    assert len("".join(chunks)) > 500
 
 
 @pytest.mark.asyncio

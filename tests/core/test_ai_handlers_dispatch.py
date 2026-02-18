@@ -179,3 +179,17 @@ def test_pop_pending_ui_payload_merges_blocks():
     assert len(ui_payload["actions"]) == 2
     assert ui_payload["actions"][0][0]["text"] == "刷新"
     assert ui_payload["actions"][1][0]["text"] == "取消"
+
+
+def test_stream_cut_index_prefers_sentence_boundary():
+    text = "第一段内容。\n第二段内容继续输出"
+    cut = ai_handlers._stream_cut_index(text, 14)
+    assert cut <= 14
+    assert cut >= 6
+    assert text[:cut].endswith(("。", "\n"))
+
+
+def test_stream_cut_index_falls_back_to_limit_without_boundary():
+    text = "abcdefghijklmnopqrstuvwxyz"
+    cut = ai_handlers._stream_cut_index(text, 10)
+    assert cut == 10

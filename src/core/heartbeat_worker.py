@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import io
 import inspect
 import logging
 import os
@@ -78,6 +79,19 @@ class HeartbeatWorker:
         self.enable_stock_signal = (
             os.getenv("HEARTBEAT_STOCK_SIGNAL_ENABLED", "true").lower() == "true"
         )
+        self.push_file_enabled = (
+            os.getenv("HEARTBEAT_PUSH_FILE_ENABLED", "true").lower() == "true"
+        )
+        try:
+            push_threshold = int(os.getenv("HEARTBEAT_PUSH_FILE_THRESHOLD", "12000"))
+        except Exception:
+            push_threshold = 12000
+        self.push_file_threshold = max(512, push_threshold)
+        try:
+            max_chunks = int(os.getenv("HEARTBEAT_PUSH_MAX_TEXT_CHUNKS", "3"))
+        except Exception:
+            max_chunks = 3
+        self.push_max_text_chunks = max(1, max_chunks)
         self._stop_event = asyncio.Event()
         self._loop_task: asyncio.Task | None = None
         self._running: dict[str, asyncio.Task] = {}
@@ -292,12 +306,41 @@ class HeartbeatWorker:
             ctx.user_data["execution_policy"] = "worker_execution_policy"
 
         sections: list[str] = []
+        rss_refresh_attempted = False
+        rss_refresh_available = False
+        rss_refresh_text = ""
+        rss_refresh_appended = False
         for idx, spec in enumerate(specs, start=1):
             await heartbeat_store.refresh_lock(user_id, owner=owner)
             title = str(spec.get("title") or f"任务 {idx}")
             goal = str(spec.get("goal") or "").strip()
             if not goal:
                 continue
+
+            spec_type = str(spec.get("type") or "").strip().lower()
+            if spec_type == "rss_signal" or self._is_rss_related_goal(goal):
+                if not rss_refresh_attempted:
+                    rss_refresh_attempted = True
+                    try:
+                        from core.scheduler import trigger_manual_rss_check
+
+                        rss_refresh_text = str(
+                            await trigger_manual_rss_check(user_id) or ""
+                        ).strip()
+                        rss_refresh_available = True
+                    except Exception as exc:
+                        logger.warning(
+                            "Heartbeat direct RSS refresh failed, fallback to orchestrator. "
+                            "user=%s err=%s",
+                            user_id,
+                            exc,
+                        )
+
+                if rss_refresh_available:
+                    if rss_refresh_text and not rss_refresh_appended:
+                        sections.append(rss_refresh_text)
+                        rss_refresh_appended = True
+                    continue
 
             task_id = f"hb-{int(datetime.now().timestamp())}-{idx}"
             prompt = self._build_heartbeat_task_prompt(
@@ -408,9 +451,16 @@ class HeartbeatWorker:
         return specs
 
     @staticmethod
+    def _is_rss_related_goal(goal: str) -> bool:
+        text = str(goal or "").strip().lower()
+        if not text:
+            return False
+        return any(token in text for token in ("rss", "订阅", "feed"))
+
+    @staticmethod
     def _build_heartbeat_task_prompt(*, task_id: str, goal: str, readonly: bool) -> str:
         readonly_line = (
-            "当前为 readonly 模式：仅允许检查、查询、总结，不要进行系统级修改。"
+            "当前为 readonly 模式：仅允许检查、查询、总结；允许执行用于状态去重的轻量写入（如 RSS last_entry_hash）。"
             if readonly
             else "当前为 execute 模式：可以按需派发 worker 完成任务。"
         )
@@ -487,6 +537,58 @@ class HeartbeatWorker:
             user=user,
         )
 
+    async def _push_markdown_attachment(
+        self,
+        *,
+        adapter: Any,
+        platform: str,
+        chat_id: str,
+        text: str,
+    ) -> bool:
+        payload = str(text or "").strip()
+        if not payload:
+            return True
+
+        filename = f"heartbeat-{datetime.now().strftime('%Y%m%d-%H%M%S')}.md"
+        caption = "📝 内容较长，完整结果见附件。"
+        document_bytes = payload.encode("utf-8")
+
+        try:
+            send_document = getattr(adapter, "send_document", None)
+            if callable(send_document):
+                send_result = send_document(
+                    chat_id=chat_id,
+                    document=document_bytes,
+                    filename=filename,
+                    caption=caption,
+                )
+                if inspect.isawaitable(send_result):
+                    await send_result
+                return True
+
+            bot = getattr(adapter, "bot", None)
+            if platform == "telegram" and bot is not None:
+                file_obj = io.BytesIO(document_bytes)
+                file_obj.name = filename
+                send_result = bot.send_document(
+                    chat_id=chat_id,
+                    document=file_obj,
+                    caption=caption,
+                )
+                if inspect.isawaitable(send_result):
+                    await send_result
+                return True
+        except Exception as exc:
+            logger.warning(
+                "Heartbeat attachment push failed, fallback to chunked text. "
+                "platform=%s chat=%s err=%s",
+                platform,
+                chat_id,
+                exc,
+            )
+
+        return False
+
     async def _push_to_target(self, platform: str, chat_id: str, text: str) -> bool:
         try:
             adapter = adapter_manager.get_adapter(platform)
@@ -494,8 +596,24 @@ class HeartbeatWorker:
             return False
 
         try:
-            chunks = self._split_push_chunks(text)
+            payload_text = str(text or "").strip()
+            chunks = self._split_push_chunks(payload_text)
             if not chunks:
+                return True
+
+            if (
+                self.push_file_enabled
+                and (
+                    len(chunks) > self.push_max_text_chunks
+                    or len(payload_text) > self.push_file_threshold
+                )
+                and await self._push_markdown_attachment(
+                    adapter=adapter,
+                    platform=platform,
+                    chat_id=chat_id,
+                    text=payload_text,
+                )
+            ):
                 return True
 
             total = len(chunks)

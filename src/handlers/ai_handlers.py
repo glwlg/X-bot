@@ -2,6 +2,7 @@ import time
 import asyncio
 import logging
 import base64
+import os
 import re
 from datetime import datetime
 from typing import Any
@@ -25,6 +26,50 @@ from .message_utils import process_and_send_code_files
 logger = logging.getLogger(__name__)
 
 LONG_RESPONSE_FILE_THRESHOLD = 9000
+
+
+def _env_int(name: str, default: int, minimum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except Exception:
+        value = default
+    return max(minimum, value)
+
+
+def _env_float(name: str, default: float, minimum: float) -> float:
+    try:
+        value = float(os.getenv(name, str(default)))
+    except Exception:
+        value = default
+    return max(minimum, value)
+
+
+def _stream_cut_index(text: str, max_chars: int) -> int:
+    if not text:
+        return 0
+    if len(text) <= max_chars:
+        return len(text)
+    head = text[:max_chars]
+    candidates = (
+        "\n\n",
+        "\n",
+        "。",
+        "！",
+        "？",
+        ". ",
+        "! ",
+        "? ",
+        "；",
+        ";",
+    )
+    best = -1
+    for marker in candidates:
+        idx = head.rfind(marker)
+        if idx > best:
+            best = idx + len(marker)
+    if best >= int(max_chars * 0.35):
+        return best
+    return max_chars
 
 
 def _extract_history_text(item: Any) -> tuple[str, str]:
@@ -639,6 +684,60 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
 
     # Default to True for backward compatibility or if adapter missing
     can_update = getattr(ctx._adapter, "can_update_message", True)
+    stream_segment_enabled = (
+        os.getenv("AI_SEGMENT_STREAM_ENABLED", "true").lower() == "true"
+        and str(platform_name or "").lower() in {"telegram", "discord"}
+        and not has_media
+    )
+    stream_min_chars = _env_int("AI_SEGMENT_STREAM_MIN_CHARS", 220, 40)
+    stream_max_chars = _env_int("AI_SEGMENT_STREAM_MAX_CHARS", 1200, 160)
+    stream_flush_sec = _env_float("AI_SEGMENT_STREAM_FLUSH_SEC", 1.0, 0.2)
+    stream_buffer = ""
+    stream_chunks_seen = 0
+    stream_chunks_sent = 0
+    stream_last_sent_ts = 0.0
+    stream_locked = False
+    thinking_deleted = False
+
+    async def _flush_stream_buffer(*, force: bool = False) -> None:
+        nonlocal \
+            stream_buffer, \
+            stream_chunks_sent, \
+            stream_last_sent_ts, \
+            thinking_deleted
+        if not stream_segment_enabled or stream_locked:
+            return
+        if not stream_buffer:
+            return
+        now = time.time()
+        if not force and now - stream_last_sent_ts < stream_flush_sec:
+            return
+
+        while stream_buffer:
+            cut = _stream_cut_index(stream_buffer, stream_max_chars)
+            if cut <= 0:
+                return
+            if (
+                not force
+                and cut < stream_min_chars
+                and len(stream_buffer) < stream_max_chars
+            ):
+                return
+            segment = stream_buffer[:cut].strip()
+            stream_buffer = stream_buffer[cut:].lstrip()
+            if not segment:
+                continue
+            await ctx.reply(segment)
+            stream_chunks_sent += 1
+            stream_last_sent_ts = time.time()
+            if can_update and not thinking_deleted:
+                try:
+                    await thinking_msg.delete()
+                    thinking_deleted = True
+                except Exception:
+                    pass
+            if not force:
+                return
 
     # 启动动画任务 (仅当支持消息更新时，也就是非 DingTalk)
     animation_task = None
@@ -698,12 +797,22 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                 logger.info(f"Task cancelled check hit for user {user_id}")
                 raise asyncio.CancelledError()
 
+            chunk_text = str(chunk_text or "")
             final_text_response += chunk_text
             state["final_text"] = final_text_response
             state["last_update_time"] = time.time()
 
+            stream_chunks_seen += 1
+            if stream_segment_enabled:
+                if "```" in chunk_text and stream_chunks_sent == 0:
+                    stream_locked = True
+                if not stream_locked:
+                    stream_buffer += chunk_text
+                    if stream_chunks_seen >= 2:
+                        await _flush_stream_buffer(force=False)
+
             # Update UI (Standard Stream) - ONLY if supported
-            if can_update:
+            if can_update and (stream_chunks_sent == 0 or stream_locked):
                 now = time.time()
                 if now - last_stream_update > 1.0:  # Reduce frequency slightly
                     msg_id = getattr(
@@ -725,61 +834,72 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
 
         # 5. 发送最终回复并入库
         if final_text_response:
-            rendered_response = await process_and_send_code_files(
-                ctx, final_text_response
-            )
-            # 用户体验优化：为了避免工具产生的中间消息导致最终结果被顶上去需要翻页，
-            # 这里改为发送一条新消息作为最终结果，并删除原本的"思考中"消息。
-
-            # 1. 检查是否有 Skill 返回的 UI 组件/按钮
             ui_payload = _pop_pending_ui_payload(ctx.user_data)
+            streamed_delivery = (
+                stream_segment_enabled
+                and stream_chunks_sent > 0
+                and not stream_locked
+                and not ui_payload
+            )
 
-            # 2. 发送新消息
-            try:
-                if len(final_text_response) > LONG_RESPONSE_FILE_THRESHOLD:
-                    preview_text = rendered_response.strip()
-                    if len(preview_text) > 1200:
-                        preview_text = (
-                            preview_text[:1200].rstrip()
-                            + "\n\n...（内容较长，完整结果见附件）"
-                        )
-                    sent_msg = None
-                    if preview_text:
-                        payload = {"text": preview_text}
-                        if ui_payload:
-                            payload["ui"] = ui_payload
-                        sent_msg = await ctx.reply(payload)
-                    await ctx.reply("📝 内容较长，完整结果已转为 Markdown 文件发送。")
-                    sent_msg = await _send_response_as_markdown_file(
-                        ctx, final_text_response
-                    )
-                else:
-                    payload = {"text": rendered_response}
-                    if ui_payload:
-                        payload["ui"] = ui_payload
-                    sent_msg = await ctx.reply(payload)
-            except MessageSendError as send_err:
-                if not _is_message_too_long_error(send_err):
-                    raise
-                await ctx.reply("⚠️ 文本过长，正在转换为文件发送...")
-                sent_msg = await _send_response_as_markdown_file(
+            if streamed_delivery:
+                await _flush_stream_buffer(force=True)
+                tail = stream_buffer.strip()
+                if tail:
+                    await ctx.reply(tail)
+                if can_update and not thinking_deleted:
+                    try:
+                        await thinking_msg.delete()
+                    except Exception as del_e:
+                        logger.warning(f"Failed to delete thinking_msg: {del_e}")
+            else:
+                rendered_response = await process_and_send_code_files(
                     ctx, final_text_response
                 )
 
-            # 2. 尝试删除旧的思考消息 (如果发送成功)
-            # 如果支持编辑（Telegram/Discord），尝试删除思考中消息
-            # 如果不支持（DingTalk），思考中消息可能会留着，或者尝试删除（返回 False）
-            if sent_msg and can_update:
                 try:
-                    await thinking_msg.delete()
-                except Exception as del_e:
-                    logger.warning(f"Failed to delete thinking_msg: {del_e}")
-            elif not sent_msg and can_update:  # Fallback edit
-                # 如果发送失败（极少见），则降级为编辑旧消息
-                msg_id = getattr(
-                    thinking_msg, "message_id", getattr(thinking_msg, "id", None)
-                )
-                sent_msg = await ctx.edit_message(msg_id, rendered_response)
+                    if len(final_text_response) > LONG_RESPONSE_FILE_THRESHOLD:
+                        preview_text = rendered_response.strip()
+                        if len(preview_text) > 1200:
+                            preview_text = (
+                                preview_text[:1200].rstrip()
+                                + "\n\n...（内容较长，完整结果见附件）"
+                            )
+                        sent_msg = None
+                        if preview_text:
+                            payload = {"text": preview_text}
+                            if ui_payload:
+                                payload["ui"] = ui_payload
+                            sent_msg = await ctx.reply(payload)
+                        await ctx.reply(
+                            "📝 内容较长，完整结果已转为 Markdown 文件发送。"
+                        )
+                        sent_msg = await _send_response_as_markdown_file(
+                            ctx, final_text_response
+                        )
+                    else:
+                        payload = {"text": rendered_response}
+                        if ui_payload:
+                            payload["ui"] = ui_payload
+                        sent_msg = await ctx.reply(payload)
+                except MessageSendError as send_err:
+                    if not _is_message_too_long_error(send_err):
+                        raise
+                    await ctx.reply("⚠️ 文本过长，正在转换为文件发送...")
+                    sent_msg = await _send_response_as_markdown_file(
+                        ctx, final_text_response
+                    )
+
+                if sent_msg and can_update:
+                    try:
+                        await thinking_msg.delete()
+                    except Exception as del_e:
+                        logger.warning(f"Failed to delete thinking_msg: {del_e}")
+                elif not sent_msg and can_update:
+                    msg_id = getattr(
+                        thinking_msg, "message_id", getattr(thinking_msg, "id", None)
+                    )
+                    sent_msg = await ctx.edit_message(msg_id, rendered_response)
 
             # 记录模型回复到上下文 (Explicitly save final response)
             await add_message(ctx, user_id, "model", final_text_response)

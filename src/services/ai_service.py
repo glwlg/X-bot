@@ -9,6 +9,41 @@ from google.genai import types
 logger = logging.getLogger(__name__)
 
 
+def _split_text_for_streaming(text: str, max_chars: int) -> list[str]:
+    payload = str(text or "")
+    if not payload:
+        return []
+    if len(payload) <= max_chars:
+        return [payload]
+
+    chunks: list[str] = []
+    remaining = payload
+    breakpoints = ["\n\n", "\n", "。", "！", "？", ". ", "! ", "? "]
+    min_boundary = int(max_chars * 0.35)
+
+    while remaining:
+        if len(remaining) <= max_chars:
+            chunks.append(remaining)
+            break
+
+        head = remaining[:max_chars]
+        cut = -1
+        for marker in breakpoints:
+            idx = head.rfind(marker)
+            if idx >= 0:
+                candidate = idx + len(marker)
+                if candidate > cut:
+                    cut = candidate
+
+        if cut < min_boundary:
+            cut = max_chars
+
+        chunks.append(remaining[:cut])
+        remaining = remaining[cut:]
+
+    return [chunk for chunk in chunks if chunk]
+
+
 class AiService:
     """
     Service for interacting with Gemini AI, acting as a generic Agent Engine.
@@ -48,6 +83,16 @@ class AiService:
             )
         except ValueError:
             TOOL_EXEC_TIMEOUT_SEC = 420
+        tool_final_stream_enabled = (
+            os.getenv("AI_TOOL_FINAL_STREAM_ENABLED", "true").lower() == "true"
+        )
+        try:
+            tool_final_stream_chunk_chars = max(
+                120,
+                int(os.getenv("AI_TOOL_FINAL_STREAM_CHUNK_CHARS", "900")),
+            )
+        except ValueError:
+            tool_final_stream_chunk_chars = 900
         try:
             MAX_REPEAT_TOOL_CALLS = max(2, int(os.getenv("AI_TOOL_REPEAT_GUARD", "3")))
         except ValueError:
@@ -139,15 +184,30 @@ class AiService:
                                 else ""
                             )
                             if forced_reply:
-                                yield forced_reply
+                                if tools and tool_final_stream_enabled:
+                                    for segment in _split_text_for_streaming(
+                                        forced_reply,
+                                        tool_final_stream_chunk_chars,
+                                    ):
+                                        yield segment
+                                else:
+                                    yield forced_reply
                             elif (
                                 last_terminal_success_text
                                 or last_terminal_success_summary
                             ):
-                                yield (
+                                fallback_text = (
                                     last_terminal_success_text
                                     or f"✅ 任务已完成：{last_terminal_success_summary}"
                                 )
+                                if tools and tool_final_stream_enabled:
+                                    for segment in _split_text_for_streaming(
+                                        fallback_text,
+                                        tool_final_stream_chunk_chars,
+                                    ):
+                                        yield segment
+                                else:
+                                    yield fallback_text
                             else:
                                 yield (
                                     "⚠️ 检测到重复工具调用，已自动停止以避免死循环。"
@@ -308,7 +368,14 @@ class AiService:
                         pending_tool_failures = turn_failures
 
                         if should_terminal_stop:
-                            yield terminal_short_circuit_text
+                            if tools and tool_final_stream_enabled:
+                                for segment in _split_text_for_streaming(
+                                    terminal_short_circuit_text,
+                                    tool_final_stream_chunk_chars,
+                                ):
+                                    yield segment
+                            else:
+                                yield terminal_short_circuit_text
                             completed = True
                             break
 
@@ -379,7 +446,14 @@ class AiService:
                                         "text_preview": preview,
                                     },
                                 )
-                                yield model_text
+                                if tools and tool_final_stream_enabled:
+                                    for segment in _split_text_for_streaming(
+                                        model_text,
+                                        tool_final_stream_chunk_chars,
+                                    ):
+                                        yield segment
+                                else:
+                                    yield model_text
                             else:
                                 logger.warning(
                                     f"[AiService] Empty text response. Candidates: {response.candidates}"
@@ -432,10 +506,18 @@ class AiService:
                     },
                 )
                 if last_terminal_success_text or last_terminal_success_summary:
-                    yield (
+                    fallback_text = (
                         last_terminal_success_text
                         or f"✅ 任务已完成：{last_terminal_success_summary}"
                     )
+                    if tools and tool_final_stream_enabled:
+                        for segment in _split_text_for_streaming(
+                            fallback_text,
+                            tool_final_stream_chunk_chars,
+                        ):
+                            yield segment
+                    else:
+                        yield fallback_text
                     return
                 yield (
                     f"⚠️ 工具调用轮次已达上限（{MAX_TURNS}），任务仍未完成。"

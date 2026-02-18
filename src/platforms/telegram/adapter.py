@@ -1,5 +1,6 @@
 import logging
 import asyncio
+import io
 import inspect
 from typing import Any, Optional, Union, Callable, Dict
 from telegram import Update, Bot
@@ -200,6 +201,37 @@ class TelegramAdapter(BotAdapter):
             )
         except Exception as e:
             logger.error(f"Telegram send_message failed: {e}")
+            raise MessageSendError(str(e))
+
+    async def send_document(
+        self,
+        chat_id: int | str,
+        document: Union[str, bytes],
+        filename: Optional[str] = None,
+        caption: Optional[str] = None,
+        **kwargs,
+    ) -> Any:
+        try:
+            resolved_filename = str(filename or "heartbeat.md")
+            formatted_caption = markdown_to_telegram_html(caption) if caption else None
+            outgoing_doc: Union[str, bytes, io.BytesIO] = document
+            if isinstance(document, bytes):
+                file_obj = io.BytesIO(document)
+                file_obj.name = resolved_filename
+                outgoing_doc = file_obj
+            return await self._send_with_retry(
+                lambda: self.bot.send_document(
+                    chat_id=chat_id,
+                    document=outgoing_doc,
+                    filename=resolved_filename,
+                    caption=formatted_caption,
+                    parse_mode="HTML",
+                    **kwargs,
+                ),
+                label="send_document",
+            )
+        except Exception as e:
+            logger.error(f"Telegram send_document failed: {e}")
             raise MessageSendError(str(e))
 
     async def edit_text(

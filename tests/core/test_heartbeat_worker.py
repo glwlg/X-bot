@@ -266,6 +266,130 @@ async def test_heartbeat_push_prefers_adapter_send_message_for_telegram(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_push_sends_markdown_attachment_when_too_long(monkeypatch):
+    sent_messages = []
+    sent_documents = []
+
+    class _FakeAdapter:
+        async def send_message(self, chat_id, text, **kwargs):
+            sent_messages.append((chat_id, text, kwargs))
+            return SimpleNamespace(id="sent")
+
+        async def send_document(
+            self,
+            chat_id,
+            document,
+            filename=None,
+            caption=None,
+            **kwargs,
+        ):
+            sent_documents.append((chat_id, document, filename, caption, kwargs))
+            return SimpleNamespace(id="doc")
+
+    monkeypatch.setattr(
+        heartbeat_worker_module.adapter_manager,
+        "get_adapter",
+        lambda _platform: _FakeAdapter(),
+    )
+
+    worker = HeartbeatWorker()
+    worker.push_file_enabled = True
+    worker.push_file_threshold = 20
+
+    ok = await worker._push_to_target("telegram", "101", "A" * 200)
+    assert ok is True
+    assert sent_messages == []
+    assert len(sent_documents) == 1
+    chat_id, document, filename, caption, _kwargs = sent_documents[0]
+    assert chat_id == "101"
+    assert isinstance(document, (bytes, bytearray))
+    assert bytes(document).startswith(b"AAAA")
+    assert str(filename).endswith(".md")
+    assert "完整结果见附件" in str(caption)
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_push_fallbacks_to_chunked_text_when_attachment_fails(
+    monkeypatch,
+):
+    sent_messages = []
+
+    class _FakeAdapter:
+        async def send_message(self, chat_id, text, **kwargs):
+            sent_messages.append((chat_id, text, kwargs))
+            return SimpleNamespace(id="sent")
+
+        async def send_document(
+            self,
+            chat_id,
+            document,
+            filename=None,
+            caption=None,
+            **kwargs,
+        ):
+            raise RuntimeError("document channel unavailable")
+
+    monkeypatch.setattr(
+        heartbeat_worker_module.adapter_manager,
+        "get_adapter",
+        lambda _platform: _FakeAdapter(),
+    )
+
+    worker = HeartbeatWorker()
+    worker.push_file_enabled = True
+    worker.push_file_threshold = 20
+
+    text = "B" * 120
+    ok = await worker._push_to_target("telegram", "202", text)
+    assert ok is True
+    assert sent_messages
+    assert sent_messages[0][0] == "202"
+    assert sent_messages[0][1] == text
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_push_prefers_chunked_text_for_two_chunks(monkeypatch):
+    sent_messages = []
+    sent_documents = []
+
+    class _FakeAdapter:
+        async def send_message(self, chat_id, text, **kwargs):
+            sent_messages.append((chat_id, text, kwargs))
+            return SimpleNamespace(id="sent")
+
+        async def send_document(
+            self,
+            chat_id,
+            document,
+            filename=None,
+            caption=None,
+            **kwargs,
+        ):
+            sent_documents.append((chat_id, document, filename, caption, kwargs))
+            return SimpleNamespace(id="doc")
+
+    monkeypatch.setattr(
+        heartbeat_worker_module.adapter_manager,
+        "get_adapter",
+        lambda _platform: _FakeAdapter(),
+    )
+
+    worker = HeartbeatWorker()
+    worker.push_file_enabled = True
+    worker.push_file_threshold = 20000
+    worker.push_max_text_chunks = 3
+
+    text = "C" * 4200
+    ok = await worker._push_to_target("telegram", "303", text)
+    assert ok is True
+    assert sent_documents == []
+    assert len(sent_messages) == 2
+    assert sent_messages[0][0] == "303"
+    assert sent_messages[0][1].startswith("[1/2]\n")
+    assert sent_messages[1][1].startswith("[2/2]\n")
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_specs_skip_auto_rss_when_checklist_already_rss(monkeypatch):
     async def _fake_get_user_subscriptions(_user_id: int):
         return [{"id": 1, "feed_url": "https://example.com/rss.xml", "title": "AI"}]
@@ -308,3 +432,110 @@ async def test_heartbeat_specs_skip_auto_stock_when_checklist_is_rss(monkeypatch
         item for item in specs if str(item.get("type") or "") == "stock_signal"
     ]
     assert len(stock_specs) == 0
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_rss_goal_prefers_direct_scheduler_refresh(
+    monkeypatch, tmp_path
+):
+    runtime_root = (tmp_path / "runtime_tasks").resolve()
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(heartbeat_store, "root", runtime_root)
+    heartbeat_store._locks.clear()
+
+    user_id = "worker_rss_1"
+    await heartbeat_store.set_heartbeat_spec(
+        user_id,
+        every="30m",
+        active_start="00:00",
+        active_end="23:59",
+        paused=False,
+    )
+    await heartbeat_store.remove_checklist_item(user_id, 1)
+    await heartbeat_store.add_checklist_item(user_id, "检查我的 RSS 订阅更新")
+    await heartbeat_store.set_delivery_target(user_id, "telegram", "501")
+
+    refresh_calls = {"value": 0}
+
+    async def _fake_trigger_manual_rss_check(_uid: int):
+        refresh_calls["value"] += 1
+        return "📢 RSS 订阅日报 (1 条更新)\n\n- AI 新闻更新"
+
+    monkeypatch.setattr(
+        "core.scheduler.trigger_manual_rss_check",
+        _fake_trigger_manual_rss_check,
+    )
+
+    async def _fake_orchestrator(_ctx, _message_history):
+        yield "HEARTBEAT_OK"
+
+    monkeypatch.setattr(
+        heartbeat_worker_module,
+        "agent_orchestrator",
+        type(
+            "FakeOrchestrator",
+            (),
+            {"handle_message": _fake_orchestrator},
+        )(),
+    )
+
+    pushed = []
+
+    class _FakeAdapter:
+        async def send_message(self, chat_id, text, **kwargs):
+            pushed.append((chat_id, text, kwargs))
+            return SimpleNamespace(id="sent")
+
+    monkeypatch.setattr(
+        heartbeat_worker_module.adapter_manager,
+        "get_adapter",
+        lambda _platform: _FakeAdapter(),
+    )
+
+    worker = HeartbeatWorker()
+    worker.enabled = True
+    worker.suppress_ok = True
+
+    result = await worker.run_user_now(user_id)
+    assert refresh_calls["value"] == 1
+    assert "RSS 订阅日报" in result
+    assert pushed
+    assert pushed[0][0] == "501"
+    assert "RSS 订阅日报" in pushed[0][1]
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_multiple_rss_items_only_append_once(monkeypatch, tmp_path):
+    runtime_root = (tmp_path / "runtime_tasks").resolve()
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(heartbeat_store, "root", runtime_root)
+    heartbeat_store._locks.clear()
+
+    user_id = "worker_rss_2"
+    await heartbeat_store.set_heartbeat_spec(
+        user_id,
+        every="30m",
+        active_start="00:00",
+        active_end="23:59",
+        paused=False,
+    )
+
+    call_count = {"value": 0}
+
+    async def _fake_trigger_manual_rss_check(_uid: int):
+        call_count["value"] += 1
+        return "📢 RSS 订阅日报 (1 条更新)\n\n- AI 新闻更新"
+
+    monkeypatch.setattr(
+        "core.scheduler.trigger_manual_rss_check",
+        _fake_trigger_manual_rss_check,
+    )
+
+    worker = HeartbeatWorker()
+    result = await worker._run_heartbeat_task_batch(
+        user_id=user_id,
+        checklist=["检查我的 RSS 订阅更新", "再检查一次 RSS 订阅更新"],
+        owner="test-owner",
+    )
+    assert call_count["value"] == 1
+    assert result.count("RSS 订阅日报") == 1
