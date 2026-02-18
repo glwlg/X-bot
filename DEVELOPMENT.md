@@ -1,6 +1,6 @@
 # X-Bot DEVELOPMENT
 
-更新时间：2026-02-17  
+更新时间：2026-02-18  
 状态：`ACTIVE`（当前实现与维护约束文档）
 
 ## 1. 设计目标
@@ -74,6 +74,10 @@ src/
 │   ├── worker_store.py
 │   ├── heartbeat_store.py
 │   ├── heartbeat_worker.py
+│   ├── state_store.py
+│   ├── state_io.py
+│   ├── state_paths.py
+│   ├── state_file.py
 │   ├── tool_registry.py
 │   └── config.py
 ├── handlers/
@@ -83,9 +87,9 @@ src/
 │   ├── voice_handler.py
 │   └── document_handler.py
 ├── services/
-├── repositories/
 ├── platforms/
-└── mcp_client/
+├── mcp_client/
+└── worker_runtime/
 ```
 
 ### 3.3 `skills/` 结构
@@ -115,9 +119,11 @@ data/
 - 任务事件标准字段：`source` / `status` / `created_at` / `started_at` / `ended_at` / `error` / `retry_count` / `events[]`。
 - `/worker tasks` 查询链路：`handlers/worker_handlers.py -> core.worker_store.WorkerTaskStore.list_recent -> data/WORKER_TASKS.jsonl`。
 - heartbeat 运行态查询链路：`handlers/heartbeat_handlers.py -> core.heartbeat_store.get_state -> data/runtime_tasks/<user_id>/{HEARTBEAT.md,STATUS.json}`。
-- 对话检索链路：`/chatlog -> repositories.chat_repo.search_messages -> data/users/<user_id>/chat/<YYYY-MM-DD>/<session_id>.md`。
-- 系统级 repository 状态文件：`data/system/repositories/{allowed_users.md,id_counters.md,video_cache.md}`。
-- `src/repositories/base.py` 仅提供文件读写原语与计数器，不保留数据库兼容接口或迁移逻辑。
+- 对话检索链路：`/chatlog -> handlers/service_handlers.py -> core.state_store.search_messages -> data/users/<user_id>/chat/<YYYY-MM-DD>/<session_id>.md`。
+- 系统级状态文件：`data/system/repositories/{allowed_users.md,id_counters.md,video_cache.md}`。
+- 状态路径与读写原语：`core.state_paths.py + core.state_io.py`。
+- 业务状态聚合入口：`core.state_store.py`（替代历史 repository 分层）。
+- 业务状态文件统一采用 canonical 协议：`core.state_file.py`（`XBOT_STATE_BEGIN/END + fenced yaml`）。
 
 ## 4. 任务调度模型（当前实现）
 
@@ -221,17 +227,27 @@ Core Manager 采用双层记忆：
 - 本文是开发任务规范，不等同于已上线能力。
 - 实施时请在 PR/提交中关联任务编号（如 `ARCH-001`）。
 
-## 12. 2026-02-15 交接状态（最新）
+## 12. 2026-02-18 交接状态（最新）
 
 本节用于交接当前实现状态与遗留问题，供后续接手者快速定位。
 
+### 12.1 本轮架构收敛结果
 
+- 业务状态访问已统一收敛到 `core.state_store.py`（settings/subscriptions/watchlist/reminders/scheduled_tasks/allowed_users/chat/account）。
+- `src/repositories/` 已移除，不再作为业务状态访问入口。
+- 状态文件协议统一为 canonical Markdown payload（`XBOT_STATE_BEGIN/END + fenced yaml`），由 `core.state_file.py` 负责解析/渲染。
+- 状态路径与通用读写能力已统一到 `core.state_paths.py` 与 `core.state_io.py`。
+- 一次性迁移工具 `core.state_migration` 已在迁移完成后下线（脚本已删除）。
 
-### 12.5 关键代码入口（交接索引）
+### 12.2 关键代码入口（交接索引）
 
 - `src/handlers/ai_handlers.py`：派发、上下文封装、Markdown memory 读写、回执主链路。
 - `src/core/prompt_composer.py`：角色与 SOUL 注入。
 - `src/core/prompts.py`：默认系统提示词与通用约束。
 - `src/core/tool_access_store.py`：工具分组与 worker memory 禁用策略。
 - `src/core/agent_orchestrator.py`：function call 工具注入过滤。
+- `src/core/state_store.py`：业务状态统一访问面（chat/account/subscription/watchlist/reminder/task/settings）。
+- `src/core/state_io.py`：通用状态读写与计数器原语（canonical 协议）。
+- `src/core/state_paths.py`：`data/` 目录路径规范与 user/system path 构造。
+- `src/core/state_file.py`：canonical state payload 解析/渲染协议。
 - `src/core/markdown_memory_store.py`：基于 `MEMORY.md` + `memory/YYYY-MM-DD.md` 的记忆实现。

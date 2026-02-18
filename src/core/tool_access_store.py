@@ -56,6 +56,7 @@ class ToolAccessStore:
     """Agent tool grouping and allow/deny policy store."""
 
     CORE_MANAGER_DEFAULT_ALLOW = [
+        "group:primitives",
         "group:management",
     ]
     WORKER_DEFAULT_DENY = [
@@ -130,9 +131,19 @@ class ToolAccessStore:
                 )
                 core_allow = list((core_policy.get("tools") or {}).get("allow") or [])
                 core_deny = list((core_policy.get("tools") or {}).get("deny") or [])
+                if core_allow == ["group:management"] and not core_deny:
+                    core_policy["tools"]["allow"] = list(
+                        self.CORE_MANAGER_DEFAULT_ALLOW
+                    )
+                    core_allow = list(
+                        (core_policy.get("tools") or {}).get("allow") or []
+                    )
                 if core_allow == ["group:all"] and not core_deny:
                     core_policy["tools"]["allow"] = list(
                         self.CORE_MANAGER_DEFAULT_ALLOW
+                    )
+                    core_allow = list(
+                        (core_policy.get("tools") or {}).get("allow") or []
                     )
                 legacy_core_allow_sets = [
                     {

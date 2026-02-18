@@ -384,7 +384,12 @@ class HeartbeatWorker:
                         }
                     )
 
-        if self.enable_stock_signal and numeric_user_id > 0 and not has_stock_focus:
+        if (
+            self.enable_stock_signal
+            and numeric_user_id > 0
+            and not normalized
+            and not has_stock_focus
+        ):
             with contextlib.suppress(Exception):
                 from core.scheduler import is_trading_time
                 from core.state_store import get_user_watchlist

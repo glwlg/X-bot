@@ -1,26 +1,27 @@
 import sys
 import os
 import asyncio
-from unittest.mock import MagicMock, patch
+import importlib.util
+from typing import Any, cast
+from unittest.mock import MagicMock
 
 # Adjust path
 sys.path.append(os.getcwd())
 sys.path.append(os.path.join(os.getcwd(), "src"))
 sys.path.append(os.path.join(os.getcwd(), "skills", "builtin"))
 
-# Mock repositories and services to avoid DB dependency
-sys.modules["repositories"] = MagicMock()
+# Mock services to avoid DB dependency
 sys.modules["services.stock_service"] = MagicMock()
 sys.modules["core.platform.models"] = MagicMock()
 sys.modules["core.scheduler"] = MagicMock()
 sys.modules["core.config"] = MagicMock()
+sys.modules["core.state_store"] = MagicMock()
 
 # Setup mocks
-from repositories import (
-    get_user_watchlist,
-    add_watchlist_stock,
-    remove_watchlist_stock,
-)
+state_store = cast(Any, sys.modules["core.state_store"])
+get_user_watchlist = state_store.get_user_watchlist
+add_watchlist_stock = state_store.add_watchlist_stock
+remove_watchlist_stock = state_store.remove_watchlist_stock
 
 
 # Make them async
@@ -47,11 +48,10 @@ async def mock_remove_stock(*args, **kwargs):
 
 remove_watchlist_stock.side_effect = mock_remove_stock
 
-from services.stock_service import (
-    fetch_stock_quotes,
-    format_stock_message,
-    search_stock_by_name,
-)
+stock_service = cast(Any, sys.modules["services.stock_service"])
+fetch_stock_quotes = stock_service.fetch_stock_quotes
+format_stock_message = stock_service.format_stock_message
+search_stock_by_name = stock_service.search_stock_by_name
 
 
 async def mock_fetch(*args, **kwargs):
@@ -71,13 +71,12 @@ async def mock_search(*args, **kwargs):
 
 search_stock_by_name.side_effect = mock_search
 
-# Import module under test
-import importlib.util
-
 spec = importlib.util.spec_from_file_location(
     "stock_execute", "skills/builtin/stock_watch/scripts/execute.py"
 )
-stock_execute = importlib.util.module_from_spec(spec)
+if spec is None or spec.loader is None:
+    raise RuntimeError("failed to load stock_execute spec")
+stock_execute = cast(Any, importlib.util.module_from_spec(spec))
 
 # Mock UnifiedContext in the module
 stock_execute.UnifiedContext = MagicMock()

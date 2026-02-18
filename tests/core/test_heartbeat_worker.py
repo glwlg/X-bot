@@ -271,7 +271,7 @@ async def test_heartbeat_specs_skip_auto_rss_when_checklist_already_rss(monkeypa
         return [{"id": 1, "feed_url": "https://example.com/rss.xml", "title": "AI"}]
 
     monkeypatch.setattr(
-        "repositories.subscription_repo.get_user_subscriptions",
+        "core.state_store.get_user_subscriptions",
         _fake_get_user_subscriptions,
     )
 
@@ -284,3 +284,27 @@ async def test_heartbeat_specs_skip_auto_rss_when_checklist_already_rss(monkeypa
     )
     rss_specs = [item for item in specs if str(item.get("type") or "") == "rss_signal"]
     assert len(rss_specs) == 0
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_specs_skip_auto_stock_when_checklist_is_rss(monkeypatch):
+    async def _fake_get_user_watchlist(_user_id: int):
+        return [{"id": 1, "stock_code": "AAPL", "stock_name": "Apple"}]
+
+    monkeypatch.setattr(
+        "core.state_store.get_user_watchlist",
+        _fake_get_user_watchlist,
+    )
+    monkeypatch.setattr("core.scheduler.is_trading_time", lambda: True)
+
+    worker = HeartbeatWorker()
+    worker.enable_stock_signal = True
+
+    specs = await worker._build_heartbeat_task_specs(
+        user_id="257675041",
+        checklist=["检查我的 RSS 订阅更新"],
+    )
+    stock_specs = [
+        item for item in specs if str(item.get("type") or "") == "stock_signal"
+    ]
+    assert len(stock_specs) == 0

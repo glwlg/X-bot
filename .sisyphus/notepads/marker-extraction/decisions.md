@@ -1,0 +1,2 @@
+- Keep payload-marker editing rules in `MEMORY_MANAGEMENT_GUIDE` so behavior guidance stays centralized for agent-facing memory/state operations.
+- Restrict marker-scoped editing to business-state Markdown paths only and treat chat/memory/skills/heartbeat domains as explicit exclusions.

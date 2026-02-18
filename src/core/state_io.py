@@ -1,72 +1,25 @@
-"""Filesystem repository primitives."""
-
 from __future__ import annotations
 
 import asyncio
 import copy
+import importlib
 import logging
-import os
-import re
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import yaml
-
-from core.config import DATA_DIR
+_state_paths = importlib.import_module("core.state_paths")
+repo_root = _state_paths.repo_root
+system_path = _state_paths.system_path
+users_root = _state_paths.users_root
+_state_file = importlib.import_module("core.state_file")
+parse_state_payload = _state_file.parse_state_payload
+render_state_markdown = _state_file.render_state_markdown
 
 logger = logging.getLogger(__name__)
 
 _LOCKS: dict[str, asyncio.Lock] = {}
 _COUNTERS_FILE = "id_counters.md"
-
-
-def _runtime_data_dir() -> Path:
-    return Path(os.getenv("DATA_DIR", DATA_DIR)).resolve()
-
-
-def users_root() -> Path:
-    root = (_runtime_data_dir() / "users").resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    return root
-
-
-def repo_root() -> Path:
-    root = (_runtime_data_dir() / "system" / "repositories").resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    return root
-
-
-def _safe_part(value: Any, fallback: str = "unknown") -> str:
-    raw = str(value or "").strip()
-    if not raw:
-        return fallback
-    safe = re.sub(r"[^a-zA-Z0-9_\-:.]+", "_", raw)
-    return safe or fallback
-
-
-def user_path(user_id: int | str, *parts: str) -> Path:
-    uid = _safe_part(user_id)
-    path = (users_root() / uid).resolve()
-    for part in parts:
-        path = (path / str(part)).resolve()
-    return path
-
-
-def system_path(*parts: str) -> Path:
-    path = repo_root()
-    for part in parts:
-        path = (path / str(part)).resolve()
-    return path
-
-
-def all_user_ids() -> list[str]:
-    root = users_root()
-    ids: list[str] = []
-    for item in root.iterdir():
-        if item.is_dir():
-            ids.append(item.name)
-    return sorted(ids)
 
 
 def now_iso() -> str:
@@ -86,15 +39,8 @@ def _ensure_parent(path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
 
 
-def _extract_yaml_block(text: str) -> str:
-    raw = str(text or "")
-    fence = re.search(r"```yaml\s*(.*?)\s*```", raw, flags=re.DOTALL | re.IGNORECASE)
-    if fence:
-        return str(fence.group(1) or "")
-    front = re.search(r"^---\s*\n(.*?)\n---\s*$", raw, flags=re.DOTALL)
-    if front:
-        return str(front.group(1) or "")
-    return raw
+def _parse_yaml_payload(text: str) -> tuple[bool, Any]:
+    return parse_state_payload(text)
 
 
 def _read_json_sync(path: Path, default: Any) -> Any:
@@ -104,9 +50,8 @@ def _read_json_sync(path: Path, default: Any) -> Any:
         text = path.read_text(encoding="utf-8").strip()
         if not text:
             return copy.deepcopy(default)
-        yaml_text = _extract_yaml_block(text)
-        loaded = yaml.safe_load(yaml_text)
-        if loaded is None:
+        ok, loaded = _parse_yaml_payload(text)
+        if not ok:
             return copy.deepcopy(default)
         return loaded
     except Exception:
@@ -117,18 +62,17 @@ def _write_json_sync(path: Path, payload: Any) -> None:
     _ensure_parent(path)
     tmp = path.with_suffix(path.suffix + ".tmp")
     title = path.stem.replace("_", " ").strip().title() or "Data"
-    body = yaml.safe_dump(
-        payload,
-        allow_unicode=True,
-        sort_keys=False,
-        default_flow_style=False,
-    ).strip()
-    content = (
-        f"# {title}\n\n"
-        "<!-- x-bot-state-file: edit via read/write/edit when needed -->\n"
-        "<!-- payload format: fenced YAML block below -->\n\n"
-        f"```yaml\n{body}\n```\n"
-    )
+    if path.exists():
+        existing_text = path.read_text(encoding="utf-8")
+        if existing_text.strip():
+            ok, _ = _parse_yaml_payload(existing_text)
+            if not ok:
+                backup_path = path.with_name(
+                    f"{path.name}.bak-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+                )
+                backup_path.write_text(existing_text, encoding="utf-8")
+
+    content = render_state_markdown(payload, title=title)
     tmp.write_text(content, encoding="utf-8")
     tmp.replace(path)
 
