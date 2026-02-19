@@ -4,7 +4,8 @@ from urllib.parse import quote
 import httpx
 from core.platform.models import UnifiedContext
 from services.web_summary_service import fetch_webpage_content
-from core.config import gemini_client, GEMINI_MODEL
+from core.config import GEMINI_MODEL, openai_async_client
+from services.openai_adapter import generate_text
 
 logger = logging.getLogger(__name__)
 
@@ -126,12 +127,14 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None):
     """
 
     try:
-        response = await gemini_client.aio.models.generate_content(
+        if openai_async_client is None:
+            raise RuntimeError("OpenAI async client is not initialized")
+        report_html = await generate_text(
+            async_client=openai_async_client,
             model=GEMINI_MODEL,
             contents=prompt,
         )
-
-        report_html = response.text
+        report_html = str(report_html or "")
 
         # Strip markdown code blocks if AI added them
         import re

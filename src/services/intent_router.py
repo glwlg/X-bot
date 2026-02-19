@@ -6,8 +6,9 @@ import json
 import logging
 import re
 from dataclasses import dataclass
+from typing import Any, cast
 
-from core.config import ROUTING_MODEL, gemini_client
+from core.config import ROUTING_MODEL, openai_async_client
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +62,16 @@ class IntentRouter:
             f"用户消息: {text}"
         )
         try:
-            response = await gemini_client.aio.models.generate_content(
+            client = openai_async_client
+            if client is None:
+                raise RuntimeError("OpenAI async client is not initialized")
+            response = await cast(Any, client).chat.completions.create(
                 model=self.model,
-                contents=prompt,
-                config={"temperature": 0},
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0,
             )
-            payload = str(response.text or "").strip()
+            content = response.choices[0].message.content if response.choices else ""
+            payload = str(content or "").strip()
             parsed = self._parse_json(payload)
             route = str(parsed.get("route", "worker_task")).strip().lower()
             if route not in {"worker_task", "manager_chat"}:

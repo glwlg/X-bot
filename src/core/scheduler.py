@@ -263,7 +263,8 @@ async def load_jobs_from_db():
 
 async def generate_entry_summary(title: str, content: str, link: str) -> str:
     """使用 AI 生成 RSS 条目摘要"""
-    from core.config import gemini_client, GEMINI_MODEL
+    from core.config import GEMINI_MODEL, openai_async_client
+    from services.openai_adapter import generate_text
 
     # 截断过长内容
     if len(content) > 2000:
@@ -280,11 +281,14 @@ async def generate_entry_summary(title: str, content: str, link: str) -> str:
     )
 
     try:
-        response = await gemini_client.aio.models.generate_content(
+        if openai_async_client is None:
+            raise RuntimeError("OpenAI async client is not initialized")
+        summary = await generate_text(
+            async_client=openai_async_client,
             model=GEMINI_MODEL,
             contents=prompt,
         )
-        return response.text.strip()
+        return str(summary or "").strip()
     except Exception as e:
         logger.error(f"AI summary generation failed: {e}")
         # 失败时返回原始内容的截断版本
@@ -703,94 +707,6 @@ def start_stock_scheduler():
 
 
 # --- 动态 Skill 调度 ---
-# --- NotebookLM 定时任务 ---
-
-
-async def notebooklm_auto_list_job():
-    """
-    定时执行 NotebookLM list 命令以刷新状态
-    遍历 /app/data/users/*/notebooklm/storage_state.json
-    """
-    logger.info("Running NotebookLM auto-list job...")
-    import glob
-    import sys
-
-    # 确保 /app 在 sys.path 中 (Docker 容器环境)
-    if "/app" not in sys.path:
-        sys.path.append("/app")
-
-    try:
-        from skills.builtin.notebooklm.scripts.execute import (
-            execute as notebook_execute,
-        )
-        from core.platform.models import (
-            UnifiedMessage,
-            UnifiedContext,
-            User,
-            Chat,
-            MessageType,
-        )
-    except ImportError as e:
-        logger.error(f"Failed to import NotebookLM skill: {e}")
-        return
-
-    pattern = "/app/data/users/*/notebooklm/storage_state.json"
-    files = glob.glob(pattern)
-
-    if not files:
-        logger.info("No NotebookLM users found to refresh.")
-        return
-
-    for file_path in files:
-        try:
-            # Extract user_id from path: /app/data/users/{user_id}/notebooklm/storage_state.json
-            parts = file_path.split("/")
-            try:
-                users_index = parts.index("users")
-                user_id = parts[users_index + 1]
-            except ValueError:
-                logger.warning(f"Could not extract user_id from path: {file_path}")
-                continue
-
-            logger.info(f"Executing NotebookLM list for user {user_id}")
-
-            # Construct Mock Context
-            mock_user = User(id=str(user_id), username="CronUser", is_bot=False)
-            # 这里的 platform 暂定 telegram，实际上该脚本只依赖 storage_state.json
-            mock_chat = Chat(id=str(user_id), type="private")
-            mock_message = UnifiedMessage(
-                id="cron_notebooklm",
-                platform="telegram",
-                user=mock_user,
-                chat=mock_chat,
-                text="notebooklm list",
-                date=datetime.datetime.now(),
-                type=MessageType.TEXT,
-            )
-            ctx = UnifiedContext(message=mock_message, platform_ctx=None)
-
-            # Execute
-            await notebook_execute(ctx, {"action": "list"})
-
-        except Exception as e:
-            logger.error(f"Error executing notebooklm job for file {file_path}: {e}")
-
-
-def start_notebooklm_scheduler():
-    """启动 NotebookLM 定时维护任务"""
-    # 每小时执行一次
-    scheduler.add_job(
-        notebooklm_auto_list_job,
-        "interval",
-        hours=1,
-        next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=15),
-        id="notebooklm_auto_list",
-        replace_existing=True,
-    )
-    logger.info("NotebookLM scheduler started, interval=1h")
-
-
-# --- 动态 Skill 调度 ---
 
 
 async def run_skill_cron_job(
@@ -804,7 +720,7 @@ async def run_skill_cron_job(
     """
     try:
         user_id = int(str(user_id))
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         user_id = 0
 
     logger.info(

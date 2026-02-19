@@ -32,6 +32,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./downloads:/app/downloads
+      - ./skills:/app/skills
       - /var/run/docker.sock:/var/run/docker.sock
 
   searxng-redis:

@@ -286,14 +286,13 @@ async def button_callback(ctx: UnifiedContext) -> int:
             reply_markup = InlineKeyboardMarkup(keyboard)
 
             # 安全获取环境变量
-            openai_model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-            gemini_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+            openai_model = os.getenv("CORE_MODEL", "gpt-4o-mini")
 
             await ctx.edit_message(
                 msg_id,
                 "⚙️ **设置**\n\n"
                 "当前配置：\n"
-                f"• Gemini 模型：{gemini_model}\n"
+                f"• 对话模型：{openai_model}\n"
                 "• 视频质量：最高\n"
                 "• 文件大小限制：49 MB\n\n"
                 "更多设置功能即将推出...",

@@ -11,10 +11,11 @@ import random
 from core.markdown_memory_store import markdown_memory_store
 
 from core.config import (
-    gemini_client,
     GEMINI_MODEL,
+    openai_async_client,
 )
 from core.platform.exceptions import MediaProcessingError, MessageSendError
+from services.openai_adapter import generate_text
 
 from user_context import get_user_context, add_message
 from core.state_store import get_user_settings
@@ -420,7 +421,7 @@ async def _try_handle_memory_commands(ctx: UnifiedContext, user_message: str) ->
 
 async def handle_ai_chat(ctx: UnifiedContext) -> None:
     """
-    处理普通文本消息，使用 Gemini AI 生成回复
+    处理普通文本消息，使用对话模型生成回复
     支持引用（回复）包含图片或视频的消息
     """
     user_message = ctx.message.text
@@ -537,15 +538,17 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                 "- 只输出译文，不要解释。\n\n"
                 f"输入：{user_message}"
             )
-            response = await gemini_client.aio.models.generate_content(
+            if openai_async_client is None:
+                raise RuntimeError("OpenAI async client is not initialized")
+            translated = await generate_text(
+                async_client=openai_async_client,
                 model=GEMINI_MODEL,
                 contents=translation_request,
-                config={
-                    "system_instruction": system_instruction,
-                },
+                config={"system_instruction": system_instruction},
             )
-            if response.text:
-                translation_text = f"🌍 **译文**\n\n{response.text}"
+            translated = str(translated or "").strip()
+            if translated:
+                translation_text = f"🌍 **译文**\n\n{translated}"
                 msg_id = getattr(
                     thinking_msg, "message_id", getattr(thinking_msg, "id", None)
                 )
@@ -936,7 +939,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
 
 async def handle_ai_photo(ctx: UnifiedContext) -> None:
     """
-    处理图片消息，使用 Gemini AI 分析图片
+    处理图片消息，使用对话模型分析图片
     """
     user_id = ctx.message.user.id
 
@@ -995,8 +998,10 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
             }
         ]
 
-        # 调用 Gemini API
-        response = await gemini_client.aio.models.generate_content(
+        if openai_async_client is None:
+            raise RuntimeError("OpenAI async client is not initialized")
+        analysis = await generate_text(
+            async_client=openai_async_client,
             model=GEMINI_MODEL,
             contents=contents,
             config={
@@ -1008,20 +1013,21 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
                         "policy": {"tools": {"allow": [], "deny": []}},
                     },
                     mode="media_image",
-                ),
+                )
             },
         )
+        analysis = str(analysis or "").strip()
 
-        if response.text:
+        if analysis:
             # 更新消息
             # 更新消息
             msg_id = getattr(
                 thinking_msg, "message_id", getattr(thinking_msg, "id", None)
             )
-            await ctx.edit_message(msg_id, response.text)
+            await ctx.edit_message(msg_id, analysis)
 
             # Save model response to history
-            await add_message(ctx, user_id, "model", response.text)
+            await add_message(ctx, user_id, "model", analysis)
 
             # 记录统计
             await increment_stat(user_id, "photo_analyses")
@@ -1040,7 +1046,7 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
 
 async def handle_ai_video(ctx: UnifiedContext) -> None:
     """
-    处理视频消息，使用 Gemini AI 分析视频
+    处理视频消息，使用对话模型分析视频
     """
     user_id = ctx.message.user.id
 
@@ -1075,9 +1081,6 @@ async def handle_ai_video(ctx: UnifiedContext) -> None:
     # Save to history immediately
     await add_message(ctx, user_id, "user", f"【用户发送了一个视频】 {caption}")
 
-    # 检查视频大小（Gemini 有限制）
-    # 检查视频大小（Gemini 有限制）
-    # 检查视频大小（Gemini 有限制）
     if media.file_size and media.file_size > 20 * 1024 * 1024:  # 20MB 限制
         await ctx.reply(
             "⚠️ 视频文件过大（超过 20MB），无法分析。\n\n请尝试发送较短的视频片段。"
@@ -1111,8 +1114,10 @@ async def handle_ai_video(ctx: UnifiedContext) -> None:
             }
         ]
 
-        # 调用 Gemini API
-        response = await gemini_client.aio.models.generate_content(
+        if openai_async_client is None:
+            raise RuntimeError("OpenAI async client is not initialized")
+        analysis = await generate_text(
+            async_client=openai_async_client,
             model=GEMINI_MODEL,
             contents=contents,
             config={
@@ -1124,19 +1129,20 @@ async def handle_ai_video(ctx: UnifiedContext) -> None:
                         "policy": {"tools": {"allow": [], "deny": []}},
                     },
                     mode="media_video",
-                ),
+                )
             },
         )
+        analysis = str(analysis or "").strip()
 
-        if response.text:
+        if analysis:
             # Update the thinking message with the model response
             msg_id = getattr(
                 thinking_msg, "message_id", getattr(thinking_msg, "id", None)
             )
-            await ctx.edit_message(msg_id, response.text)
+            await ctx.edit_message(msg_id, analysis)
 
             # Save model response to history
-            await add_message(ctx, user_id, "model", response.text)
+            await add_message(ctx, user_id, "model", analysis)
 
             # 记录统计
             await increment_stat(user_id, "video_analyses")
@@ -1223,8 +1229,10 @@ async def handle_sticker_message(ctx: UnifiedContext) -> None:
             }
         ]
 
-        # Call API
-        response = await gemini_client.aio.models.generate_content(
+        if openai_async_client is None:
+            raise RuntimeError("OpenAI async client is not initialized")
+        analysis = await generate_text(
+            async_client=openai_async_client,
             model=GEMINI_MODEL,
             contents=contents,
             config={
@@ -1236,16 +1244,17 @@ async def handle_sticker_message(ctx: UnifiedContext) -> None:
                         "policy": {"tools": {"allow": [], "deny": []}},
                     },
                     mode="media_meme",
-                ),
+                )
             },
         )
+        analysis = str(analysis or "").strip()
 
-        if response.text:
+        if analysis:
             msg_id = getattr(
                 thinking_msg, "message_id", getattr(thinking_msg, "id", None)
             )
-            await ctx.edit_message(msg_id, response.text)
-            await add_message(ctx, user_id, "model", response.text)
+            await ctx.edit_message(msg_id, analysis)
+            await add_message(ctx, user_id, "model", analysis)
             await increment_stat(user_id, "photo_analyses")  # Count as photo
         else:
             msg_id = getattr(

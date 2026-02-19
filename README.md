@@ -23,7 +23,7 @@ X-Bot 现已支持多平台运行，一套代码，无缝体验：
 ## ✨ 核心功能
 
 ### 🤖 强大的 AI 能力
--   **多轮智能对话**：基于 Gemini 2.0 Flash 模型，支持深层上下文理解。
+-   **多轮智能对话**：基于 OpenAI 对话模型，支持深层上下文理解。
 -   **🧠 长期记忆 (New)**：
     -   **个性化记忆**：自动记住你的偏好、习惯和重要信息（如“我住在北京”，“不要吃辣”）。
     -   **隐私隔离**：采用**物理级文件隔离**架构，每个用户的记忆存储在独立的加密空间，绝无数据混淆风险。
@@ -34,7 +34,7 @@ X-Bot 现已支持多平台运行，一套代码，无缝体验：
     -   **文档分析**：支持 PDF 和 DOCX 文档，提取内容并回答相关问题。
 -   **网页摘要**：发送链接，自动抓取网页内容并生成精简摘要。
 - **AI 绘图 (New)**：
-    -   **官方模型**：集成 Google **Imagen 3** (via Vertex AI)，生成质量极高。
+    -   **官方模型**：集成 OpenAI **gpt-image-1**，生成质量极高。
     -   **简单指令**：只需说 "画一只猫" 或 "生成赛博朋克风格的街道"。
     -   **独立通道**：支持配置独立的官方 API Key，与对话 LLM 隔离，确保稳定性。
 
@@ -119,17 +119,19 @@ X-Bot 现已支持多平台运行，一套代码，无缝体验：
 ### 2. 获取配置
 创建一个 `.env` 文件（参考 `.env.example`）：
 
+```env
 # Telegram (Optional)
 TELEGRAM_BOT_TOKEN="你的 Telegram Bot Token"
 
 # Discord (Optional)
 DISCORD_BOT_TOKEN="你的 Discord Bot Token"
 
-# Gemini AI (https://aistudio.google.com/)
-GEMINI_API_KEY="你的 API Key"
-GEMINI_MODEL="gemini-2.0-flash"
-GEMINI_IMAGE_API_KEY="你的官方API Key" # (可选) 用于官方 Vertex AI 画图接口
-CREATOR_MODEL="gemini-2.0-pro-exp-02-11" # 用于生成 Skill 代码的强力模型
+# OpenAI (https://platform.openai.com/)
+LLM_API_KEY="你的 API Key"
+CORE_MODEL="gpt-4o-mini"
+ROUTING_MODEL="gpt-4o-mini"
+CREATOR_MODEL="gpt-4o" # 用于生成 Skill 代码的强力模型
+OPENAI_IMAGE_MODEL="gpt-image-1"
 ```
 
 ### 3. 一键启动

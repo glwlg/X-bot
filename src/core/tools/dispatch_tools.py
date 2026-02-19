@@ -27,7 +27,8 @@ def _score_worker(goal: str, worker: Dict[str, Any]) -> int:
         score += 30
 
     capabilities = [str(item).lower() for item in (worker.get("capabilities") or [])]
-    merged_cap = " ".join(capabilities)
+    summary = str(worker.get("summary") or "").lower()
+    merged_cap = " ".join(capabilities + [summary])
     if any(token in text for token in ("rss", "订阅", "feed")) and (
         "rss" in merged_cap or "feed" in merged_cap
     ):
@@ -39,6 +40,14 @@ def _score_worker(goal: str, worker: Dict[str, Any]) -> int:
         score += 40
     if any(token in text for token in ("部署", "deploy", "docker")) and any(
         token in merged_cap for token in ("deploy", "docker", "ops")
+    ):
+        score += 40
+    if any(
+        token in text
+        for token in ("画", "绘图", "图片", "图像", "海报", "插画", "image", "draw")
+    ) and any(
+        token in merged_cap
+        for token in ("image", "media", "draw", "绘图", "图片", "图像")
     ):
         score += 40
     if any(token in text for token in ("测试", "test", "代码", "refactor")) and any(
@@ -77,6 +86,7 @@ class DispatchTools:
                     "backend": str(effective_backend or "none"),
                     "configured_backend": configured_backend,
                     "capabilities": list(item.get("capabilities") or []),
+                    "summary": str(item.get("summary") or ""),
                     "last_task_id": str(item.get("last_task_id") or ""),
                     "last_error": str(item.get("last_error") or ""),
                 }

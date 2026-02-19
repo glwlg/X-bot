@@ -72,10 +72,11 @@ async def save_feature_command(ctx: UnifiedContext) -> int:
 async def process_feature_request(ctx: UnifiedContext, description: str) -> int:
     """整理用户需求并保存"""
     from core.config import (
-        gemini_client,
+        openai_async_client,
         GEMINI_MODEL,
         DATA_DIR,
     )  # lazy import to avoid top level issues if moved
+    from services.openai_adapter import generate_text
 
     msg = await ctx.reply("🤔 正在整理您的需求...")
 
@@ -96,11 +97,14 @@ async def process_feature_request(ctx: UnifiedContext, description: str) -> int:
 """
 
     try:
-        response = await gemini_client.aio.models.generate_content(
+        if openai_async_client is None:
+            raise RuntimeError("OpenAI async client is not initialized")
+        doc_content = await generate_text(
+            async_client=openai_async_client,
             model=GEMINI_MODEL,
             contents=prompt,
         )
-        doc_content = response.text.strip()
+        doc_content = str(doc_content or "").strip()
 
         title_match = re.search(r"^#\s*(.+)$", doc_content, re.MULTILINE)
         title = title_match.group(1).strip()[:15] if title_match else "需求"

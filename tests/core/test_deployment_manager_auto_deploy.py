@@ -4,12 +4,14 @@ from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("GEMINI_API_KEY", "test-key")
+os.environ.setdefault("LLM_API_KEY", "test-key")
 
 
 def _load_module():
     module_path = Path("skills/builtin/deployment_manager/scripts/execute.py")
-    spec = importlib.util.spec_from_file_location("deployment_manager_execute", module_path)
+    spec = importlib.util.spec_from_file_location(
+        "deployment_manager_execute", module_path
+    )
     module = importlib.util.module_from_spec(spec)
     assert spec and spec.loader
     spec.loader.exec_module(module)
@@ -65,7 +67,9 @@ async def test_search_repo_and_guides_prefers_github(monkeypatch):
         ]
 
     monkeypatch.setattr(module, "_search_searxng", fake_search)
-    result = await module._search_repo_and_guides("帮我部署一套example app", "example-app")
+    result = await module._search_repo_and_guides(
+        "帮我部署一套example app", "example-app"
+    )
 
     assert result["repo_url"] == "https://github.com/example-org/example-app.git"
     assert result["guides"]
@@ -106,7 +110,9 @@ async def test_auto_deploy_retries_after_compose_placeholder_fix(monkeypatch, tm
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(module, "_resolve_project_path", lambda *_args, **_kwargs: project_dir)
+    monkeypatch.setattr(
+        module, "_resolve_project_path", lambda *_args, **_kwargs: project_dir
+    )
 
     async def fake_clone_repo(_params):
         return {"text": "✅ 仓库克隆成功", "ui": {}}
@@ -118,7 +124,10 @@ async def test_auto_deploy_retries_after_compose_placeholder_fix(monkeypatch, tm
         if " up -d" in command:
             if call_state["up_count"] == 0:
                 call_state["up_count"] += 1
-                return 1, "unable to get image 'n8nio/n8n:{version}': invalid reference format"
+                return (
+                    1,
+                    "unable to get image 'n8nio/n8n:{version}': invalid reference format",
+                )
             return 0, "container started"
         if " ps" in command:
             return 0, "service Up 2 seconds"
@@ -149,7 +158,9 @@ async def test_clone_repo_switches_directory_on_remote_mismatch(monkeypatch, tmp
     project_dir.mkdir(parents=True, exist_ok=True)
     (project_dir / ".git").mkdir(parents=True, exist_ok=True)
 
-    monkeypatch.setattr(module, "_resolve_project_path", lambda *_args, **_kwargs: project_dir)
+    monkeypatch.setattr(
+        module, "_resolve_project_path", lambda *_args, **_kwargs: project_dir
+    )
 
     async def fake_read_git_remote_url(_path):
         return "https://github.com/alice39s/kuma-mieru.git"
@@ -181,7 +192,9 @@ async def test_clone_repo_switches_directory_on_remote_mismatch(monkeypatch, tmp
 
 
 @pytest.mark.asyncio
-async def test_auto_deploy_switches_to_next_candidate_when_first_missing_compose(monkeypatch, tmp_path):
+async def test_auto_deploy_switches_to_next_candidate_when_first_missing_compose(
+    monkeypatch, tmp_path
+):
     module = _load_module()
 
     async def fake_search_repo_and_guides(*_args, **_kwargs):
@@ -247,7 +260,9 @@ async def test_auto_deploy_switches_to_next_candidate_when_first_missing_compose
 
 
 @pytest.mark.asyncio
-async def test_auto_deploy_uses_github_fallback_when_searxng_empty(monkeypatch, tmp_path):
+async def test_auto_deploy_uses_github_fallback_when_searxng_empty(
+    monkeypatch, tmp_path
+):
     module = _load_module()
 
     async def fake_search_repo_and_guides(*_args, **_kwargs):

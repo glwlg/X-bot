@@ -10,7 +10,8 @@ import os
 import httpx
 from bs4 import BeautifulSoup
 
-from core.config import gemini_client, GEMINI_MODEL, COOKIES_FILE
+from core.config import GEMINI_MODEL, COOKIES_FILE, openai_client
+from services.openai_adapter import generate_text_sync
 
 logger = logging.getLogger(__name__)
 
@@ -344,8 +345,10 @@ async def summarize_webpage(url: str) -> str:
             "摘要应该简洁明了，一般不超过 200 字。"
         )
 
-        # 使用 Gemini 生成摘要
-        response = gemini_client.models.generate_content(
+        if openai_client is None:
+            raise RuntimeError("OpenAI sync client is not initialized")
+        summary = generate_text_sync(
+            sync_client=openai_client,
             model=GEMINI_MODEL,
             contents=prompt,
             config={
@@ -353,8 +356,8 @@ async def summarize_webpage(url: str) -> str:
             },
         )
 
-        if response.text:
-            return f"📄 **网页摘要**\n\n🔗 {url}\n\n{response.text}"
+        if summary:
+            return f"📄 **网页摘要**\n\n🔗 {url}\n\n{summary}"
         else:
             return f"❌ 无法生成摘要：{url}"
 

@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, cast
+from uuid import uuid4
 
 from core.worker_store import worker_registry, worker_task_store
 from core.tool_access_store import tool_access_store
@@ -20,6 +21,88 @@ def _now_iso() -> str:
 
 
 class _WorkerSilentAdapter:
+    @staticmethod
+    def _safe_filename(filename: str, fallback: str = "artifact.bin") -> str:
+        raw = str(filename or "").strip()
+        if not raw:
+            return fallback
+        keep = [ch for ch in raw if ch.isalnum() or ch in {".", "-", "_"}]
+        cleaned = "".join(keep).strip(".")
+        return cleaned or fallback
+
+    @staticmethod
+    def _infer_kind(filename: str, default: str = "document") -> str:
+        ext = str(Path(str(filename or "")).suffix or "").strip().lower()
+        if ext in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}:
+            return "photo"
+        if ext in {".mp4", ".mov", ".mkv", ".webm"}:
+            return "video"
+        if ext in {".mp3", ".wav", ".m4a", ".ogg", ".flac"}:
+            return "audio"
+        return default
+
+    @classmethod
+    def _append_pending_file(
+        cls,
+        ctx: Any,
+        *,
+        content: Any,
+        filename: str = "",
+        caption: str = "",
+        default_kind: str = "document",
+    ) -> None:
+        user_data = getattr(ctx, "user_data", None)
+        if not isinstance(user_data, dict):
+            return
+
+        outbox_root = str(user_data.get("worker_outbox_root") or "").strip()
+        if not outbox_root:
+            return
+
+        root = Path(outbox_root).resolve()
+        root.mkdir(parents=True, exist_ok=True)
+
+        raw_name = str(filename or "").strip()
+        safe_name = cls._safe_filename(
+            raw_name,
+            fallback=f"artifact-{uuid4().hex[:8]}.bin",
+        )
+        file_path: Path | None = None
+
+        if isinstance(content, str):
+            maybe_path = Path(content).expanduser().resolve()
+            if maybe_path.exists() and maybe_path.is_file():
+                file_path = maybe_path
+                if not raw_name:
+                    safe_name = cls._safe_filename(maybe_path.name, fallback=safe_name)
+
+        if file_path is None:
+            if isinstance(content, bytes):
+                file_bytes = content
+            elif isinstance(content, bytearray):
+                file_bytes = bytes(content)
+            else:
+                file_bytes = str(content or "").encode("utf-8")
+            file_path = (root / safe_name).resolve()
+            file_path.write_bytes(file_bytes)
+
+        pending = user_data.get("pending_files")
+        rows = (
+            [row for row in pending if isinstance(row, dict)]
+            if isinstance(pending, list)
+            else []
+        )
+        kind = cls._infer_kind(safe_name, default=default_kind)
+        rows.append(
+            {
+                "kind": kind,
+                "path": str(file_path),
+                "filename": safe_name,
+                "caption": str(caption or "").strip()[:300],
+            }
+        )
+        user_data["pending_files"] = rows[-20:]
+
     async def reply_text(self, ctx, text: str, ui=None, **kwargs):
         return SimpleNamespace(id=f"worker-silent-{int(datetime.now().timestamp())}")
 
@@ -29,15 +112,47 @@ class _WorkerSilentAdapter:
     async def reply_document(
         self, ctx, document, filename=None, caption=None, **kwargs
     ):
+        _ = kwargs
+        self._append_pending_file(
+            ctx,
+            content=document,
+            filename=str(filename or ""),
+            caption=str(caption or ""),
+            default_kind="document",
+        )
         return SimpleNamespace(id=filename or "doc")
 
     async def reply_photo(self, ctx, photo, caption=None, **kwargs):
+        _ = kwargs
+        self._append_pending_file(
+            ctx,
+            content=photo,
+            filename="photo.png",
+            caption=str(caption or ""),
+            default_kind="photo",
+        )
         return SimpleNamespace(id="photo")
 
     async def reply_video(self, ctx, video, caption=None, **kwargs):
+        _ = kwargs
+        self._append_pending_file(
+            ctx,
+            content=video,
+            filename="video.mp4",
+            caption=str(caption or ""),
+            default_kind="video",
+        )
         return SimpleNamespace(id="video")
 
     async def reply_audio(self, ctx, audio, caption=None, **kwargs):
+        _ = kwargs
+        self._append_pending_file(
+            ctx,
+            content=audio,
+            filename="audio.mp3",
+            caption=str(caption or ""),
+            default_kind="audio",
+        )
         return SimpleNamespace(id="audio")
 
     async def delete_message(self, ctx, message_id: str, chat_id=None, **kwargs):
@@ -495,12 +610,47 @@ class WorkerRuntime:
             output["error"] = error_value
         return output
 
+    @staticmethod
+    def _extract_pending_file_payload(raw_pending_files: Any) -> list[Dict[str, str]]:
+        if not isinstance(raw_pending_files, list):
+            return []
+
+        normalized: list[Dict[str, str]] = []
+        for row in raw_pending_files:
+            if not isinstance(row, dict):
+                continue
+            path_text = str(row.get("path") or "").strip()
+            if not path_text:
+                continue
+            path_obj = Path(path_text).expanduser().resolve()
+            if not path_obj.exists() or not path_obj.is_file():
+                continue
+
+            kind = str(row.get("kind") or "document").strip().lower() or "document"
+            if kind not in {"photo", "video", "audio", "document"}:
+                kind = "document"
+
+            filename = (
+                str(row.get("filename") or path_obj.name).strip() or path_obj.name
+            )
+            caption = str(row.get("caption") or "").strip()[:500]
+            normalized.append(
+                {
+                    "kind": kind,
+                    "path": str(path_obj),
+                    "filename": filename,
+                    "caption": caption,
+                }
+            )
+        return normalized
+
     async def _execute_core_agent_task(
         self,
         *,
         worker_id: str,
         instruction: str,
         metadata: Dict[str, Any] | None = None,
+        workspace_root: str = "",
     ) -> Dict[str, Any]:
         try:
             from core.agent_orchestrator import agent_orchestrator
@@ -553,8 +703,25 @@ class WorkerRuntime:
             _adapter=_WorkerSilentAdapter(),
             user=user,
         )
+        if str(workspace_root or "").strip():
+            outbox_root = (
+                Path(str(workspace_root)).resolve() / ".relay_files"
+            ).resolve()
+        else:
+            outbox_root = (
+                Path(str(self.userland_root)).resolve() / worker_id / ".relay_files"
+            ).resolve()
+        try:
+            outbox_root.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            outbox_root = (
+                Path.cwd() / ".tmp" / "worker-relay" / worker_id / ".relay_files"
+            ).resolve()
+            outbox_root.mkdir(parents=True, exist_ok=True)
         ctx.user_data["execution_policy"] = "worker_execution_policy"
         ctx.user_data["runtime_user_id"] = worker_user_id
+        ctx.user_data["worker_outbox_root"] = str(outbox_root)
+        ctx.user_data["pending_files"] = []
         message_history = [
             {"role": "user", "parts": [{"text": str(instruction or "")}]}
         ]
@@ -576,12 +743,17 @@ class WorkerRuntime:
             ui_payload = self._extract_pending_ui_payload(
                 ctx.user_data.get("pending_ui")
             )
+            file_payload = self._extract_pending_file_payload(
+                ctx.user_data.get("pending_files")
+            )
 
             payload: Dict[str, Any] = (
                 {"text": final_text, "ui": ui_payload}
                 if ui_payload
                 else {"text": final_text}
             )
+            if file_payload:
+                payload["files"] = file_payload
             return {
                 "ok": True,
                 "error": "",
@@ -589,6 +761,7 @@ class WorkerRuntime:
                 "result": final_text,
                 "text": final_text,
                 "ui": ui_payload or {},
+                "files": file_payload,
                 "payload": payload,
             }
         except Exception as exc:
@@ -813,6 +986,7 @@ class WorkerRuntime:
                 worker_id=str(worker.get("id") or worker_id),
                 instruction=instruction,
                 metadata=metadata or {},
+                workspace_root=str(workspace),
             )
             ok = bool(core_result.get("ok"))
             summary = str(core_result.get("summary") or "")[:500]
@@ -894,6 +1068,7 @@ class WorkerRuntime:
                     worker_id=str(worker.get("id") or worker_id),
                     instruction=instruction,
                     metadata=metadata or {},
+                    workspace_root=str(workspace),
                 )
                 if core_result.get("ok"):
                     combined = str(core_result.get("result") or "")

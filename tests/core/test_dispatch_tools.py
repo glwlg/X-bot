@@ -37,6 +37,40 @@ class _FakeRegistry:
         return dict(self._workers[0])
 
 
+class _ImageRegistry:
+    def __init__(self):
+        self._workers = [
+            {
+                "id": "worker-main",
+                "name": "General Worker",
+                "status": "ready",
+                "backend": "core-agent",
+                "capabilities": ["automation"],
+                "summary": "通用执行助手",
+            },
+            {
+                "id": "worker-media",
+                "name": "Media Worker",
+                "status": "ready",
+                "backend": "core-agent",
+                "capabilities": ["media", "image"],
+                "summary": "图片生成与多媒体处理",
+            },
+        ]
+
+    async def list_workers(self):
+        return list(self._workers)
+
+    async def get_worker(self, worker_id: str):
+        for item in self._workers:
+            if item["id"] == worker_id:
+                return dict(item)
+        return None
+
+    async def ensure_default_worker(self):
+        return dict(self._workers[0])
+
+
 class _FakeRuntime:
     def _select_allowed_backend(
         self,
@@ -180,3 +214,30 @@ async def test_dispatch_worker_async_mode_queues_job_and_returns_ack(
     assert submitted["metadata"]["worker_name"] == "Main Worker"
     assert submitted["metadata"]["selection_reason"]
     assert submitted["metadata"]["session_id"] == "session-async-1"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_worker_prefers_media_worker_for_image_requests(monkeypatch):
+    fake_job_store = _FakeJobStore()
+
+    monkeypatch.setenv("WORKER_DISPATCH_MODE", "async")
+    monkeypatch.setattr(dispatch_tools_module, "worker_registry", _ImageRegistry())
+    monkeypatch.setattr(dispatch_tools_module, "worker_runtime", _FakeRuntime())
+    monkeypatch.setattr(dispatch_tools_module, "worker_task_store", _FakeTaskStore())
+    monkeypatch.setattr(dispatch_tools_module, "worker_job_store", fake_job_store)
+
+    tools = dispatch_tools_module.DispatchTools()
+    result = await tools.dispatch_worker(
+        instruction="请画一只猫",
+        metadata={
+            "session_id": "session-image-1",
+            "platform": "telegram",
+            "chat_id": "c-image",
+            "user_id": "u-image",
+        },
+    )
+
+    assert result["ok"] is True
+    assert result["worker_id"] == "worker-media"
+    assert fake_job_store.submitted
+    assert fake_job_store.submitted[0]["worker_id"] == "worker-media"

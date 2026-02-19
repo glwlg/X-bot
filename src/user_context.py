@@ -48,7 +48,7 @@ async def get_user_context(
     获取用户的对话上下文 (Async)
 
     Returns:
-        对话历史列表，格式符合 Gemini API 要求
+        对话历史列表，格式符合当前对话模型输入要求
     """
     session_id = await get_or_create_session_id(context, user_id)
     # 限制最近 20 条，避免 token 过长

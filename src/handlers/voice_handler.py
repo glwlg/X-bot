@@ -8,10 +8,12 @@
 import logging
 import base64
 import re
+from typing import Any, cast
 from telegram.error import BadRequest
 
-from core.config import gemini_client, GEMINI_MODEL, is_user_allowed
+from core.config import GEMINI_MODEL, is_user_allowed, openai_async_client
 from core.platform.exceptions import MediaProcessingError
+from services.openai_adapter import build_messages
 from user_context import add_message, get_user_context
 from core.platform.models import MessageType, UnifiedContext
 from .media_utils import extract_media_input
@@ -67,6 +69,21 @@ def _extract_model_text(response) -> str:
         text = str(direct_text).strip()
         if text:
             return text
+
+    choices = getattr(response, "choices", None) or []
+    for choice in choices:
+        message = getattr(choice, "message", None)
+        content = getattr(message, "content", "")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+        if isinstance(content, list):
+            chunks = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    chunks.append(str(part.get("text") or ""))
+            merged = "\n".join([item for item in chunks if item]).strip()
+            if merged:
+                return merged
 
     candidates = getattr(response, "candidates", None) or []
     for candidate in candidates:
@@ -134,11 +151,18 @@ def _build_audio_contents(
 
 async def _run_audio_prompt(prompt: str, voice_bytes: bytes, mime_type: str) -> str:
     last_error: Exception | None = None
+    client: Any = openai_async_client
+    if client is None:
+        logger.error("Voice model call skipped: OpenAI async client is not initialized")
+        return ""
+
     for candidate_mime in _audio_mime_candidates(mime_type):
         try:
-            response = await gemini_client.aio.models.generate_content(
+            response = await cast(Any, client).chat.completions.create(
                 model=GEMINI_MODEL,
-                contents=_build_audio_contents(prompt, voice_bytes, candidate_mime),
+                messages=build_messages(
+                    contents=_build_audio_contents(prompt, voice_bytes, candidate_mime),
+                ),
             )
         except Exception as exc:
             last_error = exc
@@ -160,7 +184,7 @@ async def _run_audio_prompt(prompt: str, voice_bytes: bytes, mime_type: str) -> 
 
 async def transcribe_voice(voice_bytes: bytes, mime_type: str) -> str | None:
     """
-    使用 Gemini 转写语音为文字
+    使用对话模型转写语音为文字
 
     Returns:
         转写后的文本，失败返回 None

@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import logging
 import os
+from pathlib import Path
 from typing import Any, Dict
 
 from core.heartbeat_store import heartbeat_store
@@ -40,7 +41,7 @@ def _split_chunks(text: str, limit: int = 3500) -> list[str]:
 
 def _extract_payload(
     result: Dict[str, Any],
-) -> tuple[str, dict[str, Any], dict[str, Any]]:
+) -> tuple[str, dict[str, Any], dict[str, Any], list[dict[str, str]]]:
     payload = result.get("payload") if isinstance(result, dict) else {}
     payload_obj: dict[str, Any] = {}
     if isinstance(payload, dict):
@@ -67,10 +68,46 @@ def _extract_payload(
         payload_obj["text"] = text
     if ui and "ui" not in payload_obj:
         payload_obj["ui"] = ui
-    return text, ui, payload_obj
+
+    file_rows: list[dict[str, str]] = []
+    raw_files = payload_obj.get("files")
+    if not isinstance(raw_files, list):
+        raw_files = result.get("files")
+
+    if isinstance(raw_files, list):
+        for item in raw_files:
+            if not isinstance(item, dict):
+                continue
+            path_text = str(item.get("path") or "").strip()
+            if not path_text:
+                continue
+            path_obj = Path(path_text).expanduser().resolve()
+            if not path_obj.exists() or not path_obj.is_file():
+                continue
+            kind = str(item.get("kind") or "document").strip().lower() or "document"
+            if kind not in {"photo", "video", "audio", "document"}:
+                kind = "document"
+            filename = (
+                str(item.get("filename") or path_obj.name).strip() or path_obj.name
+            )
+            caption = str(item.get("caption") or "").strip()[:500]
+            file_rows.append(
+                {
+                    "kind": kind,
+                    "path": str(path_obj),
+                    "filename": filename,
+                    "caption": caption,
+                }
+            )
+
+    if file_rows and "files" not in payload_obj:
+        payload_obj["files"] = file_rows
+    return text, ui, payload_obj, file_rows
 
 
-def _build_delivery_text(job: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
+def _build_delivery_text(
+    job: Dict[str, Any],
+) -> tuple[str, dict[str, Any], list[dict[str, str]]]:
     result = dict(job.get("result") or {})
     metadata = job.get("metadata")
     meta = dict(metadata) if isinstance(metadata, dict) else {}
@@ -81,7 +118,7 @@ def _build_delivery_text(job: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         or job.get("worker_id")
         or "执行助手"
     )
-    text, ui, _payload = _extract_payload(result)
+    text, ui, _payload, files = _extract_payload(result)
 
     if ok:
         body = text or str(result.get("summary") or "任务执行完成。")
@@ -91,7 +128,7 @@ def _build_delivery_text(job: Dict[str, Any]) -> tuple[str, dict[str, Any]]:
         summary = str(result.get("summary") or "").strip()
         detail = summary or text or error
         final_text = f"❌ {worker_name} 任务执行失败\n\n{detail}".strip()
-    return final_text, ui
+    return final_text, ui, files
 
 
 class WorkerResultRelay:
@@ -196,13 +233,21 @@ class WorkerResultRelay:
             )
             return False
 
-        text, ui = _build_delivery_text(job)
+        text, ui, files = _build_delivery_text(job)
         if not text:
             text = "任务执行完成，但无可展示输出。"
 
+        delivered_any = False
+        if files:
+            delivered_any = await self._deliver_files(
+                adapter=adapter,
+                chat_id=chat_id,
+                files=files,
+            )
+
         chunks = _split_chunks(text)
         if not chunks:
-            return True
+            return delivered_any
 
         try:
             total = len(chunks)
@@ -219,9 +264,10 @@ class WorkerResultRelay:
                     result = send(**kwargs)
                     if inspect.isawaitable(result):
                         await result
+                    delivered_any = True
                     continue
                 return False
-            return True
+            return delivered_any
         except Exception as exc:
             logger.error(
                 "Worker relay delivery failed job=%s platform=%s chat=%s err=%s",
@@ -231,6 +277,59 @@ class WorkerResultRelay:
                 exc,
             )
             return False
+
+    async def _deliver_files(
+        self,
+        *,
+        adapter: Any,
+        chat_id: str,
+        files: list[dict[str, str]],
+    ) -> bool:
+        delivered = False
+        for item in files:
+            path_text = str(item.get("path") or "").strip()
+            if not path_text:
+                continue
+            path_obj = Path(path_text).expanduser().resolve()
+            if not path_obj.exists() or not path_obj.is_file():
+                continue
+            caption = str(item.get("caption") or "").strip() or None
+            filename = (
+                str(item.get("filename") or path_obj.name).strip() or path_obj.name
+            )
+            kind = str(item.get("kind") or "document").strip().lower() or "document"
+
+            sender = None
+            kwargs: Dict[str, Any] = {"chat_id": chat_id}
+            if kind == "photo":
+                sender = getattr(adapter, "send_photo", None)
+                kwargs["photo"] = str(path_obj)
+            elif kind == "video":
+                sender = getattr(adapter, "send_video", None)
+                kwargs["video"] = str(path_obj)
+            elif kind == "audio":
+                sender = getattr(adapter, "send_audio", None)
+                kwargs["audio"] = str(path_obj)
+
+            if not callable(sender):
+                sender = getattr(adapter, "send_document", None)
+                kwargs = {
+                    "chat_id": chat_id,
+                    "document": str(path_obj),
+                    "filename": filename,
+                }
+
+            if not callable(sender):
+                continue
+
+            if caption:
+                kwargs["caption"] = caption
+            result = sender(**kwargs)
+            if inspect.isawaitable(result):
+                await result
+            delivered = True
+
+        return delivered
 
 
 worker_result_relay = WorkerResultRelay()
