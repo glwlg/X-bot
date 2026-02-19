@@ -3,13 +3,13 @@
 """
 
 import io
-import asyncio
 import logging
 from typing import Any
 from telegram.error import BadRequest
 
-from core.config import gemini_client, GEMINI_MODEL, is_user_allowed
+from core.config import GEMINI_MODEL, is_user_allowed, openai_async_client
 from core.platform.exceptions import MediaProcessingError
+from services.openai_adapter import generate_text
 from user_context import add_message
 from core.platform.models import UnifiedContext, MessageType
 from .media_utils import extract_media_input
@@ -271,9 +271,10 @@ async def handle_document(ctx: UnifiedContext) -> None:
 
         await ctx.edit_message(get_message_id(thinking_msg), "📄 正在分析文档内容...")
 
-        # 调用 Gemini 分析
-        response = await asyncio.to_thread(
-            gemini_client.models.generate_content,
+        if openai_async_client is None:
+            raise RuntimeError("OpenAI async client is not initialized")
+        response_text = await generate_text(
+            async_client=openai_async_client,
             model=GEMINI_MODEL,
             contents=f"用户问题：{caption}\n\n文档内容：\n{text}",
             config={
@@ -285,11 +286,12 @@ async def handle_document(ctx: UnifiedContext) -> None:
                 ),
             },
         )
+        response_text = str(response_text or "")
 
-        if response.text:
-            await ctx.edit_message(get_message_id(thinking_msg), response.text)
+        if response_text:
+            await ctx.edit_message(get_message_id(thinking_msg), response_text)
             # 记录模型回复到上下文
-            await add_message(ctx, user_id, "model", response.text)
+            await add_message(ctx, user_id, "model", response_text)
             # 记录统计
             from stats import increment_stat
 

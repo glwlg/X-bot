@@ -1,7 +1,7 @@
 import json
 import os
 
-os.environ.setdefault("GEMINI_API_KEY", "test-key")
+os.environ.setdefault("LLM_API_KEY", "test-key")
 
 from core.todo_manager import TaskTodoSession
 import core.todo_manager as todo_manager_module

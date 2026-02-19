@@ -1,9 +1,10 @@
 from types import SimpleNamespace
+import json
 import os
 
 import pytest
 
-os.environ.setdefault("GEMINI_API_KEY", "test-key")
+os.environ.setdefault("LLM_API_KEY", "test-key")
 
 from core.agent_orchestrator import AgentOrchestrator
 from core.extension_executor import ExtensionRunResult
@@ -653,32 +654,42 @@ async def test_ai_service_returns_visible_failure_on_turn_limit(monkeypatch):
         def __init__(self):
             self.function_call = SimpleNamespace(name="read", args={"path": "a.txt"})
 
-    class FakeContent:
-        def __init__(self):
-            self.parts = [FakePart()]
-
-    class FakeCandidate:
-        def __init__(self):
-            self.content = FakeContent()
-
     class FakeResponse:
         def __init__(self):
-            self.candidates = [FakeCandidate()]
-            self.text = ""
+            part = FakePart()
+            self.choices = [
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="",
+                        tool_calls=[
+                            SimpleNamespace(
+                                id="call-1",
+                                function=SimpleNamespace(
+                                    name=part.function_call.name,
+                                    arguments=json.dumps(
+                                        part.function_call.args,
+                                        ensure_ascii=False,
+                                    ),
+                                ),
+                            )
+                        ],
+                    )
+                )
+            ]
 
     class FakeModels:
-        async def generate_content(self, **kwargs):
+        async def create(self, **kwargs):
             return FakeResponse()
 
-    class FakeAio:
+    class FakeChat:
         def __init__(self):
-            self.models = FakeModels()
+            self.completions = FakeModels()
 
     class FakeClient:
         def __init__(self):
-            self.aio = FakeAio()
+            self.chat = FakeChat()
 
-    monkeypatch.setattr(ai_service_module, "gemini_client", FakeClient())
+    monkeypatch.setattr(ai_service_module, "openai_async_client", FakeClient())
 
     async def fake_tool_executor(_name, _args):
         return {"ok": True}

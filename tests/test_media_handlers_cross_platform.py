@@ -6,24 +6,25 @@ from core.platform.models import MessageType
 from handlers import ai_handlers
 
 
-class _FakeGeminiResponse:
-    def __init__(self, text: str):
-        self.text = text
+class _FakeOpenAICompletions:
+    async def create(self, **kwargs):
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="分析结果", tool_calls=[]),
+                )
+            ]
+        )
 
 
-class _FakeGeminiModels:
-    async def generate_content(self, **kwargs):
-        return _FakeGeminiResponse("分析结果")
-
-
-class _FakeGeminiAio:
+class _FakeOpenAIChat:
     def __init__(self):
-        self.models = _FakeGeminiModels()
+        self.completions = _FakeOpenAICompletions()
 
 
-class _FakeGeminiClient:
+class _FakeOpenAIClient:
     def __init__(self):
-        self.aio = _FakeGeminiAio()
+        self.chat = _FakeOpenAIChat()
 
 
 class _DummyOutgoingMessage:
@@ -98,7 +99,7 @@ async def test_handle_ai_photo_works_for_discord_without_telegram_update(monkeyp
     monkeypatch.setattr(config_module, "is_user_allowed", _allow_user)
     monkeypatch.setattr(ai_handlers, "add_message", _noop)
     monkeypatch.setattr(ai_handlers, "increment_stat", _noop)
-    monkeypatch.setattr(ai_handlers, "gemini_client", _FakeGeminiClient())
+    monkeypatch.setattr(ai_handlers, "openai_async_client", _FakeOpenAIClient())
 
     message = _build_discord_message(MessageType.IMAGE, "image/png")
     platform_event = SimpleNamespace(
@@ -125,7 +126,7 @@ async def test_handle_ai_video_works_for_discord_without_telegram_update(monkeyp
     monkeypatch.setattr(config_module, "is_user_allowed", _allow_user)
     monkeypatch.setattr(ai_handlers, "add_message", _noop)
     monkeypatch.setattr(ai_handlers, "increment_stat", _noop)
-    monkeypatch.setattr(ai_handlers, "gemini_client", _FakeGeminiClient())
+    monkeypatch.setattr(ai_handlers, "openai_async_client", _FakeOpenAIClient())
 
     message = _build_discord_message(MessageType.VIDEO, "video/mp4")
     platform_event = SimpleNamespace(

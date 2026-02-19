@@ -433,3 +433,31 @@ async def test_worker_core_agent_context_keeps_logical_user_id(monkeypatch):
     assert captured["user_id"] == "42"
     assert captured["runtime_user_id"] == "worker::worker-main::42"
     assert captured["platform"] == "worker_runtime"
+
+
+@pytest.mark.asyncio
+async def test_worker_core_agent_collects_pending_files(monkeypatch, tmp_path):
+    runtime = WorkerRuntime()
+
+    async def fake_handle_message(ctx, message_history):
+        _ = message_history
+        await ctx.reply_document(document=b"fake-image", filename="dog.png")
+        yield "图片已生成"
+
+    fake_orchestrator = SimpleNamespace(handle_message=fake_handle_message)
+    monkeypatch.setattr(orchestrator_module, "agent_orchestrator", fake_orchestrator)
+
+    result = await runtime._execute_core_agent_task(
+        worker_id="worker-main",
+        instruction="画一只狗",
+        metadata={"user_id": "42"},
+        workspace_root=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    payload = result.get("payload") or {}
+    files = payload.get("files") or []
+    assert files
+    first = files[0]
+    assert first["filename"] == "dog.png"
+    assert Path(first["path"]).exists()

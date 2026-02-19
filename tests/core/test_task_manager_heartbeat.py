@@ -4,7 +4,7 @@ from contextlib import suppress
 
 import pytest
 
-os.environ.setdefault("GEMINI_API_KEY", "test-key")
+os.environ.setdefault("LLM_API_KEY", "test-key")
 
 from core.task_manager import TaskManager
 

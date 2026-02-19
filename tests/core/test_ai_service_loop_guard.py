@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import json
 
 import pytest
 
@@ -15,32 +16,42 @@ async def test_ai_service_emits_loop_guard_on_repeated_calls(monkeypatch):
         def __init__(self):
             self.function_call = SimpleNamespace(name="read", args={"path": "a.txt"})
 
-    class FakeContent:
-        def __init__(self):
-            self.parts = [FakePart()]
-
-    class FakeCandidate:
-        def __init__(self):
-            self.content = FakeContent()
-
     class FakeResponse:
         def __init__(self):
-            self.candidates = [FakeCandidate()]
-            self.text = ""
+            part = FakePart()
+            self.choices = [
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="",
+                        tool_calls=[
+                            SimpleNamespace(
+                                id="call-1",
+                                function=SimpleNamespace(
+                                    name=part.function_call.name,
+                                    arguments=json.dumps(
+                                        part.function_call.args,
+                                        ensure_ascii=False,
+                                    ),
+                                ),
+                            )
+                        ],
+                    )
+                )
+            ]
 
     class FakeModels:
-        async def generate_content(self, **kwargs):
+        async def create(self, **kwargs):
             return FakeResponse()
 
-    class FakeAio:
+    class FakeChat:
         def __init__(self):
-            self.models = FakeModels()
+            self.completions = FakeModels()
 
     class FakeClient:
         def __init__(self):
-            self.aio = FakeAio()
+            self.chat = FakeChat()
 
-    monkeypatch.setattr(ai_service_module, "gemini_client", FakeClient())
+    monkeypatch.setattr(ai_service_module, "openai_async_client", FakeClient())
     monkeypatch.setenv("AI_TOOL_REPEAT_GUARD", "2")
 
     async def fake_tool_executor(_name, _args):
@@ -70,39 +81,45 @@ async def test_ai_service_keeps_full_terminal_text_without_truncation(monkeypatc
     long_text = "✅DEPLOY_OK\n" + ("x" * 1200)
     captured_terminal = {"value": ""}
 
-    class FakePart:
+    class FakeResponse:
         def __init__(self):
-            self.function_call = SimpleNamespace(
+            function_call = SimpleNamespace(
                 name="ext_deployment_manager",
                 args={"action": "auto_deploy"},
             )
-
-    class FakeContent:
-        def __init__(self):
-            self.parts = [FakePart()]
-
-    class FakeCandidate:
-        def __init__(self):
-            self.content = FakeContent()
-
-    class FakeResponse:
-        def __init__(self):
-            self.candidates = [FakeCandidate()]
-            self.text = ""
+            self.choices = [
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="",
+                        tool_calls=[
+                            SimpleNamespace(
+                                id="call-1",
+                                function=SimpleNamespace(
+                                    name=function_call.name,
+                                    arguments=json.dumps(
+                                        function_call.args,
+                                        ensure_ascii=False,
+                                    ),
+                                ),
+                            )
+                        ],
+                    )
+                )
+            ]
 
     class FakeModels:
-        async def generate_content(self, **kwargs):
+        async def create(self, **kwargs):
             return FakeResponse()
 
-    class FakeAio:
+    class FakeChat:
         def __init__(self):
-            self.models = FakeModels()
+            self.completions = FakeModels()
 
     class FakeClient:
         def __init__(self):
-            self.aio = FakeAio()
+            self.chat = FakeChat()
 
-    monkeypatch.setattr(ai_service_module, "gemini_client", FakeClient())
+    monkeypatch.setattr(ai_service_module, "openai_async_client", FakeClient())
 
     async def fake_tool_executor(_name, _args):
         return {
@@ -145,39 +162,45 @@ async def test_ai_service_terminal_payload_uses_result_and_ui(monkeypatch):
     terminal_result = "✅RSS_READY\n" + ("a" * 600)
     captured = {"text": "", "ui": {}}
 
-    class FakePart:
+    class FakeResponse:
         def __init__(self):
-            self.function_call = SimpleNamespace(
+            function_call = SimpleNamespace(
                 name="dispatch_worker",
                 args={"instruction": "检查 RSS"},
             )
-
-    class FakeContent:
-        def __init__(self):
-            self.parts = [FakePart()]
-
-    class FakeCandidate:
-        def __init__(self):
-            self.content = FakeContent()
-
-    class FakeResponse:
-        def __init__(self):
-            self.candidates = [FakeCandidate()]
-            self.text = ""
+            self.choices = [
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="",
+                        tool_calls=[
+                            SimpleNamespace(
+                                id="call-1",
+                                function=SimpleNamespace(
+                                    name=function_call.name,
+                                    arguments=json.dumps(
+                                        function_call.args,
+                                        ensure_ascii=False,
+                                    ),
+                                ),
+                            )
+                        ],
+                    )
+                )
+            ]
 
     class FakeModels:
-        async def generate_content(self, **kwargs):
+        async def create(self, **kwargs):
             return FakeResponse()
 
-    class FakeAio:
+    class FakeChat:
         def __init__(self):
-            self.models = FakeModels()
+            self.completions = FakeModels()
 
     class FakeClient:
         def __init__(self):
-            self.aio = FakeAio()
+            self.chat = FakeChat()
 
-    monkeypatch.setattr(ai_service_module, "gemini_client", FakeClient())
+    monkeypatch.setattr(ai_service_module, "openai_async_client", FakeClient())
 
     async def fake_tool_executor(_name, _args):
         return {

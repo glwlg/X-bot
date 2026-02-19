@@ -57,6 +57,35 @@ def _resolve_worker_display_name(
     return current or soul_name or worker_id
 
 
+def _normalize_capabilities(value: Any) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    normalized: List[str] = []
+    for item in value:
+        token = str(item or "").strip()
+        if token and token not in normalized:
+            normalized.append(token)
+    return normalized
+
+
+def _build_worker_summary(
+    *,
+    worker_id: str,
+    worker_name: str,
+    backend: str,
+    capabilities: List[str],
+    stored_summary: str,
+) -> str:
+    summary = str(stored_summary or "").strip()
+    if summary:
+        return summary
+    if capabilities:
+        capability_hint = "、".join(capabilities[:4])
+        return f"{worker_name or worker_id} 是通用执行助手，擅长：{capability_hint}。"
+    backend_name = str(backend or "core-agent").strip() or "core-agent"
+    return f"{worker_name or worker_id} 是通用执行助手（backend={backend_name}），可处理跨工具任务。"
+
+
 def _normalize_worker_output(
     output: Any,
     *,
@@ -148,22 +177,30 @@ class WorkerRegistry:
                 default_exists = Path(default_workspace).exists()
                 if not configured_exists and default_exists:
                     workspace_root = default_workspace
+            worker_name = _resolve_worker_display_name(
+                worker_id=worker_id,
+                stored_name=str(value.get("name") or "").strip(),
+                workspace_root=workspace_root,
+            )
+            backend_name = (
+                str(value.get("backend") or self.default_backend).strip().lower()
+                or self.default_backend
+            )
+            capabilities = _normalize_capabilities(value.get("capabilities"))
             record = {
                 "id": worker_id,
-                "name": _resolve_worker_display_name(
-                    worker_id=worker_id,
-                    stored_name=str(value.get("name") or "").strip(),
-                    workspace_root=workspace_root,
-                ),
-                "backend": str(value.get("backend") or self.default_backend)
-                .strip()
-                .lower()
-                or self.default_backend,
+                "name": worker_name,
+                "backend": backend_name,
                 "status": str(value.get("status") or "ready").strip().lower()
                 or "ready",
-                "capabilities": value.get("capabilities")
-                if isinstance(value.get("capabilities"), list)
-                else [],
+                "capabilities": capabilities,
+                "summary": _build_worker_summary(
+                    worker_id=worker_id,
+                    worker_name=worker_name,
+                    backend=backend_name,
+                    capabilities=capabilities,
+                    stored_summary=str(value.get("summary") or ""),
+                ),
                 "workspace_root": workspace_root,
                 "credentials_root": str(
                     value.get("credentials_root")
@@ -241,6 +278,7 @@ class WorkerRegistry:
             or self.default_backend,
             "status": "ready",
             "capabilities": [],  # 运行时可动态更新
+            "summary": f"{str(name or safe_id).strip() or safe_id} 是通用执行助手，可处理跨工具任务。",
             "workspace_root": str((self.root / safe_id).resolve()),
             "credentials_root": str(
                 (Path(DATA_DIR) / "credentials" / "workers" / safe_id).resolve()
@@ -305,7 +343,14 @@ class WorkerRegistry:
             current = workers.get(safe_id)
             if not isinstance(current, dict):
                 return None
-            for key in ("name", "status", "backend", "last_task_id", "last_error"):
+            for key in (
+                "name",
+                "status",
+                "backend",
+                "summary",
+                "last_task_id",
+                "last_error",
+            ):
                 if key in fields:
                     current[key] = str(
                         fields[key] if fields[key] is not None else current.get(key, "")

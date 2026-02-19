@@ -3,8 +3,10 @@ import inspect
 import os
 import json
 import asyncio
-from core.config import gemini_client, GEMINI_MODEL
-from google.genai import types
+from typing import Any, Awaitable, Callable, cast
+
+from core.config import GEMINI_MODEL, openai_async_client
+from services.openai_adapter import build_messages
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +48,7 @@ def _split_text_for_streaming(text: str, max_chars: int) -> list[str]:
 
 class AiService:
     """
-    Service for interacting with Gemini AI, acting as a generic Agent Engine.
+    Service for interacting with OpenAI chat models, acting as a generic Agent Engine.
     Handles:
     - Text generation
     - Tool use (Function Calling) loop
@@ -56,17 +58,17 @@ class AiService:
     async def generate_response_stream(
         self,
         message_history: list,
-        tools: list = None,
-        tool_executor: callable = None,
-        system_instruction: str = None,
-        event_callback: callable = None,
+        tools: list | None = None,
+        tool_executor: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None,
+        system_instruction: str | None = None,
+        event_callback: Callable[[str, dict[str, Any]], Any] | None = None,
     ):
         """
         Generator for streaming responses with support for Function Calling (Agent Loop).
 
         Args:
-            message_history: List of Gemini content objects/dicts.
-            tools: List of FunctionDeclaration objects.
+            message_history: List of history content objects/dicts.
+            tools: List of function declaration objects.
             tool_executor: Async callable (name, args) -> result.
             system_instruction: System prompt.
 
@@ -107,12 +109,16 @@ class AiService:
         last_terminal_success_summary = ""
         last_terminal_tool_name = ""
 
-        # Clone history to avoid mutating the original reference too early
-        current_history = message_history.copy()
+        current_history = build_messages(
+            contents=message_history,
+            system_instruction=system_instruction,
+        )
+        openai_tools = self._build_openai_tools(tools)
+        client = openai_async_client
 
         try:
 
-            async def _emit(event: str, payload: dict):
+            async def _emit(event: str, payload: dict[str, Any]):
                 if not event_callback:
                     return None
                 try:
@@ -128,37 +134,23 @@ class AiService:
                 turn_count += 1
                 await _emit("turn_start", {"turn": turn_count})
 
-                config = {"system_instruction": system_instruction}
-                if tools:
-                    config["tools"] = [types.Tool(function_declarations=tools)]
+                if client is None:
+                    raise RuntimeError("OpenAI async client is not initialized")
 
                 if tools:
-                    # Non-stream mode required to capture Function Calls reliably?
-                    # Gemini API supports streaming function calls, but the SDK handling might be trickier.
-                    # For stability, we use non-stream for the decision phase.
-
                     logger.debug(
                         f"🤖 [AiService] Sending prompt to AI (Tools Mode):\n{current_history}"
                     )
-                    logger.debug(
-                        f"🤖 [AiService] Sending config to AI (Tools Mode):\n{config}"
+                    request_kwargs: dict[str, Any] = {
+                        "model": GEMINI_MODEL,
+                        "messages": current_history,
+                    }
+                    if openai_tools:
+                        request_kwargs["tools"] = openai_tools
+                    response = await cast(Any, client).chat.completions.create(
+                        **request_kwargs
                     )
-                    response = await gemini_client.aio.models.generate_content(
-                        model=GEMINI_MODEL,
-                        contents=current_history,
-                        config=config,
-                    )
-
-                    # 1. Check for Function Calls
-                    function_calls = []
-                    if (
-                        response.candidates
-                        and response.candidates[0].content
-                        and response.candidates[0].content.parts
-                    ):
-                        for part in response.candidates[0].content.parts:
-                            if part.function_call:
-                                function_calls.append(part.function_call)
+                    function_calls = self._extract_tool_calls(response)
 
                     if function_calls:
                         # Agent decided to act
@@ -174,7 +166,10 @@ class AiService:
                             loop_payload = {
                                 "turn": turn_count,
                                 "repeat_count": repeat_tool_call_count,
-                                "tool_names": [fc.name for fc in function_calls],
+                                "tool_names": [
+                                    str(item.get("name") or "")
+                                    for item in function_calls
+                                ],
                                 "signature": signature,
                             }
                             directive = await _emit("loop_guard", loop_payload)
@@ -217,50 +212,58 @@ class AiService:
                             break
 
                         logger.info(
-                            f"[AiService] Agent decided to call: {[fc.name for fc in function_calls]}"
+                            "[AiService] Agent decided to call: %s",
+                            [str(item.get("name") or "") for item in function_calls],
                         )
 
-                        # Add model's decision to history
-                        current_history.append(response.candidates[0].content)
+                        assistant_tool_message = self._build_assistant_tool_message(
+                            response
+                        )
+                        if assistant_tool_message:
+                            current_history.append(assistant_tool_message)
 
                         # Execute tools
                         turn_failures: list[str] = []
                         terminal_short_circuit_text = ""
                         should_terminal_stop = False
-                        for fc in function_calls:
+                        for index, fc in enumerate(function_calls):
+                            tool_name = str(fc.get("name") or "").strip()
+                            tool_args = fc.get("args")
+                            if not isinstance(tool_args, dict):
+                                tool_args = {}
+                            tool_call_id = str(fc.get("id") or "").strip() or (
+                                f"call_{turn_count}_{index + 1}"
+                            )
                             if tool_executor:
                                 await _emit(
                                     "tool_call_started",
                                     {
                                         "turn": turn_count,
-                                        "name": fc.name,
-                                        "args": fc.args,
+                                        "name": tool_name,
+                                        "args": tool_args,
                                     },
                                 )
-                                # Yield status update if possible?
-                                # But we can't yield text that isn't part of final response easily without confusing UI?
-                                # We can yield a special marker or just be silent.
-                                # Let's be silent for now, relying on Telegram's "typing" action from handler.
 
                                 try:
                                     logger.info(
-                                        f"Executing tool: {fc.name} args={fc.args}"
+                                        f"Executing tool: {tool_name} args={tool_args}"
                                     )
-                                    # Increase timeout for tool execution (Deep Research can take time)
                                     tool_result = await asyncio.wait_for(
-                                        tool_executor(fc.name, fc.args),
+                                        tool_executor(tool_name, tool_args),
                                         timeout=float(TOOL_EXEC_TIMEOUT_SEC),
                                     )
                                 except asyncio.TimeoutError:
-                                    logger.error(f"Tool execution timed out: {fc.name}")
+                                    logger.error(
+                                        f"Tool execution timed out: {tool_name}"
+                                    )
                                     tool_result = (
-                                        f"Error: Tool '{fc.name}' timed out after "
+                                        f"Error: Tool '{tool_name}' timed out after "
                                         f"{TOOL_EXEC_TIMEOUT_SEC} seconds."
                                     )
                                 except Exception as e:
                                     logger.error(f"Tool execution error: {e}")
                                     tool_result = (
-                                        f"Error executing tool {fc.name}: {str(e)}"
+                                        f"Error executing tool {tool_name}: {str(e)}"
                                     )
 
                                 tool_ok = self._tool_result_ok(tool_result)
@@ -304,17 +307,17 @@ class AiService:
                                     last_terminal_success_summary = (
                                         self._summarize_tool_result(tool_result)
                                     )
-                                    last_terminal_tool_name = fc.name
+                                    last_terminal_tool_name = tool_name
 
                                 if not tool_ok:
                                     turn_failures.append(
-                                        f"{fc.name}: {self._summarize_tool_result(tool_result)}"
+                                        f"{tool_name}: {self._summarize_tool_result(tool_result)}"
                                     )
                                 directive = await _emit(
                                     "tool_call_finished",
                                     {
                                         "turn": turn_count,
-                                        "name": fc.name,
+                                        "name": tool_name,
                                         "ok": tool_ok,
                                         "summary": self._summarize_tool_result(
                                             tool_result
@@ -330,21 +333,20 @@ class AiService:
                                         "failure_mode": failure_mode,
                                     },
                                 )
-
-                                # Add tool result to history
-                                # Add tool result to history
                                 current_history.append(
-                                    types.Content(
-                                        role="tool",
-                                        parts=[
-                                            types.Part(
-                                                function_response=types.FunctionResponse(
-                                                    name=fc.name,
-                                                    response={"result": tool_result},
+                                    {
+                                        "role": "tool",
+                                        "tool_call_id": tool_call_id,
+                                        "content": json.dumps(
+                                            {
+                                                "result": self._sanitize_tool_result_for_history(
+                                                    tool_result
                                                 )
-                                            )
-                                        ],
-                                    )
+                                            },
+                                            ensure_ascii=False,
+                                            default=str,
+                                        ),
+                                    }
                                 )
 
                                 if (
@@ -383,11 +385,7 @@ class AiService:
                         continue
 
                     else:
-                        model_text = ""
-                        try:
-                            model_text = response.text or ""
-                        except ValueError:
-                            model_text = ""
+                        model_text = self._extract_response_text(response)
 
                         if (
                             has_tool_call
@@ -398,8 +396,11 @@ class AiService:
                                 "[AiService] Tool failure detected; forcing another attempt. failures=%s",
                                 pending_tool_failures,
                             )
-                            if response.candidates and response.candidates[0].content:
-                                current_history.append(response.candidates[0].content)
+                            assistant_text_message = self._build_assistant_text_message(
+                                response
+                            )
+                            if assistant_text_message:
+                                current_history.append(assistant_text_message)
                             retry_payload = {
                                 "turn": turn_count,
                                 "failures": pending_tool_failures[:],
@@ -423,71 +424,59 @@ class AiService:
                                     + "; ".join(pending_tool_failures[:3])
                                 )
                             current_history.append(
-                                types.Content(
-                                    role="user",
-                                    parts=[types.Part(text=recovery_instruction)],
-                                )
+                                {"role": "user", "content": recovery_instruction}
                             )
                             continue
 
                         # Agent decided to reply with text (Final Answer)
-                        try:
-                            if model_text:
-                                preview = model_text.replace("\n", " ")[:200]
-                                logger.info(
-                                    "[AiService] Model returned final text without tool call (turn=%s): %s",
-                                    turn_count,
-                                    preview,
-                                )
-                                await _emit(
-                                    "final_response",
-                                    {
-                                        "turn": turn_count,
-                                        "text_preview": preview,
-                                    },
-                                )
-                                if tools and tool_final_stream_enabled:
-                                    for segment in _split_text_for_streaming(
-                                        model_text,
-                                        tool_final_stream_chunk_chars,
-                                    ):
-                                        yield segment
-                                else:
-                                    yield model_text
-                            else:
-                                logger.warning(
-                                    f"[AiService] Empty text response. Candidates: {response.candidates}"
-                                )
-                                await _emit(
-                                    "final_response",
-                                    {
-                                        "turn": turn_count,
-                                        "text_preview": "",
-                                    },
-                                )
-                                yield "⚠️ 抱歉，模型返回了空响应，可能是触发了安全过滤或内部错误。"
-                        except ValueError:
-                            # response.text might raise ValueError if there are no text parts
-                            logger.warning(
-                                f"[AiService] Invalid text response. Candidates: {response.candidates}"
+                        if model_text:
+                            preview = model_text.replace("\n", " ")[:200]
+                            logger.info(
+                                "[AiService] Model returned final text without tool call (turn=%s): %s",
+                                turn_count,
+                                preview,
                             )
-                            yield "⚠️ 抱歉，模型返回了无效响应。"
+                            await _emit(
+                                "final_response",
+                                {
+                                    "turn": turn_count,
+                                    "text_preview": preview,
+                                },
+                            )
+                            if tools and tool_final_stream_enabled:
+                                for segment in _split_text_for_streaming(
+                                    model_text,
+                                    tool_final_stream_chunk_chars,
+                                ):
+                                    yield segment
+                            else:
+                                yield model_text
+                        else:
+                            logger.warning("[AiService] Empty text response.")
+                            await _emit(
+                                "final_response",
+                                {
+                                    "turn": turn_count,
+                                    "text_preview": "",
+                                },
+                            )
+                            yield "⚠️ 抱歉，模型返回了空响应，可能是触发了安全过滤或内部错误。"
                         completed = True
                         break
 
                 else:
-                    # No tools -> Pure streaming chat
                     logger.debug(
                         f"🤖 [AiService] Sending prompt to AI (Stream Mode):\n{current_history}"
                     )
-                    stream = await gemini_client.aio.models.generate_content_stream(
+                    stream = await cast(Any, client).chat.completions.create(
                         model=GEMINI_MODEL,
-                        contents=current_history,
-                        config=config,
+                        messages=current_history,
+                        stream=True,
                     )
                     async for chunk in stream:
-                        if chunk.text:
-                            yield chunk.text
+                        chunk_text = self._extract_stream_text(chunk)
+                        if chunk_text:
+                            yield chunk_text
                     completed = True
                     break
 
@@ -527,6 +516,140 @@ class AiService:
         except Exception as e:
             logger.error(f"[AiService] Error: {e}")
             raise e
+
+    @staticmethod
+    def _build_openai_tools(tools: list | None) -> list[dict[str, Any]]:
+        output: list[dict[str, Any]] = []
+        for tool in tools or []:
+            if not isinstance(tool, dict):
+                continue
+            name = str(tool.get("name") or "").strip()
+            if not name:
+                continue
+            parameters = tool.get("parameters")
+            if not isinstance(parameters, dict):
+                parameters = {"type": "object", "properties": {}}
+            output.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "description": str(tool.get("description") or ""),
+                        "parameters": parameters,
+                    },
+                }
+            )
+        return output
+
+    @staticmethod
+    def _extract_tool_calls(response: Any) -> list[dict[str, Any]]:
+        choices = list(getattr(response, "choices", []) or [])
+        if not choices:
+            return []
+        message = getattr(choices[0], "message", None)
+        tool_calls = list(getattr(message, "tool_calls", None) or [])
+        output: list[dict[str, Any]] = []
+        for item in tool_calls:
+            function = getattr(item, "function", None)
+            name = str(getattr(function, "name", "") or "").strip()
+            if not name:
+                continue
+            raw_args = getattr(function, "arguments", "") or ""
+            parsed_args: dict[str, Any] = {}
+            if isinstance(raw_args, str) and raw_args.strip():
+                try:
+                    loaded = json.loads(raw_args)
+                    if isinstance(loaded, dict):
+                        parsed_args = loaded
+                except Exception:
+                    parsed_args = {}
+            output.append(
+                {
+                    "id": str(getattr(item, "id", "") or "").strip(),
+                    "name": name,
+                    "args": parsed_args,
+                }
+            )
+        return output
+
+    @staticmethod
+    def _build_assistant_tool_message(response: Any) -> dict[str, Any] | None:
+        choices = list(getattr(response, "choices", []) or [])
+        if not choices:
+            return None
+        message = getattr(choices[0], "message", None)
+        tool_calls = list(getattr(message, "tool_calls", None) or [])
+        if not tool_calls:
+            return None
+        payload_calls: list[dict[str, Any]] = []
+        for call in tool_calls:
+            function = getattr(call, "function", None)
+            name = str(getattr(function, "name", "") or "").strip()
+            if not name:
+                continue
+            payload_calls.append(
+                {
+                    "id": str(getattr(call, "id", "") or "").strip(),
+                    "type": "function",
+                    "function": {
+                        "name": name,
+                        "arguments": str(getattr(function, "arguments", "") or ""),
+                    },
+                }
+            )
+        if not payload_calls:
+            return None
+        message_content = getattr(message, "content", "")
+        return {
+            "role": "assistant",
+            "content": str(message_content or ""),
+            "tool_calls": payload_calls,
+        }
+
+    @staticmethod
+    def _build_assistant_text_message(response: Any) -> dict[str, Any] | None:
+        text = AiService._extract_response_text(response)
+        if not text:
+            return None
+        return {"role": "assistant", "content": text}
+
+    @staticmethod
+    def _extract_response_text(response: Any) -> str:
+        choices = list(getattr(response, "choices", []) or [])
+        if not choices:
+            return ""
+        message = getattr(choices[0], "message", None)
+        content = getattr(message, "content", "")
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            chunks: list[str] = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    chunks.append(str(item.get("text") or ""))
+            return "".join(chunks).strip()
+        return ""
+
+    @staticmethod
+    def _extract_stream_text(chunk: Any) -> str:
+        choices = list(getattr(chunk, "choices", []) or [])
+        if not choices:
+            return ""
+        delta = getattr(choices[0], "delta", None)
+        content = getattr(delta, "content", None)
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            chunks: list[str] = []
+            for item in content:
+                if isinstance(item, dict) and item.get("type") == "text":
+                    chunks.append(str(item.get("text") or ""))
+                    continue
+                text = getattr(item, "text", None)
+                if text:
+                    chunks.append(str(text))
+            return "".join(chunks)
+        return ""
 
     @staticmethod
     def _tool_result_ok(tool_result) -> bool:
@@ -605,12 +728,48 @@ class AiService:
         return text, ui, payload
 
     @staticmethod
+    def _sanitize_tool_result_for_history(tool_result: Any) -> Any:
+        def _sanitize(value: Any) -> Any:
+            if isinstance(value, dict):
+                sanitized: dict[str, Any] = {}
+                for key, item in value.items():
+                    key_text = str(key)
+                    if key_text == "files" and isinstance(item, dict):
+                        names = [str(name) for name in list(item.keys())[:8]]
+                        sanitized[key_text] = {
+                            "count": len(item),
+                            "names": names,
+                        }
+                        continue
+                    sanitized[key_text] = _sanitize(item)
+                return sanitized
+            if isinstance(value, list):
+                return [_sanitize(item) for item in value[:50]]
+            if isinstance(value, tuple):
+                return [_sanitize(item) for item in list(value)[:50]]
+            if isinstance(value, (bytes, bytearray)):
+                return f"<binary:{len(value)} bytes>"
+            return value
+
+        return _sanitize(tool_result)
+
+    @staticmethod
     def _build_tool_signature(function_calls) -> str:
         signatures: list[str] = []
         for fc in function_calls:
+            name = ""
+            args_obj: Any = {}
+            if isinstance(fc, dict):
+                name = str(fc.get("name") or "").strip()
+                args_obj = fc.get("args")
+            else:
+                name = str(getattr(fc, "name", "") or "").strip()
+                args_obj = getattr(fc, "args", {})
             try:
-                args_str = json.dumps(fc.args or {}, ensure_ascii=False, sort_keys=True)
+                args_str = json.dumps(
+                    args_obj or {}, ensure_ascii=False, sort_keys=True
+                )
             except Exception:
-                args_str = str(fc.args)
-            signatures.append(f"{fc.name}:{args_str}")
+                args_str = str(args_obj)
+            signatures.append(f"{name}:{args_str}")
         return "|".join(signatures)

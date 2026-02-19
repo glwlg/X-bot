@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-os.environ.setdefault("GEMINI_API_KEY", "test-key")
+os.environ.setdefault("LLM_API_KEY", "test-key")
 
 import core.todo_async_worker as worker_module
 
@@ -55,7 +55,9 @@ def _write_todo_file(
     return todo_path
 
 
-async def _wait_worker_idle(worker: worker_module.TodoAsyncWorker, timeout_sec: float = 2.0):
+async def _wait_worker_idle(
+    worker: worker_module.TodoAsyncWorker, timeout_sec: float = 2.0
+):
     deadline = time.time() + timeout_sec
     while worker._running and time.time() < deadline:
         await asyncio.sleep(0.02)
@@ -64,7 +66,9 @@ async def _wait_worker_idle(worker: worker_module.TodoAsyncWorker, timeout_sec: 
 @pytest.mark.asyncio
 async def test_todo_async_worker_processes_pending_todo(monkeypatch, tmp_path):
     runtime_root = tmp_path / "runtime_tasks" / "u1" / "task-a"
-    _write_todo_file(runtime_root, user_id="u1", task_id="task-a", goal="执行一个后台任务")
+    _write_todo_file(
+        runtime_root, user_id="u1", task_id="task-a", goal="执行一个后台任务"
+    )
 
     async def fake_handle_message(ctx, message_history):
         assert ctx.message.user.id == "u1"
@@ -72,7 +76,9 @@ async def test_todo_async_worker_processes_pending_todo(monkeypatch, tmp_path):
         yield "done-by-daemon"
 
     monkeypatch.setattr(worker_module, "DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(worker_module.agent_orchestrator, "handle_message", fake_handle_message)
+    monkeypatch.setattr(
+        worker_module.agent_orchestrator, "handle_message", fake_handle_message
+    )
 
     worker = worker_module.TodoAsyncWorker()
     worker.enabled = True
@@ -85,20 +91,26 @@ async def test_todo_async_worker_processes_pending_todo(monkeypatch, tmp_path):
     assert result_path.exists()
     assert "done-by-daemon" in result_path.read_text(encoding="utf-8")
 
-    heartbeat = json.loads((runtime_root / "heartbeat.json").read_text(encoding="utf-8"))
+    heartbeat = json.loads(
+        (runtime_root / "heartbeat.json").read_text(encoding="utf-8")
+    )
     assert any("daemon:completed" in item for item in heartbeat.get("events", []))
 
 
 @pytest.mark.asyncio
 async def test_todo_async_worker_not_reprocess_unchanged_file(monkeypatch, tmp_path):
     runtime_root = tmp_path / "runtime_tasks" / "u2" / "task-b"
-    todo_path = _write_todo_file(runtime_root, user_id="u2", task_id="task-b", goal="重复保护任务")
+    todo_path = _write_todo_file(
+        runtime_root, user_id="u2", task_id="task-b", goal="重复保护任务"
+    )
 
     async def fake_handle_message(ctx, message_history):
         yield "single-run"
 
     monkeypatch.setattr(worker_module, "DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(worker_module.agent_orchestrator, "handle_message", fake_handle_message)
+    monkeypatch.setattr(
+        worker_module.agent_orchestrator, "handle_message", fake_handle_message
+    )
 
     worker = worker_module.TodoAsyncWorker()
     worker.enabled = True
@@ -112,7 +124,9 @@ async def test_todo_async_worker_not_reprocess_unchanged_file(monkeypatch, tmp_p
     result_text = (runtime_root / "RESULT.md").read_text(encoding="utf-8")
     assert result_text.count("single-run") == 1
 
-    todo_path.write_text(todo_path.read_text(encoding="utf-8") + "\n- external edit\n", encoding="utf-8")
+    todo_path.write_text(
+        todo_path.read_text(encoding="utf-8") + "\n- external edit\n", encoding="utf-8"
+    )
 
     await worker.process_once()
     await _wait_worker_idle(worker)
@@ -135,7 +149,9 @@ async def test_todo_async_worker_skips_completed_todo(monkeypatch, tmp_path):
         raise AssertionError("should not execute completed TODO")
 
     monkeypatch.setattr(worker_module, "DATA_DIR", str(tmp_path))
-    monkeypatch.setattr(worker_module.agent_orchestrator, "handle_message", fake_handle_message)
+    monkeypatch.setattr(
+        worker_module.agent_orchestrator, "handle_message", fake_handle_message
+    )
 
     worker = worker_module.TodoAsyncWorker()
     worker.enabled = True

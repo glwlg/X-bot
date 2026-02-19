@@ -103,6 +103,42 @@ async def test_worker_registry_falls_back_workspace_root_when_configured_path_mi
 
 
 @pytest.mark.asyncio
+async def test_worker_registry_generates_summary_when_missing(tmp_path):
+    registry = _build_registry(tmp_path)
+
+    payload = {
+        "version": 1,
+        "updated_at": "2026-02-16T00:00:00+00:00",
+        "workers": {
+            "worker-main": {
+                "id": "worker-main",
+                "name": "阿黑",
+                "backend": "core-agent",
+                "status": "ready",
+                "capabilities": [],
+                "workspace_root": str((registry.root / "worker-main").resolve()),
+                "credentials_root": str((tmp_path / "credentials").resolve()),
+                "created_at": "2026-02-16T00:00:00+00:00",
+                "updated_at": "2026-02-16T00:00:00+00:00",
+                "last_task_id": "",
+                "last_error": "",
+                "auth": {},
+            }
+        },
+    }
+    registry.meta_path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+    worker = await registry.get_worker("worker-main")
+
+    assert worker is not None
+    assert "summary" in worker
+    assert "通用执行助手" in str(worker["summary"])
+
+
+@pytest.mark.asyncio
 async def test_worker_task_store_persists_structured_output(tmp_path):
     store = WorkerTaskStore()
     store.path = (tmp_path / "WORKER_TASKS.jsonl").resolve()
