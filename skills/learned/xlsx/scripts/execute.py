@@ -4,7 +4,7 @@ from typing import Dict, Any
 from core.platform.models import UnifiedContext
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, Any]:
     """
     执行 xlsx skill 操作。
 

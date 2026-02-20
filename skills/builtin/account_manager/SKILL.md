@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: account_manager
 description: 安全地管理用户账号信息（CRUD）。支持存储密码、API Key、Cookies 等敏感信息，并支持 TOTP (MFA) 代码生成。**所有涉及凭证存储的操作必须优先使用此技能**，不可用于账号注册。
 triggers:
@@ -8,6 +9,14 @@ triggers:
 - login
 - 登录
 - 密码
+input_schema:
+  type: object
+  properties: {}
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # Account Manager (账号管家)

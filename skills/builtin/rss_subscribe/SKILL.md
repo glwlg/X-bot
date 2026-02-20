@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: rss_subscribe
 description: "**管理RSS订阅与新闻监控**。订阅 RSS/Atom 源，监控关键词，给出关键词即可监控，不需要链接。"
 triggers:
@@ -10,6 +11,27 @@ triggers:
 - 监控
 - watch
 - 关注
+input_schema:
+  type: object
+  properties:
+    action:
+      type: string
+      enum:
+        - add
+        - list
+        - remove
+        - refresh
+      description: "add=新增订阅/关键词监控，list=查看订阅，remove=取消订阅，refresh=检查最新更新"
+    url:
+      type: string
+      description: "当 action=add/remove 时使用；可传 RSS URL 或监控关键词"
+  required:
+    - action
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # RSS Subscribe (RSS 订阅助手)

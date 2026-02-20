@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: deep_research
 description: "**深度研究**。深度研究,深入研究,深入分析"
 triggers:
@@ -7,6 +8,32 @@ triggers:
 - 深入研究
 - 深度分析
 - deep dive
+- 调研
+- 研究
+- 研究报告
+input_schema:
+  type: object
+  properties:
+    topic:
+      type: string
+      description: 研究主题或问题
+    depth:
+      type: integer
+      description: 读取和分析的网页数量，建议 3-10
+      minimum: 1
+      maximum: 10
+      default: 5
+    language:
+      type: string
+      description: 搜索语言，例如 zh-CN、en-US
+      default: zh-CN
+  required:
+  - topic
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # Deep Research (深度研究)

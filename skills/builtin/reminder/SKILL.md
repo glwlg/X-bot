@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: reminder
 description: "**简单文本提醒工具**。仅用于设置一次性提醒（如“10分钟后叫我”）。  **❌ 禁止用于复杂调度**: 如果用户需要“每天/每周”重复的任务，或需要调用其他技能（如“每天查天气”），**必须**转交给 `scheduler_manager`。"
 triggers:
@@ -7,6 +8,14 @@ triggers:
 - timer
 - 闹钟
 - alarm
+input_schema:
+  type: object
+  properties: {}
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # Reminder (提醒助手)

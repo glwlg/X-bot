@@ -5,7 +5,7 @@ import aiofiles
 
 from core.platform.models import UnifiedContext, MessageType
 from services.web_summary_service import extract_urls
-from repositories import get_video_cache
+from core.state_store import get_video_cache
 from services.web_summary_service import fetch_webpage_content
 
 logger = logging.getLogger(__name__)
@@ -205,32 +205,8 @@ async def process_and_send_code_files(ctx: UnifiedContext, text: str) -> str:
         if not code_content:
             continue
 
-        # Determine extension
-        ext_map = {
-            "html": "html",
-            "css": "css",
-            "js": "js",
-            "javascript": "js",
-            "ts": "ts",
-            "typescript": "ts",
-            "json": "json",
-            "python": "py",
-            "py": "py",
-            "sh": "sh",
-            "bash": "sh",
-            "sql": "sql",
-            "xml": "xml",
-            "yaml": "yaml",
-            "yml": "yaml",
-            "md": "md",
-            "markdown": "md",
-            "txt": "txt",
-            "text": "txt",
-            "vue": "vue",
-            "jsx": "jsx",
-            "tsx": "tsx",
-        }
-        ext = ext_map.get(language, "txt")
+        # 输出文件策略：除 html 外统一转为 markdown，便于 Telegram 直接预览。
+        ext = "html" if language == "html" else "md"
 
         # Criteria to send as file AND collapse
         lines = code_content.splitlines()
@@ -248,23 +224,50 @@ async def process_and_send_code_files(ctx: UnifiedContext, text: str) -> str:
         filepath = os.path.join(temp_dir, filename)
 
         try:
+            if ext == "html":
+                file_content = code_content
+                caption = "📝 HTML 代码片段"
+            else:
+                safe_lang = (
+                    language if re.fullmatch(r"[a-zA-Z0-9_+\-]+", language) else ""
+                )
+                if language in {"md", "markdown"}:
+                    file_content = code_content
+                else:
+                    fence = f"```{safe_lang}".rstrip()
+                    file_content = f"{fence}\n{code_content}\n```"
+                caption = f"📝 Markdown 文本片段（原始语言: {language}）"
+
             async with aiofiles.open(filepath, "w", encoding="utf-8") as f:
-                await f.write(code_content)
+                await f.write(file_content)
 
             # Send document - 读取文件内容为 bytes 以确保跨平台兼容性
             async with aiofiles.open(filepath, "rb") as f:
                 file_bytes = await f.read()
 
+            # Platform-adaptive format conversion
+            try:
+                from services.md_converter import adapt_md_file_for_platform
+
+                platform = getattr(ctx.message, "platform", "") or ""
+                file_bytes, filename = adapt_md_file_for_platform(
+                    file_bytes=file_bytes,
+                    filename=filename,
+                    platform=platform,
+                )
+            except Exception:
+                pass
+
             await ctx.reply_document(
                 document=file_bytes,
                 filename=filename,
-                caption=f"📝 {language} 代码片段",
+                caption=caption,
                 reply_to_message_id=ctx.message.id,
             )
             sent_count += 1
 
             # Replace in text with placeholder
-            placeholder = f"\n\n(⬇️ {language} 代码已保存为文件: {filename})\n\n"
+            placeholder = f"\n\n(⬇️ {language} 内容已保存为文件: {filename})\n\n"
             final_text = final_text[:start_pos] + placeholder + final_text[end_pos:]
 
         except Exception as e:

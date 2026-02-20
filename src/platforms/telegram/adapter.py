@@ -1,4 +1,7 @@
 import logging
+import asyncio
+import io
+import inspect
 from typing import Any, Optional, Union, Callable, Dict
 from telegram import Update, Bot
 from telegram.ext import (
@@ -59,6 +62,60 @@ class TelegramAdapter(BotAdapter):
 
         return InlineKeyboardMarkup(keyboard)
 
+    @staticmethod
+    def _is_timeout_error(exc: Exception) -> bool:
+        text = str(exc or "").lower()
+        if "timed out" in text or "timeout" in text:
+            return True
+        name = exc.__class__.__name__.lower()
+        return "timeout" in name
+
+    async def _send_with_retry(
+        self,
+        sender: Callable[[], Any],
+        *,
+        max_attempts: int = 3,
+        label: str = "send_message",
+    ) -> Any:
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                result = sender()
+                if inspect.isawaitable(result):
+                    return await result
+                return result
+            except Exception as e:
+                if attempt >= max_attempts or not self._is_timeout_error(e):
+                    raise
+                delay = 0.5 * attempt
+                logger.warning(
+                    "Telegram %s timeout, retrying (%s/%s) in %.1fs",
+                    label,
+                    attempt,
+                    max_attempts,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+    @staticmethod
+    def _is_auto_reply_payload(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            return True
+        if isinstance(value, dict):
+            # Structured unified reply payload: {"text": "...", "ui": {...}}
+            return "text" in value
+        return False
+
+    async def _auto_reply_if_needed(
+        self, unified_ctx: UnifiedContext, result: Any
+    ) -> None:
+        if not self._is_auto_reply_payload(result):
+            return
+        await unified_ctx.reply(result)
+
     async def start(self) -> None:
         """
         Start the bot using the configured Application.
@@ -103,16 +160,78 @@ class TelegramAdapter(BotAdapter):
             if not reply_markup and ui:
                 reply_markup = self._render_ui(ui)
 
-            return await self.bot.send_message(
-                chat_id=chat_id,
-                text=html_text,
-                parse_mode="HTML",
-                disable_web_page_preview=True,
-                reply_markup=reply_markup,
-                **kwargs,
+            return await self._send_with_retry(
+                lambda: self.bot.send_message(
+                    chat_id=chat_id,
+                    text=html_text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                    reply_markup=reply_markup,
+                    **kwargs,
+                ),
+                label="reply_text",
             )
         except Exception as e:
             logger.error(f"Telegram reply_text failed: {e}")
+            raise MessageSendError(str(e))
+
+    async def send_message(
+        self,
+        chat_id: int | str,
+        text: str,
+        ui: Optional[Dict[str, Any]] = None,
+        **kwargs,
+    ) -> Any:
+        """Out-of-context message push helper used by scheduler/heartbeat."""
+        try:
+            html_text = markdown_to_telegram_html(text)
+            reply_markup = kwargs.pop("reply_markup", None)
+            if not reply_markup and ui:
+                reply_markup = self._render_ui(ui)
+            return await self._send_with_retry(
+                lambda: self.bot.send_message(
+                    chat_id=chat_id,
+                    text=html_text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                    reply_markup=reply_markup,
+                    **kwargs,
+                ),
+                label="send_message",
+            )
+        except Exception as e:
+            logger.error(f"Telegram send_message failed: {e}")
+            raise MessageSendError(str(e))
+
+    async def send_document(
+        self,
+        chat_id: int | str,
+        document: Union[str, bytes],
+        filename: Optional[str] = None,
+        caption: Optional[str] = None,
+        **kwargs,
+    ) -> Any:
+        try:
+            resolved_filename = str(filename or "heartbeat.md")
+            formatted_caption = markdown_to_telegram_html(caption) if caption else None
+            outgoing_doc: Union[str, bytes, io.BytesIO] = document
+            if isinstance(document, bytes):
+                file_obj = io.BytesIO(document)
+                file_obj.name = resolved_filename
+                outgoing_doc = file_obj
+            return await self._send_with_retry(
+                lambda: self.bot.send_document(
+                    chat_id=chat_id,
+                    document=outgoing_doc,
+                    filename=resolved_filename,
+                    caption=formatted_caption,
+                    parse_mode="HTML",
+                    **kwargs,
+                ),
+                label="send_document",
+            )
+        except Exception as e:
+            logger.error(f"Telegram send_document failed: {e}")
             raise MessageSendError(str(e))
 
     async def edit_text(
@@ -300,9 +419,7 @@ class TelegramAdapter(BotAdapter):
                     _adapter=self,
                 )
                 res = await handler_func(unified_ctx)
-                if res is not None:
-                    # Auto-reply if handler returns something
-                    await unified_ctx.reply(res)
+                await self._auto_reply_if_needed(unified_ctx, res)
                 return res
             except Exception as e:
                 logger.error(f"Error in unified handler wrapper: {e}", exc_info=True)
@@ -322,8 +439,7 @@ class TelegramAdapter(BotAdapter):
                     _adapter=self,
                 )
                 res = await handler_func(unified_ctx)
-                if res is not None:
-                    await unified_ctx.reply(res)
+                await self._auto_reply_if_needed(unified_ctx, res)
                 return res
             except Exception as e:
                 logger.error(
@@ -347,8 +463,7 @@ class TelegramAdapter(BotAdapter):
                     _adapter=self,
                 )
                 res = await handler_func(unified_ctx)
-                if res is not None:
-                    await unified_ctx.reply(res)
+                await self._auto_reply_if_needed(unified_ctx, res)
                 return res
             except Exception as e:
                 logger.error(
@@ -372,8 +487,7 @@ class TelegramAdapter(BotAdapter):
                     _adapter=self,
                 )
                 res = await handler_func(unified_ctx)
-                if res is not None:
-                    await unified_ctx.reply(res)
+                await self._auto_reply_if_needed(unified_ctx, res)
                 return res
             except Exception as e:
                 logger.error(f"Error in unified callback wrapper: {e}", exc_info=True)
@@ -395,8 +509,7 @@ class TelegramAdapter(BotAdapter):
                     _adapter=self,
                 )
                 res = await handler_func(unified_ctx)
-                if res is not None:
-                    await unified_ctx.reply(res)
+                await self._auto_reply_if_needed(unified_ctx, res)
                 return res
             except Exception as e:
                 logger.error(f"Error in unified command wrapper: {e}", exc_info=True)
@@ -418,8 +531,7 @@ class TelegramAdapter(BotAdapter):
                     _adapter=self,
                 )
                 res = await handler_func(unified_ctx)
-                if res is not None:
-                    await unified_ctx.reply(res)
+                await self._auto_reply_if_needed(unified_ctx, res)
                 return res
             except Exception as e:
                 logger.error(f"Error in unified message wrapper: {e}", exc_info=True)

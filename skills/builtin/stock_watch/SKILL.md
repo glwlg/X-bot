@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: stock_watch
 description: "**自选股助手**。管理用户的股票关注列表，支持实时行情刷新。"
 triggers:
@@ -7,6 +8,14 @@ triggers:
 - 自选股
 - add_stock
 - remove_stock
+input_schema:
+  type: object
+  properties: {}
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # Stock Watch (自选股)

@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: deployment_manager
 description: "**智能部署代理**。分析目标需求，自动搜索、规划并部署 Docker 应用。"
 triggers:
@@ -7,6 +8,54 @@ triggers:
 - manage_deployment
 - 安装服务
 - install
+input_schema:
+  type: object
+  properties:
+    action:
+      type: string
+      description: 执行动作类型
+      enum:
+      - auto_deploy
+      - status
+      - delete_project
+      - get_access_info
+      - verify_access
+    repo_url:
+      type: string
+      description: Git 仓库地址（auto_deploy 可选）
+    request:
+      type: string
+      description: 自动部署的原始用户请求文本（auto_deploy）
+    service:
+      type: string
+      description: 服务名称（auto_deploy，可选）
+    target_dir:
+      type: string
+      description: 部署目标目录（可选）
+    project_name:
+      type: string
+      description: 项目目录名（auto_deploy 可用）
+    host_port:
+      type: integer
+      description: 暴露端口（建议 20000-60000）
+      default: 20080
+    name:
+      type: string
+      description: 项目名（delete_project/get_access_info/verify_access 可用）
+    url:
+      type: string
+      description: 访问 URL（verify_access 可用）
+    timeout:
+      type: integer
+      description: verify_access 超时时间秒数
+      default: 10
+  required:
+  - action
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # Deployment Manager (智能部署代理)
@@ -19,7 +68,7 @@ triggers:
 1. **分析需求** → 理解用户想部署什么
 2. **搜索资料** → 委托 `searxng_search` 查找部署方法和 GitHub 仓库
 3. **阅读文档** → 委托 `web_browser` 获取具体配置信息
-4. **准备环境** → 使用本技能的基础功能（克隆、创建文件、编辑配置）
+4. **准备环境** → 指导核心 Agent 用四原语（`read/write/edit/bash`）准备配置
 5. **执行部署** → 委托 `docker_ops` 完成容器操作
 
 ## 可调度的技能
@@ -36,10 +85,7 @@ triggers:
 
 | Action | 参数 | 说明 |
 | :--- | :--- | :--- |
-| `clone` | `repo_url`, `target_dir` (可选) | 克隆 GitHub 仓库到工作目录 |
-| `write_file` | `path`, `content` | 创建或覆盖文件（如 docker-compose.yml） |
-| `read_file` | `path` | 读取文件内容 |
-| `list_dir` | `path` (可选) | 列出目录内容 |
+| `auto_deploy` | `request`/`service`/`repo_url` (可选), `host_port` (可选) | 一步自动部署（通用模式，或直接给 GitHub 仓库） |
 | `status` | 无 | 返回当前已部署的项目列表及访问 URL |
 | `get_access_info` | `name` | 获取指定项目的访问 URL（基于 SERVER_IP 配置） |
 | `verify_access` | `name` 或 `url`, `timeout` (可选) | **验证服务可访问性**，使用 httpx 检查是否可达 |
@@ -50,11 +96,8 @@ triggers:
 
 | 领域 | 动作 (Action) | 说明 |
 | :--- | :--- | :--- |
-| **文件操作** | `clone` | 克隆 GitHub 仓库 |
-| | `write_file` | 创建/修改 docker-compose.yml |
-| | `read_file` | 读取文件内容 |
-| | `list_dir` | 查看目录结构 |
-| **状态验证** | **`verify_access`** | **(必选)** 检查服务 HTTP 可达性 |
+| **部署编排** | `auto_deploy` | 自动完成仓库搜索、部署与状态汇报 |
+| **状态验证** | `verify_access` | 检查服务 HTTP 可达性 |
 | | `status` | 列出已部署项目 |
 | **外部协作** | `DELEGATE` → `docker_ops` | 容器管理 (Up/Down/Logs/Ps) |
 | | `DELEGATE` → `searxng_search` | 搜索部署文档 |
@@ -65,7 +108,7 @@ triggers:
 1.  **验证优先 (Verify First)**
     - **部署任务**：启动服务后，**必须**调用 `verify_access` 检查。
     - **从不盲信**：不要假设 `docker compose up` 成功服务就一定可用。只有 `verify_access` 返回 `success: true` 才是真正的成功。
-    - **回复准则**：最终回复给用户的 URL 必须是 `verify_access` 返回的那个（如 `http://192.168.1.100:23001`）。
+    - **回复准则**：最终回复给用户的 URL 必须是 `verify_access` 返回的那个（如 `http://192.168.1.100:20080`）。
 
 2.  **端口安全 (Port Safety)**
     - **高端口策略**：所有宿主机端口映射**必须大于 20000**（范围 20000-60000）。
@@ -74,14 +117,14 @@ triggers:
 
 3.  **路径规范 (Path Standard)**
     - **工作根目录**：所有操作必须在 `$X_DEPLOYMENT_STAGING_PATH` 下进行。
-    - **环境变量**：在任何需要路径的地方（如 `write_file` 的 path，或 `docker_ops` 的 instruction），请使用变量 `$X_DEPLOYMENT_STAGING_PATH`，不要硬编码 `/app/...`。
+    - **环境变量**：在任何需要路径的地方（如 `docker_ops` 指令中的 cwd），请使用变量 `$X_DEPLOYMENT_STAGING_PATH`，不要硬编码 `/app/...`。
 
 ## 典型场景参考 (Reference Scenarios)
 
 ### 场景 A: 部署新服务 (Deploy)
-1.  **搜索调研**：不知道怎么部署？先搜 GitHub 和 Docker 文档。
+1.  **搜索调研**：优先自动搜索 GitHub 仓库与官方 Docker/Compose 部署文档（无仓库直链时必须执行）。
 2.  **获取端口**：委托 `docker_ops` 找一个没用的高端口。
-3.  **准备文件**：`clone` 代码或 `write_file` 写入 `docker-compose.yml`。
+3.  **准备文件**：由核心四原语（read/write/edit/bash）准备 compose 与环境文件。
     - *注意：记得修改端口映射！*
 4.  **启动容器**：委托 `docker_ops` 执行 `up -d`。
 5.  **验证结果**：执行 `verify_access`。
@@ -97,7 +140,7 @@ triggers:
 ## 决策指南 (Decision Guide)
 
 - **遇到错误怎么办？**
-  - 读取日志 (`docker logs`) -> 分析原因 -> 修改配置 (`write_file`) -> 重启 -> 验证。
+  - 读取日志 (`docker logs`) -> 分析原因 -> 用核心四原语修正配置 -> 重启 -> 验证。
   - 不要立即放弃，至少尝试修复一次。
 
 - **什么时候回复 (REPLY)？**
@@ -108,11 +151,11 @@ triggers:
 ## 意图映射示例
 
 **1. 简单描述部署**
-- 用户输入: "帮我部署一个 Uptime Kuma"
+- 用户输入: "帮我部署一个服务"
 - 行动: 先委托搜索，然后按 SOP 执行
 
 **2. 指定仓库部署**
-- 用户输入: "部署这个项目: https://github.com/louislam/uptime-kuma"
+- 用户输入: "部署这个项目: https://github.com/user/repo"
 - 行动: 跳过搜索，直接从步骤 3 开始
 
 **3. 查看部署状态**

@@ -9,8 +9,9 @@ from typing import Dict, Any, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from core.platform.models import UnifiedContext
 
-from core.config import gemini_client, GEMINI_MODEL
+from core.config import GEMINI_MODEL, openai_async_client
 from core.skill_loader import skill_loader
+from services.openai_adapter import generate_text
 
 logger = logging.getLogger(__name__)
 
@@ -235,42 +236,17 @@ class EvolutionRouter:
         self, request: str, strategy: str, success: bool, details: str
     ):
         """
-        Record evolution event to System Memory (Global Wisdom)
+        Record evolution event to markdown system memory.
         """
         try:
-            from mcp_client.manager import mcp_manager
-            from mcp_client.memory import register_memory_server
-
-            # Ensure registered
-            register_memory_server()
-
-            # Use "SYSTEM" as user_id for global memory
-            memory = await mcp_manager.get_server("memory", user_id="SYSTEM")
+            from core.markdown_memory_store import markdown_memory_store
 
             outcome = "success" if success else "failure"
             observation = f"Evolution Event - Request: '{request}', Strategy: '{strategy}', Outcome: {outcome}. Details: {details}"
-
-            # Store as observation linked to 'EvolutionSystem' entity
-            await memory.call_tool(
-                "create_entities",
-                {
-                    "entities": [
-                        {"name": "EvolutionSystem", "type": "System"},
-                        {"name": strategy, "type": "Strategy"},
-                    ]
-                },
-            )
-
-            await memory.call_tool(
-                "add_observations",
-                {
-                    "observations": [
-                        {
-                            "entityNames": ["EvolutionSystem", strategy],
-                            "contents": observation,
-                        }
-                    ]
-                },
+            markdown_memory_store.remember(
+                "SYSTEM",
+                observation,
+                source="evolution_router",
             )
             logger.info(f"[Evolution] Recorded event to System Memory: {outcome}")
 
@@ -335,7 +311,10 @@ Return JSON:
 }}
 """
         try:
-            response = await gemini_client.aio.models.generate_content(
+            if openai_async_client is None:
+                raise RuntimeError("OpenAI async client is not initialized")
+            response_text = await generate_text(
+                async_client=openai_async_client,
                 model=GEMINI_MODEL,
                 contents=prompt,
                 config={"response_mime_type": "application/json"},
@@ -343,7 +322,7 @@ Return JSON:
             import json
             import re
 
-            text = response.text.strip()
+            text = str(response_text or "").strip()
             # Clean markdown code blocks
             text = re.sub(r"^```json\s*", "", text)
             text = re.sub(r"^```\s*", "", text)
@@ -364,7 +343,7 @@ Return JSON:
                 return analysis
             except json.JSONDecodeError:
                 logger.error(
-                    f"Analysis JSON parse failed. Raw response: {response.text}"
+                    f"Analysis JSON parse failed. Raw response: {response_text}"
                 )
                 # Fallback: simple heuristic
                 if (

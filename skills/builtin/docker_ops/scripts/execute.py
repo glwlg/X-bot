@@ -18,7 +18,7 @@ from core.platform.models import UnifiedContext
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict):
+async def execute(ctx: UnifiedContext, params: dict, runtime=None):
     """
     Execute Docker operations.
     """

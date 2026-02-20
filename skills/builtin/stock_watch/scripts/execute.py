@@ -5,8 +5,8 @@ Stock Watch Skill Script
 import re
 
 
-from repositories import (
-    remove_watchlist_stock_by_code,
+from core.state_store import (
+    remove_watchlist_stock,
     get_user_watchlist,
     add_watchlist_stock,
 )
@@ -21,7 +21,47 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> str:
+def _parse_stock_subcommand(text: str) -> tuple[str, str]:
+    raw = str(text or "").strip()
+    if not raw:
+        return "list", ""
+
+    parts = raw.split(maxsplit=2)
+    if not parts:
+        return "list", ""
+    if not parts[0].startswith("/stock"):
+        return "help", ""
+    if len(parts) == 1:
+        return "list", ""
+
+    sub = str(parts[1] or "").strip().lower()
+    args = str(parts[2] if len(parts) >= 3 else "").strip()
+
+    if sub in {"list", "ls", "show"}:
+        return "list", ""
+    if sub in {"add", "add_stock"}:
+        return "add", args
+    if sub in {"remove", "rm", "del", "delete", "remove_stock"}:
+        return "remove", args
+    if sub in {"refresh", "run", "check"}:
+        return "refresh", ""
+    if sub in {"help", "h", "?"}:
+        return "help", ""
+    return "help", ""
+
+
+def _stock_usage_text() -> str:
+    return (
+        "用法:\n"
+        "`/stock list`\n"
+        "`/stock add <股票名称或代码>`\n"
+        "`/stock remove <股票名称或代码>`\n"
+        "`/stock refresh`\n"
+        "`/stock help`"
+    )
+
+
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> str:
     """执行自选股操作"""
     from core.scheduler import trigger_manual_stock_check
 
@@ -49,7 +89,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
     action = ACTION_MAP.get(raw_action, raw_action)
 
     if action == "refresh":
-        result = await trigger_manual_stock_check(ctx.platform_ctx, user_id)
+        result = await trigger_manual_stock_check(user_id)
         if result:
             return {
                 "text": f"✅ 股票行情已刷新。\n[CONTEXT_DATA_ONLY - DO NOT REPEAT]\n{result}",
@@ -73,63 +113,47 @@ async def execute(ctx: UnifiedContext, params: dict) -> str:
 
 
 def register_handlers(adapter_manager):
-    """注册 Stock 相关的 Command 和 Callback"""
+    """注册 Stock 二级命令和 Callback"""
     from core.config import is_user_allowed
 
-    async def cmd_watchlist(ctx):
+    async def cmd_stock(ctx):
         if not await is_user_allowed(ctx.message.user.id):
             return
-        return await show_watchlist(ctx, ctx.message.user.id)
+        sub, args = _parse_stock_subcommand(ctx.message.text or "")
+        user_id = ctx.message.user.id
 
-    async def cmd_add_stock(ctx):
-        if not await is_user_allowed(ctx.message.user.id):
-            return
+        if sub == "list":
+            return await show_watchlist(ctx, user_id)
 
-        args = []
-        if ctx.message.text:
-            parts = ctx.message.text.split()
-            if len(parts) > 1:
-                args = parts[1:]
-
-        if args:
-            name = " ".join(args)
+        if sub == "add":
+            name = args.strip()
+            if not name:
+                return {"text": "用法: `/stock add <股票名称或代码>`", "ui": {}}
             if "," in name or " " in name or "，" in name:
                 names = [n.strip() for n in re.split(r"[,，\s]+", name) if n.strip()]
-                return await add_multiple_stocks(ctx, ctx.message.user.id, names)
-            else:
-                return await add_single_stock(ctx, ctx.message.user.id, name)
-        else:
-            return "请使用: /add_stock <股票名称>"
+                return await add_multiple_stocks(ctx, user_id, names)
+            return await add_single_stock(ctx, user_id, name)
 
-    # Aliases
-    adapter_manager.on_command("watchlist", cmd_watchlist, description="查看自选股行情")
-    adapter_manager.on_command("stocks", cmd_watchlist, description="查看自选股行情")
+        if sub == "remove":
+            name = args.strip()
+            if not name:
+                return {"text": "用法: `/stock remove <股票名称或代码>`", "ui": {}}
+            return await remove_stock(ctx, user_id, name)
 
-    # Missing commands
-    adapter_manager.on_command(
-        "addstock", cmd_add_stock, description="添加自选股 (例: /addstock 茅台)"
-    )
+        if sub == "refresh":
+            from core.scheduler import trigger_manual_stock_check
 
-    async def cmd_del_stock(ctx):
-        if not await is_user_allowed(ctx.message.user.id):
-            return
+            result = await trigger_manual_stock_check(user_id)
+            if result:
+                return {
+                    "text": f"✅ 股票行情已刷新。\n[CONTEXT_DATA_ONLY - DO NOT REPEAT]\n{result}",
+                    "ui": {},
+                }
+            return {"text": "📭 您的自选股列表为空，无法刷新。", "ui": {}}
 
-        args = []
-        if ctx.message.text:
-            parts = ctx.message.text.split()
-            if len(parts) > 1:
-                args = parts[1:]
+        return {"text": _stock_usage_text(), "ui": {}}
 
-        if args:
-            name = " ".join(args)
-            return await remove_stock(ctx, ctx.message.user.id, name)
-        else:
-            return "请使用: /delstock <股票名称>"
-
-    adapter_manager.on_command(
-        "delstock", cmd_del_stock, description="删除自选股 (例: /delstock 茅台)"
-    )
-    # Optional implicit add via message? No, keep explicit commands for now
+    adapter_manager.on_command("stock", cmd_stock, description="自选股管理")
 
     # Callback
     adapter_manager.on_callback_query("^stock_", handle_stock_select_callback)
@@ -189,7 +213,7 @@ async def remove_stock(ctx: UnifiedContext, user_id: int, stock_name: str) -> st
     watchlist = await get_user_watchlist(user_id, platform=platform)
     for item in watchlist:
         if stock_name.lower() in item["stock_name"].lower():
-            await remove_watchlist_stock_by_code(user_id, item["stock_code"])
+            await remove_watchlist_stock(user_id, item["stock_code"])
             return {"text": f"✅ 已取消关注 **{item['stock_name']}**", "ui": {}}
     return {"text": f"⚠️ 未找到匹配「{stock_name}」的自选股", "ui": {}}
 
@@ -338,7 +362,7 @@ async def handle_stock_select_callback(ctx: UnifiedContext) -> None:
 
     if data.startswith("stock_del_"):
         stock_code = data.replace("stock_del_", "")
-        success = await remove_watchlist_stock_by_code(user_id, stock_code)
+        success = await remove_watchlist_stock(user_id, stock_code)
         if success:
             await ctx.edit_message(ctx.message.id, f"✅ 已取消关注 {stock_code}")
         else:

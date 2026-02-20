@@ -1,35 +1,131 @@
-"""
-MCP 相关 Handler
-处理浏览器操作（截图等）请求
-"""
-
+import asyncio
 import io
 import logging
-from core.platform.models import UnifiedContext
+import os
+import re
+import shlex
+import shutil
+from pathlib import Path
+from urllib.parse import urlparse
+from uuid import uuid4
 
-from core.config import MCP_ENABLED
+from core.platform.models import UnifiedContext
 
 logger = logging.getLogger(__name__)
 
+_TRUTHY = {"1", "true", "yes", "on"}
+
+
+def _playwright_cli_command() -> list[str]:
+    raw = str(os.getenv("PLAYWRIGHT_CLI_COMMAND") or "").strip()
+    if raw:
+        return [part for part in shlex.split(raw) if part]
+
+    binary = shutil.which("playwright-cli")
+    if binary:
+        return [binary]
+
+    allow_npx = str(os.getenv("PLAYWRIGHT_CLI_ALLOW_NPX", "false")).strip().lower()
+    if allow_npx in _TRUTHY:
+        return ["npx", "-y", "@playwright/cli@latest"]
+
+    return []
+
+
+async def _run_command(command: list[str], timeout_sec: float) -> tuple[int, str, str]:
+    proc = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        return 124, "", "timeout"
+
+    return (
+        int(proc.returncode or 0),
+        stdout.decode("utf-8", errors="ignore"),
+        stderr.decode("utf-8", errors="ignore"),
+    )
+
+
+def _extract_artifact_path(stdout_text: str, suffix: str) -> str:
+    text = str(stdout_text or "")
+    markdown = re.search(r"\[[^\]]+\]\(([^)]+\.%s)\)" % suffix, text, flags=re.I)
+    if markdown:
+        return str(markdown.group(1) or "").strip()
+
+    plain = re.search(r"([^\s]+\.%s)" % suffix, text, flags=re.I)
+    if plain:
+        return str(plain.group(1) or "").strip()
+    return ""
+
+
+async def _capture_page_screenshot(url: str) -> tuple[bytes | None, str]:
+    command_prefix = _playwright_cli_command()
+    if not command_prefix:
+        return None, "playwright-cli command not configured"
+
+    session_id = f"xbot-shot-{uuid4().hex[:8]}"
+    output_root = Path(os.getenv("PLAYWRIGHT_CLI_OUTPUT_DIR", "/tmp/xbot-playwright"))
+    output_root.mkdir(parents=True, exist_ok=True)
+    artifact_path = output_root / f"screenshot-{session_id}.png"
+
+    browser = str(os.getenv("PLAYWRIGHT_CLI_BROWSER", "chrome") or "").strip()
+    open_cmd = [*command_prefix, f"-s={session_id}", "open", url]
+    if browser:
+        open_cmd.append(f"--browser={browser}")
+    screenshot_cmd = [
+        *command_prefix,
+        f"-s={session_id}",
+        "screenshot",
+        f"--filename={artifact_path}",
+    ]
+    close_cmd = [*command_prefix, f"-s={session_id}", "close"]
+
+    open_timeout = float(os.getenv("PLAYWRIGHT_CLI_OPEN_TIMEOUT_SEC", "80"))
+    shot_timeout = float(os.getenv("PLAYWRIGHT_CLI_SHOT_TIMEOUT_SEC", "80"))
+
+    try:
+        open_code, _open_out, open_err = await _run_command(
+            open_cmd, timeout_sec=open_timeout
+        )
+        if open_code != 0:
+            return None, (open_err or "playwright-cli open failed").strip()[:300]
+
+        shot_code, shot_out, shot_err = await _run_command(
+            screenshot_cmd,
+            timeout_sec=shot_timeout,
+        )
+        if shot_code != 0:
+            return None, (shot_err or "playwright-cli screenshot failed").strip()[:300]
+
+        resolved = artifact_path
+        if not resolved.exists():
+            from_stdout = _extract_artifact_path(shot_out, "png")
+            if from_stdout:
+                maybe = Path(from_stdout)
+                if not maybe.is_absolute():
+                    maybe = Path.cwd() / maybe
+                resolved = maybe
+
+        if not resolved.exists() or not resolved.is_file():
+            return None, "screenshot artifact not found"
+
+        return resolved.read_bytes(), ""
+    finally:
+        try:
+            await _run_command(close_cmd, timeout_sec=20)
+        except Exception:
+            pass
+
 
 async def handle_browser_action(ctx: UnifiedContext, params: dict) -> bool:
-    """
-    处理浏览器操作（截图等）
-
-    Args:
-    Args:
-        ctx: UnifiedContext
-        params: 从意图路由提取的参数，包含 url 和 action
-
-    Returns:
-        True 如果成功处理，False 如果需要回退到普通对话
-    """
-    if not MCP_ENABLED:
-        logger.warning("MCP is disabled, falling back to chat")
-        return False
-
-    url = params.get("url")
-    action = params.get("action", "screenshot")
+    url = str(params.get("url") or "").strip()
+    action = str(params.get("action") or "screenshot").strip().lower()
 
     if not url:
         await ctx.reply(
@@ -37,211 +133,68 @@ async def handle_browser_action(ctx: UnifiedContext, params: dict) -> bool:
         )
         return True
 
-    # 确保 URL 有协议头
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
-    if action == "screenshot":
-        return await _handle_screenshot(ctx, url)
-    else:
-        # 其他 action 可以在这里扩展
+    if action != "screenshot":
         await ctx.reply(f"❌ 暂不支持的操作：`{action}`")
         return True
 
+    return await _handle_screenshot(ctx, url)
+
 
 async def _handle_screenshot(ctx: UnifiedContext, url: str) -> bool:
-    """
-    处理网页截图请求
-    """
-    # 发送处理中提示
     thinking_msg = await ctx.reply(
         f"📸 正在截图 `{url}`...\n\n⏳ 首次使用可能需要较长时间"
     )
-    # await ctx.platform_ctx.bot.send_chat_action(chat_id=chat_id, action="upload_photo")
-    # UnifiedContext doesn't support chat_action yet, maybe access platform_ctx
+
     if ctx.platform_ctx:
         try:
             await ctx.platform_ctx.bot.send_chat_action(
-                chat_id=ctx.message.chat.id, action="upload_photo"
+                chat_id=ctx.message.chat.id,
+                action="upload_photo",
             )
-        except:
+        except Exception:
             pass
 
-    try:
-        # 导入并使用 MCP Manager
-        from mcp_client.manager import mcp_manager
-        from mcp_client.playwright import register_playwright_server
-
-        # 确保 Playwright 服务已注册
-        register_playwright_server()
-
-        # 步骤0：调整浏览器窗口大小为高分辨率
-        logger.info("Resizing browser to 2560x1440...")
+    screenshot_data, error = await _capture_page_screenshot(url)
+    if screenshot_data:
         try:
-            await mcp_manager.call_tool(
-                "playwright", "browser_resize", {"width": 1920, "height": 1080}
+            await thinking_msg.delete()
+        except Exception:
+            pass
+
+        domain = urlparse(url).netloc.replace("www.", "") or "web"
+        filename = f"screenshot_{domain}.png"
+        payload = io.BytesIO(screenshot_data)
+        payload.name = filename
+
+        if ctx.platform_ctx:
+            await ctx.platform_ctx.bot.send_document(
+                chat_id=ctx.message.chat.id,
+                document=payload,
+                caption=f"📸 网页截图：{url}",
+                parse_mode="Markdown",
             )
-        except Exception as e:
-            logger.warning(f"Resize failed (non-critical): {e}")
-
-        # 步骤1：先导航到页面并等待加载
-        logger.info(f"Navigating to {url}...")
-        await mcp_manager.call_tool("playwright", "browser_navigate", {"url": url})
-
-        # 步骤2：等待页面加载完成（使用 browser_wait_for）
-        logger.info("Waiting for page to load...")
-        try:
-            await mcp_manager.call_tool(
-                "playwright",
-                "browser_wait_for",
-                {"time": 2},  # 等待 2 秒
-            )
-        except Exception as e:
-            logger.warning(f"Wait failed (non-critical): {e}")
-
-        # 步骤3：截图（fullPage + 高分辨率视口，通过 Docker 参数设置）
-        logger.info("Taking fullPage screenshot with high-res viewport...")
-        result = await mcp_manager.call_tool(
-            "playwright",
-            "browser_take_screenshot",
-            {"fullPage": False},  # 截取完整页面
-        )
-
-        # 调试：记录返回的数据结构
-        logger.info(f"MCP result type: {type(result)}")
-        if isinstance(result, list) and len(result) > 0:
-            item = result[0]
-            logger.info(f"First item type: {type(item)}, attrs: {dir(item)}")
-            if hasattr(item, "type"):
-                logger.info(f"Content type: {item.type}")
-            if hasattr(item, "mimeType"):
-                logger.info(f"MIME type: {item.mimeType}")
-
-        # 处理返回结果
-        screenshot_data = _extract_screenshot_data(result)
-
-        if screenshot_data:
-            logger.info(
-                f"Screenshot data extracted, size: {len(screenshot_data)} bytes"
-            )
-
-            # 保存原始截图到本地（调试用）
-            import os
-            from datetime import datetime
-
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            debug_path = f"/app/downloads/screenshot_{timestamp}.png"
-            try:
-                with open(debug_path, "wb") as f:
-                    f.write(screenshot_data)
-                logger.info(f"Debug: saved screenshot to {debug_path}")
-            except Exception as e:
-                logger.warning(f"Failed to save debug screenshot: {e}")
-
-            # 删除 "正在处理" 的消息
-            try:
-                await thinking_msg.delete()
-            except Exception:
-                pass
-
-            # 发送截图（作为文档发送，避免 Telegram 压缩图片） (Legacy access for reply_document)
-            from urllib.parse import urlparse
-
-            domain = urlparse(url).netloc.replace("www.", "")
-            filename = f"screenshot_{domain}.png"
-
-            screenshot_file = io.BytesIO(screenshot_data)
-            screenshot_file.name = filename  # 设置文件名
-
-            # Using platform_event/adapter fallback or ctx.reply_document if available?
-            # UnifiedContext doesn't have reply_document yet. Use adapter specific via Platform Context.
-
-            if ctx.platform_ctx:
-                await ctx.platform_ctx.bot.send_document(
-                    chat_id=ctx.message.chat.id,
-                    document=screenshot_file,
-                    caption=f"📸 网页截图：{url}",
-                    parse_mode="Markdown",
-                )
-            # await update.message.reply_document(
-            #     document=screenshot_file,
-            #     caption=f"📸 网页截图：{url}",
-            #     parse_mode="Markdown"
-            # )
-
-            # 清理 MCP 连接（释放 Docker 容器）
-            await mcp_manager.disconnect_server("playwright")
-
-            return True
         else:
-            logger.error(f"Failed to extract screenshot data from result: {result}")
-            await ctx.edit_message(
-                thinking_msg.message_id,
-                f"❌ 截图失败：无法获取图片数据\n\nURL: `{url}`",
-            )
-            return True
-
-    except Exception as e:
-        logger.error(f"Screenshot error: {e}", exc_info=True)
-        error_msg = str(e)
-
-        # 提供更友好的错误提示
-        if "docker" in error_msg.lower():
-            error_hint = "Docker 服务不可用，请确保 Docker 已启动"
-        elif "timeout" in error_msg.lower():
-            error_hint = "操作超时，网页可能加载过慢"
-        else:
-            error_hint = error_msg[:200]  # 截断过长的错误信息
-
-        await ctx.edit_message(
-            thinking_msg.message_id,
-            f"❌ 截图失败\n\n**URL**: `{url}`\n**原因**: {error_hint}",
-        )
+            await ctx.reply("✅ 截图已完成，但当前平台不支持发送附件。")
         return True
 
+    hint = str(error or "截图失败")
+    if "command not configured" in hint.lower():
+        hint = (
+            "未找到 playwright-cli 命令，请在环境中安装 `@playwright/cli` "
+            "或配置 PLAYWRIGHT_CLI_COMMAND。"
+        )
+    elif "executable doesn't exist" in hint.lower() or "install" in hint.lower():
+        hint = "浏览器尚未安装，请先执行 `playwright install chrome`。"
 
-def _extract_screenshot_data(result) -> bytes | None:
-    """
-    从 MCP 工具返回结果中提取截图数据
+    try:
+        await ctx.edit_message(
+            thinking_msg.message_id,
+            f"❌ 截图失败\n\n**URL**: `{url}`\n**原因**: {hint}",
+        )
+    except Exception:
+        await ctx.reply(f"❌ 截图失败：{hint}")
 
-    MCP 返回格式为列表，可能包含 TextContent 和 ImageContent
-    我们需要找到 ImageContent 并提取其 data 字段
-    """
-    import base64
-
-    if not result:
-        return None
-
-    # MCP 返回列表格式，遍历所有元素
-    if isinstance(result, list):
-        for content in result:
-            # 检查是否是 ImageContent（type='image'）
-            if hasattr(content, "type") and content.type == "image":
-                if hasattr(content, "data") and content.data:
-                    try:
-                        return base64.b64decode(content.data)
-                    except Exception as e:
-                        logger.error(f"Failed to decode image data: {e}")
-                        continue
-
-            # 兼容：检查 mimeType 包含 image
-            if hasattr(content, "mimeType") and "image" in str(content.mimeType):
-                if hasattr(content, "data") and content.data:
-                    try:
-                        return base64.b64decode(content.data)
-                    except Exception:
-                        continue
-
-    # 情况 2：result 是字典
-    if isinstance(result, dict):
-        if "data" in result:
-            try:
-                return base64.b64decode(result["data"])
-            except Exception:
-                pass
-
-    # 情况 3：result 直接是 bytes
-    if isinstance(result, bytes):
-        return result
-
-    return None
+    return True

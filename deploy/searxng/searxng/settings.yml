@@ -44,6 +44,17 @@ engines:
   # - name: startpage
   #   disabled: true
 
+hostnames:
+  high_priority:
+    - '(.*\.)?weather\.com\.cn$'
+    - '(.*\.)?nmc\.cn$'
+    - '(.*\.)?cma\.cn$'
+    - '(.*\.)?iqair\.cn$'
+  low_priority:
+    - '(.*\.)?baike\.baidu\.com$'
+    - '(.*\.)?iqiyi\.com$'
+    - '(.*\.)?5adanci\.com$'
+
 valkey:
   url: redis://searxng-redis:6379/0
 

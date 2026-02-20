@@ -24,7 +24,14 @@ from core.config import (
     DINGTALK_CLIENT_SECRET,
     LOG_LEVEL,
     WAITING_FOR_FEATURE_INPUT,
+    CORE_CHAT_EXECUTION_MODE,
+    CORE_CHAT_WORKER_BACKEND,
+    HEARTBEAT_ENABLED,
+    HEARTBEAT_MODE,
+    WORKER_RUNTIME_MODE,
 )
+from core.heartbeat_worker import heartbeat_worker
+from worker_runtime.result_relay import worker_result_relay
 from handlers import (
     start,
     handle_new_command,
@@ -33,7 +40,6 @@ from handlers import (
     button_callback,
     back_to_main_and_cancel,
     cancel,
-    stats_command,
     handle_ai_chat,
     handle_ai_photo,
     handle_ai_video,
@@ -42,7 +48,10 @@ from handlers import (
     handle_feature_input,
     save_feature_command,
     toggle_translation_command,
+    chatlog_command,
     stop_command,
+    heartbeat_command,
+    worker_command,
 )
 from handlers.skill_handlers import (
     teach_command,
@@ -72,22 +81,19 @@ logger = logging.getLogger(__name__)
 
 
 async def init_services() -> None:
-    """初始化全局服务（数据库、调度器、Skills等）"""
+    """初始化全局服务（文件存储、调度器、Skills等）"""
     logger.info("⚡ Initializing global services...")
     try:
-        from repositories import init_db
+        from core.state_store import init_db
 
         await init_db()
-        logger.info("✅ Database initialized.")
+        logger.info("✅ Repository store initialized.")
 
         # 加载待执行的提醒任务
         from core.scheduler import (
             scheduler,
             load_jobs_from_db,
-            start_rss_scheduler,
-            start_stock_scheduler,
             start_dynamic_skill_scheduler,
-            start_notebooklm_scheduler,
         )
 
         logger.info("⚡ Starting schedulers...")
@@ -96,14 +102,11 @@ async def init_services() -> None:
 
         # Initialize Jobs
         await load_jobs_from_db()
-        # 启动 RSS 检查
-        start_rss_scheduler()
-        # 启动股票盯盘推送
-        start_stock_scheduler()
+        logger.info(
+            "RSS/Stock built-in schedulers are disabled; heartbeat mechanism drives these checks."
+        )
         # 启动动态 Skill 定时任务
         start_dynamic_skill_scheduler()
-        # 启动 NotebookLM 定时列表刷新
-        start_notebooklm_scheduler()
         logger.info("✅ Schedulers started.")
 
         # 初始化 Skill 索引
@@ -111,24 +114,22 @@ async def init_services() -> None:
 
         skill_loader.scan_skills()
         logger.info(f"Loaded {len(skill_loader.get_skill_index())} skills")
+
+        from core.kernel_config_store import kernel_config_store
+
+        kernel_config_store.snapshot(
+            {
+                "core_chat_execution_mode": CORE_CHAT_EXECUTION_MODE,
+                "core_chat_worker_backend": CORE_CHAT_WORKER_BACKEND,
+                "heartbeat_enabled": HEARTBEAT_ENABLED,
+                "heartbeat_mode": HEARTBEAT_MODE,
+                "worker_runtime_mode": WORKER_RUNTIME_MODE,
+            },
+            actor="bootstrap",
+            reason="init_services_snapshot",
+        )
     except Exception as e:
         logger.error(f"❌ Error in init_services: {e}", exc_info=True)
-
-    # Pre-connect MCP Memory for Admin
-    from core.config import ADMIN_USER_IDS
-    from mcp_client.manager import mcp_manager
-    from mcp_client.memory import MemoryMCPServer
-
-    mcp_manager.register_server_class("memory", MemoryMCPServer)
-
-    if ADMIN_USER_IDS:
-        admin_id = list(ADMIN_USER_IDS)[0]
-        logger.info(f"🚀 Pre-connecting MCP Memory for Admin: {admin_id}")
-        try:
-            await mcp_manager.get_server("memory", user_id=admin_id)
-            logger.info("✅ MCP Memory pre-connected.")
-        except Exception as e:
-            logger.error(f"⚠️ MCP Pre-connect failed: {e}")
 
 
 async def setup_telegram_commands(application: Application) -> None:
@@ -140,8 +141,10 @@ async def setup_telegram_commands(application: Application) -> None:
             ("teach", "教我新能力"),
             ("skills", "查看 Skills"),
             ("feature", "提交需求"),
-            ("stats", "使用统计"),
+            ("chatlog", "检索对话"),
             ("translate", "沉浸式翻译"),
+            ("heartbeat", "心跳管理"),
+            ("worker", "管理 Worker 执行层"),
             ("help", "使用帮助"),
             ("cancel", "取消当前操作"),
         ]
@@ -196,6 +199,7 @@ async def main():
 
     # --- Global Initialization (Decoupled from TG) ---
     await init_services()
+    await heartbeat_worker.start()
 
     # if tg_app:
     #     await setup_telegram_commands(tg_app)
@@ -225,7 +229,7 @@ async def main():
     adapter_manager.on_command("start", start, description="显示主菜单")
     adapter_manager.on_command("new", handle_new_command, description="开启新对话")
     adapter_manager.on_command("help", help_command, description="使用帮助")
-    adapter_manager.on_command("stats", stats_command, description="查看统计信息")
+    adapter_manager.on_command("chatlog", chatlog_command, description="检索对话记录")
     adapter_manager.on_command("skills", skills_command, description="查看可用技能")
     adapter_manager.on_command(
         "reload_skills", reload_skills_command, description="重载技能"
@@ -234,6 +238,10 @@ async def main():
         "translate", toggle_translation_command, description="开启/关闭沉浸式翻译"
     )
     adapter_manager.on_command("stop", stop_command, description="停止当前任务")
+    adapter_manager.on_command("heartbeat", heartbeat_command, description="管理心跳")
+    adapter_manager.on_command(
+        "worker", worker_command, description="管理 Worker 执行层"
+    )
 
     # ----------------------------------------------
     # 3.1 DYNAMIC SKILL HANDLER REGISTRATION
@@ -376,6 +384,7 @@ async def main():
 
     try:
         await adapter_manager.start_all()
+        await worker_result_relay.start()
 
         # Keep alive
         logger.info("All adapters started. Press Ctrl+C to stop.")
@@ -385,6 +394,8 @@ async def main():
         logger.error(f"Fatal error: {e}", exc_info=True)
     finally:
         logger.info("Shutting down...")
+        await heartbeat_worker.stop()
+        await worker_result_relay.stop()
         await adapter_manager.stop_all()
 
 

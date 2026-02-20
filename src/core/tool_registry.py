@@ -1,127 +1,285 @@
-import logging
-from typing import List
-from google.genai import types
+from typing import Any, Dict, List
 
-from core.skill_loader import skill_loader
-
-logger = logging.getLogger(__name__)
+from core.extension_router import ExtensionCandidate
+from core.tool_profile_store import tool_profile_store
 
 
 class ToolRegistry:
-    """
-    Registry for converting System Capabilities (Native Intents + Skills)
-    into Gemini Function Declarations (Tools).
-    """
+    """Build model-visible tool declarations."""
 
-    def get_all_tools(self) -> List[types.FunctionDeclaration]:
-        """
-        Get all available tools for the Agent.
-        """
-        tools = []
+    def get_core_tools(self) -> List[Dict[str, Any]]:
+        return [
+            self._read_tool(),
+            self._write_tool(),
+            self._edit_tool(),
+            self._bash_tool(),
+        ]
 
-        # Skill Invocation Tool (Unified)
-        # All capabilities including skill management are accessed via call_skill
-        tools.append(self._get_skill_tool())
+    def get_manager_tools(self) -> List[Dict[str, Any]]:
+        return [
+            self._list_workers_tool(),
+            self._dispatch_worker_tool(),
+            self._worker_status_tool(),
+        ]
 
-        return tools
-
-    def get_specific_skill_tools(
-        self, skills: List[dict]
-    ) -> List[types.FunctionDeclaration]:
-        """
-        Generate explicit FunctionDeclarations for a list of specific skills.
-        This allows the LLM to see "rss_subscribe(url=...)" instead of just "call_skill(name='rss_subscribe', ...)"
-        """
-        tools = []
-        for skill in skills:
-            name = skill["name"]
-            # Sanitized name for tool (needs to be valid python identifier roughly)
-            tool_name = f"skill_{name.replace('-', '_')}"
-
-            # Simple schema: just instruction?
-            # Or should we try to parse params?
-            # For now, consistent with unified interface: just instruction.
-            # But making it a separate tool name helps the LLM distinguish capabilities.
-
-            desc = f"Invoke the '{name}' skill. Description: {skill.get('description', '')}"
-
+    def get_extension_tools(
+        self, candidates: List[ExtensionCandidate]
+    ) -> List[Dict[str, Any]]:
+        tools: List[Dict[str, Any]] = []
+        for candidate in candidates:
+            schema = candidate.input_schema or {"type": "object", "properties": {}}
+            if "type" not in schema:
+                schema["type"] = "object"
+            trigger_hint = (
+                ", ".join(candidate.triggers[:6]) if candidate.triggers else "none"
+            )
+            allowed_tools = [
+                str(item).strip()
+                for item in list(getattr(candidate, "allowed_tools", []) or [])
+                if str(item).strip()
+            ]
+            allowed_hint = ", ".join(allowed_tools[:6]) if allowed_tools else "none"
+            profile = tool_profile_store.get_profile(candidate.tool_name)
+            attempts = int(profile.get("attempts", 0) or 0)
+            avg_latency = float(profile.get("avg_latency_ms", 0.0) or 0.0)
+            successes = int(profile.get("successes", 0) or 0)
+            success_rate = (successes / attempts) if attempts > 0 else 0.0
+            profile_hint = f"profile(success_rate={success_rate:.2f}, avg_latency_ms={avg_latency:.1f}, attempts={attempts})"
+            desc = (
+                f"On-demand extension: {candidate.name}. "
+                f"{candidate.description}\n"
+                f"Triggers: {trigger_hint}\n"
+                f"Allowed runtime tools: {allowed_hint}\n"
+                f"Input schema summary: {candidate.schema_summary}\n"
+                f"Capability: {profile_hint}\n"
+                "Prefer core tools (`read`/`write`/`edit`/`bash`) first; "
+                "use this extension only when it is clearly more suitable or user explicitly requests it. "
+                "Avoid asking clarification unless required fields are missing."
+            )
             tools.append(
-                types.FunctionDeclaration(
-                    name=tool_name,
-                    description=desc,
-                    parameters=types.Schema(
-                        type=types.Type.OBJECT,
-                        properties={
-                            "instruction": types.Schema(
-                                type=types.Type.STRING,
-                                description=f"Instruction for {name} skill",
-                            )
-                        },
-                        required=["instruction"],
-                    ),
-                )
+                {
+                    "name": candidate.tool_name,
+                    "description": desc,
+                    "parameters": schema,
+                }
             )
         return tools
 
-    def _get_skill_tool(self) -> types.FunctionDeclaration:
-        """
-        Unified tool to call installed skills.
-        Dynamically builds description based on available skills and configuration.
-        """
-        from core.config import SKILL_INJECTION_MODE
+    # Backward-compatible alias.
+    def get_all_tools(self) -> List[Dict[str, Any]]:
+        return self.get_core_tools()
 
-        mode = SKILL_INJECTION_MODE.lower()
-
-        if mode == "search_first":
-            # 极简模式：不提供列表，强制 AI 搜索
-            skill_desc = (
-                "Call an installed skill (dynamic tool). "
-                "The system has many capabilities installed. "
-                "If you need to perform an action not covered by native tools, "
-                "FIRST use `call_skill(skill_name='skill_manager', action='search', ...)` to find the capability, "
-                "THEN use `call_skill` with the specific skill name."
-            )
-
-        elif mode == "compact":
-            # 紧凑模式：只提供名称 (节省 Token)
-            skills = skill_loader.get_skills_summary()
-            if not skills:
-                skill_desc = "No skills installed."
-            else:
-                skill_list_str = "\n".join([f"- {s['name']}" for s in skills])
-                skill_desc = f"Call an installed skill. Available skills:\n{skill_list_str}\n(Descriptions omitted. Infer usage from name.)"
-
-        else:
-            # 默认完整模式 (full)
-            skills = skill_loader.get_skills_summary()
-            if not skills:
-                skill_desc = "No skills installed."
-            else:
-                skill_list_str = "\n".join(
-                    [f"- {s['name']}: {s['description'][:500]}" for s in skills]
-                )
-                skill_desc = (
-                    f"Call an installed skill. Available skills:\n{skill_list_str}"
-                )
-
-        return types.FunctionDeclaration(
-            name="call_skill",
-            description=skill_desc,
-            parameters=types.Schema(
-                type=types.Type.OBJECT,
-                properties={
-                    "skill_name": types.Schema(
-                        type=types.Type.STRING,
-                        description="The exact name of the skill to call",
-                    ),
-                    "instruction": types.Schema(
-                        type=types.Type.STRING,
-                        description="The user's natural language instruction for the skill",
-                    ),
+    def _read_tool(self) -> Dict[str, Any]:
+        return {
+            "name": "read",
+            "description": "Read file content by lines.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path"},
+                    "start_line": {
+                        "type": "integer",
+                        "description": "1-based start line",
+                        "default": 1,
+                    },
+                    "max_lines": {
+                        "type": "integer",
+                        "description": "Max number of lines to read",
+                        "default": 200,
+                    },
+                    "encoding": {
+                        "type": "string",
+                        "description": "Text encoding",
+                        "default": "utf-8",
+                    },
                 },
-                required=["skill_name", "instruction"],
+                "required": ["path"],
+            },
+        }
+
+    def _write_tool(self) -> Dict[str, Any]:
+        return {
+            "name": "write",
+            "description": "Write or append file content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path"},
+                    "content": {"type": "string", "description": "File content"},
+                    "mode": {
+                        "type": "string",
+                        "enum": ["overwrite", "append"],
+                        "default": "overwrite",
+                    },
+                    "create_parents": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "Create parent directories when missing",
+                    },
+                    "encoding": {
+                        "type": "string",
+                        "default": "utf-8",
+                    },
+                },
+                "required": ["path", "content"],
+            },
+        }
+
+    def _edit_tool(self) -> Dict[str, Any]:
+        return {
+            "name": "edit",
+            "description": "Apply deterministic text replacements in a file.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "File path"},
+                    "edits": {
+                        "type": "array",
+                        "description": "Ordered edit operations",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "old_text": {"type": "string"},
+                                "new_text": {"type": "string"},
+                                "replace_all": {
+                                    "type": "boolean",
+                                    "default": False,
+                                },
+                            },
+                            "required": ["old_text", "new_text"],
+                        },
+                    },
+                    "dry_run": {
+                        "type": "boolean",
+                        "default": False,
+                    },
+                    "encoding": {
+                        "type": "string",
+                        "default": "utf-8",
+                    },
+                },
+                "required": ["path", "edits"],
+            },
+        }
+
+    def _bash_tool(self) -> Dict[str, Any]:
+        return {
+            "name": "bash",
+            "description": "Run a shell command in the workspace.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "Shell command",
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Optional working directory",
+                    },
+                    "timeout_sec": {
+                        "type": "integer",
+                        "default": 60,
+                        "description": "Command timeout in seconds",
+                    },
+                },
+                "required": ["command"],
+            },
+        }
+
+    def _list_workers_tool(self) -> Dict[str, Any]:
+        return {
+            "name": "list_workers",
+            "description": "List worker instances and their capabilities/status.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        }
+
+    def _dispatch_worker_tool(self) -> Dict[str, Any]:
+        return {
+            "name": "dispatch_worker",
+            "description": (
+                "Dispatch a concrete execution task to a worker. "
+                "Use when command execution, long-running operations, or specialized execution is needed."
             ),
-        )
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "instruction": {
+                        "type": "string",
+                        "description": "Task instruction for worker execution",
+                    },
+                    "worker_id": {
+                        "type": "string",
+                        "description": "Optional target worker id. Omit to auto-select.",
+                    },
+                    "backend": {
+                        "type": "string",
+                        "description": "Optional backend override when worker policy allows it",
+                    },
+                    "metadata": {
+                        "type": "object",
+                        "description": "Optional metadata for traceability",
+                    },
+                },
+                "required": ["instruction"],
+            },
+        }
+
+    def _worker_status_tool(self) -> Dict[str, Any]:
+        return {
+            "name": "worker_status",
+            "description": "Query recent worker execution status and task history.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "worker_id": {
+                        "type": "string",
+                        "description": "Optional worker id",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Recent task limit (1-50)",
+                        "default": 10,
+                    },
+                },
+            },
+        }
+
+    def _list_extensions_tool(self) -> Dict[str, Any]:
+        return {
+            "name": "list_extensions",
+            "description": "List all available extensions/skills and their input schemas.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        }
+
+    def _run_extension_tool(self) -> Dict[str, Any]:
+        return {
+            "name": "run_extension",
+            "description": (
+                "Execute one extension by skill name with args. "
+                "Use this as the generic extension invocation path."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "Exact skill name, e.g. rss_subscribe / stock_watch",
+                    },
+                    "args": {
+                        "type": "object",
+                        "description": "Extension input args object",
+                    },
+                },
+                "required": ["skill_name", "args"],
+            },
+        }
 
 
 tool_registry = ToolRegistry()

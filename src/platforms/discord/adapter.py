@@ -519,7 +519,11 @@ class DiscordAdapter(BotAdapter):
             text = markdown_to_discord_compat(text)
 
             # Check for reply_markup
-            view = self._telegram_markup_to_discord_view(kwargs.get("reply_markup"))
+            reply_markup = kwargs.pop("reply_markup", None)
+            ui = kwargs.pop("ui", None)
+            view = self._telegram_markup_to_discord_view(reply_markup)
+            if view is None and isinstance(ui, dict) and ui.get("actions"):
+                view = self._actions_to_discord_view(ui["actions"])
 
             # IMPORTANT: discord.py interaction methods fail if view is None (AttributeError: is_finished)
             # We must use MISSING to indicate "no view"

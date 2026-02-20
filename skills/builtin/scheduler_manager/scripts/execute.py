@@ -1,5 +1,5 @@
 from core.platform.models import UnifiedContext
-from repositories.task_repo import (
+from core.state_store import (
     add_scheduled_task,
     get_all_active_tasks,
     delete_task,
@@ -9,7 +9,36 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> dict:
+def _parse_schedule_subcommand(text: str) -> tuple[str, str]:
+    raw = str(text or "").strip()
+    if not raw:
+        return "list", ""
+
+    parts = raw.split(maxsplit=2)
+    if not parts:
+        return "list", ""
+    if not parts[0].startswith("/schedule"):
+        return "help", ""
+    if len(parts) == 1:
+        return "list", ""
+
+    sub = str(parts[1] or "").strip().lower()
+    args = str(parts[2] if len(parts) >= 3 else "").strip()
+
+    if sub in {"list", "ls", "show"}:
+        return "list", ""
+    if sub in {"delete", "del", "rm", "remove"}:
+        return "delete", args
+    if sub in {"help", "h", "?"}:
+        return "help", ""
+    return "help", ""
+
+
+def _schedule_usage_text() -> str:
+    return "用法:\n`/schedule list`\n`/schedule delete <task_id>`\n`/schedule help`"
+
+
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> dict:
     """
     Execute scheduler management operations.
     """
@@ -72,47 +101,45 @@ async def execute(ctx: UnifiedContext, params: dict) -> dict:
 
 
 def register_handlers(adapter_manager):
-    """注册 Scheduler 相关的 Command 和 Callback"""
+    """注册 Scheduler 二级命令和 Callback"""
     from core.config import is_user_allowed
 
-    async def cmd_tasks(ctx):
+    async def cmd_schedule(ctx):
         if not await is_user_allowed(ctx.message.user.id):
             return
-        return await list_tasks_command(ctx)
 
-    async def cmd_del_task(ctx):
-        if not await is_user_allowed(ctx.message.user.id):
-            return
-        args = []
-        if ctx.message.text:
-            parts = ctx.message.text.split()
-            if len(parts) > 1:
-                args = parts[1:]
+        sub, args = _parse_schedule_subcommand(ctx.message.text or "")
+        if sub == "list":
+            return await list_tasks_command(ctx)
 
-        if args:
+        if sub == "delete":
+            task_id_raw = args.strip()
+            if not task_id_raw:
+                return await show_delete_menu(ctx)
             try:
-                task_id = int(args[0])
+                task_id = int(task_id_raw)
+            except ValueError:
+                return "❌ 任务 ID 必须是数字。"
+
+            try:
                 await delete_task(task_id)
                 from core.scheduler import reload_scheduler_jobs
 
                 await reload_scheduler_jobs()
                 return f"✅ 任务 {task_id} 已删除。"
-            except ValueError:
-                return "❌ 任务 ID 必须是数字。"
-            except Exception as e:
-                return f"❌ 删除失败: {e}"
-        else:
-            return await show_delete_menu(ctx)
+            except Exception as exc:
+                return f"❌ 删除失败: {exc}"
 
-    adapter_manager.on_command("tasks", cmd_tasks, description="查看定时任务列表")
-    adapter_manager.on_command("del_task", cmd_del_task, description="删除定时任务")
+        return _schedule_usage_text()
+
+    adapter_manager.on_command("schedule", cmd_schedule, description="管理定时任务")
 
     # Callbacks
     adapter_manager.on_callback_query("^sch_del_", handle_task_delete_callback)
 
 
 async def list_tasks_command(ctx: UnifiedContext):
-    """处理 /tasks 命令，显示带按钮的列表"""
+    """处理 schedule 列表展示，显示带按钮的任务列表"""
     user_id = ctx.message.user.id if ctx.message.user else "0"
     tasks = await get_all_active_tasks()
 

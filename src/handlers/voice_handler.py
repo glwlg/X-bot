@@ -5,16 +5,18 @@
 长语音（>60s）: 直接转写输出
 """
 
-import asyncio
 import logging
 import base64
-from telegram import Update
-from telegram.ext import ContextTypes
+import re
+from typing import Any, cast
 from telegram.error import BadRequest
 
-from core.config import gemini_client, GEMINI_MODEL, is_user_allowed
+from core.config import GEMINI_MODEL, is_user_allowed, openai_async_client
+from core.platform.exceptions import MediaProcessingError
+from services.openai_adapter import build_messages
 from user_context import add_message, get_user_context
-from core.platform.models import UnifiedContext
+from core.platform.models import MessageType, UnifiedContext
+from .media_utils import extract_media_input
 
 logger = logging.getLogger(__name__)
 
@@ -22,40 +24,198 @@ logger = logging.getLogger(__name__)
 SHORT_VOICE_THRESHOLD = 60
 
 
+def _normalize_transcribed_text(raw_text: str) -> str:
+    text = str(raw_text or "").strip()
+    if not text:
+        return ""
+
+    # Remove common wrapper labels.
+    for prefix in ("转写：", "转写结果：", "识别结果：", "文本："):
+        if text.startswith(prefix):
+            text = text[len(prefix) :].strip()
+
+    # Strip symmetrical quote wrappers repeatedly.
+    pairs = (
+        ('"', '"'),
+        ("'", "'"),
+        ("`", "`"),
+        ("“", "”"),
+        ("‘", "’"),
+    )
+    changed = True
+    while changed and len(text) >= 2:
+        changed = False
+        for left, right in pairs:
+            if text.startswith(left) and text.endswith(right):
+                text = text[len(left) : len(text) - len(right)].strip()
+                changed = True
+                break
+
+    # Quote/punctuation only output means model produced no usable transcript.
+    if re.fullmatch(r'[\s"`\'“”‘’.,，。!?！？:：;；\-\(\)\[\]\{\}…]+', text or ""):
+        return ""
+    return text
+
+
+def _extract_model_text(response) -> str:
+    if response is None:
+        return ""
+
+    try:
+        direct_text = getattr(response, "text", None)
+    except Exception:
+        direct_text = None
+    if direct_text is not None:
+        text = str(direct_text).strip()
+        if text:
+            return text
+
+    choices = getattr(response, "choices", None) or []
+    for choice in choices:
+        message = getattr(choice, "message", None)
+        content = getattr(message, "content", "")
+        if isinstance(content, str) and content.strip():
+            return content.strip()
+        if isinstance(content, list):
+            chunks = []
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "text":
+                    chunks.append(str(part.get("text") or ""))
+            merged = "\n".join([item for item in chunks if item]).strip()
+            if merged:
+                return merged
+
+    candidates = getattr(response, "candidates", None) or []
+    for candidate in candidates:
+        content = getattr(candidate, "content", None)
+        parts = getattr(content, "parts", None) or []
+        chunks = []
+        for part in parts:
+            part_text = getattr(part, "text", None)
+            if part_text:
+                chunks.append(str(part_text))
+        merged = "\n".join(chunks).strip()
+        if merged:
+            return merged
+    return ""
+
+
+def _audio_mime_candidates(mime_type: str) -> list[str]:
+    raw = str(mime_type or "").strip()
+    base = raw.split(";", 1)[0].strip().lower() if raw else ""
+    candidates: list[str] = []
+
+    def add(item: str) -> None:
+        value = str(item or "").strip()
+        if value and value not in candidates:
+            candidates.append(value)
+
+    add(raw)
+    add(base)
+
+    if base in {"audio/ogg", "audio/opus", "audio/x-opus", "application/ogg"}:
+        add("audio/ogg")
+        add("audio/ogg; codecs=opus")
+        add("audio/opus")
+    if base in {"audio/mp3", "audio/mpeg"}:
+        add("audio/mpeg")
+        add("audio/mp3")
+
+    add("audio/ogg")
+    add("audio/ogg; codecs=opus")
+    add("audio/webm")
+    add("audio/mpeg")
+    add("audio/mp4")
+    add("audio/wav")
+    return candidates
+
+
+def _build_audio_contents(
+    prompt: str, voice_bytes: bytes, mime_type: str
+) -> list[dict]:
+    return [
+        {
+            "role": "user",
+            "parts": [
+                {"text": prompt},
+                {
+                    "inline_data": {
+                        "mime_type": mime_type,
+                        "data": base64.b64encode(bytes(voice_bytes)).decode("utf-8"),
+                    }
+                },
+            ],
+        }
+    ]
+
+
+async def _run_audio_prompt(prompt: str, voice_bytes: bytes, mime_type: str) -> str:
+    last_error: Exception | None = None
+    client: Any = openai_async_client
+    if client is None:
+        logger.error("Voice model call skipped: OpenAI async client is not initialized")
+        return ""
+
+    for candidate_mime in _audio_mime_candidates(mime_type):
+        try:
+            response = await cast(Any, client).chat.completions.create(
+                model=GEMINI_MODEL,
+                messages=build_messages(
+                    contents=_build_audio_contents(prompt, voice_bytes, candidate_mime),
+                ),
+            )
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "Voice model call failed with mime=%s err=%s",
+                candidate_mime,
+                exc,
+            )
+            continue
+
+        text = _extract_model_text(response)
+        if text:
+            return text
+
+    if last_error is not None:
+        logger.error("Voice model call failed after mime retries: %s", last_error)
+    return ""
+
+
 async def transcribe_voice(voice_bytes: bytes, mime_type: str) -> str | None:
     """
-    使用 Gemini 转写语音为文字
+    使用对话模型转写语音为文字
 
     Returns:
         转写后的文本，失败返回 None
     """
+    if not voice_bytes:
+        logger.warning("Voice transcription skipped: empty audio payload.")
+        return None
+
     try:
-        contents = [
-            {
-                "parts": [
-                    {
-                        "text": "请将这段语音转写为文字。只输出语音中说的原话，不要添加任何解释或回复。如果无法识别，返回空字符串。"
-                    },
-                    {
-                        "inline_data": {
-                            "mime_type": mime_type,
-                            "data": base64.b64encode(bytes(voice_bytes)).decode(
-                                "utf-8"
-                            ),
-                        }
-                    },
-                ]
-            }
-        ]
-
-        response = await asyncio.to_thread(
-            gemini_client.models.generate_content,
-            model=GEMINI_MODEL,
-            contents=contents,
+        prompt = (
+            "请将这段语音转写为文字。"
+            "只输出语音中说的原话，不要添加任何解释或回复。"
+            "如果无法识别，返回空字符串。"
         )
+        text = _normalize_transcribed_text(
+            await _run_audio_prompt(prompt, voice_bytes, mime_type)
+        )
+        if text:
+            return text
 
-        if response.text and len(response.text.strip()) > 0:
-            return response.text.strip()
+        # Retry once with a stricter instruction to avoid placeholder outputs like """".
+        strict_prompt = (
+            "请将这段语音准确转写为文字。"
+            "只输出原话，不要输出引号、占位符或解释。"
+            "如果听不清，必须返回空字符串。"
+        )
+        retry_text = _normalize_transcribed_text(
+            await _run_audio_prompt(strict_prompt, voice_bytes, mime_type)
+        )
+        if retry_text:
+            return retry_text
         return None
     except Exception as e:
         logger.error(f"Voice transcription error: {e}")
@@ -71,6 +231,10 @@ async def transcribe_and_translate_voice(
     Returns:
         {"original": "原文", "original_lang": "语言", "translated": "译文"} 或 None
     """
+    if not voice_bytes:
+        logger.warning("Voice translation skipped: empty audio payload.")
+        return None
+
     try:
         prompt = (
             "请完成以下任务：\n"
@@ -83,33 +247,12 @@ async def transcribe_and_translate_voice(
             "译文：[翻译后的文字]"
         )
 
-        contents = [
-            {
-                "parts": [
-                    {"text": prompt},
-                    {
-                        "inline_data": {
-                            "mime_type": mime_type,
-                            "data": base64.b64encode(bytes(voice_bytes)).decode(
-                                "utf-8"
-                            ),
-                        }
-                    },
-                ]
-            }
-        ]
-
-        response = await asyncio.to_thread(
-            gemini_client.models.generate_content,
-            model=GEMINI_MODEL,
-            contents=contents,
-        )
-
-        if not response.text:
+        text = await _run_audio_prompt(prompt, voice_bytes, mime_type)
+        if not text:
             return None
 
         # 解析结果
-        text = response.text.strip()
+        text = text.strip()
         result = {}
 
         for line in text.split("\n"):
@@ -138,9 +281,8 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
         短语音: 转文字 → 智能路由
         长语音: 直接转写输出
     """
-    from repositories import get_user_settings
+    from core.state_store import get_user_settings
 
-    chat_id = ctx.message.chat.id
     user_id = ctx.message.user.id
 
     # 检查用户权限
@@ -148,37 +290,26 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
         await ctx.reply("⛔ 抱歉，您没有使用 AI 功能的权限。")
         return
 
-    # 获取语音/音频消息
-    media = None
-    mime_type = "audio/ogg"
-    file_id = ctx.message.file_id
-    duration = 999
-
-    # Platform-specific extraction
-    if ctx.message.platform == "telegram":
-        update = ctx.platform_event
-        # Ensure update.message exists (it should for voice handler)
-        if hasattr(update, "message") and update.message:
-            media = update.message.voice or update.message.audio
-            if media:
-                mime_type = media.mime_type or "audio/ogg"
-                duration = getattr(media, "duration", SHORT_VOICE_THRESHOLD + 1)
-
-    elif ctx.message.platform == "discord":
-        # Discord: Extract from platform event (Message)
-        msg = ctx.platform_event
-        if msg.attachments:
-            media = msg.attachments[0]
-            # Map content_type to mime_type
-            mime_type = getattr(media, "content_type", "audio/ogg") or "audio/ogg"
-            # Attempt to get duration (duration_secs for voice messages)
-            # Default to 1 (Assume short voice for interaction) if unknown, instead of 999
-            duration = (
-                getattr(media, "duration_secs", getattr(media, "duration", 1)) or 1
-            )
-
-    if not file_id:
+    try:
+        media = await extract_media_input(
+            ctx,
+            expected_types={MessageType.VOICE, MessageType.AUDIO},
+            auto_download=True,
+        )
+    except MediaProcessingError as exc:
+        if exc.error_code == "unsupported_media_on_platform":
+            await ctx.reply("❌ 当前平台暂不支持该语音/音频格式。")
+        else:
+            await ctx.reply("❌ 当前平台暂时无法下载语音/音频内容，请稍后再试。")
         return
+
+    mime_type = media.mime_type or "audio/ogg"
+    duration = int(media.meta.get("duration") or (SHORT_VOICE_THRESHOLD + 1))
+    user_instruction = (
+        media.caption.strip()
+        if media.caption
+        else (ctx.message.text or "").strip() or None
+    )
 
     # 检查是否开启翻译模式
     settings = await get_user_settings(user_id)
@@ -194,12 +325,14 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
     await ctx.send_chat_action(action="typing")
 
     try:
-        # 下载语音文件
-        logger.info(f"Downloading voice file: {file_id}, mime: {mime_type}")
-        voice_bytes = await ctx.download_file(file_id)
-
-        # 检查是否包含用户指令（Caption）
-        user_instruction = ctx.message.caption if ctx.message.caption else None
+        logger.info("Voice payload loaded: mime=%s duration=%s", mime_type, duration)
+        voice_bytes = media.content or b""
+        if not voice_bytes:
+            msg_id = getattr(
+                thinking_msg, "message_id", getattr(thinking_msg, "id", None)
+            )
+            await ctx.edit_message(msg_id, "❌ 未能读取语音数据，请重试。")
+            return
 
         # 翻译模式：双语对照输出
         if translate_mode:

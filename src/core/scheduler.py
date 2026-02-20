@@ -5,6 +5,9 @@
 import asyncio
 import logging
 import datetime
+import html
+import re
+import urllib.parse
 import dateutil.parser
 import feedparser
 import httpx
@@ -13,7 +16,7 @@ from apscheduler.triggers.cron import CronTrigger
 from core.platform.registry import adapter_manager
 from core.platform.models import UnifiedContext
 
-from repositories import (
+from core.state_store import (
     add_reminder,
     delete_reminder,
     get_pending_reminders,
@@ -22,13 +25,90 @@ from repositories import (
     get_user_watchlist,
     get_all_watchlist_users,
 )
-from repositories.task_repo import get_all_active_tasks
-from repositories.chat_repo import save_message, get_latest_session_id
+from core.state_store import get_all_active_tasks, save_message, get_latest_session_id
 
 logger = logging.getLogger(__name__)
 
 # Global Scheduler Instance
 scheduler = AsyncIOScheduler()
+
+
+def _is_google_rss_redirect(url: str) -> bool:
+    parsed = urllib.parse.urlparse(str(url or "").strip())
+    host = (parsed.netloc or "").lower()
+    path = (parsed.path or "").lower()
+    return host.endswith("news.google.com") and "/rss/articles/" in path
+
+
+def _extract_urls_from_html(raw_html: str) -> list[str]:
+    text = str(raw_html or "")
+    if not text:
+        return []
+    matches = re.findall(r'href=["\'](https?://[^"\']+)["\']', text, flags=re.I)
+    urls: list[str] = []
+    for item in matches:
+        value = html.unescape(str(item or "").strip())
+        if value:
+            urls.append(value)
+    return urls
+
+
+def _resolve_entry_link(entry: object, fallback_url: str) -> str:
+    fallback = str(fallback_url or "").strip()
+
+    def _entry_get(key: str, default: object = "") -> object:
+        getter = getattr(entry, "get", None)
+        if callable(getter):
+            return getter(key, default)
+        return getattr(entry, key, default)
+
+    primary = str(_entry_get("link", "") or "").strip()
+    candidates: list[str] = []
+    if primary:
+        candidates.append(primary)
+
+    links = _entry_get("links", [])
+    if isinstance(links, list):
+        for item in links:
+            href = ""
+            if isinstance(item, dict):
+                href = str(item.get("href") or "").strip()
+            else:
+                href = str(getattr(item, "href", "") or "").strip()
+            if href:
+                candidates.append(html.unescape(href))
+
+    for field in ("summary", "description"):
+        value = str(_entry_get(field, "") or "")
+        candidates.extend(_extract_urls_from_html(value))
+
+    content_list = _entry_get("content", [])
+    if isinstance(content_list, list):
+        for item in content_list:
+            blob = ""
+            if isinstance(item, dict):
+                blob = str(item.get("value") or "")
+            else:
+                blob = str(getattr(item, "value", "") or "")
+            candidates.extend(_extract_urls_from_html(blob))
+
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for item in candidates:
+        url = str(item or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        normalized.append(url)
+
+    for url in normalized:
+        if not url.startswith("http"):
+            continue
+        if _is_google_rss_redirect(url):
+            continue
+        return url
+
+    return primary or fallback
 
 
 async def save_push_message_to_db(user_id: int, message: str):
@@ -57,19 +137,23 @@ async def send_via_adapter(
 
     if adapter:
         try:
-            # Universal way?
-            if platform == "telegram":
-                # Telegram adapter has .bot
-                await adapter.bot.send_message(
-                    chat_id=chat_id, text=text, parse_mode=parse_mode, **kwargs
-                )
-            elif platform == "discord":
-                # Discord adapter usually takes send_message with just chat_id/text
-                # Check if discord adapter has send_message method matching signature
-                # Assuming DiscordAdapter.send_message(self, chat_id, text)
-                await adapter.send_message(chat_id=chat_id, text=text)
+            send_message = getattr(adapter, "send_message", None)
+            if callable(send_message):
+                await send_message(chat_id=chat_id, text=text)
             else:
-                logger.warning(f"Unknown platform or no send method: {platform}")
+                bot = getattr(adapter, "bot", None)
+                if platform == "telegram" and bot is not None:
+                    from platforms.telegram.formatter import markdown_to_telegram_html
+
+                    await bot.send_message(
+                        chat_id=chat_id,
+                        text=markdown_to_telegram_html(text),
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                        **kwargs,
+                    )
+                else:
+                    logger.warning(f"Unknown platform or no send method: {platform}")
             return
         except Exception as e:
             logger.error(f"{platform} send failed: {e}")
@@ -94,7 +178,7 @@ async def send_reminder_job(
     except Exception as e:
         logger.error(f"Failed to send reminder {reminder_id}: {e}")
     finally:
-        await delete_reminder(reminder_id)
+        await delete_reminder(reminder_id, user_id=user_id)
 
 
 async def schedule_reminder(
@@ -111,7 +195,7 @@ async def schedule_reminder(
     if trigger_time.tzinfo is None:
         trigger_time = trigger_time.replace(tzinfo=now.tzinfo)
 
-    # 存入数据库
+    # 落盘到文件存储
     reminder_id = await add_reminder(
         user_id, chat_id, message, trigger_time.isoformat(), platform=platform
     )
@@ -129,8 +213,8 @@ async def schedule_reminder(
 
 
 async def load_jobs_from_db():
-    """从数据库加载未执行的提醒任务（Bot 启动时调用）"""
-    logger.info("Loading pending reminders from database...")
+    """从文件存储加载未执行的提醒任务（Bot 启动时调用）"""
+    logger.info("Loading pending reminders from filesystem store...")
     reminders = await get_pending_reminders()
 
     count = 0
@@ -179,7 +263,8 @@ async def load_jobs_from_db():
 
 async def generate_entry_summary(title: str, content: str, link: str) -> str:
     """使用 AI 生成 RSS 条目摘要"""
-    from core.config import gemini_client, GEMINI_MODEL
+    from core.config import GEMINI_MODEL, openai_async_client
+    from services.openai_adapter import generate_text
 
     # 截断过长内容
     if len(content) > 2000:
@@ -196,11 +281,14 @@ async def generate_entry_summary(title: str, content: str, link: str) -> str:
     )
 
     try:
-        response = await gemini_client.aio.models.generate_content(
+        if openai_async_client is None:
+            raise RuntimeError("OpenAI async client is not initialized")
+        summary = await generate_text(
+            async_client=openai_async_client,
             model=GEMINI_MODEL,
             contents=prompt,
         )
-        return response.text.strip()
+        return str(summary or "").strip()
     except Exception as e:
         logger.error(f"AI summary generation failed: {e}")
         # 失败时返回原始内容的截断版本
@@ -222,7 +310,7 @@ async def fetch_formatted_rss_updates(
     # 1. 获取订阅 (如果没有传入)
     if not subscriptions:
         if user_id:
-            from repositories import get_user_subscriptions
+            from core.state_store import get_user_subscriptions
 
             subscriptions = await get_user_subscriptions(user_id)
         else:
@@ -279,8 +367,13 @@ async def fetch_formatted_rss_updates(
                     last_hash = sub["last_entry_hash"]
                     if entry_id != last_hash:
                         # Found new content
-                        title = latest_entry.get("title", "无标题")
-                        link = latest_entry.get("link", url)
+                        title = str(
+                            getattr(latest_entry, "get", lambda *_: "")(
+                                "title", "无标题"
+                            )
+                            or "无标题"
+                        )
+                        link = _resolve_entry_link(latest_entry, fallback_url=url)
                         feed_title = feed.feed.get("title", "RSS 订阅")
 
                         # Content summary logic...
@@ -291,8 +384,6 @@ async def fetch_formatted_rss_updates(
                             content = latest_entry.content[0].get("value", "")
                         elif hasattr(latest_entry, "description"):
                             content = latest_entry.description
-
-                        import re
 
                         content_clean = re.sub(r"<[^>]+>", "", content).strip()
 
@@ -315,7 +406,8 @@ async def fetch_formatted_rss_updates(
                             "title": title,
                             "summary": summary,
                             "link": link,
-                            "sub_id": sub["id"],
+                            "user_id": uid,
+                            "feed_url": sub["feed_url"],
                             "entry_id": entry_id,
                             "etag": getattr(feed, "etag", None),
                             "modified": getattr(feed, "modified", None),
@@ -348,15 +440,19 @@ async def fetch_formatted_rss_updates(
 
 
 async def mark_updates_as_read(pending_updates: list):
-    """更新数据库状态"""
+    """更新订阅状态"""
     for update in pending_updates:
         try:
             await update_subscription_status(
-                update["sub_id"], update["entry_id"], update["etag"], update["modified"]
+                update["user_id"],
+                update["feed_url"],
+                update["entry_id"],
+                update["etag"],
+                update["modified"],
             )
         except Exception as e:
             logger.error(
-                f"Failed to update subscription status for sub {update['sub_id']}: {e}"
+                f"Failed to update subscription status for {update.get('feed_url')}: {e}"
             )
 
 
@@ -427,7 +523,7 @@ async def check_and_send_rss_updates(subscriptions: list):
                         f"Failed to send final batch to {uid} on {platform}: {e}"
                     )
 
-        # 统一更新数据库
+        # 统一更新状态
         await mark_updates_as_read(success_updates)
 
         return sent_count
@@ -611,94 +707,6 @@ def start_stock_scheduler():
 
 
 # --- 动态 Skill 调度 ---
-# --- NotebookLM 定时任务 ---
-
-
-async def notebooklm_auto_list_job():
-    """
-    定时执行 NotebookLM list 命令以刷新状态
-    遍历 /app/data/users/*/notebooklm/storage_state.json
-    """
-    logger.info("Running NotebookLM auto-list job...")
-    import glob
-    import sys
-
-    # 确保 /app 在 sys.path 中 (Docker 容器环境)
-    if "/app" not in sys.path:
-        sys.path.append("/app")
-
-    try:
-        from skills.builtin.notebooklm.scripts.execute import (
-            execute as notebook_execute,
-        )
-        from core.platform.models import (
-            UnifiedMessage,
-            UnifiedContext,
-            User,
-            Chat,
-            MessageType,
-        )
-    except ImportError as e:
-        logger.error(f"Failed to import NotebookLM skill: {e}")
-        return
-
-    pattern = "/app/data/users/*/notebooklm/storage_state.json"
-    files = glob.glob(pattern)
-
-    if not files:
-        logger.info("No NotebookLM users found to refresh.")
-        return
-
-    for file_path in files:
-        try:
-            # Extract user_id from path: /app/data/users/{user_id}/notebooklm/storage_state.json
-            parts = file_path.split("/")
-            try:
-                users_index = parts.index("users")
-                user_id = parts[users_index + 1]
-            except ValueError:
-                logger.warning(f"Could not extract user_id from path: {file_path}")
-                continue
-
-            logger.info(f"Executing NotebookLM list for user {user_id}")
-
-            # Construct Mock Context
-            mock_user = User(id=str(user_id), username="CronUser", is_bot=False)
-            # 这里的 platform 暂定 telegram，实际上该脚本只依赖 storage_state.json
-            mock_chat = Chat(id=str(user_id), type="private")
-            mock_message = UnifiedMessage(
-                id="cron_notebooklm",
-                platform="telegram",
-                user=mock_user,
-                chat=mock_chat,
-                text="notebooklm list",
-                date=datetime.datetime.now(),
-                type=MessageType.TEXT,
-            )
-            ctx = UnifiedContext(message=mock_message, platform_ctx=None)
-
-            # Execute
-            await notebook_execute(ctx, {"action": "list"})
-
-        except Exception as e:
-            logger.error(f"Error executing notebooklm job for file {file_path}: {e}")
-
-
-def start_notebooklm_scheduler():
-    """启动 NotebookLM 定时维护任务"""
-    # 每小时执行一次
-    scheduler.add_job(
-        notebooklm_auto_list_job,
-        "interval",
-        hours=1,
-        next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=15),
-        id="notebooklm_auto_list",
-        replace_existing=True,
-    )
-    logger.info("NotebookLM scheduler started, interval=1h")
-
-
-# --- 动态 Skill 调度 ---
 
 
 async def run_skill_cron_job(
@@ -721,51 +729,54 @@ async def run_skill_cron_job(
 
     try:
         from core.platform.models import UnifiedMessage, User, Chat, MessageType
+        from core.agent_orchestrator import agent_orchestrator
 
-        # 构造系统上下文
-        # 模拟用户身份以便 SkillAgent 知道是谁触发的任务 (方便权限检查和个性化)
-        if user_id > 0:
-            mock_user = User(id=str(user_id), username="Cron User", is_bot=False)
-            mock_chat = Chat(id=str(user_id), type="private")
-            mock_message = UnifiedMessage(
-                id="cron",
-                platform=platform,
-                user=mock_user,
-                chat=mock_chat,
-                text=instruction,
-                date=datetime.datetime.now(),
-                type=MessageType.TEXT,
-            )
+        user_id_text = str(user_id)
+        mock_user = User(id=user_id_text, username="Cron User", is_bot=False)
+        mock_chat = Chat(id=user_id_text, type="private")
+        mock_message = UnifiedMessage(
+            id=f"cron-{int(datetime.datetime.now().timestamp())}",
+            platform=platform,
+            user=mock_user,
+            chat=mock_chat,
+            text=instruction,
+            date=datetime.datetime.now(),
+            type=MessageType.TEXT,
+        )
 
-            # 获取 Adapter 实例
+        adapter = None
+        try:
+            adapter = adapter_manager.get_adapter(platform)
+        except Exception:
             adapter = None
-            try:
-                adapter = adapter_manager.get_adapter(platform)
-            except Exception:
-                pass
 
-            ctx = UnifiedContext(
-                message=mock_message,
-                platform_ctx=None,
-                _adapter=adapter,
-                user=mock_user,
-            )
-        else:
-            ctx = UnifiedContext(message=None, platform_ctx=None)
+        ctx = UnifiedContext(
+            message=mock_message,
+            platform_ctx=None,
+            _adapter=adapter,
+            user=mock_user,
+        )
 
         if not instruction:
             instruction = "Execute scheduled maintenance/run_cron task."
 
+        cron_task_id = f"cron-{int(datetime.datetime.now().timestamp())}"
+
         final_output = []
 
-        # Use AgentOrchestrator (The Brain) to handle the request
-        # This effectively treats the cron job as a user message, verifying permission and handling tool usage (Delegation)
-        from core.agent_orchestrator import agent_orchestrator
-        from google.genai import types
-
-        # Construct message history for the Agent
         message_history = [
-            types.Content(role="user", parts=[types.Part(text=instruction)])
+            {
+                "role": "user",
+                "parts": [
+                    {
+                        "text": (
+                            f"[CRON TASK id={cron_task_id}]\n"
+                            f"source=cron\n"
+                            f"goal={instruction}"
+                        )
+                    }
+                ],
+            }
         ]
 
         # Execute via Agent Brain
@@ -773,9 +784,9 @@ async def run_skill_cron_job(
             if chunk and chunk.strip():
                 final_output.append(chunk)
 
+        full_response = "".join(final_output).strip()
         # Push Notification Logic
         if need_push and user_id > 0:
-            full_response = "".join(final_output).strip()
             if full_response:
                 logger.info(f"[Cron] Pushing result to {user_id} on {platform}")
                 await send_via_adapter(
@@ -792,9 +803,9 @@ async def run_skill_cron_job(
 
 async def reload_scheduler_jobs():
     """
-    重新加载数据库中的定时任务 (全量刷新)
+    重新加载文件存储中的定时任务 (全量刷新)
     """
-    logger.info("Reloading scheduler jobs from database...")
+    logger.info("Reloading scheduler jobs from filesystem store...")
 
     # 1. Clear existing dynamic jobs to handle deletions/updates
     # We identify them by ID prefix "cron_db_"
@@ -812,7 +823,7 @@ async def reload_scheduler_jobs():
     if removed_count > 0:
         logger.info(f"Removed {removed_count} existing dynamic jobs.")
 
-    # 2. Load from DB
+    # 2. Load from store
     tasks = await get_all_active_tasks()
     count = 0
     for task in tasks:
@@ -848,10 +859,10 @@ async def reload_scheduler_jobs():
                     f"Invalid crontab format for task {instruction}: {crontab}"
                 )
         except Exception as e:
-            logger.error(f"Failed to register DB cron for task {instruction}: {e}")
+            logger.error(f"Failed to register cron for task {instruction}: {e}")
 
     logger.info(
-        f"Reloaded {count} jobs from Database in {(datetime.datetime.now() - start_time).total_seconds()}s."
+        f"Reloaded {count} jobs from filesystem store in {(datetime.datetime.now() - start_time).total_seconds()}s."
     )
 
 

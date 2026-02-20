@@ -18,7 +18,7 @@ import creator  # local import
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, Any]:
     """
     Execute skill management operations.
     """
@@ -60,7 +60,11 @@ async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
         # Add explicit instruction for Agent to use the best match
         if local_matches:
             best_skill = local_matches[0]["name"]
-            response += f"\n\n[SYSTEM HINT] Found high confidence match: '{best_skill}'. You should now call `call_skill(skill_name='{best_skill}', ...)` to fulfill the user's request."
+            best_tool = f"ext_{best_skill.replace('-', '_')}"
+            response += (
+                f"\n\n[SYSTEM HINT] Found high confidence match: '{best_skill}'. "
+                f"You should now invoke tool `{best_tool}` to fulfill the user's request."
+            )
 
         response += "\n\n要安装技能，请说：`安装 <技能名>` 或 `安装 <GitHub 链接>`"
 

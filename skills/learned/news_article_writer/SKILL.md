@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: news_article_writer
 description: 搜索最新新闻，深度抓取内容，撰写高质量微信公众号文章，支持自动配图和发布到公众号草稿箱。
 triggers:
@@ -9,6 +10,14 @@ triggers:
 params:
   topic: string
   publish: boolean
+input_schema:
+  type: object
+  properties: {}
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # 微信公众号文章生成器 (All-in-One)

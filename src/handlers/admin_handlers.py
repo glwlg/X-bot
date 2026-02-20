@@ -2,7 +2,7 @@ import logging
 from core.platform.models import UnifiedContext
 
 from core.config import is_user_admin
-from repositories import add_allowed_user, remove_allowed_user
+from core.state_store import add_allowed_user, remove_allowed_user
 
 logger = logging.getLogger(__name__)
 

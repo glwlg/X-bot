@@ -9,8 +9,9 @@ from typing import Dict, Any, List
 
 from core.platform.models import UnifiedContext
 from services.web_summary_service import fetch_webpage_content
-from core.config import gemini_client, GEMINI_MODEL
-from repositories.account_repo import get_account
+from core.config import GEMINI_MODEL, openai_async_client
+from services.openai_adapter import generate_text
+from core.state_store import get_account
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,9 @@ def _normalize_article_data(data: Dict[str, Any], topic: str) -> Dict[str, Any]:
             sections.append({"content": content, "image_prompt": image_prompt})
 
     if not sections:
-        sections = [{"content": "<p>暂无正文内容，请稍后重试。</p>", "image_prompt": None}]
+        sections = [
+            {"content": "<p>暂无正文内容，请稍后重试。</p>", "image_prompt": None}
+        ]
 
     return {
         "title": title,
@@ -182,7 +185,7 @@ class WeChatPublisher:
             raise Exception(f"Failed to add draft: {data}")
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, Any]:
     topic = params.get("topic")
     publish = params.get("publish", False)
 
@@ -203,7 +206,9 @@ async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
                 "searxng_search", {"query": topic, "num_results": 8}
             )
             search_summary_text = (
-                search_res.get("text", "") if isinstance(search_res, dict) else str(search_res)
+                search_res.get("text", "")
+                if isinstance(search_res, dict)
+                else str(search_res)
             )
             if not search_summary_text and search_res is not None:
                 search_summary_text = str(search_res)
@@ -251,13 +256,16 @@ async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
     )
 
     try:
-        gen_resp = await gemini_client.aio.models.generate_content(
+        if openai_async_client is None:
+            raise RuntimeError("OpenAI async client is not initialized")
+        response_text = await generate_text(
+            async_client=openai_async_client,
             model=GEMINI_MODEL,
             contents=structure_prompt,
             config={"response_mime_type": "application/json"},
         )
         article_data = _normalize_article_data(
-            _parse_article_json(gen_resp.text),
+            _parse_article_json(str(response_text or "")),
             str(topic),
         )
     except Exception as e:
@@ -319,9 +327,7 @@ async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
             section_images[res_idx] = res_bytes
 
     # 4. 发布 或 组装本地预览
-    final_output_md = (
-        f"# {article_data['title']}\n*By {article_data['author']}*\n\n"
-    )
+    final_output_md = f"# {article_data['title']}\n*By {article_data['author']}*\n\n"
     final_output_md += f"> {article_data['digest']}\n\n"
 
     if cover_bytes:

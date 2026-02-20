@@ -1,14 +1,11 @@
 import asyncio
-import json
 import sys
 import os
 
 # Add src to path
 sys.path.append(os.path.join(os.getcwd(), "src"))
 
-from core.tool_registry import tool_registry
 from core.prompts import DEFAULT_SYSTEM_PROMPT, MEMORY_MANAGEMENT_GUIDE
-from core.config import MCP_MEMORY_ENABLED
 
 
 async def main():
@@ -34,10 +31,7 @@ async def main():
     system_instruction = DEFAULT_SYSTEM_PROMPT
     system_instruction += skill_instruction
     system_instruction += "\n⚠️ **提示**：系统可能安装了其他数百个技能。如果你需要特定的能力（如绘制图表、Docker管理等），请务必先调用 `skill_manager` 的 `search_skills` 或 `list_skills` 来查找，而不是假设自己不能做。"
-
-    if MCP_MEMORY_ENABLED:
-        # Use memory guide if enabled, but we avoid eager connection
-        system_instruction += "\n\n" + MEMORY_MANAGEMENT_GUIDE
+    system_instruction += "\n\n" + MEMORY_MANAGEMENT_GUIDE
 
     # Append dynamic time context
     system_instruction += f"\n\n【当前系统时间】: {current_time_str}"

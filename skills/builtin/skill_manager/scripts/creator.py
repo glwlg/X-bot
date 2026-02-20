@@ -10,7 +10,8 @@ from typing import Optional
 from datetime import datetime
 
 
-from core.config import gemini_client, CREATOR_MODEL
+from core.config import CREATOR_MODEL, openai_async_client
+from services.openai_adapter import generate_text
 from core.skill_loader import skill_loader
 
 logger = logging.getLogger(__name__)
@@ -76,7 +77,7 @@ params:                 # 可选, 参数定义
 简单的提醒、记录、说明类技能不需要 scripts。
 
 ## scripts 中可用工具
-- `from repositories import ...` - 数据库操作
+- `from core.state_store import ...` - 状态存储操作（Markdown）
 - `from services.web_summary_service import fetch_webpage_content` - 网页抓取
 - `import httpx` - HTTP 请求 (优先使用,带 timeout)
 - `import subprocess` - 允许使用 (仅用于 curl/wget 等必要操作)
@@ -162,12 +163,15 @@ async def create_skill(
     try:
         prompt = GENERATION_PROMPT.format(requirement=requirement, user_id=user_id)
 
-        response = await gemini_client.aio.models.generate_content(
+        if openai_async_client is None:
+            raise RuntimeError("OpenAI async client is not initialized")
+        response_text = await generate_text(
+            async_client=openai_async_client,
             model=CREATOR_MODEL,
             contents=prompt,
         )
 
-        response_text = response.text.strip()
+        response_text = str(response_text or "").strip()
 
         # 清理可能的 markdown 代码块
         response_text = re.sub(r"^```json\s*", "", response_text)
@@ -371,12 +375,15 @@ async def update_skill(skill_name: str, requirement: str, user_id: int) -> dict:
             requirement=requirement,
         )
 
-        response = await gemini_client.aio.models.generate_content(
+        if openai_async_client is None:
+            raise RuntimeError("OpenAI async client is not initialized")
+        response_text = await generate_text(
+            async_client=openai_async_client,
             model=CREATOR_MODEL,
             contents=prompt,
         )
 
-        response_text = response.text.strip()
+        response_text = str(response_text or "").strip()
 
         # 清理 JSON
         response_text = re.sub(r"^```json\s*", "", response_text)

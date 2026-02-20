@@ -4,15 +4,22 @@ from urllib.parse import quote
 import httpx
 from core.platform.models import UnifiedContext
 from services.web_summary_service import fetch_webpage_content
-from core.config import gemini_client, GEMINI_MODEL
+from core.config import GEMINI_MODEL, openai_async_client
+from services.openai_adapter import generate_text
 
 logger = logging.getLogger(__name__)
 
 
-async def execute(ctx: UnifiedContext, params: dict):
+async def execute(ctx: UnifiedContext, params: dict, runtime=None):
     topic = params.get("topic", "").strip()
     depth = params.get("depth", 5)
     language = params.get("language", "zh-CN")
+    logger.info(
+        "[deep_research] execute called topic=%r depth=%r language=%r",
+        topic,
+        depth,
+        language,
+    )
 
     if not topic:
         yield {"text": "❌ 请提供研究主题 (topic)", "ui": {}}
@@ -56,6 +63,7 @@ async def execute(ctx: UnifiedContext, params: dict):
         yield f"⚠️ 搜索阶段出错: {e}"
 
     if not search_results:
+        logger.info("[deep_research] no search results for topic=%r", topic)
         yield {"text": "❌ 未找到相关搜索结果，研究终止。", "ui": {}}
         return
 
@@ -77,6 +85,11 @@ async def execute(ctx: UnifiedContext, params: dict):
         *(process_url(item) for item in search_results)
     )
     valid_data = [item for item in crawled_results if item]
+    logger.info(
+        "[deep_research] crawled %s/%s usable pages",
+        len(valid_data),
+        len(search_results),
+    )
 
     if not valid_data:
         yield {
@@ -105,40 +118,40 @@ async def execute(ctx: UnifiedContext, params: dict):
     4. **Source Discrepancies** (if any): Did sources disagree?
     5. **Reference List**: List the titles and URLs of sources used.
     
-    Format output as HTML (for a standalone report file). Use modern, clean CSS.
-    Title the HTML page "Deep Research: {topic}".
-    Ensure the HTML is self-contained.
+    Format output as Markdown. Use proper Markdown heading hierarchy (# for title, ## for sections, etc.).
+    Title the report "Deep Research: {topic}".
+    Output ONLY the Markdown content, do NOT wrap it in code fences.
     
     Source Material:
     {context_text}
     """
 
     try:
-        response = await gemini_client.aio.models.generate_content(
+        if openai_async_client is None:
+            raise RuntimeError("OpenAI async client is not initialized")
+        report_md = await generate_text(
+            async_client=openai_async_client,
             model=GEMINI_MODEL,
             contents=prompt,
         )
+        report_md = str(report_md or "")
 
-        report_html = response.text
-
-        # Strip markdown code blocks if AI added them
+        # Strip markdown code fences if AI wrapped them
         import re
 
-        report_html = re.sub(r"^```html\s*", "", report_html)
-        report_html = re.sub(r"^```\s*", "", report_html)
-        report_html = re.sub(r"\s*```$", "", report_html)
-
-        # Output
-        import io
-
-        file_obj = io.BytesIO(report_html.encode("utf-8"))
-        file_obj.name = "deep_research_report.html"
+        report_md = re.sub(r"^```(?:markdown|md)?\s*", "", report_md)
+        report_md = re.sub(r"\s*```$", "", report_md)
 
         yield {
             "text": f"🔇🔇🔇【深度研究报告】\n\nSuccess: Deep research report generated for '{topic}' based on {len(valid_data)} sources.",
-            "files": {"deep_research_report.html": report_html.encode("utf-8")},
+            "files": {"deep_research_report.md": report_md.encode("utf-8")},
             "ui": {},
         }
+        logger.info(
+            "[deep_research] report generated for topic=%r with %s sources",
+            topic,
+            len(valid_data),
+        )
         return
 
     except Exception as e:

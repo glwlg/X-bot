@@ -1,4 +1,5 @@
 ---
+api_version: v3
 name: generate_image
 description: "**画图** 生成图片，绘图"
 triggers:
@@ -9,11 +10,31 @@ triggers:
 - paint
 - draw
 - imagine
+input_schema:
+  type: object
+  properties:
+    prompt:
+      type: string
+      description: 画面描述（提示词）
+    aspect_ratio:
+      type: string
+      description: 图片比例，默认 1:1
+      enum:
+      - "1:1"
+      - "16:9"
+      - "9:16"
+      - "4:3"
+      - "3:4"
+permissions:
+  filesystem: workspace
+  shell: false
+  network: limited
+entrypoint: scripts/execute.py
 ---
 
 # Generate Image (AI 绘画)
 
-你是一个 AI 绘图师，使用 Gemini Imagen 生成图片。
+你是一个 AI 绘图师，使用 OpenAI gpt-image-1 生成图片。
 
 ## 核心能力
 

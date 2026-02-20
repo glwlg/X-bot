@@ -1,44 +1,778 @@
-import logging
 import asyncio
-from core.platform.models import UnifiedContext
+import inspect
+import logging
+import os
+import re
+import time
+from typing import Any, Dict, List, cast
 
-from core.config import MCP_MEMORY_ENABLED
-from core.tool_registry import tool_registry
+from core.config import (
+    DATA_DIR,
+    X_DEPLOYMENT_STAGING_PATH,
+    SERVER_IP,
+    AUTO_RECOVERY_MAX_ATTEMPTS,
+)
+from core.extension_executor import ExtensionExecutor
+from core.extension_router import ExtensionCandidate, ExtensionRouter
+from core.heartbeat_store import heartbeat_store
+from core.orchestrator_context import OrchestratorRuntimeContext
+from core.orchestrator_event_handler import OrchestratorEventHandler
+from core.platform.models import UnifiedContext
+from core.primitive_runtime import PrimitiveRuntime
+from core.prompt_composer import prompt_composer
+from core.orchestrator_runtime_tools import RuntimeToolAssembler, ToolCallDispatcher
+from core.skill_loader import skill_loader
+from core.task_inbox import task_inbox
+from core.task_manager import task_manager
+from core.tool_access_store import tool_access_store
+from core.tool_broker import ToolBroker
+from core.tool_profile_store import tool_profile_store
+from core.tools.dispatch_tools import (
+    dispatch_tools,
+)  # compatibility export for tests/hooks
 from services.ai_service import AiService
-from core.prompts import DEFAULT_SYSTEM_PROMPT, MEMORY_MANAGEMENT_GUIDE
 
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_manager_text(text: str, worker_labels: Dict[str, str]) -> str:
+    raw = str(text or "")
+    if not raw or not worker_labels:
+        return raw
+
+    cleaned = raw
+    ordered = sorted(
+        (
+            (str(worker_id or "").strip(), str(name or "").strip())
+            for worker_id, name in worker_labels.items()
+        ),
+        key=lambda item: len(item[0]),
+        reverse=True,
+    )
+    ordered = [(worker_id, name) for worker_id, name in ordered if worker_id]
+    if not ordered:
+        return raw
+
+    primary_name = next(
+        (name for _worker_id, name in ordered if name),
+        ordered[0][0],
+    )
+
+    for worker_id, worker_name in ordered:
+        display_name = worker_name or primary_name
+        cleaned = cleaned.replace(f"`{worker_id}`", display_name)
+        cleaned = cleaned.replace(worker_id, display_name)
+
+    cleaned = re.sub(r"\bworker_id\b", "执行助手编号", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\bbackend\b", "执行方式", cleaned, flags=re.IGNORECASE)
+    if "worker" not in primary_name.lower():
+        cleaned = re.sub(
+            r"\bworkers\b", f"{primary_name}团队", cleaned, flags=re.IGNORECASE
+        )
+        cleaned = re.sub(r"\bworker\b", primary_name, cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\bWorker\b", primary_name, cleaned)
+    return cleaned
+
+
+class _NoopTodoSession:
+    """Compatibility shim to decouple orchestrator from TaskTodoSession."""
+
+    def __init__(self, user_id: str):
+        self.todo_path = heartbeat_store.heartbeat_path(user_id)
+        self.heartbeat_path = heartbeat_store.status_path(user_id)
+
+    def mark_step(self, *_args, **_kwargs):
+        return None
+
+    def heartbeat(self, *_args, **_kwargs):
+        return None
+
+    def add_event(self, *_args, **_kwargs):
+        return None
+
+    def mark_failed(self, *_args, **_kwargs):
+        return None
+
+    def mark_completed(self, *_args, **_kwargs):
+        return None
+
+
 class AgentOrchestrator:
-    """
-    The Agent Brain.
-    Orchestrates the interaction between:
-    1. Tool Registry (Capabilities)
-    2. User Context (Telegram Update)
-    3. AI Service (Gemini Agent Engine)
-    """
+    """Single-loop orchestrator aligned with primitive-first execution."""
 
     def __init__(self):
         self.ai_service = AiService()
-        self._memory_tools_cache = None  # Cache for tool definitions
+        self.runtime = PrimitiveRuntime()
+        self.tool_broker = ToolBroker(self.runtime)
+        self.extension_router = ExtensionRouter()
+        self.extension_executor = ExtensionExecutor()
+        self.auto_evolve_enabled = (
+            os.getenv("AUTO_EVOLVE_ON_BLOCK", "false").lower() == "true"
+        )
+        logger.info(
+            "Orchestrator policy: auto_evolve_enabled=%s",
+            self.auto_evolve_enabled,
+        )
 
     async def handle_message(self, ctx: UnifiedContext, message_history: list):
-        """
-        Main entry point for handling user messages via the Agent.
-        Returns a generator of text chunks (streaming response).
-        """
-        user_id = ctx.message.user.id  # Assuming ID is int compatible for now
+        runtime_ctx = OrchestratorRuntimeContext.from_message(ctx)
+        user_id = runtime_ctx.user_id
+        user_data = runtime_ctx.user_data
+        user_id_str = runtime_ctx.runtime_user_id
+        platform_name = runtime_ctx.platform_name
+        runtime_policy_ctx = runtime_ctx.runtime_policy_ctx
+        manager_runtime = runtime_ctx.manager_runtime
 
-        # 0. Dynamic Skill Search (Context Loading)
-        # Instead of giving the AI all skills or a generic search tool, we pre-search based on user input.
-        # This acts as a "RAG" for tools/skills.
-        from core.skill_loader import skill_loader
+        dispatched_worker_labels: Dict[str, str] = {}
+        last_user_text = self._extract_last_user_text(message_history)
+        routing_text = self._extract_recent_user_text(message_history, max_messages=3)
+        if not routing_text:
+            routing_text = last_user_text
+        task_goal = last_user_text or routing_text
 
-        # Extract user text from history (last user message)
-        last_user_text = ""
+        task_id = runtime_ctx.task_id
+        todo_session = _NoopTodoSession(str(user_id))
+
+        append_session_event = runtime_ctx.append_session_event
+        update_session_task = runtime_ctx.update_session_task
+        update_task_inbox_status = runtime_ctx.update_task_inbox_status
+
+        await runtime_ctx.ensure_task_inbox(task_goal=task_goal)
+        task_inbox_id = runtime_ctx.task_inbox_id
+
+        await runtime_ctx.mark_manager_loop_started(task_goal)
+
+        logger.info(
+            "Extension routing text (trimmed): %s",
+            routing_text.replace("\n", " | ")[:300],
+        )
+        raw_extension_candidates = self.extension_router.route(
+            routing_text, max_candidates=24
+        )
+        extension_candidates = self._apply_extension_candidate_policy(
+            raw_extension_candidates,
+            intent_text=routing_text or last_user_text,
+        )
+        extension_candidates = [
+            candidate
+            for candidate in extension_candidates
+            if self._runtime_tool_allowed(
+                runtime_user_id=user_id_str,
+                platform=platform_name,
+                tool_name=candidate.tool_name,
+                kind="tool",
+            )
+        ]
+        extension_candidates = self._rank_extension_candidates(extension_candidates)
+        logger.info(
+            "Extension candidates selected: raw=%s filtered=%s",
+            [candidate.name for candidate in raw_extension_candidates] or "none",
+            [candidate.name for candidate in extension_candidates] or "none",
+        )
+        if extension_candidates:
+            candidate_text = ", ".join(
+                [candidate.name for candidate in extension_candidates]
+            )
+            todo_session.mark_step("plan", "done", f"Candidates: {candidate_text}")
+        else:
+            todo_session.mark_step(
+                "plan", "done", "No extension matched; primitives only."
+            )
+
+        task_workspace_root = self._resolve_task_workspace_root(
+            extension_candidates=extension_candidates,
+            intent_text=routing_text or last_user_text,
+        )
+        await runtime_ctx.activate_session(
+            task_goal=task_goal,
+            task_workspace_root=task_workspace_root,
+        )
+
+        tooling_assembler = RuntimeToolAssembler(
+            runtime_user_id=user_id_str,
+            platform_name=platform_name,
+            runtime_tool_allowed=self._runtime_tool_allowed,
+        )
+        tools = await tooling_assembler.assemble(extension_candidates)
+
+        def on_worker_dispatched(worker_id: str, worker_name: str) -> None:
+            dispatched_worker_id = str(worker_id or "").strip()
+            dispatched_worker_name = str(worker_name or "").strip()
+            if dispatched_worker_id:
+                dispatched_worker_labels[dispatched_worker_id] = (
+                    dispatched_worker_name or dispatched_worker_id
+                )
+            if dispatched_worker_name:
+                user_data["last_dispatched_worker_name"] = dispatched_worker_name
+
+        tool_dispatcher = ToolCallDispatcher(
+            runtime_user_id=user_id_str,
+            platform_name=platform_name,
+            task_id=str(task_id),
+            task_inbox_id=task_inbox_id,
+            task_workspace_root=task_workspace_root,
+            ctx=ctx,
+            runtime=self.runtime,
+            tool_broker=self.tool_broker,
+            runtime_tool_allowed=self._runtime_tool_allowed,
+            record_tool_profile=self._record_tool_profile,
+            todo_mark_step=todo_session.mark_step,
+            append_session_event=append_session_event,
+            on_worker_dispatched=on_worker_dispatched,
+        )
+        tool_dispatcher.set_extension_candidates(extension_candidates)
+        tool_dispatcher.set_available_tool_names(tooling_assembler.tool_names(tools))
+
+        async def tool_executor(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
+            logger.info("Agent invoking tool: %s with args=%s", name, args)
+            await append_session_event(f"tool_start:{task_id}:{name}")
+            todo_session.mark_step("act", "in_progress", f"Calling tool `{name}`")
+            todo_session.heartbeat(f"tool:{name}:start")
+            task_manager.heartbeat(user_id, f"tool:{name}:start")
+            execution_policy = self.tool_broker.resolve_policy(ctx)
+            started = time.perf_counter()
+
+            try:
+                return await tool_dispatcher.execute(
+                    name=name,
+                    args=args,
+                    execution_policy=execution_policy,
+                    started=started,
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error("Error in tool_executor: %s", exc, exc_info=True)
+                todo_session.mark_step(
+                    "act", "blocked", f"Tool `{name}` exception: {exc}"
+                )
+                await append_session_event(
+                    f"tool_finish:{task_id}:{name}:exception:{exc}"
+                )
+                error_result = {
+                    "ok": False,
+                    "error_code": "system_error",
+                    "message": str(exc),
+                }
+                self._record_tool_profile(
+                    name=name,
+                    result=error_result,
+                    started=started,
+                )
+                return error_result
+
+        system_instruction = self._build_system_instruction(
+            extension_candidates,
+            intent_text=routing_text or last_user_text,
+            runtime_user_id=user_id_str,
+            runtime_policy_ctx=runtime_policy_ctx,
+            tools=tools,
+        )
+
+        suppressed_max_turn_warning = ""
+        max_recovery_attempts = max(1, int(AUTO_RECOVERY_MAX_ATTEMPTS))
+
+        def sanitize_preview(text: str) -> str:
+            if manager_runtime:
+                return _sanitize_manager_text(text, dispatched_worker_labels)
+            return text
+
+        event_handler = OrchestratorEventHandler(
+            user_id=user_id,
+            task_id=str(task_id),
+            task_inbox_id=task_inbox_id,
+            ctx=ctx,
+            todo_session=todo_session,
+            manager_runtime=manager_runtime,
+            session_state_active=runtime_ctx.session_state_active,
+            max_recovery_attempts=max_recovery_attempts,
+            sanitize_preview=sanitize_preview,
+            build_recovery_instruction=self._build_recovery_instruction,
+            append_session_event=append_session_event,
+            update_session_task=update_session_task,
+            update_task_inbox_status=update_task_inbox_status,
+        )
+
+        worker_progress_hook = user_data.get("worker_progress_callback")
+        if not callable(worker_progress_hook):
+            worker_progress_hook = None
+        progress_steps_raw = user_data.get("worker_progress_steps")
+        progress_steps: list[dict[str, Any]] = (
+            [item for item in progress_steps_raw if isinstance(item, dict)]
+            if isinstance(progress_steps_raw, list)
+            else []
+        )
+
+        async def emit_worker_progress(event: str, payload: Dict[str, Any]) -> None:
+            if worker_progress_hook is None:
+                return
+            try:
+                event_name = str(event or "").strip().lower()
+                turn = int(payload.get("turn") or 0)
+                if event_name == "tool_call_started":
+                    tool_name = str(payload.get("name") or "").strip()
+                    if tool_name:
+                        progress_steps.append(
+                            {
+                                "name": tool_name,
+                                "status": "running",
+                                "summary": "",
+                                "turn": turn,
+                            }
+                        )
+                elif event_name == "tool_call_finished":
+                    tool_name = str(payload.get("name") or "").strip()
+                    tool_ok = bool(payload.get("ok"))
+                    summary = str(payload.get("summary") or "").strip()
+                    updated = False
+                    for idx in range(len(progress_steps) - 1, -1, -1):
+                        row = progress_steps[idx]
+                        if str(row.get("name") or "") != tool_name:
+                            continue
+                        if str(row.get("status") or "") != "running":
+                            continue
+                        row["status"] = "done" if tool_ok else "failed"
+                        row["summary"] = summary[:160]
+                        row["turn"] = turn
+                        updated = True
+                        break
+                    if not updated and tool_name:
+                        progress_steps.append(
+                            {
+                                "name": tool_name,
+                                "status": "done" if tool_ok else "failed",
+                                "summary": summary[:160],
+                                "turn": turn,
+                            }
+                        )
+                elif event_name == "final_response":
+                    user_data["worker_progress_final_preview"] = str(
+                        payload.get("text_preview") or ""
+                    )[:180]
+
+                progress_steps[:] = progress_steps[-20:]
+                user_data["worker_progress_steps"] = progress_steps
+
+                running_tool = ""
+                done_tools: list[str] = []
+                failed_tools: list[str] = []
+                for row in progress_steps:
+                    name = str(row.get("name") or "").strip()
+                    status = str(row.get("status") or "").strip().lower()
+                    if not name:
+                        continue
+                    if status == "running":
+                        running_tool = name
+                    elif status == "done":
+                        if name not in done_tools:
+                            done_tools.append(name)
+                    elif status == "failed":
+                        if name not in failed_tools:
+                            failed_tools.append(name)
+
+                snapshot = {
+                    "event": event_name,
+                    "turn": turn,
+                    "updated_at": time.time(),
+                    "running_tool": running_tool,
+                    "done_tools": done_tools[-5:],
+                    "failed_tools": failed_tools[-3:],
+                    "recent_steps": progress_steps[-6:],
+                    "final_preview": str(
+                        user_data.get("worker_progress_final_preview") or ""
+                    )[:180],
+                }
+
+                maybe_coro = worker_progress_hook(snapshot)
+                if inspect.isawaitable(maybe_coro):
+                    await cast(Any, maybe_coro)
+            except Exception as exc:
+                logger.debug("worker progress hook error: %s", exc)
+
+        async def on_agent_event(event: str, payload: Dict[str, Any]):
+            directive = await event_handler.handle(event, payload)
+            await emit_worker_progress(event, payload)
+            return directive
+
+        logger.info("final tools: %s", tools)
+        async for chunk in self.ai_service.generate_response_stream(
+            message_history,
+            tools=tools,
+            tool_executor=tool_executor,
+            system_instruction=system_instruction,
+            event_callback=on_agent_event,
+        ):
+            task_manager.heartbeat(user_id, "streaming")
+            if isinstance(chunk, str) and "工具调用轮次已达上限" in chunk:
+                suppressed_max_turn_warning = chunk
+                continue
+            if manager_runtime and isinstance(chunk, str):
+                yield _sanitize_manager_text(chunk, dispatched_worker_labels)
+            else:
+                yield chunk
+
+        if (
+            event_handler.flags.blocked
+            and event_handler.flags.blocked_reason == "max_turn_limit"
+            and self._should_auto_evolve(
+                intent_text=routing_text or last_user_text,
+                extension_candidates=extension_candidates,
+            )
+        ):
+            todo_session.mark_step(
+                "act",
+                "in_progress",
+                "Primary tools insufficient; attempting automatic skill evolution.",
+            )
+            evolve_ok, evolve_msg = await self._attempt_auto_skill_evolution(
+                ctx=ctx,
+                user_request=routing_text or last_user_text,
+                todo_session=todo_session,
+            )
+
+            if evolve_msg:
+                yield evolve_msg
+
+            if evolve_ok:
+                # Re-route after evolution and run one more loop automatically.
+                reroute_candidates = self.extension_router.route(
+                    routing_text, max_candidates=24
+                )
+                extension_candidates = self._apply_extension_candidate_policy(
+                    reroute_candidates,
+                    intent_text=routing_text or last_user_text,
+                )
+                extension_candidates = [
+                    candidate
+                    for candidate in extension_candidates
+                    if self._runtime_tool_allowed(
+                        runtime_user_id=user_id_str,
+                        platform=platform_name,
+                        tool_name=candidate.tool_name,
+                        kind="tool",
+                    )
+                ]
+                extension_candidates = self._rank_extension_candidates(
+                    extension_candidates
+                )
+                tools = await tooling_assembler.assemble(extension_candidates)
+                tool_dispatcher.set_extension_candidates(extension_candidates)
+                tool_dispatcher.set_available_tool_names(
+                    tooling_assembler.tool_names(tools)
+                )
+
+                system_instruction = self._build_system_instruction(
+                    extension_candidates,
+                    intent_text=routing_text or last_user_text,
+                    runtime_user_id=user_id_str,
+                    runtime_policy_ctx=runtime_policy_ctx,
+                    tools=tools,
+                )
+
+                event_handler.flags.blocked = False
+                event_handler.flags.completed = False
+                event_handler.flags.blocked_reason = ""
+                suppressed_max_turn_warning = ""
+
+                async for chunk in self.ai_service.generate_response_stream(
+                    message_history,
+                    tools=tools,
+                    tool_executor=tool_executor,
+                    system_instruction=system_instruction,
+                    event_callback=on_agent_event,
+                ):
+                    task_manager.heartbeat(user_id, "streaming_after_evolution")
+                    if isinstance(chunk, str) and "工具调用轮次已达上限" in chunk:
+                        suppressed_max_turn_warning = chunk
+                        continue
+                    if manager_runtime and isinstance(chunk, str):
+                        yield _sanitize_manager_text(chunk, dispatched_worker_labels)
+                    else:
+                        yield chunk
+
+            if event_handler.flags.blocked and suppressed_max_turn_warning:
+                yield suppressed_max_turn_warning
+        elif event_handler.flags.blocked and suppressed_max_turn_warning:
+            yield suppressed_max_turn_warning
+
+        if not event_handler.flags.blocked and not event_handler.flags.completed:
+            todo_session.mark_completed("Conversation loop completed.")
+            if runtime_ctx.session_state_active:
+                await update_session_task(
+                    status="done",
+                    result_summary="Conversation loop completed.",
+                    needs_confirmation=False,
+                    confirmation_deadline="",
+                    clear_active=True,
+                )
+                await append_session_event(f"conversation_completed:{task_id}")
+            if task_inbox_id:
+                await task_inbox.complete(
+                    task_inbox_id,
+                    result={"manager_mode": "conversation_completed"},
+                    final_output="Conversation loop completed.",
+                )
+
+    @staticmethod
+    def _build_recovery_instruction(
+        stage: int,
+        max_attempts: int,
+        failures: list[str] | None = None,
+    ) -> str:
+        failure_text = "; ".join([str(item) for item in (failures or [])[:3]])
+        failure_text = failure_text or "unknown"
+        normalized_stage = max(1, min(max_attempts, int(stage)))
+
+        if normalized_stage == 1:
+            strategy = (
+                "优先在同一工具/扩展内自修复并立即重试，"
+                "例如补齐缺失参数、修复输入格式、处理可恢复环境错误。"
+            )
+        elif normalized_stage == 2:
+            strategy = (
+                "不要继续卡在当前扩展；切换到四原语 `read/write/edit/bash` 进行排障与修复，"
+                "再回到目标执行。"
+            )
+        else:
+            strategy = (
+                "尝试备选扩展或备选方案，给出可交付结果；"
+                "若仍失败，输出清晰失败报告并列出已尝试步骤。"
+            )
+
+        return (
+            "系统提示：上一步工具执行失败，任务尚未完成。"
+            f"恢复阶段 {normalized_stage}/{max_attempts}：{strategy} "
+            "除非确实缺少关键必填信息，否则不要先向用户提问。"
+            f"失败摘要：{failure_text}"
+        )
+
+    def _build_system_instruction(
+        self,
+        extension_candidates: list,
+        intent_text: str = "",
+        runtime_user_id: str = "",
+        runtime_policy_ctx: Dict[str, Any] | None = None,
+        tools: List[Dict[str, Any]] | None = None,
+    ) -> str:
+        del extension_candidates
+        del intent_text
+        agent_kind = (
+            str((runtime_policy_ctx or {}).get("agent_kind") or "").strip().lower()
+        )
+        mode = "worker" if agent_kind == "worker" else "manager"
+        return prompt_composer.compose_base(
+            runtime_user_id=runtime_user_id,
+            tools=tools or [],
+            runtime_policy_ctx=runtime_policy_ctx or {},
+            mode=mode,
+        )
+
+    def _resolve_task_workspace_root(
+        self,
+        extension_candidates: list,
+        intent_text: str = "",
+    ) -> str:
+        del extension_candidates
+        staging_path = (X_DEPLOYMENT_STAGING_PATH or "").strip()
+        if not staging_path:
+            return ""
+
+        if not self._is_deployment_intent(intent_text):
+            return ""
+
+        resolved = os.path.abspath(os.path.expanduser(staging_path))
+        try:
+            os.makedirs(resolved, exist_ok=True)
+        except Exception:
+            pass
+        return resolved
+
+    def _is_deployment_intent(self, text: str) -> bool:
+        lowered = (text or "").lower()
+        if not lowered.strip():
+            return False
+        keywords = (
+            "部署",
+            "deploy",
+            "docker compose",
+            "compose",
+            "k8s",
+            "上线",
+            "发布",
+            "install service",
+        )
+        return any(keyword in lowered for keyword in keywords)
+
+    def _apply_extension_candidate_policy(
+        self,
+        extension_candidates: list,
+        intent_text: str = "",
+    ) -> list:
+        del intent_text
+        deduped: List[ExtensionCandidate] = []
+        seen_names: set[str] = set()
+        for candidate in extension_candidates or []:
+            name = getattr(candidate, "name", "")
+            if not name or name in seen_names:
+                continue
+            deduped.append(candidate)
+            seen_names.add(name)
+        return deduped
+
+    def _rank_extension_candidates(
+        self,
+        extension_candidates: list,
+    ) -> list:
+        if not extension_candidates:
+            return []
+        ranked = sorted(
+            extension_candidates,
+            key=lambda candidate: tool_profile_store.score_tool(candidate.tool_name),
+            reverse=True,
+        )
+        return ranked
+
+    def _runtime_tool_allowed(
+        self,
+        *,
+        runtime_user_id: str,
+        platform: str,
+        tool_name: str,
+        kind: str = "tool",
+    ) -> bool:
+        allowed, detail = tool_access_store.is_tool_allowed(
+            runtime_user_id=runtime_user_id,
+            platform=platform,
+            tool_name=tool_name,
+            kind=kind,
+        )
+        if not allowed:
+            log_level = (
+                logging.DEBUG
+                if detail.get("reason") == "worker_memory_disabled"
+                else logging.INFO
+            )
+            logger.log(
+                log_level,
+                "Tool blocked by policy: user=%s tool=%s kind=%s groups=%s reason=%s agent=%s:%s",
+                runtime_user_id,
+                tool_name,
+                kind,
+                ",".join(detail.get("groups") or []),
+                detail.get("reason"),
+                detail.get("agent_kind"),
+                detail.get("agent_id"),
+            )
+        return allowed
+
+    def _record_tool_profile(self, name: str, result: Any, started: float) -> None:
+        elapsed_ms = max(0.0, (time.perf_counter() - started) * 1000.0)
+        success = True
+        if isinstance(result, dict):
+            if "ok" in result:
+                success = bool(result.get("ok"))
+            elif result.get("success") is False:
+                success = False
+            else:
+                text = str(result.get("message") or result.get("summary") or "")
+                success = not text.lower().startswith(("error", "❌"))
+        elif isinstance(result, str):
+            success = not str(result).strip().lower().startswith(("error", "❌"))
+        try:
+            tool_profile_store.record(name, success=success, latency_ms=elapsed_ms)
+        except Exception:
+            logger.debug("Failed to record tool profile: %s", name, exc_info=True)
+
+    def _should_auto_evolve(
+        self,
+        intent_text: str,
+        extension_candidates: list,
+    ) -> bool:
+        if not self.auto_evolve_enabled:
+            return False
+        if self._is_skill_management_intent(intent_text):
+            return True
+        if self._has_evolution_confirmation(intent_text):
+            return True
+        return False
+
+    async def _attempt_auto_skill_evolution(
+        self,
+        ctx: UnifiedContext,
+        user_request: str,
+        todo_session: Any | None = None,
+    ) -> tuple[bool, str]:
+        if not user_request.strip():
+            return False, ""
+
+        result = await self.extension_executor.execute(
+            skill_name="skill_manager",
+            args={"action": "create", "requirement": user_request},
+            ctx=ctx,
+            runtime=self.runtime,
+        )
+        if result.ok:
+            if todo_session:
+                todo_session.heartbeat("auto_evolution:ok")
+                todo_session.mark_step(
+                    "act",
+                    "in_progress",
+                    "Automatic skill evolution succeeded; rerunning task.",
+                )
+            return True, self._sanitize_skill_text(
+                result.text or "🛠️ 自动技能进化完成。"
+            )
+
+        message = result.message or result.error_code or "unknown_error"
+        if todo_session:
+            todo_session.heartbeat(f"auto_evolution:failed:{message}")
+            todo_session.mark_step(
+                "act",
+                "blocked",
+                f"Automatic skill evolution failed: {message}",
+            )
+        return False, f"⚠️ 自动技能进化失败：{message}"
+
+    def _has_evolution_confirmation(self, text: str) -> bool:
+        lowered = (text or "").lower()
+        cues = (
+            "允许创建技能",
+            "同意创建技能",
+            "确认创建技能",
+            "继续进化",
+            "allow evolve",
+            "allow skill creation",
+            "create new skill",
+        )
+        return any(cue in lowered for cue in cues)
+
+    def _is_skill_management_intent(self, text: str) -> bool:
+        lowered = (text or "").lower()
+        if not lowered.strip():
+            return False
+
+        keywords = (
+            "skill_manager",
+            "技能",
+            "skill",
+            "teach",
+            "教我",
+            "创建技能",
+            "新技能",
+            "learned skill",
+            "删除技能",
+            "修改技能",
+            "重载技能",
+        )
+        return any(keyword in lowered for keyword in keywords)
+
+    def _sanitize_skill_text(self, text: str) -> str:
+        if text.startswith("🔇🔇🔇"):
+            return text[3:].lstrip()
+        return text
+
+    def _extract_last_user_text(self, message_history: list) -> str:
         for msg in reversed(message_history):
-            # Compatible handle for dict (legacy) or Content object (google.genai.types)
             if isinstance(msg, dict):
                 role = msg.get("role")
                 parts = msg.get("parts", [])
@@ -46,515 +780,64 @@ class AgentOrchestrator:
                 role = getattr(msg, "role", None)
                 parts = getattr(msg, "parts", [])
 
-            if role == "user":
-                for p in parts:
-                    if isinstance(p, dict) and "text" in p:
-                        last_user_text = p["text"]
-                    elif hasattr(p, "text"):
-                        last_user_text = p.text
+            if role != "user":
+                continue
+
+            texts: List[str] = []
+            for part in parts:
+                if isinstance(part, dict) and "text" in part:
+                    texts.append(str(part["text"]))
+                else:
+                    part_text = getattr(part, "text", None)
+                    if part_text:
+                        texts.append(str(part_text))
+            return "\n".join(texts).strip()
+        return ""
+
+    def _extract_recent_user_text(
+        self,
+        message_history: list,
+        max_messages: int = 3,
+        max_chars: int = 1200,
+    ) -> str:
+        """Extract recent user messages for extension routing continuity."""
+        if max_messages < 1:
+            max_messages = 1
+
+        collected: List[str] = []
+        for msg in reversed(message_history):
+            if isinstance(msg, dict):
+                role = msg.get("role")
+                parts = msg.get("parts", [])
+            else:
+                role = getattr(msg, "role", None)
+                parts = getattr(msg, "parts", [])
+
+            if role != "user":
+                continue
+
+            texts: List[str] = []
+            for part in parts:
+                if isinstance(part, dict) and "text" in part and part.get("text"):
+                    texts.append(str(part["text"]))
+                else:
+                    part_text = getattr(part, "text", None)
+                    if part_text:
+                        texts.append(str(part_text))
+
+            if texts:
+                collected.append("\n".join(texts).strip())
+            if len(collected) >= max_messages:
                 break
 
-        # 1. Gather Tools
-        # Start with base tools (e.g. skill_manager for explicitly managing skills)
-        # Note: We might want a simplified skill_manager tool if we are auto-injecting.
-        tools = []
-
-        # Always include skill_manager for explicit "install", "search" etc commands unless handled purely via NLI
-        # For now, let's keep the generic capability logic but prioritizing matched skills.
-
-        matched_skills = []
-        if last_user_text:
-            # Use a lower threshold to catch more potential candidates
-            # matched_skills = await skill_loader.find_similar_skills(
-            #     last_user_text, threshold=0.4
-            # )
-            pass
-
-        if matched_skills:
-            logger.info(
-                f"Dynamic Skill Injection: Found {len(matched_skills)} matches for '{last_user_text[:20]}...'"
-            )
-            # Create specific tools for these skills
-            # We need to ask ToolRegistry to generate tools for these specific skills
-            specific_tools = tool_registry.get_specific_skill_tools(matched_skills)
-            tools.extend(specific_tools)
-
-        # Add the generic 'call_skill' tool as a fallback (but maybe with reduced description to save tokens?)
-        # Or if we trust the search, we might not need it?
-        # Safety: Keep generic tool but maybe prompt emphasizes using specific ones?
-        # Actually, get_all_tools() returns the generic one.
-        # Let's add the generic one LAST as fallback.
-        tools.extend(tool_registry.get_all_tools())
-
-        # 2. Add Memory Tools
-        if MCP_MEMORY_ENABLED:
-            memory_tools = await self._get_memory_tool_definitions(user_id)
-            if memory_tools:
-                tools.extend(memory_tools)
-
-        # 3. Define Tool Executor (Closure with Context)
-        async def tool_executor(name: str, args: dict) -> str:
-            logger.info(f"Agent invoking tool: {name} with {args}")
-            try:
-                # Dispatch to specific handlers
-                if name == "call_skill" or name.startswith("skill_"):
-                    from agents.skill_agent import (
-                        skill_agent,
-                        SkillDelegationRequest,
-                        SkillFinalReply,
-                        SkillDecision,
-                    )
-
-                    if name == "call_skill":
-                        skill_name = args["skill_name"]
-                        instruction = args["instruction"]
-                    else:
-                        # Dynamic tool: skill_rss_subscribe -> rss_subscribe
-                        # Remove prefix "skill_"
-                        # skill_manager -> skill_manager
-                        safe_name = name[6:] if name != "skill_manager" else name
-
-                        from core.skill_loader import skill_loader
-
-                        # 1. Try exact match (e.g. rss_subscribe)
-                        skill_name = safe_name
-
-                        if not skill_loader.get_skill(skill_name):
-                            # 2. Try hyphenated version (e.g. data_storytelling -> data-storytelling)
-                            alt_name = skill_name.replace("_", "-")
-                            if skill_loader.get_skill(alt_name):
-                                skill_name = alt_name
-
-                        instruction = args["instruction"]
-
-                    # Notify user about skill invocation (ephemeral, not saved)
-
-                    instruction_preview = (
-                        instruction[:200] + "..."
-                        if len(instruction) > 200
-                        else instruction
-                    )
-                    await ctx.reply(
-                        f"⚡ 准备调用 `{skill_name}` 能力，指令：{instruction_preview}"
-                    )
-
-                    full_output = ""
-                    extra_context = ""
-
-                    # Continuous Observation Loop (ReAct Pattern)
-                    # 只有 REPLY 才退出，EXECUTE 和 DELEGATE 都继续循环
-                    MAX_DEPTH = 20
-                    MAX_ROUND_OUTPUT_LEN = 2000  # 每轮结果最大长度
-                    MAX_CONTEXT_LEN = 8000  # 总 context 最大长度
-
-                    # 循环检测变量
-                    last_iteration_output = None
-                    last_decision = None
-                    decision_loop_counter = 0
-                    loop_counter = 0
-
-                    for depth in range(MAX_DEPTH):
-                        delegation = None
-                        execution_result = None
-                        is_final_reply = False
-                        iteration_output = ""
-                        current_decision = None
-
-                        logger.info(
-                            "=============================1================================="
-                        )
-
-                        # Check for cancellation
-                        from core.task_manager import task_manager
-
-                        if task_manager.is_cancelled(user_id):
-                            logger.info(
-                                f"Task cancelled by user {user_id} during tool execution loop"
-                            )
-                            raise asyncio.CancelledError()
-
-                        # 包裹异常捕获，确保错误信息能传递给下一轮
-                        try:
-                            # Execute Skill Agent (Think -> Act)
-                            async for (
-                                chunk,
-                                files,
-                                result_obj,
-                            ) in skill_agent.execute_skill(
-                                skill_name,
-                                instruction,
-                                extra_context=extra_context,
-                                ctx=ctx,
-                            ):
-                                logger.info(
-                                    "=============================2================================="
-                                )
-                                # Check for cancellation during streaming
-                                if task_manager.is_cancelled(user_id):
-                                    raise asyncio.CancelledError()
-
-                                # 检测返回类型
-                                if isinstance(result_obj, SkillDelegationRequest):
-                                    delegation = result_obj
-                                elif isinstance(result_obj, SkillDecision):
-                                    current_decision = result_obj
-                                elif isinstance(result_obj, SkillFinalReply):
-                                    # Agent 明确返回了最终回复
-                                    is_final_reply = True
-                                elif isinstance(result_obj, dict):
-                                    if "ui" in result_obj:
-                                        if "pending_ui" not in ctx.user_data:
-                                            ctx.user_data["pending_ui"] = []
-                                        ctx.user_data["pending_ui"].append(
-                                            result_obj["ui"]
-                                        )
-                                    # 捕获执行结果（用于反馈给下一轮）
-                                    execution_result = result_obj
-
-                                    if chunk:
-                                        # 只在 result_obj 为空（普通文本流）时发送消息
-                                        # 如果是 dict (structured result)，会在后续 execution_result 逻辑中统一发送，避免重复
-                                        # 避免发送 Agent 的中间思考消息（如 "正在思考..."）
-                                        if (
-                                            not isinstance(result_obj, dict)
-                                            and not chunk.startswith("🧠")
-                                            and not chunk.startswith("🔇🔇🔇")
-                                            and not is_final_reply
-                                        ):
-                                            await ctx.reply(chunk)
-                                            logger.info(f"[Round {depth + 1}] {chunk}")
-
-                                    iteration_output += chunk + "\n"
-
-                                if files:
-                                    for filename, content in files.items():
-                                        await ctx.reply_document(
-                                            document=content, filename=filename
-                                        )
-                        except Exception as e:
-                            # 捕获技能执行过程中的异常
-                            error_msg = f"❌ 执行出错: {str(e)}"
-                            logger.error(
-                                f"[Round {depth + 1}] Skill execution error: {e}",
-                                exc_info=True,
-                            )
-
-                            # 将错误信息发送给用户
-                            await ctx.reply(error_msg)
-
-                            # 将错误信息加入 iteration_output 和 execution_result
-                            iteration_output += error_msg + "\n"
-                            execution_result = {"text": error_msg, "error": str(e)}
-
-                        logger.info(
-                            "=============================3================================="
-                        )
-                        full_output += iteration_output
-
-                        # 检查是否是最终回复（Agent 返回 REPLY action）
-                        # 如果 iteration_output 不包含特定的中间状态标记，且没有 delegation，
-                        # 我们需要更精确地判断是否是 REPLY
-                        # 实际上，SkillAgent 在 REPLY 时会直接 yield content 并 return
-                        # 而 EXECUTE 时会 yield 执行结果
-
-                        if delegation:
-                            # === DELEGATE: 执行委托并继续循环 ===
-                            logger.info(
-                                f"[Round {depth + 1}] Delegating to {delegation.target_skill}"
-                            )
-                            await ctx.reply(
-                                f"🔄 正在委托给 `{delegation.target_skill}`: {delegation.instruction}"
-                            )
-
-                            # Execute Delegated Skill
-                            delegated_output = ""
-                            try:
-                                async for (
-                                    d_chunk,
-                                    d_files,
-                                    d_result,
-                                ) in skill_agent.execute_skill(
-                                    delegation.target_skill,
-                                    delegation.instruction,
-                                    ctx=ctx,
-                                ):
-                                    if d_chunk:
-                                        delegated_output += d_chunk + "\n"
-                                    if d_files:
-                                        for f_name, f_content in d_files.items():
-                                            await ctx.reply_document(
-                                                document=f_content, filename=f_name
-                                            )
-                            except Exception as e:
-                                # 捕获委托执行过程中的异常
-                                error_msg = f"❌ 委托执行出错: {str(e)}"
-                                logger.error(
-                                    f"[Round {depth + 1}] Delegation error: {e}",
-                                    exc_info=True,
-                                )
-                                await ctx.reply(error_msg)
-                                delegated_output = error_msg + "\n"
-
-                            # 智能截断
-                            if len(delegated_output) > MAX_ROUND_OUTPUT_LEN:
-                                truncated = delegated_output[:MAX_ROUND_OUTPUT_LEN]
-                                truncated += f"\n...[已截断，原长度 {len(delegated_output)} 字符]"
-                            else:
-                                truncated = delegated_output
-
-                            extra_context += f"\n\n【轮次 {depth + 1} 结果 - {delegation.target_skill}】:\n{truncated}"
-
-                        elif execution_result or iteration_output:
-                            # === EXECUTE: 把执行结果加入 context 并继续循环 ===
-                            logger.info(
-                                "=============================4================================="
-                            )
-                            # 如果有具体的执行结果（如 write_file 返回的 success），加入上下文
-                            if execution_result:
-                                result_text = str(execution_result)
-                                logger.info(
-                                    "=============================5================================="
-                                )
-                                if isinstance(execution_result, dict):
-                                    result_text = execution_result.get(
-                                        "text", str(execution_result)
-                                    )
-
-                                    # [新增] 将执行结果发送给用户（增强可见性）
-                                    # 避免发送纯数据对象的字符串表示，只发送有意义的文本
-                                    if "text" in execution_result and result_text:
-                                        if not result_text.startswith("🔇🔇🔇"):
-                                            await ctx.reply(result_text)
-
-                                if len(result_text) > MAX_ROUND_OUTPUT_LEN:
-                                    result_text = (
-                                        result_text[:MAX_ROUND_OUTPUT_LEN]
-                                        + "...[已截断]"
-                                    )
-
-                                command_info = ""
-                                if current_decision:
-                                    cmd_content = str(current_decision.content)
-                                    # Truncate large params in context to save tokens, but keep enough
-                                    if len(cmd_content) > 500:
-                                        cmd_content = (
-                                            cmd_content[:500] + "...[truncated]"
-                                        )
-
-                                    command_info = f"【轮次 {depth + 1} 操作】: {current_decision.action}"
-                                    if current_decision.execute_type:
-                                        command_info += (
-                                            f" ({current_decision.execute_type})"
-                                        )
-                                    command_info += f"\n参数: {cmd_content}\n"
-
-                                extra_context += f"\n\n{command_info}【轮次 {depth + 1} 执行结果】:\n{result_text}"
-                                logger.info(
-                                    f"[Round {depth + 1}] EXECUTE result captured, continuing..."
-                                )
-                                logger.info(f"Extra context: {extra_context}")
-                                continue
-
-                            # 如果只有文本输出且不是最终回复（例如 Agent 的思考过程）
-                            elif not is_final_reply and iteration_output.strip():
-                                # 忽略纯状态消息
-                                is_status_msg = any(
-                                    marker in iteration_output
-                                    for marker in [
-                                        "正在执行",
-                                        "正在思考",
-                                        "⚙️",
-                                        "🧠",
-                                        "👉 委托给",
-                                    ]
-                                )
-                                if not is_status_msg:
-                                    extra_context += f"\n\n【轮次 {depth + 1} 输出】:\n{iteration_output[:MAX_ROUND_OUTPUT_LEN]}"
-                                    # 注意：这里不continue，以便进行后续的死循环检测
-
-                        # === 死循环检测 (Loop Circuit Breaker) ===
-
-                        # 1. Decision-based Check (Semantic Loop)
-                        if (
-                            last_decision
-                            and current_decision
-                            and current_decision == last_decision
-                        ):
-                            decision_loop_counter += 1
-                            logger.warning(
-                                f"[Loop Detector] Detailed Decision repeated: {decision_loop_counter} times"
-                            )
-                            if decision_loop_counter >= 2:
-                                failure_msg = f"\n\n⚠️ **系统保护**: 检测到 Agent 在连续尝试相同的操作 ({decision_loop_counter + 1} 次)，任务已强制终止。"
-                                await ctx.reply(failure_msg)
-                                full_output += failure_msg
-                                is_final_reply = True
-                        else:
-                            decision_loop_counter = 0
-
-                        last_decision = current_decision
-
-                        # 2. Text-based Check (Output Loop)
-                        # 检查当前轮次的输出是否与上一轮完全一致
-                        current_output_signature = iteration_output.strip()
-
-                        if (
-                            last_iteration_output
-                            and current_output_signature == last_iteration_output
-                        ):
-                            loop_counter += 1
-                            logger.warning(
-                                f"[Loop Detector] Detected identical output for {loop_counter} rounds."
-                            )
-
-                            # 放宽阈值：允许连续 2 次重复（即允许重试 1 次）
-                            # 只有当连续第 3 次出现相同输出时（loop_counter=2），才触发熔断
-                            if loop_counter >= 2:
-                                failure_msg = f"\n\n⚠️ **系统保护**: 检测到 Agent 在连续重试相同的操作 ({loop_counter + 1} 次)，任务已强制终止。"
-                                await ctx.reply(failure_msg)
-                                full_output += failure_msg
-                                is_final_reply = True  # 触发循环退出
-                        else:
-                            loop_counter = 0
-
-                        last_iteration_output = current_output_signature
-
-                        if is_final_reply:
-                            logger.info(
-                                f"[Round {depth + 1}] Final REPLY detected, breaking loop"
-                            )
-                            break
-
-                        # 上下文长度管理
-                        if len(extra_context) > MAX_CONTEXT_LEN:
-                            keep_len = 6000
-                            summary = f"【早期轮次摘要】: 之前已完成 {depth} 轮操作。\n"
-                            extra_context = summary + extra_context[-keep_len:]
-
-                        logger.info(
-                            f"[Round {depth + 1}] extra_context: {extra_context}"
-                        )
-                        logger.info(
-                            f"[Round {depth + 1}] extra_context 长度: {len(extra_context)}"
-                        )
-
-                    if not full_output.strip():
-                        logger.warning(f"Skill {skill_name} returned empty output!")
-                        return None
-
-                    logger.info(
-                        f"Skill {skill_name} completed after {depth + 1} rounds, output length: {len(full_output)}"
-                    )
-                    return f"Skill Execution Output:\n{full_output}"
-
-                # Memory Tools (Lazy Connect)
-                else:
-                    # Try to see if it's a memory tool
-                    if self._is_memory_tool(name):
-                        logger.info(
-                            f"Connecting to Memory Server for tool execution: {name}"
-                        )
-                        memory_server = await self._get_active_memory_server(user_id)
-                        if memory_server:
-                            return await memory_server.call_tool(name, args)
-
-                    return f"Error: Unknown tool '{name}'"
-
-            except Exception as e:
-                logger.error(f"Error in tool_executor: {e}", exc_info=True)
-                return f"System Error: {str(e)}"
-
-        # 4. Generate Response
-        import datetime
-
-        current_time_str = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S %A")
-
-        # Inject Skill Awareness - User Feedback Optimization
-        # Only inject skill_manager details to save context and encourage dynamic lookup
-        skill_mgr = skill_loader.get_skill("skill_manager")
-        skill_instruction = ""
-
-        if skill_mgr:
-            skill_instruction = (
-                f"\n\n【系统核心能力】\n"
-                f"你不仅仅是一个聊天机器人，你拥有完整的技能管理系统。\n"
-                f"skill_manager：{skill_mgr['description']}\n"
-            )
-        else:
-            logger.warning("Skill Manager not found during prompt generation!")
-
-        system_instruction = DEFAULT_SYSTEM_PROMPT
-        system_instruction += skill_instruction
-        system_instruction += "在你使用call_skill时，你不需要了解skill的详细信息，直接使用自然语言发送指令即可，SkillAgent会处理后续的调用。"
-        # system_instruction += "\n⚠️ **提示**：系统可能安装了其他数百个技能。如果你需要特定的能力（如绘制图表、Docker管理等），请务必先调用 `skill_manager`来查找，而不是假设自己不能做。"
-
-        if MCP_MEMORY_ENABLED:
-            # Use memory guide if enabled, but we avoid eager connection
-            system_instruction += "\n\n" + MEMORY_MANAGEMENT_GUIDE
-
-        # Append dynamic time context
-        system_instruction += f"\n\n【当前系统时间】: {current_time_str}"
-
-        async for chunk in self.ai_service.generate_response_stream(
-            message_history,
-            tools=tools,
-            tool_executor=tool_executor,
-            system_instruction=system_instruction,
-        ):
-            yield chunk
-
-    async def _get_memory_tool_definitions(self, user_id: int):
-        """
-        Get memory tool definitions (schemas).
-        Uses caching to avoid connecting on every request.
-        """
-        if self._memory_tools_cache:
-            return self._memory_tools_cache
-
-        try:
-            # First time: Need to connect and fetch
-            logger.info("Fetching Memory Tool Definitions (One-time init)...")
-            from mcp_client import mcp_manager
-            from mcp_client.tools_bridge import convert_mcp_tools_to_gemini
-            from mcp_client.memory import register_memory_server
-
-            register_memory_server()
-            # We start server just to get tools, then we can let it be (manager handles process)
-            memory_server = await mcp_manager.get_server("memory", user_id=user_id)
-
-            if memory_server and memory_server.session:
-                mcp_tools_result = await memory_server.session.list_tools()
-                gemini_funcs = convert_mcp_tools_to_gemini(mcp_tools_result.tools)
-
-                self._memory_tools_cache = gemini_funcs
-                return gemini_funcs
-        except Exception as e:
-            logger.error(f"Failed to fetch memory tools: {e}")
-            pass
-        return None
-
-    async def _get_active_memory_server(self, user_id: int):
-        """
-        Get an active connection to the memory server for EXECUTION.
-        """
-        try:
-            from mcp_client import mcp_manager
-            from mcp_client.memory import register_memory_server
-
-            register_memory_server()
-            return await mcp_manager.get_server("memory", user_id=user_id)
-        except Exception:
-            return None
-
-    def _is_memory_tool(self, name: str) -> bool:
-        """Check if tool name belongs to memory tools"""
-        if not self._memory_tools_cache:
-            return False
-        # Check against cached definitions
-        for tool in self._memory_tools_cache:
-            if tool.get("name") == name:
-                return True
-        return False
+        if not collected:
+            return ""
+
+        collected.reverse()
+        merged = "\n".join([item for item in collected if item])
+        if len(merged) > max_chars:
+            merged = merged[-max_chars:]
+        return merged
 
 
 agent_orchestrator = AgentOrchestrator()

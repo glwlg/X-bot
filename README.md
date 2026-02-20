@@ -23,7 +23,7 @@ X-Bot 现已支持多平台运行，一套代码，无缝体验：
 ## ✨ 核心功能
 
 ### 🤖 强大的 AI 能力
--   **多轮智能对话**：基于 Gemini 2.0 Flash 模型，支持深层上下文理解。
+-   **多轮智能对话**：基于 OpenAI 对话模型，支持深层上下文理解。
 -   **🧠 长期记忆 (New)**：
     -   **个性化记忆**：自动记住你的偏好、习惯和重要信息（如“我住在北京”，“不要吃辣”）。
     -   **隐私隔离**：采用**物理级文件隔离**架构，每个用户的记忆存储在独立的加密空间，绝无数据混淆风险。
@@ -34,7 +34,7 @@ X-Bot 现已支持多平台运行，一套代码，无缝体验：
     -   **文档分析**：支持 PDF 和 DOCX 文档，提取内容并回答相关问题。
 -   **网页摘要**：发送链接，自动抓取网页内容并生成精简摘要。
 - **AI 绘图 (New)**：
-    -   **官方模型**：集成 Google **Imagen 3** (via Vertex AI)，生成质量极高。
+    -   **官方模型**：集成 OpenAI **gpt-image-1**，生成质量极高。
     -   **简单指令**：只需说 "画一只猫" 或 "生成赛博朋克风格的街道"。
     -   **独立通道**：支持配置独立的官方 API Key，与对话 LLM 隔离，确保稳定性。
 
@@ -45,10 +45,10 @@ X-Bot 现已支持多平台运行，一套代码，无缝体验：
     -   **秒传技术**：智能文件缓存与去重，已下载内容无需重复下载。
     -   **大文件提示**：若视频/音频超过 Telegram 20MB 下载限制，Bot 会给出友好提示。
 
-### 📊 数据持久化与统计
--   **SQLite 数据库**：所有数据（对话历史、文件映射、用户统计）持久化存储。
+### 📊 数据持久化
+-   **文件系统存储**：用户对话、订阅、提醒与偏好数据持久化到 `data/` 目录。
+-   **无兼容层**：仓储层仅保留文件系统实现，不再包含数据库迁移或 DB shim。
 -   **Docker 卷映射**：重启容器不丢失任何数据。
--   **使用统计**：通过 `/stats` 命令随时查看个人使用数据。
 
 ## ✨ 进阶功能
 
@@ -102,7 +102,7 @@ X-Bot 现已支持多平台运行，一套代码，无缝体验：
     -   发送 "订阅这个RSS https://..." -> 自动添加订阅
     -   发送 "监控关键词 AI" -> 自动订阅 Google News
     -   发送 "帮我关注英伟达股票" -> 自动添加自选股
-    -   发送 "列出我的订阅" -> 自动查询数据库
+    -   发送 "列出我的订阅" -> 自动查询用户状态文件
 
 ### 🧬 Skill 自进化系统 (V2)
 -   **无师自通**：遇到未知指令（如 "查询 GitHub 最新 Commit"），Bot 会自动编写 Python 代码并热加载新技能，实现即时能力扩展。
@@ -119,17 +119,19 @@ X-Bot 现已支持多平台运行，一套代码，无缝体验：
 ### 2. 获取配置
 创建一个 `.env` 文件（参考 `.env.example`）：
 
+```env
 # Telegram (Optional)
 TELEGRAM_BOT_TOKEN="你的 Telegram Bot Token"
 
 # Discord (Optional)
 DISCORD_BOT_TOKEN="你的 Discord Bot Token"
 
-# Gemini AI (https://aistudio.google.com/)
-GEMINI_API_KEY="你的 API Key"
-GEMINI_MODEL="gemini-2.0-flash"
-GEMINI_IMAGE_API_KEY="你的官方API Key" # (可选) 用于官方 Vertex AI 画图接口
-CREATOR_MODEL="gemini-2.0-pro-exp-02-11" # 用于生成 Skill 代码的强力模型
+# OpenAI (https://platform.openai.com/)
+LLM_API_KEY="你的 API Key"
+CORE_MODEL="gpt-4o-mini"
+ROUTING_MODEL="gpt-4o-mini"
+CREATOR_MODEL="gpt-4o" # 用于生成 Skill 代码的强力模型
+OPENAI_IMAGE_MODEL="gpt-image-1"
 ```
 
 ### 3. 一键启动
@@ -138,13 +140,13 @@ docker compose up --build -d
 ```
 
 ### 4. 数据管理
-所有持久化数据存储在 `./data`（数据库）、`./downloads`（媒体）和 `./skills`（技能）目录。
+所有持久化数据存储在 `./data`（文件状态）、`./downloads`（媒体）和 `./skills`（技能）目录。
 
 ### 5. 权限管理
  Bot 启动后，管理员可以使用以下命令动态管理允许使用的用户白名单：
  - `/adduser <user_id> [备注]` : 添加用户到白名单
  - `/deluser <user_id>` : 从白名单移除用户
- - 所有白名单用户的权限数据将持久化保存在数据库中。
+ - 所有白名单用户的权限数据将持久化保存在 `data/system/repositories/allowed_users.md`。
 
 ## 🤖 使用指南
 
@@ -155,7 +157,6 @@ docker compose up --build -d
 -   `/teach` - 教 Bot 新能力 (Core!)
 -   `/skills` - 查看拥有的能力
 -   `/feature` - 提交新功能需求
--   `/stats` - 查看我的使用统计
 -   `/help` - 查看帮助信息
 -   `/adduser` / `/deluser` - 用户权限管理（仅管理员）
 

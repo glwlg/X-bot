@@ -30,7 +30,7 @@ async def check_permission(ctx: UnifiedContext) -> bool:
 # --- Skill Entry Point ---
 
 
-async def execute(ctx: UnifiedContext, params: dict) -> Dict[str, Any]:
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, Any]:
     """执行视频下载 (Stateless/AI called)"""
     url = params.get("url", "")
     format_type = params.get("format", "video")
@@ -281,7 +281,7 @@ async def process_video_download(
                     file_id = sent_message.document.file_id
 
                 if file_id:
-                    from repositories import save_video_cache
+                    from core.state_store import save_video_cache
 
                     await save_video_cache(file_id, file_path)
                     logger.info(f"Video cached: {file_id} -> {file_path}")
@@ -512,7 +512,8 @@ async def handle_large_file_action(ctx: UnifiedContext) -> None:
             await ctx.edit_message(
                 ctx.message.id, "📝 音频处理完成，正在通过 AI 生成摘要..."
             )
-            from core.config import gemini_client, GEMINI_MODEL
+            from core.config import GEMINI_MODEL, openai_async_client
+            from services.openai_adapter import generate_text
 
             contents = [
                 {
@@ -531,11 +532,15 @@ async def handle_large_file_action(ctx: UnifiedContext) -> None:
             ]
 
             try:
-                response = await gemini_client.aio.models.generate_content(
-                    model=GEMINI_MODEL, contents=contents
+                if openai_async_client is None:
+                    raise RuntimeError("OpenAI async client is not initialized")
+                summary_body = await generate_text(
+                    async_client=openai_async_client,
+                    model=GEMINI_MODEL,
+                    contents=contents,
                 )
-                if response.text:
-                    summary_text = f"📝 **视频内容摘要**\n\n{response.text}"
+                if summary_body:
+                    summary_text = f"📝 **视频内容摘要**\n\n{summary_body}"
                     await ctx.reply(summary_text)
                     await add_message(
                         ctx.platform_ctx, ctx.message.user.id, "model", summary_text

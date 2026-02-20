@@ -3,14 +3,17 @@
 """
 
 import re
-import json
 import logging
 import asyncio
 import os
+import shlex
+import shutil
 import httpx
-from bs4 import BeautifulSoup
+from pathlib import Path
+from uuid import uuid4
 
-from core.config import gemini_client, GEMINI_MODEL, COOKIES_FILE
+from core.config import GEMINI_MODEL, openai_client
+from services.openai_adapter import generate_text_sync
 
 logger = logging.getLogger(__name__)
 
@@ -23,129 +26,117 @@ def extract_urls(text: str) -> list[str]:
     return URL_PATTERN.findall(text)
 
 
-# 视频平台域名检测
-VIDEO_DOMAINS = [
-    "youtube.com",
-    "youtu.be",
-    "twitter.com",
-    "x.com",
-    "instagram.com",
-    "tiktok.com",
-    "bilibili.com",
-]
+def _playwright_cli_command() -> list[str]:
+    raw = str(os.getenv("PLAYWRIGHT_CLI_COMMAND") or "").strip()
+    if raw:
+        return [part for part in shlex.split(raw) if part]
+    binary = shutil.which("playwright-cli")
+    if binary:
+        return [binary]
+    allow_npx = str(os.getenv("PLAYWRIGHT_CLI_ALLOW_NPX", "false")).lower()
+    if allow_npx in {"1", "true", "yes", "on"}:
+        return ["npx", "-y", "@playwright/cli@latest"]
+    return []
 
 
-def is_video_platform(url: str) -> bool:
-    """检查是否为支持的视频平台 URL"""
-    return any(domain in url for domain in VIDEO_DOMAINS)
-
-
-async def fetch_video_metadata(url: str) -> str | None:
-    """使用 yt-dlp 获取视频/帖子元数据"""
+async def _run_command(command: list[str], timeout_sec: float) -> tuple[int, str, str]:
+    proc = await asyncio.create_subprocess_exec(
+        *command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
     try:
-        # 检查 cookies 文件
-        cookies_arg = []
-        if os.path.exists(COOKIES_FILE):
-            cookies_arg = ["--cookies", COOKIES_FILE]
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout_sec)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.communicate()
+        return 124, "", "timeout"
+    return (
+        int(proc.returncode or 0),
+        stdout.decode("utf-8", errors="ignore"),
+        stderr.decode("utf-8", errors="ignore"),
+    )
 
-        # 使用 yt-dlp 获取 JSON 元数据 (不下载)
-        command = (
-            [
-                "yt-dlp",
-                "--dump-json",
-                "--skip-download",
-                "--no-warnings",
-                "--no-playlist",
-            ]
-            + cookies_arg
-            + [
-                # 为了防止被 X/Twitter 限制，尝试使用 cookies-from-browser 或者简单的 UA 伪装
-                # 这里暂时只依赖 yt-dlp 内置的反爬能力
-                url
-            ]
+
+def _extract_snapshot_path(snapshot_stdout: str) -> str:
+    text = str(snapshot_stdout or "")
+    match = re.search(r"\[Snapshot\]\(([^)]+)\)", text)
+    if not match:
+        return ""
+    return str(match.group(1) or "").strip()
+
+
+async def fetch_with_playwright_cli_snapshot(url: str) -> str | None:
+    command_prefix = _playwright_cli_command()
+    if not command_prefix:
+        return None
+
+    session_id = f"xbot-{uuid4().hex[:8]}"
+    output_root = Path(os.getenv("PLAYWRIGHT_CLI_OUTPUT_DIR", "/tmp/xbot-playwright"))
+    output_root.mkdir(parents=True, exist_ok=True)
+    snapshot_file = output_root / f"snapshot-{session_id}.yml"
+
+    browser = str(os.getenv("PLAYWRIGHT_CLI_BROWSER", "chrome") or "").strip()
+    open_command = [*command_prefix, f"-s={session_id}", "open", url]
+    if browser:
+        open_command.append(f"--browser={browser}")
+
+    close_command = [*command_prefix, f"-s={session_id}", "close"]
+    try:
+        open_code, _open_out, open_err = await _run_command(
+            open_command, timeout_sec=60
         )
-
-        proc = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-
-        stdout, stderr = await proc.communicate()
-
-        if proc.returncode != 0:
-            logger.warning(f"yt-dlp metadata fetch failed for {url}: {stderr.decode()}")
+        if open_code != 0:
+            logger.warning(
+                "playwright-cli open failed for %s: %s",
+                url,
+                open_err.strip()[:300],
+            )
             return None
 
-        data = json.loads(stdout.decode())
+        snapshot_command = [
+            *command_prefix,
+            f"-s={session_id}",
+            "snapshot",
+            f"--filename={snapshot_file}",
+        ]
+        snapshot_code, snapshot_out, snapshot_err = await _run_command(
+            snapshot_command,
+            timeout_sec=60,
+        )
+        if snapshot_code != 0:
+            logger.warning(
+                "playwright-cli snapshot failed for %s: %s",
+                url,
+                snapshot_err.strip()[:300],
+            )
+            return None
 
-        title = data.get("title", "")
-        description = data.get("description", "")
-        uploader = data.get("uploader", "")
+        resolved_path = snapshot_file
+        if not resolved_path.exists():
+            extracted = _extract_snapshot_path(snapshot_out)
+            if extracted:
+                maybe_path = Path(extracted)
+                if not maybe_path.is_absolute():
+                    maybe_path = Path.cwd() / maybe_path
+                resolved_path = maybe_path
 
-        # 针对 X/Twitter 特别处理：description 通常就是推文内容
-        content = f"平台：{data.get('extractor_key', 'Unknown')}\n"
-        content += f"发布者：{uploader}\n"
-        content += f"标题/内容：{title}\n"
-        if description and description != title:
-            content += f"详细描述：\n{description}\n"
+        if not resolved_path.exists() or not resolved_path.is_file():
+            logger.warning("playwright-cli snapshot file not found for %s", url)
+            return None
 
-        return content
-
-    except Exception as e:
-        logger.error(f"Error fetching video metadata: {e}")
+        content = resolved_path.read_text(encoding="utf-8", errors="ignore").strip()
+        if not content:
+            return None
+        return f"【通过 Playwright CLI 获取的页面 Markdown 快照】\n\n{content}"
+    except Exception as exc:
+        logger.warning("playwright-cli fetch failed for %s: %s", url, exc)
         return None
-
-
-async def fetch_with_browser_snapshot(url: str) -> str | None:
-    """
-    使用 MCP Playwright 获取网页快照（回退机制）
-
-    用于处理静态抓取失败或需要 JS 渲染的页面。
-    """
-    logger.info(f"Attempting to fetch {url} using MCP browser_snapshot...")
-    try:
-        # 动态导入避免循环引用
-        from mcp_client.manager import mcp_manager
-        from mcp_client.playwright import register_playwright_server
-
-        # 确保服务已注册
-        register_playwright_server()
-
-        # 步骤1：导航
-        logger.info(f"MCP: Navigating to {url}...")
-        await mcp_manager.call_tool("playwright", "browser_navigate", {"url": url})
-
-        # 步骤2：等待加载
-        logger.info("MCP: Waiting for page load...")
+    finally:
         try:
-            await mcp_manager.call_tool("playwright", "browser_wait_for", {"time": 3})
-        except Exception as e:
-            logger.warning(f"MCP wait failed: {e}")
-
-        # 步骤3：获取快照
-        logger.info("MCP: Taking snapshot...")
-        result = await mcp_manager.call_tool("playwright", "browser_snapshot", {})
-
-        # 解析结果
-        # browser_snapshot 通常返回 TextContent
-        content = ""
-        if isinstance(result, list):
-            for item in result:
-                if hasattr(item, "text"):
-                    content += item.text + "\n"
-        elif hasattr(result, "text"):
-            content = result.text
-
-        if content:
-            logger.info(f"MCP snapshot successful, length: {len(content)}")
-            return f"【通过 Playwright 获取的页面快照】\n\n{content}"
-
-        return None
-
-    except Exception as e:
-        logger.error(f"MCP browser_snapshot failed: {e}")
-        return None
+            await _run_command(close_command, timeout_sec=20)
+        except Exception:
+            pass
 
 
 async def fetch_webpage_content(url: str) -> str | None:
@@ -159,47 +150,13 @@ async def fetch_webpage_content(url: str) -> str | None:
         网页文本内容，如果失败返回 None
     """
 
-    # -----------------------------------------------------------------
-    # 策略升级：如果是 Google News 链接，先尝试解码还原真实 URL
-    # -----------------------------------------------------------------
-    if "news.google.com" in url or "google.com/news" in url:
-        try:
-            logger.info(
-                f"Detected Google News URL, decoding with googlenewsdecoder: {url}"
-            )
-            from googlenewsdecoder import gnewsdecoder
+    prefer_cli = str(os.getenv("WEB_BROWSER_PREFER_PLAYWRIGHT_CLI", "true")).lower()
+    if prefer_cli in {"1", "true", "yes", "on"}:
+        cli_content = await fetch_with_playwright_cli_snapshot(url)
+        if cli_content:
+            return cli_content
 
-            # gnewsdecoder 是同步函数，包裹在 executor 中运行以免阻塞
-            def decode_func():
-                return gnewsdecoder(url, interval=1)
-
-            decoded_result = await asyncio.to_thread(decode_func)
-
-            if decoded_result.get("status"):
-                real_url = decoded_result.get("decoded_url")
-                if real_url:
-                    logger.info(
-                        f"Successfully decoded Google News URL: {url} -> {real_url}"
-                    )
-                    url = real_url
-            else:
-                logger.warning(
-                    f"Google News decoding failed: {decoded_result.get('message')}"
-                )
-        except Exception as e:
-            logger.error(f"Error decoding Google News URL: {e}")
-
-    # -----------------------------------------------------------------
-    # 策略升级：如果是视频平台，优先尝试使用 yt-dlp 获取元数据
-    # 这能解决 X (Twitter) 等前端渲染页面的抓取问题
-    # -----------------------------------------------------------------
-    if is_video_platform(url):
-        logger.info(f"Detected video platform URL, trying yt-dlp extraction: {url}")
-        video_content = await fetch_video_metadata(url)
-        if video_content:
-            return f"【从视频平台提取的元数据】\n{video_content}"
-        logger.info("yt-dlp extraction failed, falling back to standard scraping.")
-
+    logger.info("Playwright CLI unavailable, fallback to plain HTTP fetch: %s", url)
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             response = await client.get(
@@ -209,112 +166,13 @@ async def fetch_webpage_content(url: str) -> str | None:
                 },
             )
             response.raise_for_status()
-
-            # 解析 HTML (CPU bound operation, offload to thread)
-            def parse_html(html_content):
-                soup = BeautifulSoup(html_content, "html.parser")
-
-                # 移除脚本和样式
-                for script in soup(["script", "style", "nav", "footer", "header"]):
-                    script.decompose()
-
-                # 获取标题
-                title = soup.title.string if soup.title else ""
-
-                # 获取正文内容
-                # 优先尝试 article 标签
-                article = soup.find("article")
-                if article:
-                    text = article.get_text(separator="\n", strip=True)
-                else:
-                    # 否则获取 body 内容
-                    body = soup.find("body")
-                    if body:
-                        text = body.get_text(separator="\n", strip=True)
-                    else:
-                        text = soup.get_text(separator="\n", strip=True)
-                return title, text
-
-            title, text = await asyncio.to_thread(parse_html, response.text)
-
-            # 限制文本长度（避免 token 超限）
-            max_length = 8000
+            text = str(response.text or "")
+            max_length = 12000
             if len(text) > max_length:
                 text = text[:max_length] + "..."
-
-            # -----------------------------------------------------------------
-            # 增加网页有效性校验 (防止 AI 总结错误页面)
-            # -----------------------------------------------------------------
-
-            # 2. 检查常见错误关键字 (JavaScript, Error page, etc)
-            error_keywords = [
-                "JavaScript is disabled",
-                "enable JavaScript",
-                "browser is not supported",
-                "Something went wrong",
-                "Please wait...",
-                "Just a moment...",
-                "Checking your browser",
-                "403 Forbidden",
-                "404 Not Found",
-                "Access Denied",
-                "JavaScript 已经被禁用",
-                "请启用 JavaScript",
-                "Google News",  # Google News interstitial page title often contains this
-            ]
-
-            # 检查前 500 个字符即可 (通常错误提示在最前面)
-            preview_text = text[:500].lower()
-            needs_fallback = False
-
-            for ignored in error_keywords:
-                if ignored.lower() in preview_text:
-                    logger.warning(f"Detected invalid content ('{ignored}') for {url}")
-                    needs_fallback = True
-                    break
-
-            # 1. 检查文本长度，太短也视为无效
-            if len(text.strip()) < 50:
-                logger.warning(
-                    f"Extracted content too short ({len(text)} chars) for {url}."
-                )
-                needs_fallback = True
-
-            if needs_fallback:
-                # 策略升级：使用 MCP Browser Snapshot 进行回退
-                logger.info(f"Falling back to MCP browser_snapshot for {url}")
-                snapshot_content = await fetch_with_browser_snapshot(url)
-                if snapshot_content:
-                    return snapshot_content
-
-                # 如果 MCP 也失败，尝试 yt-dlp 兜底
-                logger.info(f"MCP fallback failed, trying yt-dlp for {url}")
-                video_content = await fetch_video_metadata(url)
-                if video_content:
-                    return f"【通过工具提取的元数据】\n{video_content}"
-                return None
-
-            return f"标题：{title}\n\n内容：\n{text}"
-
+            return f"【HTTP 原始页面内容】\n\n{text}"
     except Exception as e:
         logger.error(f"Failed to fetch webpage: {e}")
-
-        # 出错时优先尝试 MCP Browser Snapshot
-        try:
-            logger.info(f"Exception occurred, trying MCP browser_snapshot for {url}")
-            snapshot_content = await fetch_with_browser_snapshot(url)
-            if snapshot_content:
-                return snapshot_content
-        except Exception as mcp_e:
-            logger.error(f"MCP fallback also failed: {mcp_e}")
-
-        # 最后尝试 yt-dlp
-        try:
-            video_content = await fetch_video_metadata(url)
-            if video_content:
-                return f"【通过工具提取的元数据】\n{video_content}"
-        except:
-            pass
         return None
 
 
@@ -344,8 +202,10 @@ async def summarize_webpage(url: str) -> str:
             "摘要应该简洁明了，一般不超过 200 字。"
         )
 
-        # 使用 Gemini 生成摘要
-        response = gemini_client.models.generate_content(
+        if openai_client is None:
+            raise RuntimeError("OpenAI sync client is not initialized")
+        summary = generate_text_sync(
+            sync_client=openai_client,
             model=GEMINI_MODEL,
             contents=prompt,
             config={
@@ -353,8 +213,8 @@ async def summarize_webpage(url: str) -> str:
             },
         )
 
-        if response.text:
-            return f"📄 **网页摘要**\n\n🔗 {url}\n\n{response.text}"
+        if summary:
+            return f"📄 **网页摘要**\n\n🔗 {url}\n\n{summary}"
         else:
             return f"❌ 无法生成摘要：{url}"
 
