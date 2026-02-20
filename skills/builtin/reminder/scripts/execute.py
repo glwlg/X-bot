@@ -85,6 +85,41 @@ async def _process_remind_logic(
 CONVERSATION_END = -1
 
 
+def _parse_remind_command(text: str) -> tuple[str, str, str]:
+    raw = str(text or "").strip()
+    if not raw:
+        return "help", "", ""
+
+    parts = raw.split(maxsplit=2)
+    if not parts:
+        return "help", "", ""
+    if not parts[0].startswith("/remind"):
+        return "help", "", ""
+    if len(parts) == 1:
+        return "help", "", ""
+
+    sub = str(parts[1] or "").strip().lower()
+    if sub in {"help", "h", "?"}:
+        return "help", "", ""
+    if len(parts) < 3:
+        return "help", "", ""
+
+    return "set", str(parts[1]).strip(), str(parts[2]).strip()
+
+
+def _remind_usage_text() -> str:
+    return (
+        "⏰ **定时提醒使用帮助**\n\n"
+        "用法：\n"
+        "• `/remind <时间> <内容>`\n"
+        "• `/remind help`\n\n"
+        "示例：\n"
+        "• `/remind 10m 喝水`\n"
+        "• `/remind 1h30m 休息一下`\n\n"
+        "时间单位支持：s(秒), m(分), h(时), d(天)"
+    )
+
+
 async def remind_command(ctx: UnifiedContext) -> int:
     """处理 /remind 命令"""
     # check permission logic if needed, usually adapter_manager handles basic routing,
@@ -95,24 +130,14 @@ async def remind_command(ctx: UnifiedContext) -> int:
     if not await is_user_allowed(ctx.message.user.id):
         return CONVERSATION_END
 
-    text = ctx.message.text
-    parts = text.split(maxsplit=2)
-
-    # If standard command "/remind 10m content"
-    if len(parts) >= 3:
-        # parts[0] is /remind, parts[1] time, parts[2] content
-        result = await _process_remind_logic(ctx, parts[1], parts[2])
+    mode, time_str, content = _parse_remind_command(ctx.message.text or "")
+    if mode == "set":
+        result = await _process_remind_logic(ctx, time_str, content)
         await ctx.reply(result.get("text"))
         return CONVERSATION_END
 
-    # Interactive mode
-    await ctx.reply(
-        {
-            "text": "⏰ **设置定时提醒**\n\n请发送您想要的提醒时间和内容。\n格式：`<时间> <内容>`\n示例：\n• 10m 喝水\n• 1h 开会\n\n发送 /cancel 取消。",
-            "ui": {},
-        }
-    )
-    return WAITING_FOR_REMIND_INPUT
+    await ctx.reply({"text": _remind_usage_text(), "ui": {}})
+    return CONVERSATION_END
 
 
 async def handle_remind_input(ctx: UnifiedContext) -> int:

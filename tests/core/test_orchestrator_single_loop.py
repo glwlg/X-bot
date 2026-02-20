@@ -293,7 +293,6 @@ async def test_orchestrator_prompt_includes_runtime_and_skill_briefs(monkeypatch
     assert "ext_deployment_manager" not in captured["tool_names"]
     assert "ext_skill_manager" not in captured["tool_names"]
     assert "【SOUL】" in captured["system_instruction"]
-    assert "【可用工具】" in captured["system_instruction"]
     assert "ext_deployment_manager" not in captured["system_instruction"]
     assert "【运行环境事实】" not in captured["system_instruction"]
 

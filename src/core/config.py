@@ -141,12 +141,6 @@ WAITING_FOR_MONITOR_KEYWORD = 4
 WAITING_FOR_SUBSCRIBE_URL = 5
 WAITING_FOR_FEATURE_INPUT = 6
 
-# MCP 配置
-MCP_ENABLED = os.getenv("MCP_ENABLED", "true").lower() == "true"
-MCP_PLAYWRIGHT_IMAGE = os.getenv(
-    "MCP_PLAYWRIGHT_IMAGE", "mcr.microsoft.com/playwright/mcp:1.51.0-noble"
-)
-MCP_TIMEOUT_SECONDS = int(os.getenv("MCP_TIMEOUT_SECONDS", "60"))
 # Internal Search Service URL (SearXNG)
 SEARXNG_URL = os.getenv("SEARXNG_URL")
 # Skill Context Injection Mode: 'full' (default), 'search_first', 'compact'

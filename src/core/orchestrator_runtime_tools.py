@@ -3,9 +3,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Dict, List, Set
 
+from core.skill_arg_planner import skill_arg_planner
+from core.task_inbox import task_inbox
 from core.tool_registry import tool_registry
 from core.tools.dispatch_tools import dispatch_tools
 from core.tools.extension_tools import extension_tools
+from services.md_converter import adapt_md_file_for_platform
 
 RuntimeToolAllowed = Callable[..., bool]
 RecordToolProfile = Callable[[str, Any, float], None]
@@ -59,7 +62,7 @@ class RuntimeToolAssembler:
                 filtered.append(item)
         return filtered
 
-    async def assemble(self, extension_candidates: list) -> List[Any]:
+    async def assemble(self, extension_candidates: list[Any]) -> List[Any]:
         merged_tools: List[Any] = []
         merged_tools.extend(tool_registry.get_core_tools())
         merged_tools.extend(tool_registry.get_manager_tools())
@@ -87,7 +90,7 @@ class ToolCallDispatcher:
     extension_map: Dict[str, Any] = field(default_factory=dict)
     available_tool_names: Set[str] = field(default_factory=set)
 
-    def set_extension_candidates(self, extension_candidates: list) -> None:
+    def set_extension_candidates(self, extension_candidates: list[Any]) -> None:
         self.extension_map = {
             str(getattr(candidate, "tool_name", "") or ""): candidate
             for candidate in (extension_candidates or [])
@@ -96,6 +99,67 @@ class ToolCallDispatcher:
 
     def set_available_tool_names(self, names: Set[str]) -> None:
         self.available_tool_names = set(names or set())
+
+    def _extract_user_request(self) -> str:
+        message = getattr(self.ctx, "message", None)
+        text = str(getattr(message, "text", "") or "").strip()
+        if text:
+            return text
+        user_data = getattr(self.ctx, "user_data", None)
+        if isinstance(user_data, dict):
+            fallback = str(user_data.get("task_goal") or "").strip()
+            if fallback:
+                return fallback
+        return ""
+
+    def _should_retry_extension(self, result: Dict[str, Any]) -> bool:
+        if not isinstance(result, dict):
+            return False
+        if bool(result.get("ok")):
+            return False
+        failure_mode = str(result.get("failure_mode") or "recoverable").strip().lower()
+        if failure_mode == "fatal":
+            return False
+
+        error_code = str(result.get("error_code") or "").strip().lower()
+        if error_code in {"invalid_args", "skill_failed", "workflow_failed"}:
+            return True
+
+        text = str(result.get("message") or result.get("text") or "").lower().strip()
+        hints = ("missing", "required", "请提供", "缺少", "参数", "field")
+        return any(token in text for token in hints)
+
+    def _is_args_changed(
+        self,
+        *,
+        old_args: Dict[str, Any],
+        new_args: Dict[str, Any],
+    ) -> bool:
+        if set(old_args.keys()) != set(new_args.keys()):
+            return True
+        for key, value in new_args.items():
+            if old_args.get(key) != value:
+                return True
+        return False
+
+    def _attach_arg_plan(
+        self,
+        *,
+        result: Dict[str, Any],
+        plan: Dict[str, Any],
+        resolved_args: Dict[str, Any],
+        attempt: int,
+    ) -> Dict[str, Any]:
+        payload = dict(result or {})
+        payload["resolved_args"] = resolved_args
+        payload["arg_planner"] = {
+            "attempt": attempt,
+            "planned": bool(plan.get("planned")),
+            "source": str(plan.get("source") or ""),
+            "missing_fields": list(plan.get("missing_fields") or []),
+            "reason": str(plan.get("reason") or "")[:300],
+        }
+        return payload
 
     async def execute(
         self,
@@ -192,6 +256,18 @@ class ToolCallDispatcher:
                 backend=str(args.get("backend") or ""),
                 metadata=metadata_obj,
             )
+            if self.task_inbox_id:
+                dispatched_worker_id = str(result.get("worker_id") or "").strip()
+                if dispatched_worker_id:
+                    try:
+                        await task_inbox.assign_worker(
+                            self.task_inbox_id,
+                            worker_id=dispatched_worker_id,
+                            reason=str(result.get("selection_reason") or ""),
+                            manager_id="core-manager",
+                        )
+                    except Exception:
+                        pass
             if self.on_worker_dispatched is not None:
                 self.on_worker_dispatched(
                     str(result.get("worker_id") or "").strip(),
@@ -224,11 +300,22 @@ class ToolCallDispatcher:
             )
             files = result.get("files")
             if isinstance(files, dict):
+                saved_paths = []
                 for filename, content in files.items():
                     if isinstance(content, (bytes, bytearray)):
-                        await self.ctx.reply_document(
-                            document=bytes(content), filename=str(filename)
+                        adapted_bytes, adapted_name = adapt_md_file_for_platform(
+                            file_bytes=bytes(content),
+                            filename=str(filename),
+                            platform=self.platform_name,
                         )
+                        reply_result = await self.ctx.reply_document(
+                            document=adapted_bytes, filename=adapted_name
+                        )
+                        path = getattr(reply_result, "path", "") if reply_result else ""
+                        if path:
+                            saved_paths.append(path)
+                if saved_paths:
+                    result["saved_file_paths"] = saved_paths
             self.record_tool_profile(tool_name, result, started)
             return result
 
@@ -248,20 +335,71 @@ class ToolCallDispatcher:
                 }
                 self.record_tool_profile(tool_name, blocked, started)
                 return blocked
+            skill_name = str(getattr(candidate, "name", "") or "")
+            user_request = self._extract_user_request()
+            current_args = dict(args or {})
+            plan = await skill_arg_planner.plan(
+                skill_name=skill_name,
+                current_args=current_args,
+                user_request=user_request,
+            )
+            resolved_args = dict(plan.get("args") or current_args)
             result = await extension_tools.run_extension(
-                skill_name=str(getattr(candidate, "name", "") or ""),
-                args=args,
+                skill_name=skill_name,
+                args=resolved_args,
                 ctx=self.ctx,
                 runtime=self.runtime,
             )
+            result = self._attach_arg_plan(
+                result=result,
+                plan=plan,
+                resolved_args=resolved_args,
+                attempt=1,
+            )
+
+            if self._should_retry_extension(result):
+                retry_plan = await skill_arg_planner.plan(
+                    skill_name=skill_name,
+                    current_args=resolved_args,
+                    user_request=user_request,
+                    validation_error=str(
+                        result.get("message") or result.get("summary") or ""
+                    ),
+                    force=True,
+                )
+                retry_args = dict(retry_plan.get("args") or resolved_args)
+                if self._is_args_changed(old_args=resolved_args, new_args=retry_args):
+                    retry_result = await extension_tools.run_extension(
+                        skill_name=skill_name,
+                        args=retry_args,
+                        ctx=self.ctx,
+                        runtime=self.runtime,
+                    )
+                    result = self._attach_arg_plan(
+                        result=retry_result,
+                        plan=retry_plan,
+                        resolved_args=retry_args,
+                        attempt=2,
+                    )
 
             files = result.get("files")
             if isinstance(files, dict):
+                saved_paths = []
                 for filename, content in files.items():
                     if isinstance(content, (bytes, bytearray)):
-                        await self.ctx.reply_document(
-                            document=bytes(content), filename=str(filename)
+                        adapted_bytes, adapted_name = adapt_md_file_for_platform(
+                            file_bytes=bytes(content),
+                            filename=str(filename),
+                            platform=self.platform_name,
                         )
+                        reply_result = await self.ctx.reply_document(
+                            document=adapted_bytes, filename=adapted_name
+                        )
+                        path = getattr(reply_result, "path", "") if reply_result else ""
+                        if path:
+                            saved_paths.append(path)
+                if saved_paths:
+                    result["saved_file_paths"] = saved_paths
 
             candidate_name = str(getattr(candidate, "name", "") or tool_name)
             if result.get("ok"):

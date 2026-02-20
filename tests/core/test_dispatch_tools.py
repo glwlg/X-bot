@@ -201,11 +201,12 @@ async def test_dispatch_worker_async_mode_queues_job_and_returns_ack(
     )
 
     assert result["ok"] is True
-    assert result["terminal"] is True
-    assert result["task_outcome"] == "done"
+    assert result["terminal"] is False
+    assert result["task_outcome"] == "partial"
     assert result["async_dispatch"] is True
     assert result["task_id"] == "wj-1"
-    assert "自动把结果发给你" in result["text"]
+    assert "worker dispatch accepted" in result["text"]
+    assert result["payload"]["dispatch"] == "queued"
 
     assert fake_job_store.submitted
     submitted = fake_job_store.submitted[0]

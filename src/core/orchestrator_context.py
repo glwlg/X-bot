@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import datetime
 import contextlib
+import logging
 from dataclasses import dataclass
 from typing import Any, Dict
 
@@ -9,6 +10,8 @@ from core.heartbeat_store import heartbeat_store
 from core.task_inbox import task_inbox
 from core.task_manager import task_manager
 from core.tool_access_store import tool_access_store
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -83,6 +86,50 @@ class OrchestratorRuntimeContext:
         if not self.session_state_enabled:
             return
         await heartbeat_store.append_session_event(self.user_id, note)
+
+    def _task_inbox_source(self) -> str:
+        if self.heartbeat_runtime_user:
+            return "heartbeat"
+        if self.worker_runtime_user:
+            return "worker_runtime"
+        return "user_chat"
+
+    async def ensure_task_inbox(self, *, task_goal: str) -> str:
+        if self.task_inbox_id:
+            return self.task_inbox_id
+        if not self.session_state_enabled:
+            return ""
+
+        goal = str(task_goal or "").strip()
+        if not goal or not self.user_id:
+            return ""
+
+        try:
+            envelope = await task_inbox.submit(
+                source=self._task_inbox_source(),
+                goal=goal,
+                user_id=self.user_id,
+                payload={
+                    "task_id": self.task_id,
+                    "runtime_user_id": self.runtime_user_id,
+                    "platform": self.platform_name,
+                },
+                priority="normal",
+                requires_reply=bool(self.manager_runtime),
+                metadata={
+                    "runtime_agent_kind": self.runtime_agent_kind,
+                },
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to create task inbox entry for user=%s: %s",
+                self.user_id,
+                exc,
+            )
+            return ""
+
+        self.task_inbox_id = str(getattr(envelope, "task_id", "") or "").strip()
+        return self.task_inbox_id
 
     async def update_session_task(
         self,

@@ -102,6 +102,18 @@ class SkillLoader:
         if not isinstance(triggers, list):
             triggers = []
 
+        allowed_tools_raw = frontmatter.get("allowed-tools")
+        if allowed_tools_raw is None:
+            allowed_tools_raw = frontmatter.get("allowed_tools")
+        if isinstance(allowed_tools_raw, str):
+            allowed_tools = [allowed_tools_raw]
+        elif isinstance(allowed_tools_raw, list):
+            allowed_tools = [
+                str(item).strip() for item in allowed_tools_raw if str(item).strip()
+            ]
+        else:
+            allowed_tools = []
+
         input_schema = frontmatter.get("input_schema")
         if not input_schema:
             input_schema = self._legacy_params_to_schema(
@@ -119,18 +131,35 @@ class SkillLoader:
                 "network": "limited",
             }
 
-        entrypoint = frontmatter.get("entrypoint") or "scripts/execute.py"
+        entrypoint_present = "entrypoint" in frontmatter
+        raw_entrypoint = frontmatter.get("entrypoint")
+        if entrypoint_present and isinstance(raw_entrypoint, str):
+            entrypoint = raw_entrypoint.strip()
+        elif entrypoint_present and raw_entrypoint is None:
+            entrypoint = ""
+        else:
+            entrypoint = ""
+
+        if not entrypoint and not entrypoint_present and not allowed_tools:
+            entrypoint = "scripts/execute.py"
         api_version = str(frontmatter.get("api_version") or "v3")
 
         missing = sorted(
             [field for field in self.REQUIRED_V3_FIELDS if field not in frontmatter]
         )
         if missing:
-            logger.warning(
-                "Skill %s missing v3 fields %s; using compatibility defaults",
-                name,
-                missing,
-            )
+            if allowed_tools and not entrypoint:
+                logger.info(
+                    "Skill %s loaded as standard skill format (missing v3 fields: %s)",
+                    name,
+                    missing,
+                )
+            else:
+                logger.warning(
+                    "Skill %s missing v3 fields %s; using compatibility defaults",
+                    name,
+                    missing,
+                )
 
         scripts = []
         scripts_dir = os.path.join(skill_dir, "scripts")
@@ -148,6 +177,7 @@ class SkillLoader:
             "name": name,
             "description": description,
             "triggers": triggers,
+            "allowed_tools": allowed_tools,
             "input_schema": input_schema,
             "permissions": permissions,
             "entrypoint": entrypoint,
@@ -200,9 +230,14 @@ class SkillLoader:
         if "type" not in normalized:
             normalized["type"] = "object"
         properties = normalized.get("properties")
-        normalized["properties"] = (
-            dict(properties) if isinstance(properties, dict) else {}
-        )
+        raw_props = dict(properties) if isinstance(properties, dict) else {}
+        normalized_props: Dict[str, Any] = {}
+        for key, value in raw_props.items():
+            key_text = str(key or "").strip()
+            if not key_text:
+                continue
+            normalized_props[key_text] = self._normalize_property_schema(value)
+        normalized["properties"] = normalized_props
         required = normalized.get("required")
         normalized["required"] = list(required) if isinstance(required, list) else []
         return normalized
@@ -220,6 +255,12 @@ class SkillLoader:
         for key, value in inferred_props.items():
             if key not in base_props:
                 base_props[key] = value
+                continue
+            current = base_props.get(key)
+            if isinstance(current, dict) and isinstance(value, dict):
+                for prop_key, prop_value in value.items():
+                    if prop_key not in current:
+                        current[prop_key] = prop_value
 
         required_items: List[str] = []
         for key in list(merged.get("required") or []) + list(
@@ -229,7 +270,13 @@ class SkillLoader:
             if token and token not in required_items:
                 required_items.append(token)
 
-        merged["properties"] = base_props
+        normalized_props: Dict[str, Any] = {}
+        for key, value in base_props.items():
+            key_text = str(key or "").strip()
+            if not key_text:
+                continue
+            normalized_props[key_text] = self._normalize_property_schema(value)
+        merged["properties"] = normalized_props
         merged["required"] = required_items
         return merged
 
@@ -250,7 +297,7 @@ class SkillLoader:
                 enum_values = self._infer_enum_values(description)
                 if enum_values:
                     prop["enum"] = enum_values
-            properties[name] = prop
+            properties[name] = self._normalize_property_schema(prop)
 
             required_flag = str(row.get("required") or "").strip().lower()
             if (
@@ -273,8 +320,7 @@ class SkillLoader:
                 if not name:
                     continue
                 if name not in properties:
-                    inferred_type = self._infer_type_from_value(value)
-                    properties[name] = {"type": inferred_type}
+                    properties[name] = self._infer_property_schema_from_value(value)
 
         schema: Dict[str, Any] = {"type": "object", "properties": properties}
         if required:
@@ -410,6 +456,59 @@ class SkillLoader:
             return "object"
         return "string"
 
+    def _infer_property_schema_from_value(self, value: Any) -> Dict[str, Any]:
+        inferred_type = self._infer_type_from_value(value)
+        if inferred_type == "array":
+            item_type = "string"
+            if isinstance(value, list):
+                for item in value:
+                    if item is None:
+                        continue
+                    item_type = self._infer_type_from_value(item)
+                    break
+            return self._normalize_property_schema(
+                {
+                    "type": "array",
+                    "items": {"type": item_type},
+                }
+            )
+        return self._normalize_property_schema({"type": inferred_type})
+
+    def _normalize_property_schema(self, schema: Any) -> Dict[str, Any]:
+        if isinstance(schema, dict):
+            normalized = dict(schema)
+        else:
+            normalized = {}
+
+        schema_type = self._normalize_schema_type(
+            str(normalized.get("type") or "string")
+        )
+        normalized["type"] = schema_type
+
+        if schema_type == "array":
+            items = normalized.get("items")
+            if isinstance(items, dict):
+                normalized["items"] = self._normalize_property_schema(items)
+            else:
+                normalized["items"] = {"type": "string"}
+            return normalized
+
+        if schema_type == "object":
+            nested = normalized.get("properties")
+            if isinstance(nested, dict):
+                nested_props: Dict[str, Any] = {}
+                for key, value in nested.items():
+                    key_text = str(key or "").strip()
+                    if not key_text:
+                        continue
+                    nested_props[key_text] = self._normalize_property_schema(value)
+                normalized["properties"] = nested_props
+            elif "additionalProperties" not in normalized:
+                normalized["additionalProperties"] = True
+            return normalized
+
+        return normalized
+
     def get_skill_index(self) -> Dict[str, Dict[str, Any]]:
         if not self._skill_index:
             self.scan_skills()
@@ -423,6 +522,7 @@ class SkillLoader:
                     "name": info.get("name", ""),
                     "description": info.get("description", "")[:500],
                     "triggers": info.get("triggers", []),
+                    "allowed_tools": info.get("allowed_tools", []),
                     "input_schema": info.get("input_schema", {}),
                 }
             )

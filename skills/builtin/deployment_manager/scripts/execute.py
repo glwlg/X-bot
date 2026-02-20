@@ -31,6 +31,7 @@ COMPOSE_FILENAMES = (
     "compose.yaml",
 )
 
+
 def _is_valid_ipv4(value: str) -> bool:
     parts = value.split(".")
     if len(parts) != 4:
@@ -310,7 +311,9 @@ def _classify_failure_mode(output: str) -> str:
     return "fatal"
 
 
-async def _search_searxng(query: str, language: str = "zh-CN", num_results: int = 8) -> list[dict]:
+async def _search_searxng(
+    query: str, language: str = "zh-CN", num_results: int = 8
+) -> list[dict]:
     base_url = os.getenv("SEARXNG_URL", "").strip()
     if not base_url:
         return []
@@ -381,7 +384,9 @@ async def _search_repo_and_guides(request_text: str, service_hint: str) -> dict:
             if (
                 repo_name
                 and repo_name != service_lower
-                and any(tag in repo_name for tag in ("i18n", "chinese", "mirror", "fork"))
+                and any(
+                    tag in repo_name for tag in ("i18n", "chinese", "mirror", "fork")
+                )
             ):
                 score -= 2
             repo_candidates.append((score, github_repo, url))
@@ -389,7 +394,9 @@ async def _search_repo_and_guides(request_text: str, service_hint: str) -> dict:
         # Keep top deployment references.
         if len(guides) < 4:
             lowered_url = url.lower()
-            if any(tag in lowered_url for tag in ("docs", "docker", "compose", "github")):
+            if any(
+                tag in lowered_url for tag in ("docs", "docker", "compose", "github")
+            ):
                 guides.append(url)
 
     repo_candidates.sort(key=lambda item: item[0], reverse=True)
@@ -464,7 +471,9 @@ async def _search_repo_candidates_via_github(
                     continue
                 payload = response.json()
             except Exception as exc:
-                logger.warning("GitHub fallback search failed for query=%s: %s", query, exc)
+                logger.warning(
+                    "GitHub fallback search failed for query=%s: %s", query, exc
+                )
                 continue
 
             for item in payload.get("items", []) or []:
@@ -561,7 +570,9 @@ async def _run_shell(command: str, cwd: Path, timeout: int = 120) -> tuple[int, 
     err_text = (stderr or b"").decode("utf-8", errors="replace")
     combined = out_text
     if err_text:
-        combined = f"{combined}\n[stderr]\n{err_text}" if combined else f"[stderr]\n{err_text}"
+        combined = (
+            f"{combined}\n[stderr]\n{err_text}" if combined else f"[stderr]\n{err_text}"
+        )
     return process.returncode, combined.strip()
 
 
@@ -644,7 +655,13 @@ async def _auto_deploy(params: dict) -> dict:
         )
 
     # 2) Search repository and deployment references when URL missing.
-    search_result = {"queries": [], "repo_url": "", "repo_source": "", "guides": [], "repo_candidates": []}
+    search_result = {
+        "queries": [],
+        "repo_url": "",
+        "repo_source": "",
+        "guides": [],
+        "repo_candidates": [],
+    }
     if not repo_candidates:
         search_result = await _search_repo_and_guides(request_text, service_key)
         for candidate in search_result.get("repo_candidates", []):
@@ -660,7 +677,9 @@ async def _auto_deploy(params: dict) -> dict:
 
         if repo_candidates:
             best = repo_candidates[0]
-            search_summary_lines.append(f"- 自动搜索命中仓库: `{best.get('repo_url', '')}`")
+            search_summary_lines.append(
+                f"- 自动搜索命中仓库: `{best.get('repo_url', '')}`"
+            )
             if best.get("source_url"):
                 search_summary_lines.append(f"- 命中来源: {best.get('source_url')}")
 
@@ -677,7 +696,9 @@ async def _auto_deploy(params: dict) -> dict:
             repo_candidates.extend(github_candidates)
             best = github_candidates[0]
             search_summary_lines.append("- 已启用 GitHub API 通用兜底搜索。")
-            search_summary_lines.append(f"- GitHub 命中仓库: `{best.get('repo_url', '')}`")
+            search_summary_lines.append(
+                f"- GitHub 命中仓库: `{best.get('repo_url', '')}`"
+            )
             if best.get("source_url"):
                 search_summary_lines.append(f"- 命中来源: {best.get('source_url')}")
 
@@ -685,9 +706,10 @@ async def _auto_deploy(params: dict) -> dict:
     deduped_candidates: list[dict] = []
     seen_repos: set[str] = set()
     for candidate in repo_candidates:
-        candidate_repo = _normalize_github_repo_url(candidate.get("repo_url", "")) or str(
-            candidate.get("repo_url", "")
-        ).strip()
+        candidate_repo = (
+            _normalize_github_repo_url(candidate.get("repo_url", ""))
+            or str(candidate.get("repo_url", "")).strip()
+        )
         if not candidate_repo or candidate_repo in seen_repos:
             continue
         seen_repos.add(candidate_repo)
@@ -721,7 +743,9 @@ async def _auto_deploy(params: dict) -> dict:
     repo_url = repo_candidates[0]["repo_url"]
 
     repo_name = _extract_repo_name(repo_url) or "project"
-    target_dir = str(params.get("target_dir", "") or params.get("project_name", "")).strip()
+    target_dir = str(
+        params.get("target_dir", "") or params.get("project_name", "")
+    ).strip()
     target_path = _resolve_project_path(target_dir, repo_name)
     existing_compose = _find_compose_file(target_path) if target_path.exists() else None
 
@@ -745,7 +769,11 @@ async def _auto_deploy(params: dict) -> dict:
         already_running = ps_code == 0 and (
             "Up" in ps_output or "running" in ps_output.lower()
         )
-        if already_running and not force_redeploy and not has_unresolved_version_placeholder:
+        if (
+            already_running
+            and not force_redeploy
+            and not has_unresolved_version_placeholder
+        ):
             existing_port = _normalize_host_port(
                 params.get("host_port", DEFAULT_HOST_PORT), DEFAULT_HOST_PORT
             )
@@ -802,9 +830,7 @@ async def _auto_deploy(params: dict) -> dict:
 
         candidate_compose = _find_compose_file(candidate_target_path)
         if not candidate_compose:
-            candidate_attempt_notes.append(
-                f"- `{candidate_repo}`: 未找到 compose 文件"
-            )
+            candidate_attempt_notes.append(f"- `{candidate_repo}`: 未找到 compose 文件")
             continue
 
         repo_url = candidate_repo
@@ -837,7 +863,9 @@ async def _auto_deploy(params: dict) -> dict:
         search_summary_lines.append(f"- 最终部署仓库: `{repo_url}`")
 
     default_port = DEFAULT_HOST_PORT
-    host_port = _normalize_host_port(params.get("host_port", default_port), default_port)
+    host_port = _normalize_host_port(
+        params.get("host_port", default_port), default_port
+    )
     rewrite_note = ""
     raw_container_port = params.get("container_port")
     container_port: int | None = None
@@ -865,7 +893,9 @@ async def _auto_deploy(params: dict) -> dict:
         patch_notes = _patch_compose_known_issues(compose_file, up_output)
         if patch_notes:
             compose_notes.extend(patch_notes)
-            retry_code, retry_output = await _run_shell(up_cmd, target_path, timeout=300)
+            retry_code, retry_output = await _run_shell(
+                up_cmd, target_path, timeout=300
+            )
             if retry_code == 0:
                 up_code, up_output = retry_code, retry_output
             else:
@@ -932,7 +962,9 @@ async def _auto_deploy(params: dict) -> dict:
     search_block = f"\n自动检索结果:\n{search_summary}\n" if search_summary else ""
     compose_block = ""
     if compose_notes:
-        compose_block = "\n自动修复:\n" + "\n".join([f"- {item}" for item in compose_notes]) + "\n"
+        compose_block = (
+            "\n自动修复:\n" + "\n".join([f"- {item}" for item in compose_notes]) + "\n"
+        )
     access_block = (
         f"- 本机: {local_url}\n- 局域网/公网: {public_url}"
         if public_url != local_url
@@ -976,7 +1008,9 @@ async def _clone_repo(params: dict) -> dict:
     try:
         if target_path.exists():
             # 非破坏性更新已有仓库：仅快进更新，不覆盖本地改动。
-            logger.info(f"Updating existing repository (non-destructive): {target_path}")
+            logger.info(
+                f"Updating existing repository (non-destructive): {target_path}"
+            )
             if not (target_path / ".git").exists():
                 return {
                     "text": (
@@ -988,9 +1022,13 @@ async def _clone_repo(params: dict) -> dict:
                     "project_path": str(target_path),
                 }
 
-            requested_repo = _normalize_github_repo_url(str(repo_url)) or str(repo_url).strip()
+            requested_repo = (
+                _normalize_github_repo_url(str(repo_url)) or str(repo_url).strip()
+            )
             existing_remote = await _read_git_remote_url(target_path)
-            existing_repo = _normalize_github_repo_url(existing_remote) or existing_remote
+            existing_repo = (
+                _normalize_github_repo_url(existing_remote) or existing_remote
+            )
             if requested_repo and existing_repo and requested_repo != existing_repo:
                 new_target = _build_conflict_clone_path(target_path, requested_repo)
                 logger.info(
@@ -1401,6 +1439,47 @@ async def _delete_project(params: dict) -> dict:
 # =============================================================================
 # Handler Registration (for /deploy command)
 # =============================================================================
+def _parse_deploy_request(text: str) -> tuple[str, str]:
+    raw = str(text or "").strip()
+    if not raw:
+        return "help", ""
+
+    parts = raw.split(maxsplit=2)
+    if not parts:
+        return "help", ""
+    if not parts[0].startswith("/deploy"):
+        return "help", ""
+    if len(parts) == 1:
+        return "help", ""
+
+    sub = str(parts[1] or "").strip().lower()
+    if sub in {"help", "h", "?"}:
+        return "help", ""
+    if sub == "run":
+        target = str(parts[2] if len(parts) >= 3 else "").strip()
+        if not target:
+            return "help", ""
+        return "run", target
+
+    implicit_target = " ".join(parts[1:]).strip()
+    if implicit_target:
+        return "run", implicit_target
+    return "help", ""
+
+
+def _deploy_usage_text() -> str:
+    return (
+        "⚠️ 请提供部署目标。\n\n"
+        "用法:\n"
+        "• `/deploy run <描述或URL>`\n"
+        "• `/deploy <描述或URL>`\n"
+        "• `/deploy help`\n\n"
+        "示例:\n"
+        "• `/deploy https://github.com/user/repo`\n"
+        "• `/deploy run Uptime Kuma`"
+    )
+
+
 def register_handlers(adapter_manager):
     """注册 /deploy 命令"""
 
@@ -1412,23 +1491,17 @@ def register_handlers(adapter_manager):
         if not await is_user_allowed(ctx.message.user.id):
             return
 
-        args = ctx.platform_ctx.args if ctx.platform_ctx else []
-        if not args:
-            await ctx.reply(
-                "⚠️ 请提供部署目标。\n\n"
-                "用法:\n"
-                "• `/deploy https://github.com/user/repo` - 部署 GitHub 项目\n"
-                "• `/deploy Uptime Kuma` - 智能搜索并部署"
-            )
+        mode, target = _parse_deploy_request(ctx.message.text or "")
+        if mode != "run" or not target:
+            await ctx.reply(_deploy_usage_text())
             return
 
         # 将请求转发给 Agent 处理
         from core.agent_orchestrator import agent_orchestrator
 
-        user_input = " ".join(args)
-        full_request = f"部署: {user_input}"
+        full_request = f"部署: {target}"
 
-        await ctx.reply(f"🚀 收到部署请求: {user_input}\n\n正在分析...")
+        await ctx.reply(f"🚀 收到部署请求: {target}\n\n正在分析...")
 
         # 调用 Agent 处理
         message_history = [{"role": "user", "parts": [{"text": full_request}]}]

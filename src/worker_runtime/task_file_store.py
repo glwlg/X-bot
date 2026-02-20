@@ -427,6 +427,282 @@ class WorkerTaskFileStore:
         )
         return rows[:safe_limit]
 
+    async def list_running(self, *, limit: int = 20) -> List[Dict[str, Any]]:
+        safe_limit = max(1, min(200, int(limit or 20)))
+        workers = await self._candidate_workers()
+        rows: List[Dict[str, Any]] = []
+        for worker in workers:
+            safe_worker_id = (
+                str(worker.get("id") or "worker-main").strip() or "worker-main"
+            )
+            path = self._task_md_path(worker)
+            payload = self._read_payload_unlocked(path, safe_worker_id)
+            tasks = [
+                self._normalize_task(item, worker_id=safe_worker_id)
+                for item in list(payload.get("tasks") or [])
+                if isinstance(item, dict)
+            ]
+            for row in tasks:
+                status = str(row.get("status") or "").strip().lower()
+                if status != "running":
+                    continue
+                rows.append(row)
+        rows.sort(
+            key=lambda item: (
+                str(item.get("started_at") or ""),
+                str(item.get("updated_at") or ""),
+                str(item.get("created_at") or ""),
+            )
+        )
+        return rows[:safe_limit]
+
+    async def is_cancel_requested(self, job_id: str) -> bool:
+        key = str(job_id or "").strip()
+        if not key:
+            return False
+
+        workers = await self._candidate_workers()
+        for worker in workers:
+            safe_worker_id = (
+                str(worker.get("id") or "worker-main").strip() or "worker-main"
+            )
+            path = self._task_md_path(worker)
+            payload = self._read_payload_unlocked(path, safe_worker_id)
+            tasks = [
+                self._normalize_task(item, worker_id=safe_worker_id)
+                for item in list(payload.get("tasks") or [])
+                if isinstance(item, dict)
+            ]
+            for row in tasks:
+                if str(row.get("job_id") or "").strip() != key:
+                    continue
+                metadata = row.get("metadata")
+                metadata_obj = dict(metadata) if isinstance(metadata, dict) else {}
+                return bool(metadata_obj.get("cancel_requested"))
+        return False
+
+    async def cancel_for_user(
+        self,
+        *,
+        user_id: str,
+        reason: str = "cancelled_by_user",
+        include_running: bool = True,
+    ) -> Dict[str, Any]:
+        target_user = str(user_id or "").strip()
+        if not target_user:
+            return {
+                "pending_cancelled": 0,
+                "running_signaled": 0,
+                "job_ids": [],
+            }
+
+        pending_cancelled = 0
+        running_signaled = 0
+        touched_ids: list[str] = []
+        workers = await self._candidate_workers()
+        for worker in workers:
+            safe_worker_id = (
+                str(worker.get("id") or "worker-main").strip() or "worker-main"
+            )
+            task_path = self._task_md_path(worker)
+            history_path = self._history_md_path(worker)
+            lock_path = self._lock_path(worker)
+            async with self._inproc_lock:
+                try:
+                    async with _WorkerFileLock(lock_path):
+                        payload = self._read_payload_unlocked(task_path, safe_worker_id)
+                        tasks = [
+                            self._normalize_task(item, worker_id=safe_worker_id)
+                            for item in list(payload.get("tasks") or [])
+                            if isinstance(item, dict)
+                        ]
+
+                        now = _now_iso()
+                        changed = False
+                        kept: list[Dict[str, Any]] = []
+                        archived: list[Dict[str, Any]] = []
+                        for row in tasks:
+                            metadata = row.get("metadata")
+                            metadata_obj = (
+                                dict(metadata) if isinstance(metadata, dict) else {}
+                            )
+                            task_user = str(metadata_obj.get("user_id") or "").strip()
+                            if task_user != target_user:
+                                kept.append(row)
+                                continue
+
+                            status = str(row.get("status") or "").strip().lower()
+                            job_id = str(row.get("job_id") or "").strip()
+                            if status == "pending":
+                                row["status"] = "cancelled"
+                                row["ended_at"] = now
+                                row["updated_at"] = now
+                                row["error"] = str(reason or "cancelled_by_user")
+                                row["result"] = {
+                                    "ok": False,
+                                    "error": "cancelled_by_user",
+                                    "summary": "Task cancelled by /stop command.",
+                                }
+                                row["delivery_detail"] = "cancelled_before_start"
+                                archived.append(dict(row))
+                                pending_cancelled += 1
+                                if job_id:
+                                    touched_ids.append(job_id)
+                                changed = True
+                                continue
+
+                            if include_running and status == "running":
+                                if not bool(metadata_obj.get("cancel_requested")):
+                                    metadata_obj["cancel_requested"] = True
+                                    metadata_obj["cancel_requested_at"] = now
+                                    metadata_obj["cancel_reason"] = str(
+                                        reason or "cancelled_by_user"
+                                    )
+                                    metadata_obj["cancelled_by_user_id"] = target_user
+                                    metadata_obj["suppress_delivery"] = True
+                                    row["metadata"] = metadata_obj
+                                    row["updated_at"] = now
+                                    running_signaled += 1
+                                    if job_id:
+                                        touched_ids.append(job_id)
+                                    changed = True
+                                kept.append(row)
+                                continue
+
+                            kept.append(row)
+
+                        if not changed:
+                            continue
+
+                        payload["tasks"] = kept
+                        self._write_payload_unlocked(task_path, payload)
+                        for row in archived:
+                            self._append_task_history_unlocked(history_path, row)
+                except TimeoutError:
+                    continue
+
+        deduped_ids: list[str] = []
+        for task_id in touched_ids:
+            token = str(task_id or "").strip()
+            if not token or token in deduped_ids:
+                continue
+            deduped_ids.append(token)
+        return {
+            "pending_cancelled": pending_cancelled,
+            "running_signaled": running_signaled,
+            "job_ids": deduped_ids,
+        }
+
+    async def update_running_progress(
+        self,
+        job_id: str,
+        *,
+        progress: Dict[str, Any] | None = None,
+    ) -> bool:
+        key = str(job_id or "").strip()
+        if not key:
+            return False
+        workers = await self._candidate_workers()
+        for worker in workers:
+            safe_worker_id = (
+                str(worker.get("id") or "worker-main").strip() or "worker-main"
+            )
+            task_path = self._task_md_path(worker)
+            lock_path = self._lock_path(worker)
+            async with self._inproc_lock:
+                try:
+                    async with _WorkerFileLock(lock_path):
+                        payload = self._read_payload_unlocked(task_path, safe_worker_id)
+                        tasks = [
+                            self._normalize_task(item, worker_id=safe_worker_id)
+                            for item in list(payload.get("tasks") or [])
+                            if isinstance(item, dict)
+                        ]
+                        changed = False
+                        now = _now_iso()
+                        for row in tasks:
+                            if str(row.get("job_id") or "").strip() != key:
+                                continue
+                            status = str(row.get("status") or "").strip().lower()
+                            if status != "running":
+                                continue
+                            metadata = row.get("metadata")
+                            metadata_obj = (
+                                dict(metadata) if isinstance(metadata, dict) else {}
+                            )
+                            progress_obj = (
+                                dict(progress) if isinstance(progress, dict) else {}
+                            )
+                            progress_obj["updated_at"] = str(
+                                progress_obj.get("updated_at") or now
+                            )
+                            metadata_obj["progress"] = progress_obj
+                            row["metadata"] = metadata_obj
+                            row["updated_at"] = now
+                            changed = True
+                            break
+
+                        if not changed:
+                            continue
+
+                        payload["tasks"] = tasks
+                        self._write_payload_unlocked(task_path, payload)
+                        return True
+                except TimeoutError:
+                    continue
+        return False
+
+    async def recover_running_tasks(self, *, worker_id: str = "") -> int:
+        workers = await self._candidate_workers(worker_id)
+        recovered = 0
+        for worker in workers:
+            safe_worker_id = (
+                str(worker.get("id") or "worker-main").strip() or "worker-main"
+            )
+            task_path = self._task_md_path(worker)
+            lock_path = self._lock_path(worker)
+            async with self._inproc_lock:
+                try:
+                    async with _WorkerFileLock(lock_path):
+                        payload = self._read_payload_unlocked(task_path, safe_worker_id)
+                        tasks = [
+                            self._normalize_task(item, worker_id=safe_worker_id)
+                            for item in list(payload.get("tasks") or [])
+                            if isinstance(item, dict)
+                        ]
+                        changed = False
+                        now = _now_iso()
+                        for row in tasks:
+                            status = str(row.get("status") or "").strip().lower()
+                            if status != "running":
+                                continue
+                            metadata = row.get("metadata")
+                            metadata_obj = (
+                                dict(metadata) if isinstance(metadata, dict) else {}
+                            )
+                            metadata_obj.pop("progress", None)
+                            metadata_obj["recovered_from_running_at"] = now
+                            row["metadata"] = metadata_obj
+                            row["status"] = "pending"
+                            row["started_at"] = ""
+                            row["ended_at"] = ""
+                            row["claimed_by"] = ""
+                            row["result"] = {}
+                            row["error"] = ""
+                            row["updated_at"] = now
+                            recovered += 1
+                            changed = True
+
+                        if not changed:
+                            continue
+
+                        payload["tasks"] = tasks
+                        self._write_payload_unlocked(task_path, payload)
+                except TimeoutError:
+                    continue
+
+        return recovered
+
     async def mark_delivered(
         self,
         job_id: str,

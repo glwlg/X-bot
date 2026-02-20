@@ -76,6 +76,7 @@ async def test_extension_executor_validates_required_fields(monkeypatch):
     assert result.ok is False
     assert result.error_code == "invalid_args"
     assert "missing required field" in result.message
+    assert result.missing_fields == ["query"]
 
 
 @pytest.mark.asyncio
@@ -155,3 +156,114 @@ def test_extension_ui_response_defaults_to_terminal_done():
     assert payload["terminal"] is True
     assert payload["task_outcome"] == "done"
     assert payload["ui"]["actions"][0][0]["text"] == "刷新"
+
+
+def test_extension_executor_marks_error_text_as_failure():
+    executor = ExtensionExecutor()
+
+    result = executor._normalize_result(
+        "web_browser",
+        {"text": "❌ 请提供 URL"},
+    )
+
+    assert result.ok is False
+    assert result.error_code == "skill_failed"
+
+
+@pytest.mark.parametrize(
+    "warning_text",
+    [
+        "⚠️ 工具调用轮次已达上限（20），任务仍未完成。",
+        "⚠️ 已达到单工具调用上限，停止继续重复调用。",
+        "⚠️ 检测到语义上重复的工具调用，已停止继续搜索。",
+    ],
+)
+def test_extension_executor_marks_guard_warning_text_as_failure(warning_text):
+    executor = ExtensionExecutor()
+
+    result = executor._normalize_result(
+        "playwright-cli",
+        {"text": warning_text},
+    )
+
+    assert result.ok is False
+    assert result.error_code == "skill_failed"
+
+
+@pytest.mark.asyncio
+async def test_standard_skill_runs_allowed_bash_via_agent_loop(monkeypatch):
+    monkeypatch.setattr(
+        extension_executor_module.skill_loader,
+        "get_skill",
+        lambda name: {
+            "name": "playwright-cli",
+            "input_schema": {"type": "object", "properties": {}},
+            "allowed_tools": ["Bash(playwright-cli:*)"],
+            "skill_md_content": "Use playwright-cli commands to operate browser.",
+            "entrypoint": "",
+        }
+        if name == "playwright-cli"
+        else None,
+    )
+
+    class FakeAiService:
+        async def generate_response_stream(
+            self,
+            message_history,
+            tools,
+            tool_executor,
+            system_instruction,
+            event_callback=None,
+        ):
+            _ = (message_history, system_instruction, event_callback)
+            assert tools and tools[0]["name"] == "bash"
+            result = await tool_executor(
+                "bash",
+                {"command": "playwright-cli open https://example.com"},
+            )
+            assert result["ok"] is True
+            yield "workflow done"
+
+    monkeypatch.setattr(extension_executor_module, "AiService", FakeAiService)
+
+    class FakeRuntime:
+        async def bash(self, **kwargs):
+            assert kwargs.get("command", "").startswith("playwright-cli")
+            return {"ok": True, "summary": "ok"}
+
+    executor = ExtensionExecutor()
+    result = await executor.execute(
+        "playwright-cli",
+        {},
+        ctx=SimpleNamespace(message=SimpleNamespace(text="打开网页")),
+        runtime=FakeRuntime(),
+    )
+
+    assert result.ok is True
+    assert "workflow done" in result.text
+    assert result.data.get("standard_skill") is True
+
+
+@pytest.mark.asyncio
+async def test_standard_skill_bash_prefix_policy_blocked():
+    executor = ExtensionExecutor()
+
+    class FakeRuntime:
+        async def bash(self, **kwargs):
+            _ = kwargs
+            return {"ok": True}
+
+    result = await executor._execute_standard_tool_call(
+        runtime=FakeRuntime(),
+        tool_name="bash",
+        tool_args={"command": "rm -rf /"},
+        allowed_tool_rules={
+            "bash": {
+                "tool_name": "bash",
+                "bash_prefixes": ["playwright-cli"],
+            }
+        },
+    )
+
+    assert result["ok"] is False
+    assert result["error_code"] == "policy_blocked"

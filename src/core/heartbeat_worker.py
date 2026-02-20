@@ -553,6 +553,18 @@ class HeartbeatWorker:
         caption = "📝 内容较长，完整结果见附件。"
         document_bytes = payload.encode("utf-8")
 
+        # Platform-adaptive format conversion
+        try:
+            from services.md_converter import adapt_md_file_for_platform
+
+            document_bytes, filename = adapt_md_file_for_platform(
+                file_bytes=document_bytes,
+                filename=filename,
+                platform=platform,
+            )
+        except Exception:
+            pass
+
         try:
             send_document = getattr(adapter, "send_document", None)
             if callable(send_document):

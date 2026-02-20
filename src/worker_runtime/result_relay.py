@@ -4,11 +4,14 @@ import asyncio
 import inspect
 import logging
 import os
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
 from core.heartbeat_store import heartbeat_store
 from core.platform.registry import adapter_manager
+from services.md_converter import adapt_md_file_for_platform
 from worker_runtime.task_file_store import worker_task_file_store
 
 logger = logging.getLogger(__name__)
@@ -37,6 +40,16 @@ def _split_chunks(text: str, limit: int = 3500) -> list[str]:
             chunks.append(part)
         rest = rest[cut:].strip()
     return chunks
+
+
+def _parse_iso_timestamp(value: str) -> float:
+    raw = str(value or "").strip()
+    if not raw:
+        return 0.0
+    try:
+        return datetime.fromisoformat(raw).timestamp()
+    except Exception:
+        return 0.0
 
 
 def _extract_payload(
@@ -75,6 +88,8 @@ def _extract_payload(
         raw_files = result.get("files")
 
     if isinstance(raw_files, list):
+        seen_paths: set[str] = set()
+        seen_names: set[tuple[str, str]] = set()
         for item in raw_files:
             if not isinstance(item, dict):
                 continue
@@ -91,10 +106,16 @@ def _extract_payload(
                 str(item.get("filename") or path_obj.name).strip() or path_obj.name
             )
             caption = str(item.get("caption") or "").strip()[:500]
+            path_key = str(path_obj)
+            name_key = (kind, filename)
+            if path_key in seen_paths or name_key in seen_names:
+                continue
+            seen_paths.add(path_key)
+            seen_names.add(name_key)
             file_rows.append(
                 {
                     "kind": kind,
-                    "path": str(path_obj),
+                    "path": path_key,
                     "filename": filename,
                     "caption": caption,
                 }
@@ -139,8 +160,71 @@ class WorkerResultRelay:
             os.getenv("WORKER_RESULT_RELAY_ENABLED", "true").strip().lower() == "true"
         )
         self.tick_sec = max(1.0, float(os.getenv("WORKER_RESULT_RELAY_TICK_SEC", "2")))
+        self.progress_enabled = (
+            os.getenv("WORKER_RESULT_PROGRESS_ENABLED", "true").strip().lower()
+            == "true"
+        )
+        self.progress_notice_sec = max(
+            5.0,
+            float(os.getenv("WORKER_RESULT_PROGRESS_NOTICE_SEC", "20")),
+        )
+        self.progress_repeat_sec = max(
+            self.progress_notice_sec,
+            float(os.getenv("WORKER_RESULT_PROGRESS_REPEAT_SEC", "45")),
+        )
+        self.progress_stale_sec = max(
+            0.0,
+            float(os.getenv("WORKER_RESULT_PROGRESS_STALE_SEC", "240")),
+        )
         self._stop_event = asyncio.Event()
         self._loop_task: asyncio.Task | None = None
+        self._progress_sent_at: dict[str, float] = {}
+
+    @staticmethod
+    def _humanize_tool_name(tool_name: str) -> str:
+        raw = str(tool_name or "").strip().lower()
+        if not raw:
+            return ""
+        if raw.startswith("ext_"):
+            raw = raw[4:]
+        alias = {
+            "searxng_search": "搜索",
+            "web_browser": "网页浏览",
+            "generate_image": "图片生成",
+            "rss_subscribe": "RSS 订阅",
+            "stock_watch": "股票行情",
+            "reminder": "提醒",
+            "deployment_manager": "部署",
+        }
+        if raw in alias:
+            return alias[raw]
+        return raw.replace("_", " ")
+
+    @staticmethod
+    def _render_progress_detail(progress: Dict[str, Any]) -> str:
+        progress_obj = dict(progress) if isinstance(progress, dict) else {}
+        running_tool = WorkerResultRelay._humanize_tool_name(
+            str(progress_obj.get("running_tool") or "").strip()
+        )
+        done_tools = [
+            WorkerResultRelay._humanize_tool_name(str(item).strip())
+            for item in list(progress_obj.get("done_tools") or [])
+            if str(item).strip()
+        ]
+        failed_tools = [
+            WorkerResultRelay._humanize_tool_name(str(item).strip())
+            for item in list(progress_obj.get("failed_tools") or [])
+            if str(item).strip()
+        ]
+
+        details: list[str] = []
+        if done_tools:
+            details.append("已完成：" + " -> ".join(done_tools[-3:]))
+        if running_tool:
+            details.append(f"正在执行：{running_tool}")
+        if failed_tools:
+            details.append("失败重试：" + "、".join(failed_tools[-2:]))
+        return "；".join(details)
 
     async def start(self) -> None:
         if not self.enabled:
@@ -179,7 +263,9 @@ class WorkerResultRelay:
                 continue
 
     async def process_once(self) -> None:
+        running_ids = await self._deliver_running_progress()
         rows = await worker_task_file_store.list_undelivered(limit=20)
+        delivered_ids: set[str] = set()
         for job in rows:
             job_id = str(job.get("job_id") or "").strip()
             if not job_id:
@@ -200,6 +286,100 @@ class WorkerResultRelay:
             )
             if delivered:
                 await worker_task_file_store.mark_delivered(job_id, detail="delivered")
+                delivered_ids.add(job_id)
+                self._progress_sent_at.pop(job_id, None)
+
+        stale_ids = {
+            job_id
+            for job_id in list(self._progress_sent_at.keys())
+            if job_id not in running_ids and job_id not in delivered_ids
+        }
+        for job_id in stale_ids:
+            self._progress_sent_at.pop(job_id, None)
+
+    async def _deliver_running_progress(self) -> set[str]:
+        if not self.progress_enabled:
+            return set()
+
+        rows = await worker_task_file_store.list_running(limit=20)
+        running_ids: set[str] = set()
+        now_ts = time.time()
+
+        for job in rows:
+            job_id = str(job.get("job_id") or "").strip()
+            if not job_id:
+                continue
+            running_ids.add(job_id)
+
+            started_ts = _parse_iso_timestamp(
+                str(job.get("started_at") or job.get("created_at") or "")
+            )
+            if started_ts <= 0:
+                continue
+            elapsed_sec = max(0.0, now_ts - started_ts)
+            if elapsed_sec < self.progress_notice_sec:
+                continue
+
+            last_sent_at = float(self._progress_sent_at.get(job_id) or 0.0)
+            if last_sent_at > 0 and (now_ts - last_sent_at) < self.progress_repeat_sec:
+                continue
+
+            metadata = job.get("metadata")
+            meta = dict(metadata) if isinstance(metadata, dict) else {}
+            platform, chat_id = await self._resolve_delivery_target(meta)
+            if not platform or not chat_id:
+                continue
+
+            try:
+                adapter = adapter_manager.get_adapter(platform)
+            except Exception:
+                continue
+
+            worker_name = (
+                str(
+                    meta.get("worker_name") or job.get("worker_id") or "执行助手"
+                ).strip()
+                or "执行助手"
+            )
+
+            progress_obj = meta.get("progress")
+            progress_dict = progress_obj if isinstance(progress_obj, dict) else {}
+            progress_updated_ts = _parse_iso_timestamp(
+                str(progress_dict.get("updated_at") or "")
+            )
+            if progress_updated_ts <= 0:
+                progress_updated_ts = _parse_iso_timestamp(
+                    str(job.get("updated_at") or job.get("started_at") or "")
+                )
+            if (
+                self.progress_stale_sec > 0
+                and progress_updated_ts > 0
+                and (now_ts - progress_updated_ts) > self.progress_stale_sec
+            ):
+                continue
+
+            elapsed_text = f"{int(elapsed_sec)}秒"
+            if elapsed_sec >= 60:
+                minutes = int(elapsed_sec // 60)
+                seconds = int(elapsed_sec % 60)
+                elapsed_text = f"{minutes}分{seconds}秒"
+            progress_detail = self._render_progress_detail(progress_dict)
+            progress_text = (
+                f"⏳ {worker_name} 正在处理中（任务 {job_id}，已执行 {elapsed_text}）。"
+            )
+            if progress_detail:
+                progress_text = f"{progress_text}\n{progress_detail}"
+            progress_text = f"{progress_text}\n完成后会自动把结果发给你。"
+
+            send = getattr(adapter, "send_message", None)
+            if not callable(send):
+                continue
+            result = send(chat_id=chat_id, text=progress_text)
+            if inspect.isawaitable(result):
+                await result
+            self._progress_sent_at[job_id] = now_ts
+
+        return running_ids
 
     async def _resolve_delivery_target(
         self,
@@ -241,6 +421,7 @@ class WorkerResultRelay:
         if files:
             delivered_any = await self._deliver_files(
                 adapter=adapter,
+                platform=platform,
                 chat_id=chat_id,
                 files=files,
             )
@@ -282,6 +463,7 @@ class WorkerResultRelay:
         self,
         *,
         adapter: Any,
+        platform: str,
         chat_id: str,
         files: list[dict[str, str]],
     ) -> bool:
@@ -299,23 +481,42 @@ class WorkerResultRelay:
             )
             kind = str(item.get("kind") or "document").strip().lower() or "document"
 
+            # Platform-adaptive format conversion for .md files
+            actual_path = path_obj
+            if kind == "document" and filename.lower().endswith(".md"):
+                try:
+                    raw_bytes = path_obj.read_bytes()
+                    adapted_bytes, adapted_name = adapt_md_file_for_platform(
+                        file_bytes=raw_bytes,
+                        filename=filename,
+                        platform=platform,
+                    )
+                    if adapted_name != filename:
+                        # Write converted file next to original
+                        converted_path = path_obj.parent / adapted_name
+                        converted_path.write_bytes(adapted_bytes)
+                        actual_path = converted_path
+                        filename = adapted_name
+                except Exception as exc:
+                    logger.warning("MD conversion failed, sending original: %s", exc)
+
             sender = None
             kwargs: Dict[str, Any] = {"chat_id": chat_id}
             if kind == "photo":
                 sender = getattr(adapter, "send_photo", None)
-                kwargs["photo"] = str(path_obj)
+                kwargs["photo"] = str(actual_path)
             elif kind == "video":
                 sender = getattr(adapter, "send_video", None)
-                kwargs["video"] = str(path_obj)
+                kwargs["video"] = str(actual_path)
             elif kind == "audio":
                 sender = getattr(adapter, "send_audio", None)
-                kwargs["audio"] = str(path_obj)
+                kwargs["audio"] = str(actual_path)
 
             if not callable(sender):
                 sender = getattr(adapter, "send_document", None)
                 kwargs = {
                     "chat_id": chat_id,
-                    "document": str(path_obj),
+                    "document": str(actual_path),
                     "filename": filename,
                 }
 

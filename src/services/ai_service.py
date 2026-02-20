@@ -99,12 +99,29 @@ class AiService:
             MAX_REPEAT_TOOL_CALLS = max(2, int(os.getenv("AI_TOOL_REPEAT_GUARD", "3")))
         except ValueError:
             MAX_REPEAT_TOOL_CALLS = 3
+        try:
+            MAX_TOOL_CALLS_PER_TOOL = max(
+                1,
+                int(os.getenv("AI_TOOL_MAX_CALLS_PER_TOOL", "10")),
+            )
+        except ValueError:
+            MAX_TOOL_CALLS_PER_TOOL = 10
+        try:
+            MAX_SEMANTIC_REPEAT_TOOL_CALLS = max(
+                2,
+                int(os.getenv("AI_TOOL_SEMANTIC_REPEAT_GUARD", "3")),
+            )
+        except ValueError:
+            MAX_SEMANTIC_REPEAT_TOOL_CALLS = 3
         turn_count = 0
         completed = False
         has_tool_call = False
         pending_tool_failures: list[str] = []
         last_tool_signature = ""
+        last_semantic_tool_signature = ""
         repeat_tool_call_count = 0
+        repeat_semantic_tool_call_count = 0
+        per_tool_call_count: dict[str, int] = {}
         last_terminal_success_text = ""
         last_terminal_success_summary = ""
         last_terminal_tool_name = ""
@@ -129,6 +146,85 @@ class AiService:
                 except Exception as exc:
                     logger.debug("[AiService] event_callback error: %s", exc)
                     return None
+
+            async def _synthesize_async_dispatch_notice(
+                dispatch_rows: list[dict[str, str]],
+            ) -> str:
+                if client is None:
+                    return ""
+                compact: list[str] = []
+                for row in dispatch_rows[:3]:
+                    worker_name = str(row.get("worker_name") or "").strip()
+                    task_id = str(row.get("task_id") or "").strip()
+                    if worker_name and task_id:
+                        compact.append(f"{worker_name}（任务 {task_id}）")
+                    elif task_id:
+                        compact.append(f"任务 {task_id}")
+                    elif worker_name:
+                        compact.append(worker_name)
+
+                guidance = (
+                    "系统提示：你刚刚通过工具成功派发了异步执行任务。"
+                    "现在请只向用户回复任务已开始处理的进度说明（1-2句中文）。"
+                    "必须提到任务编号；若有执行助手名称也请提到。"
+                    "不要输出任务最终结论，不要编造天气/数据结果，不要假装任务已完成。"
+                    "派发信息：" + ("；".join(compact) if compact else "已派发")
+                )
+                synth_history = list(current_history)
+                synth_history.append({"role": "user", "content": guidance})
+                try:
+                    synth_response = await cast(Any, client).chat.completions.create(
+                        model=GEMINI_MODEL,
+                        messages=synth_history,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[AiService] Async-dispatch synthesis failed: %s", exc
+                    )
+                    return ""
+                return self._extract_response_text(synth_response).strip()
+
+            def _build_async_dispatch_fallback(
+                dispatch_rows: list[dict[str, str]],
+            ) -> str:
+                first = dispatch_rows[0] if dispatch_rows else {}
+                worker_name = str(first.get("worker_name") or "执行助手").strip()
+                task_id = str(first.get("task_id") or "").strip()
+                if task_id:
+                    return (
+                        f"已派发给 {worker_name} 处理（任务 {task_id}），"
+                        "正在处理中，完成后会自动把结果发给你。"
+                    )
+                return (
+                    f"已派发给 {worker_name} 处理，"
+                    "正在处理中，完成后会自动把结果发给你。"
+                )
+
+            async def _synthesize_final_after_guard(*, guard_reason: str) -> str:
+                if client is None:
+                    return ""
+                guidance = (
+                    "系统提示：工具调用已触发保护阈值（"
+                    f"{guard_reason}"
+                    "），请不要再调用任何工具。"
+                    "请基于当前已获得的工具结果直接给出最终答复；"
+                    "若信息不足，请明确缺失项并给出下一步建议。"
+                )
+                synth_history = list(current_history)
+                synth_history.append({"role": "user", "content": guidance})
+                try:
+                    synth_response = await cast(Any, client).chat.completions.create(
+                        model=GEMINI_MODEL,
+                        messages=synth_history,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "[AiService] Guard synthesis failed (%s): %s",
+                        guard_reason,
+                        exc,
+                    )
+                    return ""
+                return self._extract_response_text(synth_response).strip()
 
             while turn_count < MAX_TURNS:
                 turn_count += 1
@@ -155,6 +251,144 @@ class AiService:
                     if function_calls:
                         # Agent decided to act
                         has_tool_call = True
+                        guarded_calls = [
+                            item
+                            for item in function_calls
+                            if self._should_apply_cost_guards(
+                                str(item.get("name") or "")
+                            )
+                        ]
+
+                        if guarded_calls:
+                            semantic_signature = self._build_tool_signature(
+                                guarded_calls,
+                                semantic=True,
+                            )
+                            if semantic_signature == last_semantic_tool_signature:
+                                repeat_semantic_tool_call_count += 1
+                            else:
+                                last_semantic_tool_signature = semantic_signature
+                                repeat_semantic_tool_call_count = 1
+
+                            if (
+                                repeat_semantic_tool_call_count
+                                >= MAX_SEMANTIC_REPEAT_TOOL_CALLS
+                            ):
+                                await _emit(
+                                    "semantic_loop_guard",
+                                    {
+                                        "turn": turn_count,
+                                        "repeat_count": repeat_semantic_tool_call_count,
+                                        "tool_names": [
+                                            str(item.get("name") or "")
+                                            for item in guarded_calls
+                                        ],
+                                        "signature": semantic_signature,
+                                    },
+                                )
+                                fallback_text = last_terminal_success_text or (
+                                    "⚠️ 检测到语义上重复的工具调用，已停止继续搜索。"
+                                    "自动整理最终结论失败，请重试或缩小查询范围。"
+                                )
+                                final_text = (
+                                    await _synthesize_final_after_guard(
+                                        guard_reason="semantic_loop_guard"
+                                    )
+                                ) or fallback_text
+                                await _emit(
+                                    "final_response",
+                                    {
+                                        "turn": turn_count,
+                                        "text_preview": final_text.replace("\n", " ")[
+                                            :200
+                                        ],
+                                        "source": "semantic_loop_guard",
+                                    },
+                                )
+                                if tools and tool_final_stream_enabled:
+                                    for segment in _split_text_for_streaming(
+                                        final_text,
+                                        tool_final_stream_chunk_chars,
+                                    ):
+                                        yield segment
+                                else:
+                                    yield final_text
+                                completed = True
+                                break
+
+                            projected_tool_count = dict(per_tool_call_count)
+                            for item in guarded_calls:
+                                tool_name = str(item.get("name") or "").strip()
+                                if not tool_name:
+                                    continue
+                                projected_tool_count[tool_name] = (
+                                    int(projected_tool_count.get(tool_name) or 0) + 1
+                                )
+
+                            exceeded_tools: list[str] = []
+                            guarded_names = {
+                                str(item.get("name") or "").strip()
+                                for item in guarded_calls
+                            }
+                            for name in guarded_names:
+                                if not name:
+                                    continue
+                                current_count = int(per_tool_call_count.get(name) or 0)
+                                next_count = int(projected_tool_count.get(name) or 0)
+                                if (
+                                    current_count >= MAX_TOOL_CALLS_PER_TOOL
+                                    and next_count > current_count
+                                ):
+                                    exceeded_tools.append(name)
+
+                            if exceeded_tools:
+                                await _emit(
+                                    "tool_budget_guard",
+                                    {
+                                        "turn": turn_count,
+                                        "limit": MAX_TOOL_CALLS_PER_TOOL,
+                                        "tools": exceeded_tools,
+                                        "counts": {
+                                            name: int(
+                                                projected_tool_count.get(name) or 0
+                                            )
+                                            for name in exceeded_tools
+                                        },
+                                    },
+                                )
+                                fallback_text = last_terminal_success_text or (
+                                    "⚠️ 已达到单工具调用上限，停止继续重复调用。"
+                                    "自动整理最终结论失败，请重试或缩小查询范围。"
+                                )
+                                final_text = (
+                                    await _synthesize_final_after_guard(
+                                        guard_reason="tool_budget_guard"
+                                    )
+                                ) or fallback_text
+                                await _emit(
+                                    "final_response",
+                                    {
+                                        "turn": turn_count,
+                                        "text_preview": final_text.replace("\n", " ")[
+                                            :200
+                                        ],
+                                        "source": "tool_budget_guard",
+                                    },
+                                )
+                                if tools and tool_final_stream_enabled:
+                                    for segment in _split_text_for_streaming(
+                                        final_text,
+                                        tool_final_stream_chunk_chars,
+                                    ):
+                                        yield segment
+                                else:
+                                    yield final_text
+                                completed = True
+                                break
+                        else:
+                            last_semantic_tool_signature = ""
+                            repeat_semantic_tool_call_count = 0
+
                         signature = self._build_tool_signature(function_calls)
                         if signature == last_tool_signature:
                             repeat_tool_call_count += 1
@@ -224,6 +458,7 @@ class AiService:
 
                         # Execute tools
                         turn_failures: list[str] = []
+                        async_dispatch_rows: list[dict[str, str]] = []
                         terminal_short_circuit_text = ""
                         should_terminal_stop = False
                         for index, fc in enumerate(function_calls):
@@ -348,6 +583,27 @@ class AiService:
                                         ),
                                     }
                                 )
+                                if self._should_apply_cost_guards(tool_name):
+                                    per_tool_call_count[tool_name] = (
+                                        int(per_tool_call_count.get(tool_name) or 0) + 1
+                                    )
+
+                                if (
+                                    tool_ok
+                                    and isinstance(tool_result, dict)
+                                    and bool(tool_result.get("async_dispatch"))
+                                ):
+                                    async_dispatch_rows.append(
+                                        {
+                                            "tool_name": tool_name,
+                                            "worker_name": str(
+                                                tool_result.get("worker_name") or ""
+                                            ).strip(),
+                                            "task_id": str(
+                                                tool_result.get("task_id") or ""
+                                            ).strip(),
+                                        }
+                                    )
 
                                 if (
                                     isinstance(directive, dict)
@@ -378,6 +634,33 @@ class AiService:
                                     yield segment
                             else:
                                 yield terminal_short_circuit_text
+                            completed = True
+                            break
+
+                        if async_dispatch_rows:
+                            notice_text = (
+                                await _synthesize_async_dispatch_notice(
+                                    async_dispatch_rows
+                                )
+                            ) or _build_async_dispatch_fallback(async_dispatch_rows)
+                            await _emit(
+                                "final_response",
+                                {
+                                    "turn": turn_count,
+                                    "text_preview": notice_text.replace("\n", " ")[
+                                        :200
+                                    ],
+                                    "source": "async_dispatch",
+                                },
+                            )
+                            if tools and tool_final_stream_enabled:
+                                for segment in _split_text_for_streaming(
+                                    notice_text,
+                                    tool_final_stream_chunk_chars,
+                                ):
+                                    yield segment
+                            else:
+                                yield notice_text
                             completed = True
                             break
 
@@ -754,7 +1037,23 @@ class AiService:
         return _sanitize(tool_result)
 
     @staticmethod
-    def _build_tool_signature(function_calls) -> str:
+    def _build_tool_signature(function_calls, *, semantic: bool = False) -> str:
+        def _normalize_value(value: Any) -> Any:
+            if isinstance(value, dict):
+                return {
+                    str(k): _normalize_value(v)
+                    for k, v in sorted(value.items(), key=lambda item: str(item[0]))
+                }
+            if isinstance(value, list):
+                return [_normalize_value(item) for item in value]
+            if isinstance(value, str):
+                text = value.strip().lower()
+                if semantic:
+                    text = " ".join(text.split())
+                    text = text.replace("https://", "").replace("http://", "")
+                return text
+            return value
+
         signatures: list[str] = []
         for fc in function_calls:
             name = ""
@@ -767,9 +1066,14 @@ class AiService:
                 args_obj = getattr(fc, "args", {})
             try:
                 args_str = json.dumps(
-                    args_obj or {}, ensure_ascii=False, sort_keys=True
+                    _normalize_value(args_obj or {}), ensure_ascii=False, sort_keys=True
                 )
             except Exception:
                 args_str = str(args_obj)
             signatures.append(f"{name}:{args_str}")
         return "|".join(signatures)
+
+    @staticmethod
+    def _should_apply_cost_guards(tool_name: str) -> bool:
+        name = str(tool_name or "").strip().lower()
+        return bool(name) and name.startswith("ext_")

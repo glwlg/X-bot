@@ -22,6 +22,49 @@ from core.platform.models import UnifiedContext
 logger = logging.getLogger(__name__)
 
 
+def _parse_rss_subcommand(text: str) -> tuple[str, str]:
+    raw = str(text or "").strip()
+    if not raw:
+        return "list", ""
+
+    parts = raw.split(maxsplit=2)
+    if not parts:
+        return "list", ""
+    if not parts[0].startswith("/rss"):
+        return "help", ""
+    if len(parts) == 1:
+        return "list", ""
+
+    sub = str(parts[1] or "").strip().lower()
+    args = str(parts[2] if len(parts) >= 3 else "").strip()
+
+    if sub in {"list", "ls", "show"}:
+        return "list", ""
+    if sub in {"add", "subscribe", "sub"}:
+        return "add", args
+    if sub in {"monitor", "news", "keyword"}:
+        return "monitor", args
+    if sub in {"remove", "unsubscribe", "rm", "del", "delete"}:
+        return "remove", args
+    if sub in {"refresh", "check", "run", "latest"}:
+        return "refresh", ""
+    if sub in {"help", "h", "?"}:
+        return "help", ""
+    return "help", ""
+
+
+def _rss_usage_text() -> str:
+    return (
+        "用法:\n"
+        "`/rss list`\n"
+        "`/rss add <RSS URL>`\n"
+        "`/rss monitor <关键词>`\n"
+        "`/rss remove <RSS URL>`\n"
+        "`/rss refresh`\n"
+        "`/rss help`"
+    )
+
+
 async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> str:
     """执行 RSS 订阅或关键词监控"""
     action = str(params.get("action") or "").strip().lower()
@@ -136,66 +179,45 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> str:
 
 
 def register_handlers(adapter_manager):
-    """注册 RSS 相关的 Command 和 Callback"""
+    """注册 RSS 二级命令和 Callback"""
     from core.config import is_user_allowed
 
-    # 封装 command handler 以检查权限
-    async def cmd_subscribe(ctx):
+    async def cmd_rss(ctx):
         if not await is_user_allowed(ctx.message.user.id):
             return
-        args = []
-        if ctx.message.text:
-            parts = ctx.message.text.split()
-            if len(parts) > 1:
-                args = parts[1:]
 
-        if args:
-            return await process_subscribe(ctx, args[0])
-        else:
-            await ctx.reply("请使用: /subscribe <URL>")
+        sub, args = _parse_rss_subcommand(ctx.message.text or "")
+        if sub == "list":
+            return await list_subs_command(ctx)
 
-    async def cmd_monitor(ctx):
-        if not await is_user_allowed(ctx.message.user.id):
-            return
-        args = []
-        if ctx.message.text:
-            parts = ctx.message.text.split()
-            if len(parts) > 1:
-                args = parts[1:]
+        if sub == "add":
+            target = args.strip()
+            if not target:
+                return {"text": "用法: `/rss add <RSS URL>`", "ui": {}}
+            return await process_subscribe(ctx, target)
 
-        if args:
-            return await process_monitor(ctx, " ".join(args))
-        else:
-            await ctx.reply("请使用: /monitor <关键词>")
+        if sub == "monitor":
+            keyword = args.strip()
+            if not keyword:
+                return {"text": "用法: `/rss monitor <关键词>`", "ui": {}}
+            return await process_monitor(ctx, keyword)
 
-    async def cmd_list_subs(ctx):
-        if not await is_user_allowed(ctx.message.user.id):
-            return
-        return await list_subs_command(ctx)
-
-    async def cmd_unsubscribe(ctx):
-        if not await is_user_allowed(ctx.message.user.id):
-            return
-        args = []
-        if ctx.message.text:
-            parts = ctx.message.text.split()
-            if len(parts) > 1:
-                args = parts[1:]
-
-        if args:
-            await delete_subscription(ctx.message.user.id, args[0])
-            await ctx.reply(f"🗑️ 已取消订阅：`{args[0]}`")
-        else:
+        if sub == "remove":
+            target = args.strip()
+            if target:
+                success = await delete_subscription(ctx.message.user.id, target)
+                if success:
+                    return {"text": f"✅ 已取消订阅: {target}", "ui": {}}
+                return {"text": f"❌ 未找到订阅: {target}", "ui": {}}
             return await show_unsubscribe_menu(ctx)
 
-    adapter_manager.on_command("subscribe", cmd_subscribe, description="订阅 RSS 源")
-    adapter_manager.on_command(
-        "monitor", cmd_monitor, description="监控关键词更新 (Google News)"
-    )
-    adapter_manager.on_command(
-        "list_subs", cmd_list_subs, description="查看我的订阅列表"
-    )
-    adapter_manager.on_command("unsubscribe", cmd_unsubscribe, description="取消订阅")
+        if sub == "refresh":
+            msg = await refresh_user_subscriptions(ctx)
+            return {"text": msg, "ui": {}}
+
+        return {"text": _rss_usage_text(), "ui": {}}
+
+    adapter_manager.on_command("rss", cmd_rss, description="RSS/新闻订阅管理")
 
     # Callbacks
     adapter_manager.on_callback_query("^unsub_", handle_unsubscribe_callback)
@@ -326,7 +348,7 @@ async def process_monitor(ctx: UnifiedContext, keyword: str):
 
 
 async def list_subs_command(ctx: UnifiedContext) -> str:
-    """处理 /list_subs 命令"""
+    """返回订阅列表（用于 /rss list）"""
     # Note: Permission check removed from here, should be done by caller/agent
 
     user_id = ctx.message.user.id

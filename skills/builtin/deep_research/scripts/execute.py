@@ -118,9 +118,9 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None):
     4. **Source Discrepancies** (if any): Did sources disagree?
     5. **Reference List**: List the titles and URLs of sources used.
     
-    Format output as HTML (for a standalone report file). Use modern, clean CSS.
-    Title the HTML page "Deep Research: {topic}".
-    Ensure the HTML is self-contained.
+    Format output as Markdown. Use proper Markdown heading hierarchy (# for title, ## for sections, etc.).
+    Title the report "Deep Research: {topic}".
+    Output ONLY the Markdown content, do NOT wrap it in code fences.
     
     Source Material:
     {context_text}
@@ -129,29 +129,22 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None):
     try:
         if openai_async_client is None:
             raise RuntimeError("OpenAI async client is not initialized")
-        report_html = await generate_text(
+        report_md = await generate_text(
             async_client=openai_async_client,
             model=GEMINI_MODEL,
             contents=prompt,
         )
-        report_html = str(report_html or "")
+        report_md = str(report_md or "")
 
-        # Strip markdown code blocks if AI added them
+        # Strip markdown code fences if AI wrapped them
         import re
 
-        report_html = re.sub(r"^```html\s*", "", report_html)
-        report_html = re.sub(r"^```\s*", "", report_html)
-        report_html = re.sub(r"\s*```$", "", report_html)
-
-        # Output
-        import io
-
-        file_obj = io.BytesIO(report_html.encode("utf-8"))
-        file_obj.name = "deep_research_report.html"
+        report_md = re.sub(r"^```(?:markdown|md)?\s*", "", report_md)
+        report_md = re.sub(r"\s*```$", "", report_md)
 
         yield {
             "text": f"🔇🔇🔇【深度研究报告】\n\nSuccess: Deep research report generated for '{topic}' based on {len(valid_data)} sources.",
-            "files": {"deep_research_report.html": report_html.encode("utf-8")},
+            "files": {"deep_research_report.md": report_md.encode("utf-8")},
             "ui": {},
         }
         logger.info(

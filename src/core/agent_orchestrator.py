@@ -1,9 +1,10 @@
 import asyncio
+import inspect
 import logging
 import os
 import re
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
 
 from core.config import (
     DATA_DIR,
@@ -130,12 +131,14 @@ class AgentOrchestrator:
         task_goal = last_user_text or routing_text
 
         task_id = runtime_ctx.task_id
-        task_inbox_id = runtime_ctx.task_inbox_id
         todo_session = _NoopTodoSession(str(user_id))
 
         append_session_event = runtime_ctx.append_session_event
         update_session_task = runtime_ctx.update_session_task
         update_task_inbox_status = runtime_ctx.update_task_inbox_status
+
+        await runtime_ctx.ensure_task_inbox(task_goal=task_goal)
+        task_inbox_id = runtime_ctx.task_inbox_id
 
         await runtime_ctx.mark_manager_loop_started(task_goal)
 
@@ -290,9 +293,108 @@ class AgentOrchestrator:
             update_task_inbox_status=update_task_inbox_status,
         )
 
-        async def on_agent_event(event: str, payload: Dict[str, Any]):
-            return await event_handler.handle(event, payload)
+        worker_progress_hook = user_data.get("worker_progress_callback")
+        if not callable(worker_progress_hook):
+            worker_progress_hook = None
+        progress_steps_raw = user_data.get("worker_progress_steps")
+        progress_steps: list[dict[str, Any]] = (
+            [item for item in progress_steps_raw if isinstance(item, dict)]
+            if isinstance(progress_steps_raw, list)
+            else []
+        )
 
+        async def emit_worker_progress(event: str, payload: Dict[str, Any]) -> None:
+            if worker_progress_hook is None:
+                return
+            try:
+                event_name = str(event or "").strip().lower()
+                turn = int(payload.get("turn") or 0)
+                if event_name == "tool_call_started":
+                    tool_name = str(payload.get("name") or "").strip()
+                    if tool_name:
+                        progress_steps.append(
+                            {
+                                "name": tool_name,
+                                "status": "running",
+                                "summary": "",
+                                "turn": turn,
+                            }
+                        )
+                elif event_name == "tool_call_finished":
+                    tool_name = str(payload.get("name") or "").strip()
+                    tool_ok = bool(payload.get("ok"))
+                    summary = str(payload.get("summary") or "").strip()
+                    updated = False
+                    for idx in range(len(progress_steps) - 1, -1, -1):
+                        row = progress_steps[idx]
+                        if str(row.get("name") or "") != tool_name:
+                            continue
+                        if str(row.get("status") or "") != "running":
+                            continue
+                        row["status"] = "done" if tool_ok else "failed"
+                        row["summary"] = summary[:160]
+                        row["turn"] = turn
+                        updated = True
+                        break
+                    if not updated and tool_name:
+                        progress_steps.append(
+                            {
+                                "name": tool_name,
+                                "status": "done" if tool_ok else "failed",
+                                "summary": summary[:160],
+                                "turn": turn,
+                            }
+                        )
+                elif event_name == "final_response":
+                    user_data["worker_progress_final_preview"] = str(
+                        payload.get("text_preview") or ""
+                    )[:180]
+
+                progress_steps[:] = progress_steps[-20:]
+                user_data["worker_progress_steps"] = progress_steps
+
+                running_tool = ""
+                done_tools: list[str] = []
+                failed_tools: list[str] = []
+                for row in progress_steps:
+                    name = str(row.get("name") or "").strip()
+                    status = str(row.get("status") or "").strip().lower()
+                    if not name:
+                        continue
+                    if status == "running":
+                        running_tool = name
+                    elif status == "done":
+                        if name not in done_tools:
+                            done_tools.append(name)
+                    elif status == "failed":
+                        if name not in failed_tools:
+                            failed_tools.append(name)
+
+                snapshot = {
+                    "event": event_name,
+                    "turn": turn,
+                    "updated_at": time.time(),
+                    "running_tool": running_tool,
+                    "done_tools": done_tools[-5:],
+                    "failed_tools": failed_tools[-3:],
+                    "recent_steps": progress_steps[-6:],
+                    "final_preview": str(
+                        user_data.get("worker_progress_final_preview") or ""
+                    )[:180],
+                }
+
+                maybe_coro = worker_progress_hook(snapshot)
+                if inspect.isawaitable(maybe_coro):
+                    await cast(Any, maybe_coro)
+            except Exception as exc:
+                logger.debug("worker progress hook error: %s", exc)
+
+        async def on_agent_event(event: str, payload: Dict[str, Any]):
+            directive = await event_handler.handle(event, payload)
+            await emit_worker_progress(event, payload)
+            return directive
+
+        logger.info("final tools: %s", tools)
         async for chunk in self.ai_service.generate_response_stream(
             message_history,
             tools=tools,

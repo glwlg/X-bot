@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 import shlex
@@ -107,7 +108,9 @@ def _parse_tasks_filters(raw_args: str) -> tuple[list[str] | None, list[str] | N
     return include, exclude or ["heartbeat"]
 
 
-def _extract_policy_tokens(raw_args: str) -> tuple[str, list[str] | None, list[str] | None]:
+def _extract_policy_tokens(
+    raw_args: str,
+) -> tuple[str, list[str] | None, list[str] | None]:
     tokens = [item.strip() for item in str(raw_args or "").split() if item.strip()]
     worker_id = ""
     allow: list[str] | None = None
@@ -134,6 +137,28 @@ def _format_policy(policy: dict) -> str:
     return f"allow={allow}\ndeny={deny}"
 
 
+def _worker_usage_text() -> str:
+    return (
+        "用法:\n"
+        "`/worker list`\n"
+        "`/worker create <name> [allow=group:all deny=group:coding]`\n"
+        "`/worker use <worker_id>`\n"
+        "`/worker backend <worker_id> <core-agent|codex|gemini-cli|shell>`\n"
+        "`/worker run <instruction>`\n"
+        "`/worker run --shell <command>`\n"
+        "`/worker tasks`（默认只看 user_chat，排除 heartbeat）\n"
+        "`/worker tasks all`\n"
+        "`/worker tasks source=user_cmd,user_chat exclude=heartbeat`\n"
+        "`/worker tools groups`\n"
+        "`/worker tools <worker_id>`\n"
+        "`/worker tools <worker_id> allow=group:all deny=group:coding`\n"
+        "`/worker tools <worker_id> reset`\n"
+        "`/worker delete <worker_id>`\n"
+        "`/worker auth <codex|gemini-cli> <start|status>`\n"
+        "`/worker help`"
+    )
+
+
 async def _resolve_active_worker(user_id: str) -> str:
     worker_id = await heartbeat_store.get_active_worker_id(user_id)
     if worker_id:
@@ -154,6 +179,10 @@ async def worker_command(ctx: UnifiedContext) -> None:
     text = ctx.message.text or ""
     sub, args = _parse_subcommand(text)
 
+    if sub in {"help", "h", "?"}:
+        await ctx.reply(_worker_usage_text())
+        return
+
     if sub in {"list", "ls"}:
         await worker_registry.ensure_default_worker()
         workers = await worker_registry.list_workers()
@@ -164,7 +193,9 @@ async def worker_command(ctx: UnifiedContext) -> None:
         lines = ["🧩 Workers"]
         for item in workers:
             marker = "👉" if str(item.get("id")) == active_worker else "  "
-            policy = tool_access_store.get_worker_policy(str(item.get("id") or "worker-main"))
+            policy = tool_access_store.get_worker_policy(
+                str(item.get("id") or "worker-main")
+            )
             tools_cfg = dict(policy.get("tools") or {})
             deny = tools_cfg.get("deny") or []
             lines.append(
@@ -227,6 +258,8 @@ async def worker_command(ctx: UnifiedContext) -> None:
         return
 
     if sub == "run":
+        from core.task_manager import task_manager
+
         instruction = args.strip()
         force_shell = False
         if instruction.startswith("--shell "):
@@ -246,63 +279,75 @@ async def worker_command(ctx: UnifiedContext) -> None:
         configured_backend = str(worker.get("backend") or "codex")
         inferred_shell = _looks_like_shell_command(instruction)
         selected_backend = (
-            "shell"
-            if (force_shell or inferred_shell)
-            else configured_backend
+            "shell" if (force_shell or inferred_shell) else configured_backend
         )
         await ctx.reply(f"🚀 正在由 `{worker_id}` 执行...")
-        result = await worker_runtime.execute_task(
-            worker_id=worker_id,
-            source="user_cmd",
-            instruction=instruction,
-            backend=selected_backend,
-            metadata={
-                "platform": ctx.message.platform,
-                "chat_id": ctx.message.chat.id,
-                "force_shell": force_shell,
-            },
-        )
-
-        fallback_used = False
-        if (
-            not result.get("ok")
-            and not (force_shell or inferred_shell)
-            and str(selected_backend).strip().lower() in {"codex", "gemini", "gemini-cli"}
-            and str(result.get("error", "")) in {"cli_not_found", "exec_prepare_failed"}
-            and _looks_like_shell_command(instruction)
-        ):
-            fallback = await worker_runtime.execute_task(
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            await task_manager.register_task(
+                user_id,
+                current_task,
+                description="Worker 命令执行",
+            )
+        try:
+            result = await worker_runtime.execute_task(
                 worker_id=worker_id,
                 source="user_cmd",
                 instruction=instruction,
-                backend="shell",
+                backend=selected_backend,
                 metadata={
                     "platform": ctx.message.platform,
                     "chat_id": ctx.message.chat.id,
-                    "fallback_from_backend": str(selected_backend),
+                    "user_id": str(user_id),
+                    "force_shell": force_shell,
                 },
             )
-            if fallback.get("ok"):
-                result = fallback
-                fallback_used = True
 
-        if result.get("ok"):
-            prefix = "✅ Worker 执行完成"
-            if fallback_used:
-                prefix = "✅ Worker 执行完成（已自动降级到 shell backend）"
-            await ctx.reply(
-                f"{prefix}\n"
-                f"- task_id: `{result.get('task_id')}`\n"
-                f"- backend: `{result.get('backend')}`\n\n"
-                f"{result.get('summary') or ''}"
-            )
-        else:
-            await ctx.reply(
-                f"❌ Worker 执行失败\n"
-                f"- task_id: `{result.get('task_id', '')}`\n"
-                f"- error: `{result.get('error', 'unknown')}`\n\n"
-                f"{result.get('summary') or ''}"
-            )
+            fallback_used = False
+            if (
+                not result.get("ok")
+                and not (force_shell or inferred_shell)
+                and str(selected_backend).strip().lower()
+                in {"codex", "gemini", "gemini-cli"}
+                and str(result.get("error", ""))
+                in {"cli_not_found", "exec_prepare_failed"}
+                and _looks_like_shell_command(instruction)
+            ):
+                fallback = await worker_runtime.execute_task(
+                    worker_id=worker_id,
+                    source="user_cmd",
+                    instruction=instruction,
+                    backend="shell",
+                    metadata={
+                        "platform": ctx.message.platform,
+                        "chat_id": ctx.message.chat.id,
+                        "user_id": str(user_id),
+                        "fallback_from_backend": str(selected_backend),
+                    },
+                )
+                if fallback.get("ok"):
+                    result = fallback
+                    fallback_used = True
+
+            if result.get("ok"):
+                prefix = "✅ Worker 执行完成"
+                if fallback_used:
+                    prefix = "✅ Worker 执行完成（已自动降级到 shell backend）"
+                await ctx.reply(
+                    f"{prefix}\n"
+                    f"- task_id: `{result.get('task_id')}`\n"
+                    f"- backend: `{result.get('backend')}`\n\n"
+                    f"{result.get('summary') or ''}"
+                )
+            else:
+                await ctx.reply(
+                    f"❌ Worker 执行失败\n"
+                    f"- task_id: `{result.get('task_id', '')}`\n"
+                    f"- error: `{result.get('error', 'unknown')}`\n\n"
+                    f"{result.get('summary') or ''}"
+                )
+        finally:
+            task_manager.unregister_task(user_id)
         return
 
     if sub in {"tasks", "history"}:
@@ -363,9 +408,7 @@ async def worker_command(ctx: UnifiedContext) -> None:
                 await ctx.reply(f"❌ 重置失败：{reason}")
                 return
             policy_text = _format_policy(tool_access_store.get_worker_policy(worker_id))
-            await ctx.reply(
-                f"✅ `{worker_id}` 工具策略已重置为默认。\n\n{policy_text}"
-            )
+            await ctx.reply(f"✅ `{worker_id}` 工具策略已重置为默认。\n\n{policy_text}")
             return
 
         allow_tokens: list[str] | None = None
@@ -374,10 +417,14 @@ async def worker_command(ctx: UnifiedContext) -> None:
             lowered = token.lower()
             if lowered.startswith("allow="):
                 values = lowered.split("=", 1)[1]
-                allow_tokens = [item.strip() for item in values.split(",") if item.strip()]
+                allow_tokens = [
+                    item.strip() for item in values.split(",") if item.strip()
+                ]
             elif lowered.startswith("deny="):
                 values = lowered.split("=", 1)[1]
-                deny_tokens = [item.strip() for item in values.split(",") if item.strip()]
+                deny_tokens = [
+                    item.strip() for item in values.split(",") if item.strip()
+                ]
 
         if allow_tokens is not None or deny_tokens is not None:
             ok, reason = tool_access_store.set_worker_policy(
@@ -412,7 +459,9 @@ async def worker_command(ctx: UnifiedContext) -> None:
             flags=re.IGNORECASE,
         )
         if not match:
-            await ctx.reply("用法: `/worker backend <worker_id> <core-agent|codex|gemini-cli|shell>`")
+            await ctx.reply(
+                "用法: `/worker backend <worker_id> <core-agent|codex|gemini-cli|shell>`"
+            )
             return
         worker_id = match.group(1)
         backend = match.group(2).strip().lower()
@@ -466,7 +515,9 @@ async def worker_command(ctx: UnifiedContext) -> None:
                 "runtime_mode": manual.get("runtime_mode", ""),
                 "workspace_root": manual.get("workspace_root", ""),
                 "manual_command": manual.get("command", ""),
-                "last_update": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "last_update": datetime.now()
+                .astimezone()
+                .isoformat(timespec="seconds"),
                 "method": "manual_cli_login",
             }
             await worker_registry.set_auth_state(worker_id, provider, auth_state)
@@ -490,7 +541,9 @@ async def worker_command(ctx: UnifiedContext) -> None:
                 "last_exit_code": status_result.get("exit_code"),
                 "last_summary": status_result.get("summary", ""),
                 "last_error": status_result.get("error", ""),
-                "last_update": datetime.now().astimezone().isoformat(timespec="seconds"),
+                "last_update": datetime.now()
+                .astimezone()
+                .isoformat(timespec="seconds"),
             }
             await worker_registry.set_auth_state(worker_id, provider, auth_state)
             await ctx.reply(
@@ -508,21 +561,4 @@ async def worker_command(ctx: UnifiedContext) -> None:
         await ctx.reply("用法: `/worker auth <codex|gemini-cli> <start|status>`")
         return
 
-    await ctx.reply(
-        "用法:\n"
-        "`/worker list`\n"
-        "`/worker create <name> [allow=group:all deny=group:coding]`\n"
-        "`/worker use <worker_id>`\n"
-        "`/worker backend <worker_id> <core-agent|codex|gemini-cli|shell>`\n"
-        "`/worker run <instruction>`\n"
-        "`/worker run --shell <command>`\n"
-        "`/worker tasks`（默认只看 user_chat，排除 heartbeat）\n"
-        "`/worker tasks all`\n"
-        "`/worker tasks source=user_cmd,user_chat exclude=heartbeat`\n"
-        "`/worker tools groups`\n"
-        "`/worker tools <worker_id>`\n"
-        "`/worker tools <worker_id> allow=group:all deny=group:coding`\n"
-        "`/worker tools <worker_id> reset`\n"
-        "`/worker delete <worker_id>`\n"
-        "`/worker auth <codex|gemini-cli> <start|status>`"
-    )
+    await ctx.reply(_worker_usage_text())

@@ -245,6 +245,19 @@ async def process_and_send_code_files(ctx: UnifiedContext, text: str) -> str:
             async with aiofiles.open(filepath, "rb") as f:
                 file_bytes = await f.read()
 
+            # Platform-adaptive format conversion
+            try:
+                from services.md_converter import adapt_md_file_for_platform
+
+                platform = getattr(ctx.message, "platform", "") or ""
+                file_bytes, filename = adapt_md_file_for_platform(
+                    file_bytes=file_bytes,
+                    filename=filename,
+                    platform=platform,
+                )
+            except Exception:
+                pass
+
             await ctx.reply_document(
                 document=file_bytes,
                 filename=filename,

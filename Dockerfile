@@ -8,7 +8,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     # UV Mirror for China
     UV_PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple \
     # Playwright/Patchright Browsers Path (for caching)
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PLAYWRIGHT_CLI_BROWSER=chrome \
+    PLAYWRIGHT_MCP_CONFIG=/app/playwright-cli.json
 
 # Replace Debian sources with Tsinghua Mirror (for China speedup)
 RUN sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources
@@ -43,10 +45,13 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
-RUN uv tool install notebooklm-py[browser] && uv tool install playwright && playwright install
+RUN npm install -g @playwright/cli@latest \
+    && npx -y playwright install chrome
 
 # Set the working directory in the container
 WORKDIR /app
+
+RUN printf '{\n  "browser": {\n    "launchOptions": {\n      "args": ["--no-sandbox", "--disable-setuid-sandbox"],\n      "channel": "chrome",\n      "chromiumSandbox": false\n    }\n  }\n}\n' > /app/playwright-cli.json
 
 # Copy dependency files
 COPY pyproject.toml .

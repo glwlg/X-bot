@@ -70,6 +70,7 @@ async def stop_command(ctx: UnifiedContext) -> None:
 
     from core.task_manager import task_manager
     from core.heartbeat_store import heartbeat_store
+    from worker_runtime.task_file_store import worker_task_file_store
 
     active_info = task_manager.get_task_info(user_id)
     todo_path = active_info.get("todo_path") if isinstance(active_info, dict) else None
@@ -87,6 +88,20 @@ async def stop_command(ctx: UnifiedContext) -> None:
 
     # 尝试取消任务
     cancelled_desc = await task_manager.cancel_task(user_id)
+    worker_cancel = {"pending_cancelled": 0, "running_signaled": 0, "job_ids": []}
+    try:
+        worker_cancel = await worker_task_file_store.cancel_for_user(
+            user_id=str(user_id),
+            reason="cancelled_by_stop_command",
+            include_running=True,
+        )
+    except Exception as exc:
+        logger.warning("stop command worker cancel failed: %s", exc)
+
+    worker_pending_cancelled = int(worker_cancel.get("pending_cancelled") or 0)
+    worker_running_signaled = int(worker_cancel.get("running_signaled") or 0)
+    worker_cancelled_total = worker_pending_cancelled + worker_running_signaled
+
     if active_task_id:
         await heartbeat_store.update_session_active_task(
             str(user_id),
@@ -101,13 +116,22 @@ async def stop_command(ctx: UnifiedContext) -> None:
             str(user_id), f"user_cancelled:{active_task_id}"
         )
 
-    if cancelled_desc or active_task_id:
+    if cancelled_desc or active_task_id or worker_cancelled_total > 0:
+        task_type_text = cancelled_desc or "worker_dispatch"
         heartbeat_line = f"\n💓 心跳文件: `{heartbeat_path}`" if heartbeat_path else ""
         todo_line = f"\n📋 旧任务文件: `{todo_path}`" if todo_path else ""
+        worker_line = ""
+        if worker_cancelled_total > 0:
+            worker_line = (
+                "\n🧰 Worker 任务: "
+                f"取消排队 {worker_pending_cancelled} 个，"
+                f"中断运行 {worker_running_signaled} 个"
+            )
         await ctx.reply(
             f"🛑 **已中断任务**\n\n"
-            f"任务类型: {cancelled_desc}\n\n"
+            f"任务类型: {task_type_text}\n\n"
             f"如需继续，请重新发送您的请求。"
+            f"{worker_line}"
             f"{heartbeat_line}"
             f"{todo_line}"
         )
@@ -337,7 +361,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                     "**使用方法：**\n"
                     "• 发送「帮我关注仙鹤股份」添加\n"
                     "• 支持多只：「关注红太阳和联环药业」\n"
-                    "• /watchlist 查看列表"
+                    "• /stock list 查看列表"
                 )
             else:
                 stock_codes = [item["stock_code"] for item in watchlist]
@@ -372,8 +396,8 @@ async def button_callback(ctx: UnifiedContext) -> int:
                     "📢 **我的订阅**\n\n"
                     "您还没有订阅任何内容。\n\n"
                     "**使用方法：**\n"
-                    "• /subscribe `<URL>` : 订阅 RSS\n"
-                    "• /monitor `<关键词>` : 监控新闻\n"
+                    "• /rss add `<URL>` : 订阅 RSS\n"
+                    "• /rss monitor `<关键词>` : 监控新闻\n"
                 )
             else:
                 text = "📢 **我的订阅列表**\n\n"
@@ -382,7 +406,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                     url = sub["feed_url"]
                     text += f"• [{title}]({url})\n"
 
-                text += "\n使用 /unsubscribe `<URL>` 取消订阅。"
+                text += "\n使用 /rss remove `<URL>` 取消订阅。"
 
             await ctx.edit_message(msg_id, text, reply_markup=reply_markup)
             return CONVERSATION_END
@@ -427,9 +451,10 @@ async def button_callback(ctx: UnifiedContext) -> int:
             await ctx.edit_message(
                 msg_id,
                 "⏰ **定时提醒使用帮助**\n\n"
-                "请直接发送命令设置提醒：\n\n"
+                "请直接发送二级命令设置提醒：\n\n"
                 "• **/remind 10m 关火** (10分钟后)\n"
                 "• **/remind 1h30m 休息一下** (1小时30分后)\n\n"
+                "• **/remind help** 查看说明\n\n"
                 "时间单位支持：s(秒), m(分), h(时), d(天)",
                 reply_markup=reply_markup,
             )

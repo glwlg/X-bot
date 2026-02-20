@@ -13,6 +13,7 @@ class ExtensionCandidate:
     input_schema: Dict[str, Any]
     schema_summary: str
     triggers: List[str] = field(default_factory=list)
+    allowed_tools: List[str] = field(default_factory=list)
 
 
 def _tokenize(text: str) -> set[str]:
@@ -47,6 +48,7 @@ class ExtensionRouter:
 
             description = skill.get("description", "")
             triggers = skill.get("triggers", []) or []
+            allowed_tools = skill.get("allowed_tools", []) or []
             input_schema = skill.get("input_schema", {}) or {
                 "type": "object",
                 "properties": {},
@@ -66,6 +68,7 @@ class ExtensionRouter:
                     input_schema=schema,
                     schema_summary=schema_summary,
                     triggers=triggers,
+                    allowed_tools=allowed_tools,
                 )
             )
 

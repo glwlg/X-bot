@@ -96,14 +96,66 @@ class TestWebSummaryService:
 
         assert len(urls) == 0
 
-    def test_is_video_platform(self):
-        """测试视频平台检测"""
-        from services.web_summary_service import is_video_platform
+    @pytest.mark.asyncio
+    async def test_fetch_webpage_content_prefers_playwright_cli(self, monkeypatch):
+        from services import web_summary_service as web_service
 
-        assert is_video_platform("https://www.youtube.com/watch?v=abc") is True
-        assert is_video_platform("https://twitter.com/user/status/123") is True
-        assert is_video_platform("https://x.com/user/status/123") is True
-        assert is_video_platform("https://example.com/page") is False
+        async def _fake_cli(_url: str):
+            return "【通过 Playwright CLI 获取的页面 Markdown 快照】\n\n# From CLI"
+
+        monkeypatch.setenv("WEB_BROWSER_PREFER_PLAYWRIGHT_CLI", "true")
+        monkeypatch.setattr(
+            web_service,
+            "fetch_with_playwright_cli_snapshot",
+            _fake_cli,
+        )
+
+        content = await web_service.fetch_webpage_content("https://example.com")
+
+        assert content is not None
+        assert "Playwright CLI" in content
+        assert "From CLI" in content
+
+    @pytest.mark.asyncio
+    async def test_fetch_webpage_content_http_fallback(self, monkeypatch):
+        from services import web_summary_service as web_service
+
+        async def _fake_cli(_url: str):
+            return None
+
+        class _FakeResponse:
+            text = "<html><body><h1>fallback</h1></body></html>"
+
+            def raise_for_status(self):
+                return None
+
+        class _FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                _ = (exc_type, exc, tb)
+                return False
+
+            async def get(self, _url: str, headers=None):
+                _ = headers
+                return _FakeResponse()
+
+        monkeypatch.setenv("WEB_BROWSER_PREFER_PLAYWRIGHT_CLI", "false")
+        monkeypatch.setattr(
+            web_service,
+            "fetch_with_playwright_cli_snapshot",
+            _fake_cli,
+        )
+        monkeypatch.setattr(
+            web_service.httpx, "AsyncClient", lambda **kwargs: _FakeClient()
+        )
+
+        content = await web_service.fetch_webpage_content("https://example.com")
+
+        assert content is not None
+        assert "HTTP 原始页面内容" in content
+        assert "fallback" in content
 
 
 class TestDownloadService:

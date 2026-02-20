@@ -84,3 +84,16 @@ async def test_heartbeat_command_config_and_run(monkeypatch, tmp_path):
     await heartbeat_handlers.heartbeat_command(ctx_run)
     assert any("HEARTBEAT_OK" in text for text in ctx_run.replies)
     assert run_calls and run_calls[-1] == ("u2", True)
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_help_subcommand(monkeypatch):
+    async def _allow(_ctx):
+        return True
+
+    monkeypatch.setattr(heartbeat_handlers, "check_permission_unified", _allow)
+
+    ctx_help = _DummyContext("u3", "/heartbeat help")
+    await heartbeat_handlers.heartbeat_command(ctx_help)
+
+    assert any("/heartbeat help" in text for text in ctx_help.replies)

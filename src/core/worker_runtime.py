@@ -50,14 +50,15 @@ class _WorkerSilentAdapter:
         filename: str = "",
         caption: str = "",
         default_kind: str = "document",
-    ) -> None:
+    ) -> str:
+        """Append a pending file entry. Returns the absolute path of the saved file."""
         user_data = getattr(ctx, "user_data", None)
         if not isinstance(user_data, dict):
-            return
+            return ""
 
         outbox_root = str(user_data.get("worker_outbox_root") or "").strip()
         if not outbox_root:
-            return
+            return ""
 
         root = Path(outbox_root).resolve()
         root.mkdir(parents=True, exist_ok=True)
@@ -67,24 +68,26 @@ class _WorkerSilentAdapter:
             raw_name,
             fallback=f"artifact-{uuid4().hex[:8]}.bin",
         )
-        file_path: Path | None = None
+        target_path = (root / safe_name).resolve()
 
         if isinstance(content, str):
             maybe_path = Path(content).expanduser().resolve()
             if maybe_path.exists() and maybe_path.is_file():
-                file_path = maybe_path
                 if not raw_name:
                     safe_name = cls._safe_filename(maybe_path.name, fallback=safe_name)
-
-        if file_path is None:
-            if isinstance(content, bytes):
-                file_bytes = content
-            elif isinstance(content, bytearray):
-                file_bytes = bytes(content)
+                    target_path = (root / safe_name).resolve()
+                try:
+                    shutil.copyfile(maybe_path, target_path)
+                except Exception:
+                    target_path.write_bytes(maybe_path.read_bytes())
             else:
-                file_bytes = str(content or "").encode("utf-8")
-            file_path = (root / safe_name).resolve()
-            file_path.write_bytes(file_bytes)
+                target_path.write_bytes(str(content or "").encode("utf-8"))
+        elif isinstance(content, bytes):
+            target_path.write_bytes(content)
+        elif isinstance(content, bytearray):
+            target_path.write_bytes(bytes(content))
+        else:
+            target_path.write_bytes(str(content or "").encode("utf-8"))
 
         pending = user_data.get("pending_files")
         rows = (
@@ -93,15 +96,26 @@ class _WorkerSilentAdapter:
             else []
         )
         kind = cls._infer_kind(safe_name, default=default_kind)
-        rows.append(
+        filtered: list[dict[str, Any]] = []
+        for row in rows:
+            row_path = str(row.get("path") or "").strip()
+            row_kind = str(row.get("kind") or "").strip().lower()
+            row_filename = str(row.get("filename") or "").strip()
+            if row_path == str(target_path):
+                continue
+            if row_kind == kind and row_filename == safe_name:
+                continue
+            filtered.append(row)
+        filtered.append(
             {
                 "kind": kind,
-                "path": str(file_path),
+                "path": str(target_path),
                 "filename": safe_name,
                 "caption": str(caption or "").strip()[:300],
             }
         )
-        user_data["pending_files"] = rows[-20:]
+        user_data["pending_files"] = filtered[-20:]
+        return str(target_path)
 
     async def reply_text(self, ctx, text: str, ui=None, **kwargs):
         return SimpleNamespace(id=f"worker-silent-{int(datetime.now().timestamp())}")
@@ -113,47 +127,47 @@ class _WorkerSilentAdapter:
         self, ctx, document, filename=None, caption=None, **kwargs
     ):
         _ = kwargs
-        self._append_pending_file(
+        saved_path = self._append_pending_file(
             ctx,
             content=document,
             filename=str(filename or ""),
             caption=str(caption or ""),
             default_kind="document",
         )
-        return SimpleNamespace(id=filename or "doc")
+        return SimpleNamespace(id=filename or "doc", path=saved_path)
 
     async def reply_photo(self, ctx, photo, caption=None, **kwargs):
         _ = kwargs
-        self._append_pending_file(
+        saved_path = self._append_pending_file(
             ctx,
             content=photo,
             filename="photo.png",
             caption=str(caption or ""),
             default_kind="photo",
         )
-        return SimpleNamespace(id="photo")
+        return SimpleNamespace(id="photo", path=saved_path)
 
     async def reply_video(self, ctx, video, caption=None, **kwargs):
         _ = kwargs
-        self._append_pending_file(
+        saved_path = self._append_pending_file(
             ctx,
             content=video,
             filename="video.mp4",
             caption=str(caption or ""),
             default_kind="video",
         )
-        return SimpleNamespace(id="video")
+        return SimpleNamespace(id="video", path=saved_path)
 
     async def reply_audio(self, ctx, audio, caption=None, **kwargs):
         _ = kwargs
-        self._append_pending_file(
+        saved_path = self._append_pending_file(
             ctx,
             content=audio,
             filename="audio.mp3",
             caption=str(caption or ""),
             default_kind="audio",
         )
-        return SimpleNamespace(id="audio")
+        return SimpleNamespace(id="audio", path=saved_path)
 
     async def delete_message(self, ctx, message_id: str, chat_id=None, **kwargs):
         return True
@@ -486,6 +500,18 @@ class WorkerRuntime:
             )
         return out_text
 
+    @staticmethod
+    async def _cancel_requested(cancel_check: Any = None) -> bool:
+        if cancel_check is None:
+            return False
+        try:
+            result = cancel_check()
+            if inspect.isawaitable(result):
+                result = await result
+            return bool(result)
+        except Exception:
+            return False
+
     def _should_retry_codex_without_instruction_flag(
         self,
         *,
@@ -506,6 +532,7 @@ class WorkerRuntime:
         args: list[str],
         workspace: Path,
         timeout_sec: int,
+        cancel_check: Any = None,
     ) -> Dict[str, Any]:
         spawn = await self._spawn_worker_process(
             cmd=cmd, args=args, workspace=workspace
@@ -523,22 +550,51 @@ class WorkerRuntime:
             }
 
         process = spawn["process"]
+        communicate_task = asyncio.create_task(process.communicate())
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + max(1, int(timeout_sec))
         try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(), timeout=timeout_sec
-            )
-        except asyncio.TimeoutError:
+            while True:
+                if await self._cancel_requested(cancel_check):
+                    process.kill()
+                    with contextlib.suppress(Exception):
+                        await asyncio.wait_for(communicate_task, timeout=5)
+                    return {
+                        "ok": False,
+                        "error": "cancelled_by_user",
+                        "message": "Worker task cancelled by /stop command.",
+                        "exit_code": -1,
+                        "stdout": b"",
+                        "stderr": b"",
+                    }
+
+                remaining = deadline - loop.time()
+                if remaining <= 0:
+                    process.kill()
+                    with contextlib.suppress(Exception):
+                        await asyncio.wait_for(communicate_task, timeout=5)
+                    return {
+                        "ok": False,
+                        "error": "timeout",
+                        "message": f"Worker task timeout after {timeout_sec}s",
+                        "exit_code": -1,
+                        "stdout": b"",
+                        "stderr": b"",
+                    }
+
+                done, _pending = await asyncio.wait(
+                    {communicate_task},
+                    timeout=min(0.5, max(0.1, remaining)),
+                )
+                if communicate_task in done:
+                    stdout, stderr = communicate_task.result()
+                    break
+        except asyncio.CancelledError:
             process.kill()
             with contextlib.suppress(Exception):
-                await process.communicate()
-            return {
-                "ok": False,
-                "error": "timeout",
-                "message": f"Worker task timeout after {timeout_sec}s",
-                "exit_code": -1,
-                "stdout": b"",
-                "stderr": b"",
-            }
+                await asyncio.wait_for(communicate_task, timeout=5)
+            raise
+
         return {
             "ok": process.returncode == 0,
             "error": "",
@@ -615,8 +671,10 @@ class WorkerRuntime:
         if not isinstance(raw_pending_files, list):
             return []
 
-        normalized: list[Dict[str, str]] = []
-        for row in raw_pending_files:
+        normalized_reversed: list[Dict[str, str]] = []
+        seen_paths: set[str] = set()
+        seen_names: set[tuple[str, str]] = set()
+        for row in reversed(raw_pending_files):
             if not isinstance(row, dict):
                 continue
             path_text = str(row.get("path") or "").strip()
@@ -634,15 +692,22 @@ class WorkerRuntime:
                 str(row.get("filename") or path_obj.name).strip() or path_obj.name
             )
             caption = str(row.get("caption") or "").strip()[:500]
-            normalized.append(
+            path_key = str(path_obj)
+            name_key = (kind, filename)
+            if path_key in seen_paths or name_key in seen_names:
+                continue
+            seen_paths.add(path_key)
+            seen_names.add(name_key)
+            normalized_reversed.append(
                 {
                     "kind": kind,
-                    "path": str(path_obj),
+                    "path": path_key,
                     "filename": filename,
                     "caption": caption,
                 }
             )
-        return normalized
+        normalized_reversed.reverse()
+        return normalized_reversed
 
     async def _execute_core_agent_task(
         self,
@@ -651,6 +716,8 @@ class WorkerRuntime:
         instruction: str,
         metadata: Dict[str, Any] | None = None,
         workspace_root: str = "",
+        progress_callback: Any = None,
+        cancel_check: Any = None,
     ) -> Dict[str, Any]:
         try:
             from core.agent_orchestrator import agent_orchestrator
@@ -722,6 +789,8 @@ class WorkerRuntime:
         ctx.user_data["runtime_user_id"] = worker_user_id
         ctx.user_data["worker_outbox_root"] = str(outbox_root)
         ctx.user_data["pending_files"] = []
+        if callable(progress_callback):
+            ctx.user_data["worker_progress_callback"] = progress_callback
         message_history = [
             {"role": "user", "parts": [{"text": str(instruction or "")}]}
         ]
@@ -730,10 +799,42 @@ class WorkerRuntime:
             handler = getattr(agent_orchestrator, "handle_message", None)
             if handler is None:
                 raise RuntimeError("agent_orchestrator.handle_message is unavailable")
+            if await self._cancel_requested(cancel_check):
+                return {
+                    "ok": False,
+                    "error": "cancelled_by_user",
+                    "summary": "Task cancelled by /stop command.",
+                    "result": "",
+                    "text": "",
+                    "ui": {},
+                    "payload": {
+                        "text": "Task cancelled by /stop command.",
+                        "error": "cancelled_by_user",
+                    },
+                }
             raw_stream = handler(ctx, message_history)
             stream = self._coerce_async_stream(raw_stream)
             chunks: list[str] = []
             async for chunk in stream:
+                if await self._cancel_requested(cancel_check):
+                    aclose = getattr(stream, "aclose", None)
+                    if callable(aclose):
+                        with contextlib.suppress(Exception):
+                            maybe = aclose()
+                            if inspect.isawaitable(maybe):
+                                await maybe
+                    return {
+                        "ok": False,
+                        "error": "cancelled_by_user",
+                        "summary": "Task cancelled by /stop command.",
+                        "result": "",
+                        "text": "",
+                        "ui": {},
+                        "payload": {
+                            "text": "Task cancelled by /stop command.",
+                            "error": "cancelled_by_user",
+                        },
+                    }
                 if chunk:
                     chunks.append(str(chunk))
             final_text = "\n".join(chunks).strip()
@@ -906,6 +1007,7 @@ class WorkerRuntime:
         instruction: str,
         backend: str | None = None,
         metadata: Dict[str, Any] | None = None,
+        progress_callback: Any = None,
     ) -> Dict[str, Any]:
         worker = await worker_registry.get_worker(worker_id)
         if not worker:
@@ -934,6 +1036,37 @@ class WorkerRuntime:
             last_task_id=task_id,
             last_error="",
         )
+
+        meta_obj = dict(metadata or {})
+        job_id = str(meta_obj.get("job_id") or "").strip()
+
+        async def _job_cancel_requested() -> bool:
+            if not job_id:
+                return False
+            try:
+                from worker_runtime.task_file_store import worker_task_file_store
+
+                return await worker_task_file_store.is_cancel_requested(job_id)
+            except Exception:
+                return False
+
+        async def _mark_cancelled_state() -> None:
+            msg = "Worker task cancelled by /stop command."
+            await worker_task_store.update_task(
+                task_id,
+                status="failed",
+                error="cancelled_by_user",
+                ended_at=_now_iso(),
+                result_summary=msg,
+                output=self._build_task_output(text=msg, error="cancelled_by_user"),
+                retry_count=0,
+            )
+            await worker_registry.update_worker(
+                worker["id"],
+                status="ready",
+                last_error="",
+                last_task_id=task_id,
+            )
 
         selected_backend, backend_pick = self._select_allowed_backend(
             worker_id=str(worker.get("id") or worker_id),
@@ -982,12 +1115,18 @@ class WorkerRuntime:
         workspace.mkdir(parents=True, exist_ok=True)
 
         if selected_backend == "core-agent":
-            core_result = await self._execute_core_agent_task(
-                worker_id=str(worker.get("id") or worker_id),
-                instruction=instruction,
-                metadata=metadata or {},
-                workspace_root=str(workspace),
-            )
+            try:
+                core_result = await self._execute_core_agent_task(
+                    worker_id=str(worker.get("id") or worker_id),
+                    instruction=instruction,
+                    metadata=meta_obj,
+                    workspace_root=str(workspace),
+                    progress_callback=progress_callback,
+                    cancel_check=_job_cancel_requested,
+                )
+            except asyncio.CancelledError:
+                await _mark_cancelled_state()
+                raise
             ok = bool(core_result.get("ok"))
             summary = str(core_result.get("summary") or "")[:500]
             combined = str(core_result.get("result") or "")
@@ -1035,12 +1174,17 @@ class WorkerRuntime:
 
         cmd, args = self._build_command(selected_backend, instruction)
 
-        run = await self._execute_command(
-            cmd=cmd,
-            args=args,
-            workspace=workspace,
-            timeout_sec=self.exec_timeout_sec,
-        )
+        try:
+            run = await self._execute_command(
+                cmd=cmd,
+                args=args,
+                workspace=workspace,
+                timeout_sec=self.exec_timeout_sec,
+                cancel_check=_job_cancel_requested,
+            )
+        except asyncio.CancelledError:
+            await _mark_cancelled_state()
+            raise
         combined = self._combine_output(run.get("stdout"), run.get("stderr"))
 
         if self._should_retry_codex_without_instruction_flag(
@@ -1050,26 +1194,69 @@ class WorkerRuntime:
             fallback_args = shlex.split(
                 f"exec {shlex.quote(str(instruction or '').strip())}"
             )
-            rerun = await self._execute_command(
-                cmd=self.codex_cmd,
-                args=fallback_args,
-                workspace=workspace,
-                timeout_sec=self.exec_timeout_sec,
-            )
+            try:
+                rerun = await self._execute_command(
+                    cmd=self.codex_cmd,
+                    args=fallback_args,
+                    workspace=workspace,
+                    timeout_sec=self.exec_timeout_sec,
+                    cancel_check=_job_cancel_requested,
+                )
+            except asyncio.CancelledError:
+                await _mark_cancelled_state()
+                raise
             run = rerun
             combined = self._combine_output(run.get("stdout"), run.get("stderr"))
+
+        if str(run.get("error")) == "cancelled_by_user":
+            msg = str(run.get("message") or "Worker task cancelled by /stop command.")
+            await worker_task_store.update_task(
+                task_id,
+                status="failed",
+                error="cancelled_by_user",
+                ended_at=_now_iso(),
+                result_summary=msg,
+                output=self._build_task_output(text=msg, error="cancelled_by_user"),
+                retry_count=0,
+            )
+            await worker_registry.update_worker(
+                worker["id"],
+                status="ready",
+                last_error="",
+                last_task_id=task_id,
+            )
+            return {
+                "ok": False,
+                "error": "cancelled_by_user",
+                "summary": msg,
+                "task_id": task_id,
+                "backend": selected_backend,
+                "runtime_mode": self.runtime_mode,
+                "text": msg,
+                "ui": {},
+                "payload": {
+                    "text": msg,
+                    "error": "cancelled_by_user",
+                },
+            }
 
         if str(run.get("error")) == "prepare_failed":
             if self.fallback_to_core_agent and selected_backend in {
                 "codex",
                 "gemini-cli",
             }:
-                core_result = await self._execute_core_agent_task(
-                    worker_id=str(worker.get("id") or worker_id),
-                    instruction=instruction,
-                    metadata=metadata or {},
-                    workspace_root=str(workspace),
-                )
+                try:
+                    core_result = await self._execute_core_agent_task(
+                        worker_id=str(worker.get("id") or worker_id),
+                        instruction=instruction,
+                        metadata=meta_obj,
+                        workspace_root=str(workspace),
+                        progress_callback=progress_callback,
+                        cancel_check=_job_cancel_requested,
+                    )
+                except asyncio.CancelledError:
+                    await _mark_cancelled_state()
+                    raise
                 if core_result.get("ok"):
                     combined = str(core_result.get("result") or "")
                     summary = str(core_result.get("summary") or combined[:500])

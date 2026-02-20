@@ -191,9 +191,12 @@ class DispatchTools:
             )
             queued_job_id = str(queued_job.get("job_id") or "")
 
-            ack_text = (
-                f"已派发给 {selected_worker_name} 处理（任务 {queued_job_id}）。"
-                "我先继续和你聊天，完成后会自动把结果发给你。"
+            manager_hint = (
+                "worker dispatch accepted; "
+                f"worker_name={selected_worker_name}; "
+                f"task_id={queued_job_id}; "
+                "status=running_async; "
+                "reply user naturally in Chinese and mention the task id once."
             )
             return {
                 "ok": True,
@@ -202,16 +205,22 @@ class DispatchTools:
                 "task_id": queued_job_id,
                 "backend": str(backend or selected_worker_obj.get("backend") or ""),
                 "result": "",
-                "summary": ack_text[:200],
-                "text": ack_text,
+                "summary": f"worker job queued: {queued_job_id}"[:200],
+                "text": manager_hint,
                 "ui": {},
-                "payload": {"text": ack_text},
+                "payload": {
+                    "text": manager_hint,
+                    "dispatch": "queued",
+                    "worker_name": selected_worker_name,
+                    "task_id": queued_job_id,
+                    "manager_reply_style": "natural",
+                },
                 "error": "",
                 "auto_selected": bool(selected.auto_selected),
                 "selection_reason": selected.reason,
                 "runtime_mode": "async_queue",
-                "terminal": True,
-                "task_outcome": "done",
+                "terminal": False,
+                "task_outcome": "partial",
                 "async_dispatch": True,
             }
 

@@ -33,6 +33,12 @@ class ToolRegistry:
             trigger_hint = (
                 ", ".join(candidate.triggers[:6]) if candidate.triggers else "none"
             )
+            allowed_tools = [
+                str(item).strip()
+                for item in list(getattr(candidate, "allowed_tools", []) or [])
+                if str(item).strip()
+            ]
+            allowed_hint = ", ".join(allowed_tools[:6]) if allowed_tools else "none"
             profile = tool_profile_store.get_profile(candidate.tool_name)
             attempts = int(profile.get("attempts", 0) or 0)
             avg_latency = float(profile.get("avg_latency_ms", 0.0) or 0.0)
@@ -43,6 +49,7 @@ class ToolRegistry:
                 f"On-demand extension: {candidate.name}. "
                 f"{candidate.description}\n"
                 f"Triggers: {trigger_hint}\n"
+                f"Allowed runtime tools: {allowed_hint}\n"
                 f"Input schema summary: {candidate.schema_summary}\n"
                 f"Capability: {profile_hint}\n"
                 "Prefer core tools (`read`/`write`/`edit`/`bash`) first; "

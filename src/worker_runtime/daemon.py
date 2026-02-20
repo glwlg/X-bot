@@ -28,6 +28,14 @@ class WorkerDaemon:
 
     async def start(self) -> None:
         await worker_task_file_store.ensure_task_files(worker_id=self.worker_scope)
+        recovered = await worker_task_file_store.recover_running_tasks(
+            worker_id=self.worker_scope
+        )
+        if recovered > 0:
+            logger.info(
+                "Worker daemon recovered %s unfinished running task(s) after restart.",
+                recovered,
+            )
         logger.info(
             "Worker daemon started. id=%s scope=%s poll=%.1fs max_concurrency=%s runtime_mode=%s",
             self.worker_identity,
@@ -89,6 +97,7 @@ class WorkerDaemon:
         )
         metadata = job.get("metadata")
         metadata_obj = dict(metadata) if isinstance(metadata, dict) else {}
+        metadata_obj.setdefault("job_id", job_id)
         if not job_id:
             return
 
@@ -102,12 +111,27 @@ class WorkerDaemon:
         )
 
         try:
+
+            async def _on_progress(snapshot: Dict[str, Any]) -> None:
+                try:
+                    await worker_task_file_store.update_running_progress(
+                        job_id,
+                        progress=snapshot,
+                    )
+                except Exception as exc:
+                    logger.debug(
+                        "Worker daemon progress update failed job=%s err=%s",
+                        job_id,
+                        exc,
+                    )
+
             result = await worker_runtime.execute_task(
                 worker_id=worker_id,
                 source=source,
                 instruction=instruction,
                 backend=backend,
                 metadata=metadata_obj,
+                progress_callback=_on_progress,
             )
         except Exception as exc:
             msg = f"worker execution exception: {exc}"

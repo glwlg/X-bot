@@ -461,3 +461,35 @@ async def test_worker_core_agent_collects_pending_files(monkeypatch, tmp_path):
     first = files[0]
     assert first["filename"] == "dog.png"
     assert Path(first["path"]).exists()
+
+
+@pytest.mark.asyncio
+async def test_worker_core_agent_deduplicates_same_filename_files(
+    monkeypatch, tmp_path
+):
+    runtime = WorkerRuntime()
+
+    async def fake_handle_message(ctx, message_history):
+        _ = message_history
+        await ctx.reply_document(document=b"v1", filename="search_report.html")
+        await ctx.reply_document(document=b"v2", filename="search_report.html")
+        yield "完成"
+
+    fake_orchestrator = SimpleNamespace(handle_message=fake_handle_message)
+    monkeypatch.setattr(orchestrator_module, "agent_orchestrator", fake_orchestrator)
+
+    result = await runtime._execute_core_agent_task(
+        worker_id="worker-main",
+        instruction="查询天气",
+        metadata={"user_id": "42"},
+        workspace_root=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    payload = result.get("payload") or {}
+    files = payload.get("files") or []
+    assert len(files) == 1
+    assert files[0]["filename"] == "search_report.html"
+    saved = Path(files[0]["path"])
+    assert saved.exists()
+    assert saved.read_bytes() == b"v2"

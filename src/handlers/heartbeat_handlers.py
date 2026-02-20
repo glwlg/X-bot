@@ -59,6 +59,21 @@ def _split_reply_chunks(text: str, limit: int = 3500) -> list[str]:
     return chunks
 
 
+def _heartbeat_usage_text() -> str:
+    return (
+        "用法:\n"
+        "`/heartbeat list`\n"
+        "`/heartbeat add <item>`\n"
+        "`/heartbeat remove <index>`\n"
+        "`/heartbeat pause`\n"
+        "`/heartbeat resume`\n"
+        "`/heartbeat run`\n"
+        "`/heartbeat every <30m|1h|600s>`\n"
+        "`/heartbeat hours <08:00-22:00>`\n"
+        "`/heartbeat help`"
+    )
+
+
 async def heartbeat_command(ctx: UnifiedContext) -> None:
     """管理心跳清单与策略: /heartbeat [list|add|remove|pause|resume|run|every|hours]"""
     if not await check_permission_unified(ctx):
@@ -67,6 +82,10 @@ async def heartbeat_command(ctx: UnifiedContext) -> None:
     user_id = str(ctx.message.user.id)
     text = ctx.message.text or ""
     sub, args = _parse_subcommand(text)
+
+    if sub in {"help", "h", "?"}:
+        await ctx.reply(_heartbeat_usage_text())
+        return
 
     if sub in {"list", "ls", "show"}:
         state = await heartbeat_store.get_state(user_id)
@@ -161,14 +180,4 @@ async def heartbeat_command(ctx: UnifiedContext) -> None:
         await ctx.reply(f"✅ active_hours 已设置为 `{start}-{end}`")
         return
 
-    await ctx.reply(
-        "用法:\n"
-        "`/heartbeat list`\n"
-        "`/heartbeat add <item>`\n"
-        "`/heartbeat remove <index>`\n"
-        "`/heartbeat pause`\n"
-        "`/heartbeat resume`\n"
-        "`/heartbeat run`\n"
-        "`/heartbeat every <30m|1h|600s>`\n"
-        "`/heartbeat hours <08:00-22:00>`"
-    )
+    await ctx.reply(_heartbeat_usage_text())

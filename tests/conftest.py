@@ -2,9 +2,33 @@
 Pytest 配置文件
 """
 
-import sys
+import atexit
 import os
+from pathlib import Path
+import shutil
+import sys
+import tempfile
+
 import pytest
+
+
+_PYTEST_DATA_DIR = Path(tempfile.mkdtemp(prefix="xbot-pytest-data-")).resolve()
+os.environ["DATA_DIR"] = str(_PYTEST_DATA_DIR)
+
+
+def _cleanup_pytest_data_dir() -> None:
+    keep = str(os.getenv("PYTEST_KEEP_DATA_DIR", "")).strip().lower()
+    if keep in {"1", "true", "yes", "on"}:
+        return
+    shutil.rmtree(_PYTEST_DATA_DIR, ignore_errors=True)
+
+
+atexit.register(_cleanup_pytest_data_dir)
+
+
+def pytest_sessionfinish(session, exitstatus):  # type: ignore[unused-argument]
+    _cleanup_pytest_data_dir()
+
 
 # 将 src 目录添加到 Python 路径
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))

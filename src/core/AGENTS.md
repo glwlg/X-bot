@@ -11,7 +11,7 @@
 | Extension execution pipeline | `src/core/extension_router.py`, `src/core/extension_executor.py`, `src/core/tools/extension_tools.py` | central skill call and execution adapter layer |
 | Prompt policy and personality chain | `src/core/prompt_composer.py`, `src/core/prompts.py`, `src/core/soul_store.py` | system constraints + SOUL injection |
 | Task lifecycle and heartbeat | `src/core/task_inbox.py`, `src/core/task_manager.py`, `src/core/heartbeat_worker.py`, `src/core/heartbeat_store.py` | state transitions and periodic maintenance |
-| Memory and kernel state | `src/core/markdown_memory_store.py`, `src/core/kernel_memory.py`, `src/core/kernel_config_store.py` | persistent context and kernel-level config |
+| Memory and kernel state | `src/core/markdown_memory_store.py`, `src/core/kernel_config_store.py` | persistent context and kernel-level config |
 
 ## CONVENTIONS
 - Keep Core Manager as orchestrator/governor; avoid embedding user-facing business execution here.
