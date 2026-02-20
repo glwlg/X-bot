@@ -1,61 +1,49 @@
 """
-DLP Bot - X-Bot: 多平台媒体助手 + AI 智能伙伴
-主程序入口
+X-Bot: 多平台媒体助手 + AI 智能伙伴
+主程序入口 - Unified Asyncio Version
 """
+
 import logging
+import asyncio
+import signal
 from telegram.ext import (
     Application,
-    CommandHandler,
-    MessageHandler,
-    CallbackQueryHandler,
+    Application,
+    ContextTypes,
     ConversationHandler,
     PicklePersistence,
     filters,
+    TypeHandler,
 )
 from telegram import Update
 
 from core.config import (
     TELEGRAM_BOT_TOKEN,
-    WAITING_FOR_VIDEO_URL,
-    WAITING_FOR_IMAGE_PROMPT,
-    WAITING_FOR_REMIND_INPUT,
-    WAITING_FOR_MONITOR_KEYWORD,
-    WAITING_FOR_SUBSCRIBE_URL,
+    DISCORD_BOT_TOKEN,
+    DINGTALK_CLIENT_ID,
+    DINGTALK_CLIENT_SECRET,
+    LOG_LEVEL,
     WAITING_FOR_FEATURE_INPUT,
 )
 from handlers import (
     start,
     handle_new_command,
     help_command,
-    adduser_command,
-    deluser_command,
     button_callback,
-    start_download_video,
-    start_generate_image,
+    button_callback,
     back_to_main_and_cancel,
-    handle_download_format,
-    download_command,
-    handle_video_download,
-    image_command,
-    handle_image_prompt,
     cancel,
-    handle_large_file_action,
-    remind_command,
-    handle_remind_input,
-    handle_unsubscribe_callback,
-    handle_monitor_input,
-    handle_video_actions,
     stats_command,
-    handle_ai_chat, 
-    handle_ai_photo, 
+    handle_ai_chat,
+    handle_ai_photo,
     handle_ai_video,
+    handle_sticker_message,
     feature_command,
     handle_feature_input,
     save_feature_command,
-    handle_stock_select_callback,
+    toggle_translation_command,
+    stop_command,
 )
-from handlers.voice_handler import handle_voice_message
-from handlers.document_handler import handle_document
 from handlers.skill_handlers import (
     teach_command,
     handle_teach_input,
@@ -64,214 +52,344 @@ from handlers.skill_handlers import (
     reload_skills_command,
     WAITING_FOR_SKILL_DESC,
 )
+from handlers.voice_handler import handle_voice_message
+from handlers.document_handler import handle_document
+
+# Multi-Channel Imports
+from core.platform.registry import adapter_manager
+from core.platform.models import MessageType
+from platforms.telegram.adapter import TelegramAdapter
+from platforms.discord.adapter import DiscordAdapter
 
 # 日志配置
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
 )
+
+
 logger = logging.getLogger(__name__)
 
 
+async def init_services() -> None:
+    """初始化全局服务（数据库、调度器、Skills等）"""
+    logger.info("⚡ Initializing global services...")
+    try:
+        from repositories import init_db
 
-async def initialize_data(application: Application) -> None:
-    """初始化数据（数据库等）和设置菜单"""
-    from repositories import init_db
-    await init_db()
-    
-    
-    # 加载待执行的提醒任务
-    # 加载待执行的提醒任务
-    from core.scheduler import load_jobs_from_db, start_rss_scheduler, start_stock_scheduler
-    await load_jobs_from_db(application.job_queue)
-    
-    # 启动 RSS 检查
-    start_rss_scheduler(application.job_queue)
-    
-    # 启动股票盯盘推送
-    start_stock_scheduler(application.job_queue)
-    
-    # 初始化 Skill 索引
-    from core.skill_loader import skill_loader
-    skill_loader.scan_skills()
-    logger.info(f"Loaded {len(skill_loader.get_skill_index())} skills")
+        await init_db()
+        logger.info("✅ Database initialized.")
 
+        # 加载待执行的提醒任务
+        from core.scheduler import (
+            scheduler,
+            load_jobs_from_db,
+            start_rss_scheduler,
+            start_stock_scheduler,
+            start_dynamic_skill_scheduler,
+            start_notebooklm_scheduler,
+        )
+
+        logger.info("⚡ Starting schedulers...")
+        # Start APScheduler
+        scheduler.start()
+
+        # Initialize Jobs
+        await load_jobs_from_db()
+        # 启动 RSS 检查
+        start_rss_scheduler()
+        # 启动股票盯盘推送
+        start_stock_scheduler()
+        # 启动动态 Skill 定时任务
+        start_dynamic_skill_scheduler()
+        # 启动 NotebookLM 定时列表刷新
+        start_notebooklm_scheduler()
+        logger.info("✅ Schedulers started.")
+
+        # 初始化 Skill 索引
+        from core.skill_loader import skill_loader
+
+        skill_loader.scan_skills()
+        logger.info(f"Loaded {len(skill_loader.get_skill_index())} skills")
+    except Exception as e:
+        logger.error(f"❌ Error in init_services: {e}", exc_info=True)
+
+    # Pre-connect MCP Memory for Admin
+    from core.config import ADMIN_USER_IDS
+    from mcp_client.manager import mcp_manager
+    from mcp_client.memory import MemoryMCPServer
+
+    mcp_manager.register_server_class("memory", MemoryMCPServer)
+
+    if ADMIN_USER_IDS:
+        admin_id = list(ADMIN_USER_IDS)[0]
+        logger.info(f"🚀 Pre-connecting MCP Memory for Admin: {admin_id}")
+        try:
+            await mcp_manager.get_server("memory", user_id=admin_id)
+            logger.info("✅ MCP Memory pre-connected.")
+        except Exception as e:
+            logger.error(f"⚠️ MCP Pre-connect failed: {e}")
+
+
+async def setup_telegram_commands(application: Application) -> None:
+    """Register Telegram Commands"""
     await application.bot.set_my_commands(
         [
             ("start", "主菜单"),
             ("new", "开启新对话"),
-            ("image", "AI 画图"),
             ("teach", "教我新能力"),
             ("skills", "查看 Skills"),
             ("feature", "提交需求"),
             ("stats", "使用统计"),
+            ("translate", "沉浸式翻译"),
             ("help", "使用帮助"),
             ("cancel", "取消当前操作"),
         ]
     )
-    
-    # 删除 setup_bot_menu 函数，合并到这里
 
 
-async def log_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def log_update(update: Update, context):
     """记录所有收到的 Update，用于调试"""
     if update.callback_query:
-        logger.info(f"👉 RECEIVED CALLBACK: {update.callback_query.data} from user {update.effective_user.id}")
+        logger.info(
+            f"👉 RECEIVED CALLBACK: {update.callback_query.data} from user {update.effective_user.id}"
+        )
     elif update.message:
-        logger.info(f"📩 RECEIVED MESSAGE: {update.message.text} from user {update.effective_user.id}")
+        logger.info(
+            f"📩 RECEIVED MESSAGE: {update.message.text} from user {update.effective_user.id}"
+        )
 
 
-def main() -> None:
-    """启动 Bot"""
-    logger.info("Starting DLP Bot...")
+async def main():
+    """Universal Main Entry Point"""
+    logger.info("Starting X-Bot (Universal Mode)...")
 
-    # 配置持久化存储
-    persistence = PicklePersistence(filepath="data/bot_persistence.pickle")
+    # 1. Setup Telegram Application
+    # 调整第三方库日志级别，避免刷屏 (Moved to main for reliability)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
-    application = (
-        Application.builder()
-        .token(TELEGRAM_BOT_TOKEN)
-        .persistence(persistence)
-        .read_timeout(60)
-        .write_timeout(120)
-        .build()
+    tg_app = None
+    tg_adapter = None
+    if TELEGRAM_BOT_TOKEN:
+        persistence = PicklePersistence(filepath="data/bot_persistence.pickle")
+        tg_app = (
+            Application.builder()
+            .token(TELEGRAM_BOT_TOKEN)
+            .persistence(persistence)
+            .concurrent_updates(True)
+            .read_timeout(60)
+            .write_timeout(120)
+            .build()
+        )
+
+        # Debug logging
+        tg_app.add_handler(TypeHandler(Update, log_update), group=-1)
+
+        # 2. Setup Adapters
+        # A. Telegram Adapter
+        tg_adapter = TelegramAdapter(tg_app)
+        adapter_manager.register_adapter(tg_adapter)
+        logger.info("✅ Telegram Adapter enabled.")
+    else:
+        logger.info("ℹ️ Telegram Adapter skipped (no token).")
+
+    # --- Global Initialization (Decoupled from TG) ---
+    await init_services()
+
+    # if tg_app:
+    #     await setup_telegram_commands(tg_app)
+    # -----------------------------------------------
+
+    # B. Discord Adapter
+    if DISCORD_BOT_TOKEN:
+        discord_adapter = DiscordAdapter(DISCORD_BOT_TOKEN)
+        adapter_manager.register_adapter(discord_adapter)
+        logger.info("✅ Discord Adapter enabled.")
+    else:
+        logger.info("ℹ️ Discord Adapter skipped (no token).")
+
+    # C. DingTalk Adapter
+    if DINGTALK_CLIENT_ID and DINGTALK_CLIENT_SECRET:
+        from platforms.dingtalk.adapter import DingTalkAdapter
+
+        dingtalk_adapter = DingTalkAdapter(DINGTALK_CLIENT_ID, DINGTALK_CLIENT_SECRET)
+        adapter_manager.register_adapter(dingtalk_adapter)
+        logger.info("✅ DingTalk Adapter enabled (Stream Mode).")
+    else:
+        logger.info("ℹ️ DingTalk Adapter skipped (missing credentials).")
+
+    # 3. Register Handlers (Unified)
+    # Broadcast common commands
+    # Broadcast common commands
+    adapter_manager.on_command("start", start, description="显示主菜单")
+    adapter_manager.on_command("new", handle_new_command, description="开启新对话")
+    adapter_manager.on_command("help", help_command, description="使用帮助")
+    adapter_manager.on_command("stats", stats_command, description="查看统计信息")
+    adapter_manager.on_command("skills", skills_command, description="查看可用技能")
+    adapter_manager.on_command(
+        "reload_skills", reload_skills_command, description="重载技能"
     )
+    adapter_manager.on_command(
+        "translate", toggle_translation_command, description="开启/关闭沉浸式翻译"
+    )
+    adapter_manager.on_command("stop", stop_command, description="停止当前任务")
 
-    # 设置 Bot 初始化 (加载数据库和菜单)
-    application.post_init = initialize_data
+    # ----------------------------------------------
+    # 3.1 DYNAMIC SKILL HANDLER REGISTRATION
+    # ----------------------------------------------
+    from core.skill_loader import skill_loader
 
-    # 0. 全局调试记录器 (注册在最前面)
-    from telegram.ext import TypeHandler
-    application.add_handler(TypeHandler(Update, log_update), group=-1)
+    logger.info("🔌 Registering dynamic skill handlers...")
+    skill_loader.register_skill_handlers(adapter_manager)
+    # ----------------------------------------------
 
-    # 1. 独立注册通用按钮 (保证这些按钮永远可点，不受会话状态影响)
-    # 处理 help, settings, platforms, back_to_main, ai_chat
-    # 注意：排除 download_video, generate_image, back_to_main_cancel 以及 dl_format_ 和 large_file_ 开头的回调
-    
-    # 1.0 先注册智能视频操作按钮 (优先级高于通用按钮)
-    application.add_handler(CallbackQueryHandler(handle_video_actions, pattern="^action_.*"))
+    # 4. Register Platform-Specific Handlers (Telegram Complex Flows)
+    if tg_adapter:
+        # Telegram Buttons & Callbacks
 
-    # 1.1 大文件处理按钮
-    application.add_handler(CallbackQueryHandler(handle_large_file_action, pattern="^large_file_"))
-    
-    # 1.2 通用菜单按钮
-    common_pattern = "^(?!download_video$|generate_image$|back_to_main_cancel$|dl_format_|large_file_|action_|unsub_|stock_|skill_).*$"
-    application.add_handler(CallbackQueryHandler(button_callback, pattern=common_pattern))
-    
-    # 1.3 Skill 审核按钮
-    application.add_handler(CallbackQueryHandler(handle_skill_callback, pattern="^skill_"))
+        common_pattern = "^(?!back_to_main_cancel$|unsub_|stock_|skill_|del_rss_|del_stock_|action_).*$"
+        tg_adapter.on_callback_query(common_pattern, button_callback)
+        tg_adapter.on_callback_query("^skill_", handle_skill_callback)
+        # Note: stock_ & unsub_ are now registered via register_skill_handlers dynamically
 
-    # 2. 视频下载对话处理器
-    back_handler = CallbackQueryHandler(back_to_main_and_cancel, pattern="^back_to_main_cancel$")
-    format_handler = CallbackQueryHandler(handle_download_format, pattern="^dl_format_")
-    video_conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(start_download_video, pattern="^download_video$"),
-            CommandHandler("download", download_command),
-        ],
-        states={
-            WAITING_FOR_VIDEO_URL: [
-                back_handler,
-                format_handler,
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_video_download),
+        # Telegram Conversations
+
+        # Video Download Handler moved to skills/builtin/download_video
+
+        feature_conv_handler = ConversationHandler(
+            entry_points=[
+                tg_adapter.create_command_handler("feature", feature_command)
             ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel), back_handler, format_handler],
-        allow_reentry=True,
-    )
-    
-    # 3. 画图对话处理器
-    image_conv_handler = ConversationHandler(
-        entry_points=[
-            CallbackQueryHandler(start_generate_image, pattern="^generate_image$"),
-            CommandHandler("image", image_command),
-        ],
-        states={
-            WAITING_FOR_IMAGE_PROMPT: [
-                back_handler,
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_image_prompt),
+            states={
+                WAITING_FOR_FEATURE_INPUT: [
+                    tg_adapter.create_command_handler(
+                        "save_feature", save_feature_command
+                    ),
+                    tg_adapter.create_message_handler(
+                        filters.TEXT & ~filters.COMMAND, handle_feature_input
+                    ),
+                ],
+            },
+            fallbacks=[
+                tg_adapter.create_command_handler("cancel", cancel),
+                tg_adapter.create_command_handler("save_feature", save_feature_command),
             ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel), back_handler],
-        allow_reentry=True,
-    )
+            per_message=False,
+        )
+        tg_app.add_handler(feature_conv_handler)
 
-    # 3.4 需求收集对话处理器
-    feature_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("feature", feature_command)],
-        states={
-            WAITING_FOR_FEATURE_INPUT: [
-                CommandHandler("save_feature", save_feature_command),
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_feature_input)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel), CommandHandler("save_feature", save_feature_command)],
-    )
+        teach_conv_handler = ConversationHandler(
+            entry_points=[tg_adapter.create_command_handler("teach", teach_command)],
+            states={
+                WAITING_FOR_SKILL_DESC: [
+                    tg_adapter.create_message_handler(
+                        filters.TEXT & ~filters.COMMAND, handle_teach_input
+                    )
+                ],
+            },
+            fallbacks=[tg_adapter.create_command_handler("cancel", cancel)],
+            per_message=False,
+        )
+        tg_app.add_handler(teach_conv_handler)
 
-    # 4. 注册核心功能处理器
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("new", handle_new_command))
-    application.add_handler(CommandHandler("adduser", adduser_command))
-    application.add_handler(CommandHandler("deluser", deluser_command))
-    
-    # 移除独立命令注册 (已迁移至 Skill)
-    # remind, translate, subscribe, monitor, watchlist
-    
-    # 4.1 核心后台回调 (Skill 可能触发)
-    application.add_handler(CallbackQueryHandler(handle_unsubscribe_callback, pattern="^unsub_"))
-    application.add_handler(CallbackQueryHandler(handle_stock_select_callback, pattern="^stock_"))
-    
-    # 4.2 特色功能
-    application.add_handler(feature_conv_handler)
-    application.add_handler(CommandHandler("stats", stats_command))
-    application.add_handler(video_conv_handler)
-    application.add_handler(image_conv_handler)
-    
-    # 4.1 Skill 管理命令
-    teach_conv_handler = ConversationHandler(
-        entry_points=[CommandHandler("teach", teach_command)],
-        states={
-            WAITING_FOR_SKILL_DESC: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, handle_teach_input)
-            ],
-        },
-        fallbacks=[CommandHandler("cancel", cancel)],
-    )
-    application.add_handler(teach_conv_handler)
-    application.add_handler(CommandHandler("skills", skills_command))
-    application.add_handler(CommandHandler("reload_skills", reload_skills_command))
-    
-    # 5. 图片消息处理器（AI 图片分析）
-    application.add_handler(
-        MessageHandler(filters.PHOTO, handle_ai_photo)
-    )
-    
-    # 6. 视频消息处理器（AI 视频分析）
-    application.add_handler(
-        MessageHandler(filters.VIDEO, handle_ai_video)
-    )
-    
-    # 7. 语音/音频消息处理器（包括 voice 和 audio）
-    application.add_handler(
-        MessageHandler(filters.VOICE | filters.AUDIO, handle_voice_message)
-    )
-    
-    # 8. 文档消息处理器（PDF、DOCX）
-    application.add_handler(
-        MessageHandler(filters.Document.ALL, handle_document)
-    )
-    
-    # 9. AI 对话处理器（兜底文本消息）
-    application.add_handler(
-        MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ai_chat)
-    )
+        # 5. Media Handlers
+        tg_adapter.on_message(filters.PHOTO, handle_ai_photo)
+        tg_adapter.on_message(filters.VIDEO, handle_ai_video)
+        tg_adapter.on_message(filters.VOICE | filters.AUDIO, handle_voice_message)
+        tg_adapter.on_message(filters.Document.ALL, handle_document)
+        tg_adapter.on_message(filters.Sticker.ALL, handle_sticker_message)
+        tg_adapter.on_message(filters.TEXT & ~filters.COMMAND, handle_ai_chat)
+    else:
+        pass
 
-    # 启动 Bot
-    logger.info("Bot is running...")
-    application.run_polling(
-        allowed_updates=["message", "callback_query", "edited_message"]
-    )
+    # Register Discord equivalents (Manual mapping for now)
+    if DISCORD_BOT_TOKEN:
+
+        async def discord_router(ctx):
+            msg_type = ctx.message.type
+            if msg_type == MessageType.IMAGE:
+                await handle_ai_photo(ctx)
+            elif msg_type == MessageType.VIDEO:
+                await handle_ai_video(ctx)
+            elif msg_type == MessageType.AUDIO or msg_type == MessageType.VOICE:
+                await handle_voice_message(ctx)
+            elif msg_type == MessageType.DOCUMENT:
+                await handle_document(ctx)
+            else:
+                await handle_ai_chat(ctx)
+
+        discord_adapter.register_message_handler(discord_router)
+
+        # Register Discord Callbacks (Unified)
+        discord_adapter.on_callback_query("^skill_", handle_skill_callback)
+        # unsubs, stock Handled by dynamic
+
+        # Generic Button Callback (Help, Settings, etc.)
+        # Note: Discord regex matching might be slightly different if compiled differently, but standard python re works.
+        # We reuse the common pattern from Telegram.
+        # Generic Button Callback (Help, Settings, etc.)
+        # Note: Discord regex matching might be slightly different if compiled differently, but standard python re works.
+        # We reuse the common pattern from Telegram.
+        common_pattern = "^(?!back_to_main_cancel$|unsub_|stock_|skill_|del_rss_|del_stock_|action_).*$"
+        discord_adapter.on_callback_query(common_pattern, button_callback)
+
+        # Note: ConversationHandler logic not yet fully ported to DiscordAdapter
+        # So /download command state machine won't work perfectly on Discord yet
+        # But stateless actions will.
+
+    # Register DingTalk handlers
+    if DINGTALK_CLIENT_ID and DINGTALK_CLIENT_SECRET:
+
+        async def dingtalk_router(ctx):
+            msg_type = ctx.message.type
+            if msg_type == MessageType.IMAGE:
+                await handle_ai_photo(ctx)
+            elif msg_type == MessageType.VIDEO:
+                await handle_ai_video(ctx)
+            elif msg_type == MessageType.AUDIO or msg_type == MessageType.VOICE:
+                await handle_voice_message(ctx)
+            elif msg_type == MessageType.DOCUMENT:
+                await handle_document(ctx)
+            else:
+                await handle_ai_chat(ctx)
+
+        dingtalk_adapter.register_message_handler(dingtalk_router)
+
+        # Register DingTalk Callbacks (Unified)
+        dingtalk_adapter.on_callback_query("^skill_", handle_skill_callback)
+
+        # Generic Button Callback
+        # Generic Button Callback
+        common_pattern = "^(?!back_to_main_cancel$|unsub_|stock_|skill_|del_rss_|del_stock_|action_).*$"
+        dingtalk_adapter.on_callback_query(common_pattern, button_callback)
+
+    # 6. Start Engines
+    stop_event = asyncio.Event()
+
+    def signal_handler(signum, frame):
+        logger.info(f"Signal {signum} received, stopping...")
+        stop_event.set()
+
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    try:
+        await adapter_manager.start_all()
+
+        # Keep alive
+        logger.info("All adapters started. Press Ctrl+C to stop.")
+        await stop_event.wait()
+
+    except Exception as e:
+        logger.error(f"Fatal error: {e}", exc_info=True)
+    finally:
+        logger.info("Shutting down...")
+        await adapter_manager.stop_all()
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        pass

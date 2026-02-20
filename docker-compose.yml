@@ -9,10 +9,54 @@ services:
     restart: unless-stopped
     environment:
       - TZ=Asia/Shanghai
+      - SEARXNG_URL=http://127.0.0.1:28080
+    network_mode: "host"
     volumes:
       - ./downloads:/app/downloads
       - ./data:/app/data
-      - ./skills:/app/skills  # 持久化学习到的 Skills
-      - ./cookies.txt:/app/cookies.txt
+      # Deployment Staging: 宿主机路径必须与容器内路径一致
+      # 这是因为 x-bot 调度的是宿主机 Docker，docker compose 会使用宿主机路径
+      # 必须在 .env 中设置 X_DEPLOYMENT_STAGING_PATH 为绝对路径！
+      - ${X_DEPLOYMENT_STAGING_PATH}:${X_DEPLOYMENT_STAGING_PATH}
+      - ./skills:/app/skills # 持久化学习到的 Skills
       - /mnt/d/media/dlp:/app/media
-      - /var/run/docker.sock:/var/run/docker.sock  # MCP: 允许启动 MCP 服务容器
+      - /var/run/docker.sock:/var/run/docker.sock # MCP: 允许启动 MCP 服务容器
+
+  searxng-redis:
+    container_name: searxng-redis
+    image: valkey/valkey:8-alpine
+    command: valkey-server --save 30 1 --loglevel warning
+    restart: unless-stopped
+    volumes:
+      - ./data/searxng-redis:/data
+    networks:
+      - searxng-net
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: '1'
+
+  searxng:
+    container_name: searxng
+    image: searxng/searxng:latest
+    restart: unless-stopped
+    ports:
+      - "0.0.0.0:28080:8080"
+    volumes:
+      - ./deploy/searxng/searxng:/etc/searxng:rw
+    # environment:
+    #   - SEARXNG_BASE_URL=http://localhost:28080/
+    depends_on:
+      - searxng-redis
+    networks:
+      - searxng-net
+    logging:
+      driver: json-file
+      options:
+        max-size: 1m
+        max-file: '1'
+
+networks:
+  searxng-net:
+    driver: bridge

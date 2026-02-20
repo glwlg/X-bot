@@ -1,0 +1,64 @@
+"""
+Scheduled Tasks Repository
+"""
+
+import logging
+import aiosqlite
+from typing import List, Dict
+from repositories.base import get_db
+
+logger = logging.getLogger(__name__)
+
+
+async def add_scheduled_task(
+    crontab: str,
+    instruction: str,
+    user_id: int = 0,
+    platform: str = "telegram",
+    need_push: bool = True,
+) -> int:
+    """Add a new scheduled task"""
+    async with await get_db() as db:
+        cursor = await db.execute(
+            """
+            INSERT INTO scheduled_tasks (crontab, instruction, user_id, platform, need_push, is_active)
+            VALUES (?, ?, ?, ?, ?, 1)
+            """,
+            (
+                crontab,
+                instruction,
+                user_id,
+                platform,
+                1 if need_push else 0,
+            ),
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_all_active_tasks() -> List[Dict]:
+    """Get all active scheduled tasks"""
+    async with await get_db() as db:
+        db.row_factory = aiosqlite.Row
+        async with db.execute(
+            "SELECT * FROM scheduled_tasks WHERE is_active = 1"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
+
+
+async def update_task_status(task_id: int, is_active: bool):
+    """Enable/Disable a task"""
+    async with await get_db() as db:
+        await db.execute(
+            "UPDATE scheduled_tasks SET is_active = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (1 if is_active else 0, task_id),
+        )
+        await db.commit()
+
+
+async def delete_task(task_id: int):
+    """Delete a task"""
+    async with await get_db() as db:
+        await db.execute("DELETE FROM scheduled_tasks WHERE id = ?", (task_id,))
+        await db.commit()
