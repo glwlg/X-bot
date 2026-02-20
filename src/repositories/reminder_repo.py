@@ -1,16 +1,23 @@
 """
 提醒任务 Repository
 """
+
 import aiosqlite
 from .base import get_db
 
 
-async def add_reminder(user_id: int, chat_id: int, message: str, trigger_time: str) -> int:
+async def add_reminder(
+    user_id: int,
+    chat_id: int,
+    message: str,
+    trigger_time: str,
+    platform: str = "telegram",
+) -> int:
     """添加提醒任务"""
     async with await get_db() as db:
         cursor = await db.execute(
-            "INSERT INTO reminders (user_id, chat_id, message, trigger_time) VALUES (?, ?, ?, ?)",
-            (user_id, chat_id, message, trigger_time)
+            "INSERT INTO reminders (user_id, chat_id, message, trigger_time, platform) VALUES (?, ?, ?, ?, ?)",
+            (user_id, chat_id, message, trigger_time, platform),
         )
         await db.commit()
         return cursor.lastrowid

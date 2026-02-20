@@ -199,7 +199,7 @@ def format_stock_message(stocks: list[dict]) -> str:
         
         # 涨跌幅超过 1% 加粗
         if abs(stock["percent"]) > 1.0:
-            item_str = f"*{item_str}*"
+            item_str = f"**{item_str}**"
             
         formatted_items.append(item_str)
     
