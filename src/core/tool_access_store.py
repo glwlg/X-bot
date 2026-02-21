@@ -34,7 +34,7 @@ TOKEN_ALIASES = {
 
 SKILL_FUNCTION_GROUPS = {
     "deep_research": {"group:research"},
-    "searxng_search": {"group:research"},
+    "web_search": {"group:research"},
     "web_browser": {"group:research"},
     "docker_ops": {"group:ops"},
     "deployment_manager": {"group:ops"},
@@ -57,10 +57,12 @@ class ToolAccessStore:
     CORE_MANAGER_DEFAULT_ALLOW = [
         "group:primitives",
         "group:management",
+        "group:automation",
     ]
     WORKER_DEFAULT_DENY = [
         "group:coding",
         "group:management",
+        "group:automation",
     ]
 
     def __init__(self):

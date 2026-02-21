@@ -702,9 +702,15 @@ class ExtensionExecutor:
         rendered = str(text or "").strip()
         if not rendered:
             return False
+
+        if rendered.startswith("✅"):
+            return False
+
         lowered = rendered.lower()
         if lowered.startswith(("❌", "error", "failed", "invalid", "missing")):
             return True
+
+        preview = lowered[:250]
         patterns = (
             "missing required",
             "请提供",
@@ -720,4 +726,4 @@ class ExtensionExecutor:
             "tool_budget_guard",
             "semantic_loop_guard",
         )
-        return any(token in lowered or token in rendered for token in patterns)
+        return any(token in preview for token in patterns)

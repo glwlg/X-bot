@@ -10,11 +10,11 @@ def _load_module():
         Path(__file__).resolve().parents[2]
         / "skills"
         / "builtin"
-        / "searxng_search"
+        / "web_search"
         / "scripts"
         / "execute.py"
     )
-    spec = importlib.util.spec_from_file_location("searxng_search_execute_test", path)
+    spec = importlib.util.spec_from_file_location("web_search_execute_test", path)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -98,7 +98,7 @@ async def test_searxng_weather_query_reranks_authoritative_sources(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_searxng_search_applies_site_blocklist(monkeypatch):
+async def test_web_search_applies_site_blocklist(monkeypatch):
     module = _load_module()
     monkeypatch.setenv("SEARXNG_URL", "http://127.0.0.1:28080")
 
@@ -138,7 +138,7 @@ async def test_searxng_search_applies_site_blocklist(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_searxng_search_retries_general_category_once(monkeypatch):
+async def test_web_search_retries_general_category_once(monkeypatch):
     module = _load_module()
     monkeypatch.setenv("SEARXNG_URL", "http://127.0.0.1:28080")
 
@@ -178,7 +178,7 @@ async def test_searxng_search_retries_general_category_once(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_searxng_search_news_profile_uses_profile_engines_and_category(
+async def test_web_search_news_profile_uses_profile_engines_and_category(
     monkeypatch,
 ):
     module = _load_module()
@@ -218,7 +218,7 @@ async def test_searxng_search_news_profile_uses_profile_engines_and_category(
 
 
 @pytest.mark.asyncio
-async def test_searxng_search_tech_profile_strict_sources_filters_noise(monkeypatch):
+async def test_web_search_tech_profile_strict_sources_filters_noise(monkeypatch):
     module = _load_module()
     monkeypatch.setenv("SEARXNG_URL", "http://127.0.0.1:28080")
     monkeypatch.setenv("SEARXNG_SEARCH_TECH_ALLOWLIST", "docs.python.org,github.com")
@@ -260,7 +260,7 @@ async def test_searxng_search_tech_profile_strict_sources_filters_noise(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_searxng_search_auto_detects_tech_profile(monkeypatch):
+async def test_web_search_auto_detects_tech_profile(monkeypatch):
     module = _load_module()
     monkeypatch.setenv("SEARXNG_URL", "http://127.0.0.1:28080")
     monkeypatch.setenv("SEARXNG_SEARCH_TECH_CATEGORIES", "it")

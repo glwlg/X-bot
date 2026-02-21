@@ -2,7 +2,7 @@
 Deployment Manager Skill - 基础操作模块
 
 提供部署相关的基础文件操作，供 Skill Agent 调度使用。
-Agent 通过 SKILL.md 中定义的 SOP 编排 searxng_search、web_browser、docker_ops 完成部署。
+Agent 通过 SKILL.md 中定义的 SOP 编排 web_search、web_browser、docker_ops 完成部署。
 """
 
 import asyncio

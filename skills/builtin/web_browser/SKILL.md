@@ -10,10 +10,11 @@ This skill should bias toward short, deterministic workflows.
 
 ## Priority rules
 
-1. If the user gives a URL and asks to read/summarize/extract content, use the snapshot flow first.
-2. Prefer `open` + `snapshot` + `read snapshot file` over exploratory command chains.
-3. Avoid debug-only commands unless the user explicitly asks for debugging.
-4. Only use `eval` when the user explicitly requests JS evaluation.
+1. **[CRITICAL]** If the user simply wants to read, summarize, or extract text content from a URL without interacting with it, DO NOT use `web_browser`. You MUST use the `web_extractor` skill instead, as it is much faster and cleaner. 
+2. Use this skill ONLY when you need to act like a real user (click buttons, fill forms, bypass complex CAPTCHAs, or take visual screenshots).
+3. If using this skill, prefer `open` + `snapshot` + `read snapshot file` over exploratory command chains.
+4. Avoid debug-only commands unless the user explicitly asks for debugging.
+5. Only use `eval` when the user explicitly requests JS evaluation.
 
 ## Preferred workflow: summarize a web page
 

@@ -489,9 +489,9 @@ async def test_orchestrator_uses_runtime_user_id_override_for_worker_policy(
     captured = {}
 
     candidate = ExtensionCandidate(
-        name="searxng_search",
+        name="web_search",
         description="search",
-        tool_name="ext_searxng_search",
+        tool_name="ext_web_search",
         input_schema={"type": "object", "properties": {}},
         schema_summary="required=[], fields=[]",
         triggers=["search", "天气"],
@@ -529,7 +529,7 @@ async def test_orchestrator_uses_runtime_user_id_override_for_worker_policy(
 
     _ = [chunk async for chunk in orchestrator.handle_message(ctx, message_history)]
 
-    assert "ext_searxng_search" in captured["tool_names"]
+    assert "ext_web_search" in captured["tool_names"]
     assert "list_workers" not in captured["tool_names"]
 
 

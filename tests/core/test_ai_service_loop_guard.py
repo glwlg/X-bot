@@ -250,7 +250,7 @@ async def test_ai_service_stops_when_tool_call_budget_exceeded(monkeypatch):
     class FakeResponse:
         def __init__(self):
             function_call = SimpleNamespace(
-                name="ext_searxng_search",
+                name="ext_web_search",
                 args={"queries": ["上海 天气"]},
             )
             self.choices = [
@@ -301,7 +301,7 @@ async def test_ai_service_stops_when_tool_call_budget_exceeded(monkeypatch):
         message_history=[{"role": "user", "parts": [{"text": "查天气"}]}],
         tools=[
             {
-                "name": "ext_searxng_search",
+                "name": "ext_web_search",
                 "description": "",
                 "parameters": {"type": "object"},
             }
@@ -325,7 +325,7 @@ async def test_ai_service_budget_guard_synthesizes_final_answer(monkeypatch):
         async def create(self, **kwargs):
             if kwargs.get("tools"):
                 function_call = SimpleNamespace(
-                    name="ext_searxng_search",
+                    name="ext_web_search",
                     args={"queries": ["无锡 明天 天气"]},
                 )
                 return SimpleNamespace(
@@ -388,7 +388,7 @@ async def test_ai_service_budget_guard_synthesizes_final_answer(monkeypatch):
         message_history=[{"role": "user", "parts": [{"text": "查天气"}]}],
         tools=[
             {
-                "name": "ext_searxng_search",
+                "name": "ext_web_search",
                 "description": "",
                 "parameters": {"type": "object"},
             }

@@ -28,48 +28,9 @@ services:
       - .env
     restart: unless-stopped
     network_mode: "host"
-    command: ["python", "-m", "worker_runtime.daemon"]
+    command: [ "python", "-m", "worker_runtime.daemon" ]
     volumes:
       - ./data:/app/data
       - ./downloads:/app/downloads
       - ./skills:/app/skills
       - /var/run/docker.sock:/var/run/docker.sock
-
-  searxng-redis:
-    container_name: searxng-redis
-    image: valkey/valkey:8-alpine
-    command: valkey-server --save 30 1 --loglevel warning
-    restart: unless-stopped
-    volumes:
-      - ./data/searxng-redis:/data
-    networks:
-      - searxng-net
-    logging:
-      driver: json-file
-      options:
-        max-size: 1m
-        max-file: '1'
-
-  searxng:
-    container_name: searxng
-    image: searxng/searxng:latest
-    restart: unless-stopped
-    ports:
-      - "0.0.0.0:28080:8080"
-    volumes:
-      - ./deploy/searxng/searxng:/etc/searxng:rw
-    # environment:
-    #   - SEARXNG_BASE_URL=http://localhost:28080/
-    depends_on:
-      - searxng-redis
-    networks:
-      - searxng-net
-    logging:
-      driver: json-file
-      options:
-        max-size: 1m
-        max-file: '1'
-
-networks:
-  searxng-net:
-    driver: bridge

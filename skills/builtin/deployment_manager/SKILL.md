@@ -66,7 +66,7 @@ entrypoint: scripts/execute.py
 
 你本身**不直接执行 Docker 命令**或**调用 AI 接口**。你的工作模式是：
 1. **分析需求** → 理解用户想部署什么
-2. **搜索资料** → 委托 `searxng_search` 查找部署方法和 GitHub 仓库
+2. **搜索资料** → 委托 `web_search` 查找部署方法和 GitHub 仓库
 3. **阅读文档** → 委托 `web_browser` 获取具体配置信息
 4. **准备环境** → 指导核心 Agent 用四原语（`read/write/edit/bash`）准备配置
 5. **执行部署** → 委托 `docker_ops` 完成容器操作
@@ -75,7 +75,7 @@ entrypoint: scripts/execute.py
 
 | 技能名 | 用途 |
 | :--- | :--- |
-| `searxng_search` | 搜索部署教程、GitHub 仓库、Docker 镜像 |
+| `web_search` | 搜索部署教程、GitHub 仓库、Docker 镜像 |
 | `web_browser` | 访问网页获取详细配置说明、README 内容 |
 | `docker_ops` | 执行 docker 命令、容器管理、服务部署 |
 
@@ -100,7 +100,7 @@ entrypoint: scripts/execute.py
 | **状态验证** | `verify_access` | 检查服务 HTTP 可达性 |
 | | `status` | 列出已部署项目 |
 | **外部协作** | `DELEGATE` → `docker_ops` | 容器管理 (Up/Down/Logs/Ps) |
-| | `DELEGATE` → `searxng_search` | 搜索部署文档 |
+| | `DELEGATE` → `web_search` | 搜索部署文档 |
 | | `DELEGATE` → `web_browser` | 读取文档细节 |
 
 ## 核心原则 (Core Principles) - 必须严格遵守！

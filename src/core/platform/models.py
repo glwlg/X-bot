@@ -197,11 +197,17 @@ class UnifiedContext:
             return await self._adapter.edit_text(self, message_id, safe_text, **kwargs)
         except MessageSendError as exc:
             lowered = str(exc).lower()
-            if isinstance(text, str) and ("too_long" in lowered or "too long" in lowered):
-                fallback_text = self._truncate_edit_preview(text, max(400, MAX_EDIT_PREVIEW_CHARS // 2))
+            if isinstance(text, str) and (
+                "too_long" in lowered or "too long" in lowered
+            ):
+                fallback_text = self._truncate_edit_preview(
+                    text, max(400, MAX_EDIT_PREVIEW_CHARS // 2)
+                )
                 return await self._adapter.edit_text(
                     self, message_id, fallback_text, **kwargs
                 )
+            if "timed out" in lowered or "timeout" in lowered:
+                return await self._adapter.reply_text(self, safe_text, **kwargs)
             raise
 
     @staticmethod

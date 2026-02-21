@@ -200,10 +200,10 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
     try:
         from core.skill_loader import skill_loader
 
-        if skill_loader.get_skill("searxng_search"):
+        if skill_loader.get_skill("web_search"):
             # Increase limit for better breadth
             search_res = await ctx.run_skill(
-                "searxng_search", {"query": topic, "num_results": 8}
+                "web_search", {"query": topic, "num_results": 8}
             )
             search_summary_text = (
                 search_res.get("text", "")

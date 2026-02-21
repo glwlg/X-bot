@@ -44,7 +44,7 @@ async def test_worker_task_file_store_roundtrip(tmp_path, monkeypatch):
     progress_updated = await store.update_running_progress(
         submitted["job_id"],
         progress={
-            "summary": "已完成 ext_searxng_search",
+            "summary": "已完成 ext_web_search",
             "running_tool": "ext_web_browser",
         },
     )

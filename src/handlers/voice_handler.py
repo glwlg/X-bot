@@ -1,17 +1,18 @@
 """
-语音消息处理模块 - 智能路由版
+语音消息处理模块
 
-短语音（≤60s）: 转文字后走智能路由（与文本消息一致）
-长语音（>60s）: 直接转写输出
+统一将语音转写为文字后，再按普通文本消息处理，或进行语音翻译。
 """
 
 import logging
 import base64
+import asyncio
+import json
 import re
 from typing import Any, cast
 from telegram.error import BadRequest
 
-from core.config import GEMINI_MODEL, is_user_allowed, openai_async_client
+from core.config import VOICE_MODEL, is_user_allowed, openai_async_client
 from core.platform.exceptions import MediaProcessingError
 from services.openai_adapter import build_messages
 from user_context import add_message, get_user_context
@@ -20,14 +21,32 @@ from .media_utils import extract_media_input
 
 logger = logging.getLogger(__name__)
 
-# 语音时长阈值（秒）
-SHORT_VOICE_THRESHOLD = 60
-
 
 def _normalize_transcribed_text(raw_text: str) -> str:
     text = str(raw_text or "").strip()
     if not text:
         return ""
+
+    for wrapped in ("```json", "```"):
+        if text.lower().startswith(wrapped):
+            text = text[len(wrapped) :].strip()
+    if text.endswith("```"):
+        text = text[:-3].strip()
+
+    if text.lower().startswith("json"):
+        text = text[4:].strip()
+
+    if text.startswith("{"):
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                for key in ("text", "transcript", "content", "result"):
+                    value = parsed.get(key)
+                    if isinstance(value, str) and value.strip():
+                        text = value.strip()
+                        break
+        except Exception:
+            pass
 
     # Remove common wrapper labels.
     for prefix in ("转写：", "转写结果：", "识别结果：", "文本："):
@@ -130,6 +149,114 @@ def _audio_mime_candidates(mime_type: str) -> list[str]:
     return candidates
 
 
+def _audio_base_mime(mime_type: str) -> str:
+    return str(mime_type or "").split(";", 1)[0].strip().lower()
+
+
+def _sniff_audio_container(voice_bytes: bytes) -> str | None:
+    if not voice_bytes:
+        return None
+
+    head16 = bytes(voice_bytes[:16])
+    head32 = bytes(voice_bytes[:32])
+
+    if head16.startswith(b"OggS"):
+        return "ogg"
+    if len(head16) >= 12 and head16.startswith(b"RIFF") and head16[8:12] == b"WAVE":
+        return "wav"
+    if head16.startswith(b"\x1aE\xdf\xa3"):
+        return "webm"
+    if head16.startswith(b"fLaC"):
+        return "flac"
+    if head16.startswith(b"ID3"):
+        return "mp3"
+    if len(head16) >= 2 and head16[0] == 0xFF and (head16[1] & 0xE0) == 0xE0:
+        return "mp3"
+    if b"ftyp" in head32:
+        return "mp4"
+    return None
+
+
+def _ffmpeg_input_format(mime_type: str, voice_bytes: bytes) -> str | None:
+    base = _audio_base_mime(mime_type)
+    if base in {"audio/ogg", "application/ogg", "audio/opus", "audio/x-opus"}:
+        return "ogg"
+    if base in {"audio/webm"}:
+        return "webm"
+    if base in {"audio/mp4", "audio/x-m4a"}:
+        return "mp4"
+    if base in {"audio/aac", "audio/x-aac"}:
+        return "aac"
+    if "mpeg" in base or "mp3" in base:
+        return "mp3"
+    if "wav" in base:
+        return "wav"
+    if "flac" in base:
+        return "flac"
+
+    sniffed = _sniff_audio_container(voice_bytes)
+    if sniffed in {"ogg", "webm", "mp4", "aac", "mp3", "wav", "flac"}:
+        return sniffed
+    return None
+
+
+def _should_try_wav_transcode(mime_type: str, voice_bytes: bytes) -> bool:
+    base = _audio_base_mime(mime_type)
+    if "wav" in base:
+        return False
+
+    if base in {
+        "audio/ogg",
+        "application/ogg",
+        "audio/opus",
+        "audio/x-opus",
+        "audio/webm",
+        "audio/mp4",
+        "audio/x-m4a",
+        "audio/aac",
+        "audio/x-aac",
+        "audio/flac",
+    }:
+        return True
+
+    return _sniff_audio_container(voice_bytes) in {"ogg", "webm", "mp4", "flac"}
+
+
+async def _transcode_audio_to_wav(voice_bytes: bytes, mime_type: str) -> bytes | None:
+    if not voice_bytes or not _should_try_wav_transcode(mime_type, voice_bytes):
+        return None
+
+    cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error"]
+    input_fmt = _ffmpeg_input_format(mime_type, voice_bytes)
+    if input_fmt:
+        cmd.extend(["-f", input_fmt])
+    cmd.extend(["-i", "pipe:0", "-ac", "1", "-ar", "16000", "-f", "wav", "pipe:1"])
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await process.communicate(input=bytes(voice_bytes))
+        if process.returncode != 0:
+            logger.warning(
+                "Voice transcode failed: mime=%s code=%s err=%s",
+                mime_type,
+                process.returncode,
+                (stderr or b"")[:200].decode("utf-8", errors="ignore"),
+            )
+            return None
+        if stdout:
+            return stdout
+    except FileNotFoundError:
+        logger.warning("Voice transcode skipped: ffmpeg not found")
+    except Exception as exc:
+        logger.warning("Voice transcode failed: mime=%s err=%s", mime_type, exc)
+    return None
+
+
 def _build_audio_contents(
     prompt: str, voice_bytes: bytes, mime_type: str
 ) -> list[dict]:
@@ -156,29 +283,57 @@ async def _run_audio_prompt(prompt: str, voice_bytes: bytes, mime_type: str) -> 
         logger.error("Voice model call skipped: OpenAI async client is not initialized")
         return ""
 
+    attempts: list[tuple[str, bytes, str]] = []
+    transcoded_wav = await _transcode_audio_to_wav(voice_bytes, mime_type)
+    if transcoded_wav:
+        attempts.append(("audio/wav", transcoded_wav, "transcoded_wav"))
     for candidate_mime in _audio_mime_candidates(mime_type):
+        attempts.append((candidate_mime, voice_bytes, "raw"))
+
+    for candidate_mime, candidate_bytes, source in attempts:
         try:
             response = await cast(Any, client).chat.completions.create(
-                model=GEMINI_MODEL,
+                model=VOICE_MODEL,
                 messages=build_messages(
-                    contents=_build_audio_contents(prompt, voice_bytes, candidate_mime),
+                    contents=_build_audio_contents(
+                        prompt, candidate_bytes, candidate_mime
+                    ),
                 ),
             )
         except Exception as exc:
             last_error = exc
             logger.warning(
-                "Voice model call failed with mime=%s err=%s",
+                "Voice model call failed with model=%s mime=%s source=%s err=%s",
+                VOICE_MODEL,
                 candidate_mime,
+                source,
                 exc,
             )
             continue
 
         text = _extract_model_text(response)
+        if text and _looks_like_audio_missing_reply(text):
+            logger.info(
+                "Voice model could not consume audio: model=%s mime=%s",
+                VOICE_MODEL,
+                candidate_mime,
+            )
+            continue
+
+        normalized = _normalize_transcribed_text(text)
+        if text and not normalized:
+            logger.info("Voice model returned only quotes, retrying...")
+            continue
+
         if text:
             return text
 
     if last_error is not None:
         logger.error("Voice model call failed after mime retries: %s", last_error)
+    else:
+        logger.warning(
+            "Voice model returned empty transcript after %s attempts", len(attempts)
+        )
     return ""
 
 
@@ -204,18 +359,6 @@ async def transcribe_voice(voice_bytes: bytes, mime_type: str) -> str | None:
         )
         if text:
             return text
-
-        # Retry once with a stricter instruction to avoid placeholder outputs like """".
-        strict_prompt = (
-            "请将这段语音准确转写为文字。"
-            "只输出原话，不要输出引号、占位符或解释。"
-            "如果听不清，必须返回空字符串。"
-        )
-        retry_text = _normalize_transcribed_text(
-            await _run_audio_prompt(strict_prompt, voice_bytes, mime_type)
-        )
-        if retry_text:
-            return retry_text
         return None
     except Exception as e:
         logger.error(f"Voice transcription error: {e}")
@@ -273,14 +416,6 @@ async def transcribe_and_translate_voice(
 
 
 async def handle_voice_message(ctx: UnifiedContext) -> None:
-    """
-    处理语音消息（包括 voice 和 audio 类型）
-
-    翻译模式开启: 转写 + 翻译 → 双语对照输出
-    正常模式:
-        短语音: 转文字 → 智能路由
-        长语音: 直接转写输出
-    """
     from core.state_store import get_user_settings
 
     user_id = ctx.message.user.id
@@ -304,7 +439,7 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
         return
 
     mime_type = media.mime_type or "audio/ogg"
-    duration = int(media.meta.get("duration") or (SHORT_VOICE_THRESHOLD + 1))
+    duration = int(media.meta.get("duration") or 0)
     user_instruction = (
         media.caption.strip()
         if media.caption
@@ -319,7 +454,7 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
     if translate_mode:
         thinking_msg = await ctx.reply("🌍 正在翻译语音内容...")
     else:
-        thinking_msg = await ctx.reply("🎤 正在识别语音内容...")
+        thinking_msg = await ctx.reply("🎤 正在理解语音内容...")
 
     # 发送"正在输入"状态
     await ctx.send_chat_action(action="typing")
@@ -368,66 +503,13 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
             await increment_stat(user_id, "translations_count")
             return
 
-        # 正常模式：转写语音
-        transcribed_text = await transcribe_voice(voice_bytes, mime_type)
-
-        if not transcribed_text:
-            msg_id = getattr(
-                thinking_msg, "message_id", getattr(thinking_msg, "id", None)
-            )
-            await ctx.edit_message(
-                msg_id, "❌ 无法识别语音内容，请重试或发送文字消息。"
-            )
-            return
-
-        logger.info(f"Voice transcribed: {transcribed_text[:50]}...")
-
-        # 如果用户附带了文字说明（Caption），将其作为指令追加到内容前
-        final_text = transcribed_text
-        if user_instruction:
-            final_text = f"{user_instruction}\n\n【语音内容】：\n{transcribed_text}"
-            # 有指令时，视为短语音逻辑处理（走智能路由）
-            msg_id = getattr(
-                thinking_msg, "message_id", getattr(thinking_msg, "id", None)
-            )
-            await ctx.edit_message(
-                msg_id, f'🎤 已识别语音内容，正在执行指令: **"{user_instruction}"**...'
-            )
-            await process_as_text_message(ctx, final_text, thinking_msg)
-            return
-
-        # 根据语音时长决定处理策略（若无 duration 属性则默认为长语音）
-        # duration variable is already set above
-        if duration <= SHORT_VOICE_THRESHOLD:
-            # 短语音：走智能路由（与文本消息一致）
-            msg_id = getattr(
-                thinking_msg, "message_id", getattr(thinking_msg, "id", None)
-            )
-            await ctx.edit_message(
-                msg_id,
-                f'🎤 语音转写内容为: **"{transcribed_text}"**\n\n🤔 正在思考中...',
-            )
-
-            # 调用文本消息处理逻辑
-            await process_as_text_message(ctx, transcribed_text, thinking_msg)
-        else:
-            # 长语音：直接输出转写结果
-            msg_id = getattr(
-                thinking_msg, "message_id", getattr(thinking_msg, "id", None)
-            )
-            await ctx.edit_message(
-                msg_id, f"🎤 **语音转写结果：**\n\n{transcribed_text}"
-            )
-
-            # 记录到上下文
-            await add_message(
-                ctx, user_id, "user", f"【用户发送了一段长语音】{transcribed_text}"
-            )
-
-            # 记录统计
-            from stats import increment_stat
-
-            await increment_stat(user_id, "voice_chats")
+        await process_as_voice_message(
+            ctx=ctx,
+            voice_bytes=voice_bytes,
+            mime_type=mime_type,
+            user_instruction=user_instruction,
+            thinking_msg=thinking_msg,
+        )
 
     except BadRequest as e:
         msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
@@ -462,6 +544,67 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
             pass
 
 
+def _looks_like_audio_missing_reply(text: str) -> bool:
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return False
+    if ("没有收到" in lowered or "未收到" in lowered) and (
+        "语音" in lowered or "音频" in lowered
+    ):
+        return True
+    cues = (
+        "没有附上语音",
+        "没有附上音频",
+        "语音内容/音频文件",
+        "音频文件",
+        "无法听到",
+        "请上传语音",
+        "语音文件/语音链接",
+        "no audio",
+        "no voice",
+        "voice file",
+        "audio file",
+        "upload audio",
+        "attach audio",
+    )
+    return any(cue in lowered for cue in cues)
+
+
+async def process_as_voice_message(
+    ctx: UnifiedContext,
+    voice_bytes: bytes,
+    mime_type: str,
+    user_instruction: str | None,
+    thinking_msg: Any,
+) -> None:
+    """
+    语音消息处理：先转写为文字，再作为文本消息走 Agent 处理。
+
+    不再尝试多模态直接理解音频（不稳定，常返回"没收到音频"导致体验差）。
+    """
+    msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
+
+    # ── Step 1: 转写语音 ──
+    transcribed_text = await transcribe_voice(voice_bytes, mime_type)
+    if not transcribed_text:
+        await ctx.edit_message(msg_id, "❌ 无法识别语音内容，请重试或改用文字发送。")
+        return
+
+    # ── Step 2: 组装文本 ──
+    instruction = str(user_instruction or "").strip()
+    if instruction:
+        final_text = f"{instruction}\n\n【语音内容】：\n{transcribed_text}"
+    else:
+        final_text = transcribed_text
+
+    # ── Step 3: 走文本消息处理 ──
+    await ctx.edit_message(
+        msg_id,
+        f"🎤 语音已识别，正在处理...\n\n> {transcribed_text[:100]}{'...' if len(transcribed_text) > 100 else ''}",
+    )
+    await process_as_text_message(ctx, final_text, thinking_msg)
+
+
 async def process_as_text_message(ctx: UnifiedContext, text: str, thinking_msg) -> None:
     """
     将转写后的文本按普通文本消息逻辑处理（代理给 Agent Orchestrator）
@@ -469,9 +612,6 @@ async def process_as_text_message(ctx: UnifiedContext, text: str, thinking_msg) 
     import time
     from core.agent_orchestrator import agent_orchestrator
     from stats import increment_stat
-
-    # Legacy fallbacks
-    update = ctx.platform_event
 
     user_id = ctx.message.user.id
 

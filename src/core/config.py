@@ -33,6 +33,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 LLM_BASE_URL = os.getenv("LLM_BASE_URL") or GEMINI_BASE_URL
 LLM_API_KEY = os.getenv("LLM_API_KEY") or GEMINI_API_KEY
 CORE_MODEL = os.getenv("CORE_MODEL", "gpt-4o-mini")
+VOICE_MODEL = os.getenv("VOICE_MODEL", "gemini-2.5-flash")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", CORE_MODEL)
 
 ROUTING_MODEL = os.getenv("ROUTING_MODEL", CORE_MODEL)
@@ -141,10 +142,9 @@ WAITING_FOR_MONITOR_KEYWORD = 4
 WAITING_FOR_SUBSCRIBE_URL = 5
 WAITING_FOR_FEATURE_INPUT = 6
 
-# Internal Search Service URL (SearXNG)
+# External Search Service Provider ("searxng" is default)
+SEARCH_PROVIDER = os.getenv("SEARCH_PROVIDER", "searxng")
 SEARXNG_URL = os.getenv("SEARXNG_URL")
-# Skill Context Injection Mode: 'full' (default), 'search_first', 'compact'
-SKILL_INJECTION_MODE = os.getenv("SKILL_INJECTION_MODE", "full")
 
 # Server IP Override (Optional, for fixed deployment)
 SERVER_IP = os.getenv("SERVER_IP")
