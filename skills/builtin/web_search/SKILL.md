@@ -1,7 +1,7 @@
 ---
 api_version: v3
-name: searxng_search
-description: "**聚合网络搜索**。基于 SearXNG，支持 Google/Bing/DuckDuckGo 等多引擎聚合搜索。"
+name: web_search
+description: "**聚合网络搜索**。"
 triggers:
 - search
 - 搜索
@@ -18,7 +18,7 @@ input_schema:
       description: 单条搜索关键词（与 queries 二选一）
     queries:
       type: array
-      description: 并行搜索关键词列表（推荐）
+      description: 并行搜索关键词列表（由于高级引擎极强，通常只需 1-2 个词语，最多不超过 2 个）
       items:
         type: string
     intent_profile:
@@ -66,7 +66,7 @@ permissions:
 entrypoint: scripts/execute.py
 ---
 
-# SearXNG Search (网络搜索)
+# Web Search (网络搜索)
 
 你是一个网络搜索专家。
 
@@ -82,7 +82,7 @@ entrypoint: scripts/execute.py
 | 参数名 | 类型 | 必填 | 说明 |
 | :--- | :--- | :--- | :--- |
 | `query` | string | 条件 | 单一搜索关键词 (与 `queries` 二选一) |
-| `queries` | list | 条件 | **推荐**。并行搜索关键词列表 (例如 `["Python 教程", "Python 最佳实践"]`) |
+| `queries` | list | 条件 | **推荐**。并行搜索关键词列表 (例如 `["Python 教程"]`，由于高级引擎极强，一般 1-2 个最精准词汇即可，不要超过 2 个) |
 | `intent_profile` | string | 否 | 意图配置档: `weather` / `news` / `tech` / `general` |
 | `num_results` | int | 否 | 返回结果数量 (默认 5) |
 | `categories` | string | 否 | 分类: `general` (默认), `news`, `it`, `science`, `images` |

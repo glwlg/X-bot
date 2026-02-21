@@ -6,6 +6,293 @@ from urllib.parse import urlencode, urlparse
 
 import httpx
 from core.platform.models import UnifiedContext
+from ddgs import DDGS
+from exa_py import Exa
+import random
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+class BaseSearchProvider:
+    async def search(
+        self,
+        *,
+        query_text: str,
+        categories_value: str,
+        time_range: str,
+        language: str,
+        engines: list[str],
+        client: httpx.AsyncClient,
+    ) -> list[dict[str, Any]]:
+        raise NotImplementedError
+
+
+class SearxngProvider(BaseSearchProvider):
+    def __init__(self, endpoint: str):
+        self.endpoint = endpoint
+
+    async def search(
+        self,
+        *,
+        query_text: str,
+        categories_value: str,
+        time_range: str,
+        language: str,
+        engines: list[str],
+        client: httpx.AsyncClient,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {
+            "q": str(query_text or "").strip(),
+            "format": "json",
+        }
+        if categories_value:
+            params["categories"] = categories_value
+        if time_range:
+            params["time_range"] = time_range
+        if language:
+            params["language"] = language
+        if engines:
+            params["engines"] = ",".join(engines)
+        search_url = f"{self.endpoint}?{urlencode(params)}"
+
+        response = await client.get(search_url)
+        response.raise_for_status()
+        data = response.json() if response is not None else {}
+        rows = data.get("results") if isinstance(data, dict) else []
+        if not isinstance(rows, list):
+            rows = []
+        return [item for item in rows if isinstance(item, dict)]
+
+
+class TavilyProvider(BaseSearchProvider):
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.endpoint = "https://api.tavily.com/search"
+
+    async def search(
+        self,
+        *,
+        query_text: str,
+        categories_value: str,
+        time_range: str,
+        language: str,
+        engines: list[str],
+        client: httpx.AsyncClient,
+    ) -> list[dict[str, Any]]:
+        topic = "general"
+        if categories_value == "news":
+            topic = "news"
+
+        payload: dict[str, Any] = {
+            "api_key": self.api_key,
+            "query": str(query_text or "").strip(),
+            "topic": topic,
+            "search_depth": "advanced",
+            "max_results": 10,
+            "include_answer": False,
+            "include_raw_content": False,
+        }
+
+        if time_range == "day":
+            payload["days"] = 1
+        elif time_range == "week":
+            payload["days"] = 7
+        elif time_range == "month":
+            payload["days"] = 30
+
+        response = await client.post(self.endpoint, json=payload)
+        response.raise_for_status()
+        data = response.json() if response is not None else {}
+        rows = data.get("results") if isinstance(data, dict) else []
+        if not isinstance(rows, list):
+            rows = []
+
+        mapped_rows = []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
+            mapped_rows.append(
+                {
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "content": r.get("content", ""),
+                    "engine": "tavily",
+                    "publishedDate": r.get("published_date", ""),
+                }
+            )
+        return mapped_rows
+
+
+class ExaProvider(BaseSearchProvider):
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+        self.exa = Exa(api_key=api_key)
+
+    async def search(
+        self,
+        *,
+        query_text: str,
+        categories_value: str,
+        time_range: str,
+        language: str,
+        engines: list[str],
+        client: httpx.AsyncClient,
+    ) -> list[dict[str, Any]]:
+        # Exa search runs synchronously
+        def _do_search():
+            return self.exa.search(
+                query=query_text,
+                type="auto",
+                num_results=10,
+                contents={"highlights": {"max_characters": 2000}},
+            )
+
+        try:
+            results = await asyncio.to_thread(_do_search)
+        except Exception as e:
+            logger.warning(f"Exa search failed: {e}")
+            raise
+
+        mapped_rows = []
+        for r in results.results:
+            mapped_rows.append(
+                {
+                    "title": r.title or "",
+                    "url": r.url or "",
+                    "content": ", ".join(r.highlights) if r.highlights else "",
+                    "engine": "exa",
+                    "publishedDate": r.published_date or "",
+                }
+            )
+        return mapped_rows
+
+
+class DuckDuckGoProvider(BaseSearchProvider):
+    async def search(
+        self,
+        *,
+        query_text: str,
+        categories_value: str,
+        time_range: str,
+        language: str,
+        engines: list[str],
+        client: httpx.AsyncClient,
+    ) -> list[dict[str, Any]]:
+        # Map time_range for ddg
+        timelimit = None
+        if time_range == "day":
+            timelimit = "d"
+        elif time_range == "week":
+            timelimit = "w"
+        elif time_range == "month":
+            timelimit = "m"
+        elif time_range == "year":
+            timelimit = "y"
+
+        # duckduckgo_search runs synchronously inside threadpool implicitly
+        def _do_search():
+            return list(
+                DDGS().text(keywords=query_text, timelimit=timelimit, max_results=10)
+            )
+
+        try:
+            results = await asyncio.to_thread(_do_search)
+        except Exception as e:
+            logger.warning(f"DuckDuckGo search failed: {e}")
+            raise
+
+        mapped_rows = []
+        for r in results:
+            if not isinstance(r, dict):
+                continue
+            mapped_rows.append(
+                {
+                    "title": r.get("title", ""),
+                    "url": r.get("href", ""),
+                    "content": r.get("body", ""),
+                    "engine": "duckduckgo",
+                    "publishedDate": "",
+                }
+            )
+        return mapped_rows
+
+
+class PublicSearxngProvider(BaseSearchProvider):
+    PUBLIC_URLS = [
+        "https://searx.be/search",
+        "https://paulgo.io/search",
+        "https://search.mdosch.de/search",
+        "https://searx.fossfreedom.com/search",
+        "https://searx.rupertsland.org/search",
+    ]
+
+    async def search(
+        self,
+        *,
+        query_text: str,
+        categories_value: str,
+        time_range: str,
+        language: str,
+        engines: list[str],
+        client: httpx.AsyncClient,
+    ) -> list[dict[str, Any]]:
+        url = random.choice(self.PUBLIC_URLS)
+        logger.info(f"Using public searxng instance: {url}")
+        provider = SearxngProvider(endpoint=url)
+        return await provider.search(
+            query_text=query_text,
+            categories_value=categories_value,
+            time_range=time_range,
+            language=language,
+            engines=engines,
+            client=client,
+        )
+
+
+class FallbackSearchProvider(BaseSearchProvider):
+    def __init__(self, providers: list[BaseSearchProvider]):
+        self.providers = providers
+
+    async def search(
+        self,
+        *,
+        query_text: str,
+        categories_value: str,
+        time_range: str,
+        language: str,
+        engines: list[str],
+        client: httpx.AsyncClient,
+    ) -> list[dict[str, Any]]:
+        last_exception = None
+        for provider in self.providers:
+            try:
+                res = await provider.search(
+                    query_text=query_text,
+                    categories_value=categories_value,
+                    time_range=time_range,
+                    language=language,
+                    engines=engines,
+                    client=client,
+                )
+
+                # If valid results are returned, return them
+                if res:
+                    return res
+                # If an empty result is returned by DDG and it's due to rate limit, we move to next
+                # But for now, returning empty is maybe legitimate. We'll simply return if not exception.
+                return res
+            except Exception as e:
+                logger.warning(
+                    f"Search provider {provider.__class__.__name__} failed: {e}"
+                )
+                last_exception = e
+                continue
+
+        if last_exception:
+            raise last_exception
+        return []
+
 
 MAX_QUERIES = 5
 MAX_RESULTS = 10
@@ -407,30 +694,6 @@ def _rerank_results(
     return prepared[:num_results]
 
 
-def _build_search_url(
-    *,
-    search_endpoint: str,
-    query_text: str,
-    categories: str,
-    time_range: str,
-    language: str,
-    engines: list[str],
-) -> str:
-    params: dict[str, Any] = {
-        "q": str(query_text or "").strip(),
-        "format": "json",
-    }
-    if categories:
-        params["categories"] = categories
-    if time_range:
-        params["time_range"] = time_range
-    if language:
-        params["language"] = language
-    if engines:
-        params["engines"] = ",".join(engines)
-    return f"{search_endpoint}?{urlencode(params)}"
-
-
 def _build_weather_site_query(query_text: str, allowlist: list[str]) -> str:
     sites: list[str] = []
     for host in allowlist:
@@ -491,12 +754,42 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> dict:
     if not engines:
         engines = _normalize_text_list(profile_settings.get("engines"))
 
+    # Assemble Fallback search providers
+    providers = []
+
+    tier1_providers = []
+
+    # 1. Tavily
+    tavily_api_key = str(os.getenv("TAVILY_API_KEY", "")).strip()
+    if tavily_api_key:
+        tier1_providers.append(TavilyProvider(api_key=tavily_api_key))
+
+    # 2. Exa
+    exa_api_key = str(os.getenv("EXA_API_KEY", "")).strip()
+    if exa_api_key:
+        tier1_providers.append(ExaProvider(api_key=exa_api_key))
+
+    # Shuffle Tier 1 to round-robin if multiple are provided
+    random.shuffle(tier1_providers)
+    providers.extend(tier1_providers)
+
+    # 限制高级付费搜索引的并行查询数量 (节约额度)
+    if tier1_providers and len(queries) > 2:
+        logger.info("Paid tier1 provider detected, limiting max queries to 2.")
+        queries = queries[:2]
+
+    # 3. DuckDuckGo
+    providers.append(DuckDuckGoProvider())
+
+    # 4. Local SearXNG
     search_endpoint = _normalize_base_url(os.getenv("SEARXNG_URL", ""))
-    if not search_endpoint:
-        return {
-            "text": "⚠️ 搜索服务未配置 (SEARXNG_URL missing). 技能暂时不可用。",
-            "ui": {},
-        }
+    if search_endpoint:
+        providers.append(SearxngProvider(endpoint=search_endpoint))
+
+    # 4. Public SearXNG backoff
+    providers.append(PublicSearxngProvider())
+
+    provider = FallbackSearchProvider(providers=providers)
 
     weather_intent = intent_profile == "weather"
     strict_default = bool(profile_settings.get("strict_sources"))
@@ -533,20 +826,14 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> dict:
             query_text: str,
             categories_value: str,
         ) -> list[dict[str, Any]]:
-            search_url = _build_search_url(
-                search_endpoint=search_endpoint,
+            rows = await provider.search(
                 query_text=query_text,
-                categories=categories_value,
+                categories_value=categories_value,
                 time_range=time_range,
                 language=language,
                 engines=engines,
+                client=client,
             )
-            response = await client.get(search_url)
-            response.raise_for_status()
-            data = response.json() if response is not None else {}
-            rows = data.get("results") if isinstance(data, dict) else []
-            if not isinstance(rows, list):
-                rows = []
             if rerank_enabled:
                 return _rerank_results(
                     rows,

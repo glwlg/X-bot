@@ -188,7 +188,7 @@ class WorkerResultRelay:
         if raw.startswith("ext_"):
             raw = raw[4:]
         alias = {
-            "searxng_search": "搜索",
+            "web_search": "搜索",
             "web_browser": "网页浏览",
             "generate_image": "图片生成",
             "rss_subscribe": "RSS 订阅",

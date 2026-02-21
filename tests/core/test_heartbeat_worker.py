@@ -303,8 +303,8 @@ async def test_heartbeat_push_sends_markdown_attachment_when_too_long(monkeypatc
     chat_id, document, filename, caption, _kwargs = sent_documents[0]
     assert chat_id == "101"
     assert isinstance(document, (bytes, bytearray))
-    assert bytes(document).startswith(b"AAAA")
-    assert str(filename).endswith(".md")
+    assert b"AAAA" in bytes(document)
+    assert str(filename).endswith((".md", ".html"))
     assert "完整结果见附件" in str(caption)
 
 

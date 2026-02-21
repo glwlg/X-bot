@@ -72,13 +72,6 @@ class PromptComposer:
         if not soul_payload:
             parts.append(DEFAULT_SYSTEM_PROMPT.strip())
         parts.append("【SOUL】\n" + soul_payload.content.strip())
-        # tool_inventory_text, memory_available = self._compose_tool_inventory(
-        #     tools=tools,
-        #     runtime_policy_ctx=runtime_policy_ctx,
-        # )
-        # parts.append(tool_inventory_text)
-        # if memory_available:
-        #     parts.append(MEMORY_MANAGEMENT_GUIDE.strip())
 
         # 如果是 manager 模式，添加 Manager 核心 Prompt
         if str(mode or "").strip().lower() == "manager":
@@ -101,42 +94,6 @@ class PromptComposer:
         )
 
         return "\n\n".join([item for item in parts if str(item).strip()]).strip()
-
-    def _compose_tool_inventory(
-        self,
-        *,
-        tools: Iterable[Any] | None,
-        runtime_policy_ctx: Dict[str, Any] | None = None,
-    ) -> tuple[str, bool]:
-        lines: List[str] = []
-        seen: set[str] = set()
-        for item in tools or []:
-            name = _as_tool_name(item)
-            if not name or name in seen:
-                continue
-            seen.add(name)
-            desc = _short_desc(_as_tool_desc(item))
-            if desc:
-                lines.append(f"- `{name}`: {desc}")
-            else:
-                lines.append(f"- `{name}`")
-
-        agent_kind = (
-            str((runtime_policy_ctx or {}).get("agent_kind") or "").strip().lower()
-        )
-        policy = dict((runtime_policy_ctx or {}).get("policy") or {})
-        tools_cfg = dict(policy.get("tools") or {})
-        deny = [
-            str(item).strip().lower()
-            for item in (tools_cfg.get("deny") or [])
-            if str(item).strip()
-        ]
-
-        memory_allowed = ("group:memory" not in deny) and agent_kind != "worker"
-
-        if not lines:
-            return "【可用工具】\n- (none)", memory_allowed
-        return "【可用工具】\n" + "\n".join(lines[:40]), memory_allowed
 
     def _get_worker_pool_info(self) -> str:
         """获取 Worker 池信息，供 Manager 决策派发"""

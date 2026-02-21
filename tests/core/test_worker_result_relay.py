@@ -139,9 +139,9 @@ async def test_worker_result_relay_sends_running_progress_notice_once(monkeypatc
                     "chat_id": "chat-progress",
                     "worker_name": "阿黑",
                     "progress": {
-                        "done_tools": ["ext_searxng_search"],
+                        "done_tools": ["ext_web_search"],
                         "running_tool": "ext_web_browser",
-                        "summary": "已完成 ext_searxng_search；正在执行 ext_web_browser",
+                        "summary": "已完成 ext_web_search；正在执行 ext_web_browser",
                     },
                 },
             }
@@ -207,7 +207,7 @@ async def test_worker_result_relay_skips_stale_running_progress(monkeypatch):
                     "worker_name": "阿黑",
                     "progress": {
                         "updated_at": stale_at,
-                        "done_tools": ["ext_searxng_search"],
+                        "done_tools": ["ext_web_search"],
                         "running_tool": "ext_deep_research",
                     },
                 },

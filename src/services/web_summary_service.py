@@ -139,6 +139,28 @@ async def fetch_with_playwright_cli_snapshot(url: str) -> str | None:
             pass
 
 
+async def fetch_with_jina_reader(url: str) -> str | None:
+    """使用 Jina Reader 提取网页 Markdown 内容"""
+    try:
+        jina_url = f"https://r.jina.ai/{url}"
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(
+                jina_url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "text/markdown",
+                },
+            )
+            response.raise_for_status()
+            text = response.text.strip()
+            if not text:
+                return None
+            return f"【通过 Jina Reader 获取的页面 Markdown 快照】\n\n{text}"
+    except Exception as e:
+        logger.warning(f"Jina Reader fetch failed for {url}: {e}")
+        return None
+
+
 async def fetch_webpage_content(url: str) -> str | None:
     """
     获取网页内容
@@ -150,30 +172,24 @@ async def fetch_webpage_content(url: str) -> str | None:
         网页文本内容，如果失败返回 None
     """
 
+    # 优先尝试使用 Jina Reader 高效提取 Markdown
+    jina_content = await fetch_with_jina_reader(url)
+    if jina_content:
+        return jina_content
+
+    logger.info(
+        "Jina Reader unavailable or failed, fallback to Playwright CLI: %s", url
+    )
+
     prefer_cli = str(os.getenv("WEB_BROWSER_PREFER_PLAYWRIGHT_CLI", "true")).lower()
     if prefer_cli in {"1", "true", "yes", "on"}:
         cli_content = await fetch_with_playwright_cli_snapshot(url)
         if cli_content:
             return cli_content
 
-    logger.info("Playwright CLI unavailable, fallback to plain HTTP fetch: %s", url)
-    try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            response = await client.get(
-                url,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                },
-            )
-            response.raise_for_status()
-            text = str(response.text or "")
-            max_length = 12000
-            if len(text) > max_length:
-                text = text[:max_length] + "..."
-            return f"【HTTP 原始页面内容】\n\n{text}"
-    except Exception as e:
-        logger.error(f"Failed to fetch webpage: {e}")
-        return None
+    # TODO: 后续考虑接入 Firecrawl 等方案作为最终兜底
+    logger.warning("All scraping methods failed or unavailable for: %s", url)
+    return None
 
 
 async def summarize_webpage(url: str) -> str:

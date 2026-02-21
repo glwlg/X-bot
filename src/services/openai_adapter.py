@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 from typing import Any
+
+
+_AUDIO_PART_STYLE = str(os.getenv("OPENAI_AUDIO_PART_STYLE") or "file").strip().lower()
 
 
 def build_messages(
@@ -239,18 +243,30 @@ def _build_content_blocks(parts: Any) -> list[dict[str, Any]]:
             continue
 
         if mime_type.startswith("audio/"):
-            audio_format = _audio_format_from_mime(mime_type)
-            if audio_format:
-                blocks.append(
-                    {
-                        "type": "input_audio",
-                        "input_audio": {
-                            "data": raw_data,
-                            "format": audio_format,
-                        },
-                    }
-                )
-                continue
+            if _AUDIO_PART_STYLE == "input_audio":
+                audio_format = _audio_format_from_mime(mime_type)
+                if audio_format:
+                    blocks.append(
+                        {
+                            "type": "input_audio",
+                            "input_audio": {
+                                "data": raw_data,
+                                "format": audio_format,
+                            },
+                        }
+                    )
+                    continue
+
+            blocks.append(
+                {
+                    "type": "file",
+                    "file": {
+                        "filename": _audio_filename_from_mime(mime_type),
+                        "file_data": raw_data,
+                    },
+                }
+            )
+            continue
 
         blocks.append(
             {
@@ -263,9 +279,33 @@ def _build_content_blocks(parts: Any) -> list[dict[str, Any]]:
 
 
 def _audio_format_from_mime(mime_type: str) -> str | None:
-    lowered = mime_type.lower()
-    if "wav" in lowered or lowered.endswith("/x-wav"):
+    lowered = str(mime_type or "").strip().lower()
+    if not lowered:
+        return None
+
+    base = lowered.split(";", 1)[0].strip()
+
+    if "wav" in base or base.endswith("/x-wav"):
         return "wav"
-    if "mp3" in lowered or "mpeg" in lowered:
+    if "mp3" in base or "mpeg" in base:
         return "mp3"
+    if base in {"audio/ogg", "application/ogg"}:
+        return "ogg"
+    if base in {"audio/opus", "audio/x-opus"}:
+        return "opus"
+    if base == "audio/webm":
+        return "webm"
+    if base in {"audio/mp4", "audio/x-m4a"} or "m4a" in base:
+        return "mp4"
+    if "flac" in base:
+        return "flac"
+    if base in {"audio/aac", "audio/x-aac"}:
+        return "aac"
     return None
+
+
+def _audio_filename_from_mime(mime_type: str) -> str:
+    audio_format = _audio_format_from_mime(mime_type)
+    if audio_format in {"wav", "mp3", "ogg", "opus", "webm", "mp4", "flac", "aac"}:
+        return f"audio.{audio_format}"
+    return "audio.bin"
