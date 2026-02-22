@@ -772,7 +772,11 @@ async def run_skill_cron_job(
                         "text": (
                             f"[CRON TASK id={cron_task_id}]\n"
                             f"source=cron\n"
-                            f"goal={instruction}"
+                            f"【系统级别最高指令】：你当前正在“执行”一个已被触发的系统定时任务！\n"
+                            f"请从以下目标描述中提取需要真实执行的查询、分析等动作并**立刻执行它**。\n"
+                            f"如果目标描述里带有“每天/每小时/定时”等字眼，请直接忽略这些时间修饰词，只执行里面提到的查天气、看新闻等实际动作！\n"
+                            f"**绝对禁止**调用 scheduler_manager 去再次添加、创建新的定时任务（那会导致无限套娃循环）！\n\n"
+                            f"目标任务描述：{instruction}"
                         )
                     }
                 ],
