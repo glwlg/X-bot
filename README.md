@@ -144,6 +144,37 @@ docker compose up --build -d
  - `/deluser <user_id>` : 从白名单移除用户
  - 所有白名单用户的权限数据将持久化保存在 `data/system/repositories/allowed_users.md`。
 
+### 6. Worker 编码后端授权（Codex / Gemini CLI）
+镜像已内置 `codex` 和 `gemini-cli`。首次使用前需要给 Worker 完成授权：
+
+1. 先设置 Worker 后端（示例）：
+```bash
+/worker backend worker-main codex
+# 或
+/worker backend worker-main gemini-cli
+```
+
+2. 触发授权命令生成：
+```bash
+/worker auth codex start
+# 或
+/worker auth gemini-cli start
+```
+
+3. Bot 会回一条“请在宿主机终端执行以下命令”，直接在宿主机执行该命令完成登录。
+   - `WORKER_RUNTIME_MODE=docker` 时，命令会是 `docker exec -it x-bot-worker ...`
+   - `WORKER_RUNTIME_MODE=local` 时，命令会是本机 `cd ... && codex .../gemini-cli ...`
+
+4. 完成后检查状态：
+```bash
+/worker auth codex status
+/worker auth gemini-cli status
+```
+
+补充：
+- 服务器场景更推荐环境变量方式，避免每次重建容器都重新登录。
+- Gemini CLI 可直接在 `.env` 配置 `GEMINI_API_KEY`（重启容器生效）。
+
 ## 🤖 使用指南
 
 ### 常用命令

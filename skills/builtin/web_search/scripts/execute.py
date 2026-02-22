@@ -279,9 +279,8 @@ class FallbackSearchProvider(BaseSearchProvider):
                 # If valid results are returned, return them
                 if res:
                     return res
-                # If an empty result is returned by DDG and it's due to rate limit, we move to next
-                # But for now, returning empty is maybe legitimate. We'll simply return if not exception.
-                return res
+                # Continue fallback chain on empty results.
+                continue
             except Exception as e:
                 logger.warning(
                     f"Search provider {provider.__class__.__name__} failed: {e}"

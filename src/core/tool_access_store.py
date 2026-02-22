@@ -45,7 +45,6 @@ SKILL_FUNCTION_GROUPS = {
     "account_manager": {"group:account", "group:security"},
     "skill_manager": {"group:skill-admin"},
     "download_video": {"group:media"},
-    "generate_image": {"group:media"},
     "news_article_writer": {"group:content", "group:research"},
     "xlsx": {"group:data"},
 }
@@ -234,7 +233,7 @@ class ToolAccessStore:
             "group:ops": "部署运维类：deployment/docker",
             "group:automation": "自动化类：scheduler/reminder（不含 rss/stock）",
             "group:finance": "金融行情类：stock_watch",
-            "group:media": "多媒体类：download_video/generate_image",
+            "group:media": "多媒体类：download_video",
             "group:account": "账号凭据类：account_manager",
             "group:memory": "记忆类：用户 MEMORY.md",
             "group:skill-admin": "技能治理类：skill_manager",

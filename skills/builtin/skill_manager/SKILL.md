@@ -47,6 +47,7 @@ entrypoint: scripts/execute.py
 | `instruction` | string | 条件 | 给 AI 的具体指令 (create, modify 时必填，例如 "实现一个查天气的技能") |
 | `key` | string | 条件 | 配置项键名 (config 时必填) |
 | `value` | string | 条件 | 配置项新值 (config 时必填) |
+| `coding_backend` | string | 否 | 编码后端，支持 `codex` / `gemini-cli`，默认 `codex` |
 
 ### 意图映射示例
 - 用户输入: "我有哪些技能？" / "查看已安装插件"
@@ -101,4 +102,5 @@ entrypoint: scripts/execute.py
 ## 注意事项
 
 - **优先搜索**: 在创建新技能前，优先搜索已有的技能。
-
+- **编码执行位置**: 技能创建/修改由 **Manager** 直接在目标技能目录调用 `codex/gemini-cli` 完成，不走 Worker 编码权限。
+- **规范读取**: 编码前会先读取 `skills/builtin/skill_manager/SKILL_SPEC.md`，再按用户指令实现。

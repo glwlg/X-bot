@@ -138,4 +138,4 @@ MEMORY_MANAGEMENT_GUIDE = ""
 
 
 # """
-MANAGER_CORE_PROMPT = "# ## Worker 池\n{worker_pool_info}"
+MANAGER_CORE_PROMPT = "【注意事项】\n 编码工作自己执行，不要派发给Worker\n【Worker 池】\n{worker_pool_info}"

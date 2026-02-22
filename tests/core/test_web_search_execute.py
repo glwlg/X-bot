@@ -52,9 +52,43 @@ class _FakeAsyncClient:
         return _FakeResponse([])
 
 
+def _configure_searxng_only_chain(monkeypatch, module):
+    for key in (
+        "TAVILY_API_KEY",
+        "EXA_API_KEY",
+        "SEARXNG_SEARCH_ALLOWLIST",
+        "SEARXNG_SEARCH_BLOCKLIST_DEFAULT",
+        "SEARXNG_SEARCH_WEATHER_ALLOWLIST",
+        "SEARXNG_SEARCH_WEATHER_BLOCKLIST",
+        "SEARXNG_SEARCH_WEATHER_STRICT_SOURCES",
+        "SEARXNG_SEARCH_NEWS_ALLOWLIST",
+        "SEARXNG_SEARCH_NEWS_BLOCKLIST",
+        "SEARXNG_SEARCH_NEWS_STRICT_SOURCES",
+        "SEARXNG_SEARCH_TECH_ALLOWLIST",
+        "SEARXNG_SEARCH_TECH_BLOCKLIST",
+        "SEARXNG_SEARCH_TECH_STRICT_SOURCES",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setenv("SEARXNG_SEARCH_RERANK_ENABLED", "true")
+
+    class _EmptyDDGS:
+        def text(self, **kwargs):
+            _ = kwargs
+            return []
+
+    monkeypatch.setattr(module, "DDGS", lambda: _EmptyDDGS())
+
+    async def _empty_public_search(self, **kwargs):
+        _ = (self, kwargs)
+        return []
+
+    monkeypatch.setattr(module.PublicSearxngProvider, "search", _empty_public_search)
+
+
 @pytest.mark.asyncio
 async def test_searxng_weather_query_reranks_authoritative_sources(monkeypatch):
     module = _load_module()
+    _configure_searxng_only_chain(monkeypatch, module)
     monkeypatch.setenv("SEARXNG_URL", "http://127.0.0.1:28080")
 
     responses = [
@@ -100,6 +134,7 @@ async def test_searxng_weather_query_reranks_authoritative_sources(monkeypatch):
 @pytest.mark.asyncio
 async def test_web_search_applies_site_blocklist(monkeypatch):
     module = _load_module()
+    _configure_searxng_only_chain(monkeypatch, module)
     monkeypatch.setenv("SEARXNG_URL", "http://127.0.0.1:28080")
 
     responses = [
@@ -140,6 +175,7 @@ async def test_web_search_applies_site_blocklist(monkeypatch):
 @pytest.mark.asyncio
 async def test_web_search_retries_general_category_once(monkeypatch):
     module = _load_module()
+    _configure_searxng_only_chain(monkeypatch, module)
     monkeypatch.setenv("SEARXNG_URL", "http://127.0.0.1:28080")
 
     responses = [
@@ -182,6 +218,7 @@ async def test_web_search_news_profile_uses_profile_engines_and_category(
     monkeypatch,
 ):
     module = _load_module()
+    _configure_searxng_only_chain(monkeypatch, module)
     monkeypatch.setenv("SEARXNG_URL", "http://127.0.0.1:28080")
     monkeypatch.setenv("SEARXNG_SEARCH_NEWS_CATEGORIES", "news")
     monkeypatch.setenv("SEARXNG_SEARCH_NEWS_ENGINES", "google,bing")
@@ -220,6 +257,7 @@ async def test_web_search_news_profile_uses_profile_engines_and_category(
 @pytest.mark.asyncio
 async def test_web_search_tech_profile_strict_sources_filters_noise(monkeypatch):
     module = _load_module()
+    _configure_searxng_only_chain(monkeypatch, module)
     monkeypatch.setenv("SEARXNG_URL", "http://127.0.0.1:28080")
     monkeypatch.setenv("SEARXNG_SEARCH_TECH_ALLOWLIST", "docs.python.org,github.com")
     monkeypatch.setenv("SEARXNG_SEARCH_TECH_STRICT_SOURCES", "true")
@@ -262,6 +300,7 @@ async def test_web_search_tech_profile_strict_sources_filters_noise(monkeypatch)
 @pytest.mark.asyncio
 async def test_web_search_auto_detects_tech_profile(monkeypatch):
     module = _load_module()
+    _configure_searxng_only_chain(monkeypatch, module)
     monkeypatch.setenv("SEARXNG_URL", "http://127.0.0.1:28080")
     monkeypatch.setenv("SEARXNG_SEARCH_TECH_CATEGORIES", "it")
     monkeypatch.setenv("SEARXNG_SEARCH_TECH_ENGINES", "google")

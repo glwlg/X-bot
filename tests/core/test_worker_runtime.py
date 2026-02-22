@@ -171,7 +171,7 @@ async def test_worker_runtime_build_auth_start_command(monkeypatch, tmp_path):
     assert result["ok"] is True
     assert result["provider"] == "codex"
     assert "docker exec -it x-bot-worker" in result["command"]
-    assert "auth login" in result["command"]
+    assert "login" in result["command"]
 
 
 @pytest.mark.asyncio

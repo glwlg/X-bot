@@ -212,20 +212,23 @@ class WorkerRuntime:
             or "x-bot-worker"
         )
         self.codex_auth_start_args = (
-            os.getenv("WORKER_CODEX_AUTH_START_ARGS", "auth login").strip()
-            or "auth login"
+            os.getenv("WORKER_CODEX_AUTH_START_ARGS", "login").strip() or "login"
         )
-        self.gemini_auth_start_args = (
-            os.getenv("WORKER_GEMINI_AUTH_START_ARGS", "auth login").strip()
-            or "auth login"
-        )
+        # Gemini CLI (official @google/gemini-cli) uses interactive startup for OAuth,
+        # so default start command is just `gemini` without auth subcommand args.
+        self.gemini_auth_start_args = os.getenv(
+            "WORKER_GEMINI_AUTH_START_ARGS", ""
+        ).strip()
         self.codex_auth_status_args = (
-            os.getenv("WORKER_CODEX_AUTH_STATUS_ARGS", "auth status").strip()
-            or "auth status"
+            os.getenv("WORKER_CODEX_AUTH_STATUS_ARGS", "login status").strip()
+            or "login status"
         )
         self.gemini_auth_status_args = (
-            os.getenv("WORKER_GEMINI_AUTH_STATUS_ARGS", "auth status").strip()
-            or "auth status"
+            os.getenv(
+                "WORKER_GEMINI_AUTH_STATUS_ARGS",
+                "-p ping --output-format text",
+            ).strip()
+            or "-p ping --output-format text"
         )
         self.fallback_to_core_agent = (
             os.getenv("WORKER_FALLBACK_CORE_AGENT", "true").strip().lower() == "true"
@@ -939,7 +942,8 @@ class WorkerRuntime:
             }
         workspace = self._resolve_runtime_workspace(worker)
         workspace.mkdir(parents=True, exist_ok=True)
-        cmd, args = self._auth_command(provider, action="status")
+        normalized_provider = self._normalize_provider(provider)
+        cmd, args = self._auth_command(normalized_provider, action="status")
         if not args:
             return {
                 "ok": False,
@@ -963,6 +967,10 @@ class WorkerRuntime:
             "unauth",
             "not authorized",
             "login required",
+            "authorize the application",
+            "authorization code",
+            "please visit the following url to authorize",
+            "please set an auth method",
             "未登录",
             "未认证",
         )
@@ -975,9 +983,15 @@ class WorkerRuntime:
         )
 
         is_not_authed = any(token in lowered for token in not_authed_tokens)
-        is_authed = (not is_not_authed) and any(
-            token in lowered for token in authed_tokens
-        )
+        is_authed = (not is_not_authed) and any(token in lowered for token in authed_tokens)
+        if (
+            normalized_provider == "gemini-cli"
+            and not is_not_authed
+            and bool(run.get("ok"))
+            and bool(text.strip())
+        ):
+            # Gemini CLI may not expose an explicit "authenticated" phrase.
+            is_authed = True
         if is_authed:
             status = "authenticated"
         elif is_not_authed:
@@ -993,7 +1007,7 @@ class WorkerRuntime:
             "status": status,
             "authenticated": status == "authenticated",
             "runtime_mode": self.runtime_mode,
-            "provider": self._normalize_provider(provider),
+            "provider": normalized_provider,
             "exit_code": int(run.get("exit_code", -1)),
             "summary": summary,
             "error": str(run.get("error") or ""),

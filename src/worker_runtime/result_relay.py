@@ -190,7 +190,6 @@ class WorkerResultRelay:
         alias = {
             "web_search": "搜索",
             "web_browser": "网页浏览",
-            "generate_image": "图片生成",
             "rss_subscribe": "RSS 订阅",
             "stock_watch": "股票行情",
             "reminder": "提醒",

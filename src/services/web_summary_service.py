@@ -26,6 +26,15 @@ def extract_urls(text: str) -> list[str]:
     return URL_PATTERN.findall(text)
 
 
+def _as_bool(value: str, *, default: bool = False) -> bool:
+    rendered = str(value or "").strip().lower()
+    if rendered in {"1", "true", "yes", "on"}:
+        return True
+    if rendered in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
+
+
 def _playwright_cli_command() -> list[str]:
     raw = str(os.getenv("PLAYWRIGHT_CLI_COMMAND") or "").strip()
     if raw:
@@ -161,6 +170,26 @@ async def fetch_with_jina_reader(url: str) -> str | None:
         return None
 
 
+async def fetch_with_http_raw(url: str) -> str | None:
+    """直接抓取原始 HTTP 页面内容。"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                },
+            )
+            response.raise_for_status()
+            text = str(response.text or "").strip()
+            if not text:
+                return None
+            return f"【HTTP 原始页面内容】\n\n{text}"
+    except Exception as e:
+        logger.warning(f"HTTP fetch failed for {url}: {e}")
+        return None
+
+
 async def fetch_webpage_content(url: str) -> str | None:
     """
     获取网页内容
@@ -172,22 +201,32 @@ async def fetch_webpage_content(url: str) -> str | None:
         网页文本内容，如果失败返回 None
     """
 
-    # 优先尝试使用 Jina Reader 高效提取 Markdown
-    jina_content = await fetch_with_jina_reader(url)
-    if jina_content:
-        return jina_content
-
-    logger.info(
-        "Jina Reader unavailable or failed, fallback to Playwright CLI: %s", url
-    )
-
-    prefer_cli = str(os.getenv("WEB_BROWSER_PREFER_PLAYWRIGHT_CLI", "true")).lower()
-    if prefer_cli in {"1", "true", "yes", "on"}:
+    prefer_cli = _as_bool(os.getenv("WEB_BROWSER_PREFER_PLAYWRIGHT_CLI", "true"))
+    if prefer_cli:
         cli_content = await fetch_with_playwright_cli_snapshot(url)
         if cli_content:
             return cli_content
 
-    # TODO: 后续考虑接入 Firecrawl 等方案作为最终兜底
+        jina_content = await fetch_with_jina_reader(url)
+        if jina_content:
+            return jina_content
+
+        http_content = await fetch_with_http_raw(url)
+        if http_content:
+            return http_content
+    else:
+        http_content = await fetch_with_http_raw(url)
+        if http_content:
+            return http_content
+
+        jina_content = await fetch_with_jina_reader(url)
+        if jina_content:
+            return jina_content
+
+        cli_content = await fetch_with_playwright_cli_snapshot(url)
+        if cli_content:
+            return cli_content
+
     logger.warning("All scraping methods failed or unavailable for: %s", url)
     return None
 
