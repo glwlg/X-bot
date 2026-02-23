@@ -1,6 +1,7 @@
 import logging
 import httpx
 import re
+import urllib.parse
 from datetime import datetime
 from core.platform.models import UnifiedContext
 
@@ -38,8 +39,10 @@ async def _fetch_aqi(lat: float, lon: float) -> str:
 
 async def _fetch_weather(location: str) -> dict:
     target = location.strip() if location else ""
+    # URL 编码地址，防止“无锡 滨湖区”这种带空格的地点引发 httpx 异常
+    encoded_target = urllib.parse.quote(target) if target else ""
     # "lang=zh" for Chinese localization, "T" to strip ANSI terminal colors.
-    url = f"https://wttr.in/{target}?lang=zh&T"
+    url = f"https://wttr.in/{encoded_target}?lang=zh&T"
     try:
         async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
             resp = await client.get(url, headers={"User-Agent": "curl/7.68.0"})
@@ -70,8 +73,8 @@ async def _fetch_weather(location: str) -> dict:
                 "ui": {},
             }
     except Exception as e:
-        logger.error(f"[daily_query] weather fetch failed: {e}")
-        return {"text": f"❌ 获取天气时发生错误: {e}", "ui": {}}
+        logger.error(f"[daily_query] weather fetch failed: {repr(e)}")
+        return {"text": "❌ 获取天气时发生网络或解析错误，请稍后重试。", "ui": {}}
 
 
 async def _fetch_crypto(symbol: str) -> dict:
