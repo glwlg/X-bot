@@ -30,6 +30,7 @@ from core.config import (
     HEARTBEAT_MODE,
 )
 from core.heartbeat_worker import heartbeat_worker
+from core.waiting_phrase_store import waiting_phrase_store
 from manager.relay.result_relay import worker_result_relay
 from handlers import (
     start,
@@ -199,6 +200,7 @@ async def main():
 
     # --- Global Initialization (Decoupled from TG) ---
     await init_services()
+    waiting_phrase_store.schedule_startup_refresh()
     await heartbeat_worker.start()
 
     # if tg_app:
