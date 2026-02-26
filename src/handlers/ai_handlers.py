@@ -9,6 +9,7 @@ from typing import Any
 from core.platform.models import UnifiedContext, MessageType
 import random
 from core.markdown_memory_store import markdown_memory_store
+from core.waiting_phrase_store import waiting_phrase_store
 
 from core.config import (
     GEMINI_MODEL,
@@ -27,6 +28,34 @@ from .message_utils import process_and_send_code_files
 logger = logging.getLogger(__name__)
 
 LONG_RESPONSE_FILE_THRESHOLD = 9000
+
+DEFAULT_RECEIVED_PHRASES = [
+    "📨 收到！大脑急速运转中...",
+    "⚡ 信号已接收，开始解析...",
+    "🍪 Bip Bip! 消息直达核心...",
+    "📡 神经连接建立中...",
+    "💭 正在调取相关记忆...",
+    "🐌 稍微有点堵车，马上就好...",
+    "✨ 指令已确认，准备施法...",
+]
+
+DEFAULT_LOADING_PHRASES = [
+    "🤖 调用赛博算力中...",
+    "💭 此问题稍显深奥...",
+    "🛁 顺手清洗下数据管道...",
+    "📡 正在尝试连接火星通讯...",
+    "🍪 先给 AI 喂块饼干补充体力...",
+    "🐌 稍等，前面有点堵...",
+    "📚 翻阅百科全书中...",
+    "🔨 正在狂敲代码实现需求...",
+    "🌌 试图穿越虫洞寻找答案...",
+    "🧹 清理一下内存碎片...",
+    "🔌 检查下网线接好没...",
+    "🎨 正在为您绘制思维导图...",
+    "🍕 吃口披萨，马上回来...",
+    "🧘 数字冥想中...",
+    "🏃 全力冲刺中...",
+]
 
 
 def _env_int(name: str, default: int, minimum: int) -> int:
@@ -100,6 +129,43 @@ def _compact_text(text: str, limit: int = 220) -> str:
     if len(raw) <= limit:
         return raw
     return raw[:limit].rstrip() + "..."
+
+
+def _normalize_phrase_pool(items: list[str], *, limit: int = 24) -> list[str]:
+    seen: set[str] = set()
+    normalized: list[str] = []
+    for raw in items:
+        phrase = " ".join(str(raw or "").split()).strip().strip("`*")
+        if not phrase:
+            continue
+        if phrase in seen:
+            continue
+        seen.add(phrase)
+        normalized.append(phrase)
+        if len(normalized) >= max(1, int(limit)):
+            break
+    return normalized
+
+
+def _build_runtime_phrase_pools(runtime_user_id: str) -> tuple[list[str], list[str]]:
+    fallback_received = list(DEFAULT_RECEIVED_PHRASES)
+    fallback_loading = list(DEFAULT_LOADING_PHRASES)
+    try:
+        pools = waiting_phrase_store.load_phrase_pools_for_runtime_user(
+            str(runtime_user_id)
+        )
+        if not pools:
+            return fallback_received, fallback_loading
+
+        received, loading = pools
+        normalized_received = _normalize_phrase_pool(received, limit=24)
+        normalized_loading = _normalize_phrase_pool(loading, limit=24)
+        if not normalized_received or not normalized_loading:
+            return fallback_received, fallback_loading
+        return normalized_received, normalized_loading
+    except Exception as exc:
+        logger.debug("Failed to build dynamic phrase pools from SOUL.MD: %s", exc)
+        return fallback_received, fallback_loading
 
 
 def _pop_pending_ui_payload(user_data: dict[str, Any]) -> dict[str, Any] | None:
@@ -595,19 +661,10 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
     # URL 逻辑已移交给 Agent (skill: web_browser, download_video)
     # 不再进行硬编码预加载或弹窗
 
-    # 随机选择一种"消息已收到"的提示
-    RECEIVED_PHRASES = [
-        "📨 收到！大脑急速运转中...",
-        "⚡ 信号已接收，开始解析...",
-        "🍪 Bip Bip! 消息直达核心...",
-        "📡 神经连接建立中...",
-        "💭 正在调取相关记忆...",
-        "🐌 稍微有点堵车，马上就好...",
-        "✨ 指令已确认，准备施法...",
-    ]
+    received_phrases, loading_phrases = _build_runtime_phrase_pools(str(user_id))
 
     if not has_media:
-        thinking_msg = await ctx.reply(random.choice(RECEIVED_PHRASES))
+        thinking_msg = await ctx.reply(random.choice(received_phrases))
     else:
         thinking_msg = await ctx.reply("🤔 让我看看引用具体内容...")
 
@@ -630,25 +687,6 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
     # 发送"正在输入"状态
     await ctx.send_chat_action(action="typing")
 
-    # 动态加载词库
-    LOADING_PHRASES = [
-        "🤖 调用赛博算力中...",
-        "💭 此问题稍显深奥...",
-        "🛁 顺手清洗下数据管道...",
-        "📡 正在尝试连接火星通讯...",
-        "🍪 先给 AI 喂块饼干补充体力...",
-        "🐌 稍等，前面有点堵...",
-        "📚 翻阅百科全书中...",
-        "🔨 正在狂敲代码实现需求...",
-        "🌌 试图穿越虫洞寻找答案...",
-        "🧹 清理一下内存碎片...",
-        "🔌 检查下网线接好没...",
-        "🎨 正在为您绘制思维导图...",
-        "🍕 吃口披萨，马上回来...",
-        "🧘 数字冥想中...",
-        "🏃 全力冲刺中...",
-    ]
-
     # 共享状态
     state = {"last_update_time": time.time(), "final_text": "", "running": True}
 
@@ -665,7 +703,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             now = time.time()
             # 如果超过 5 秒没有更新文本（说明卡在 Tool 或者生成慢）
             if now - state["last_update_time"] > 5:
-                phrase = random.choice(LOADING_PHRASES)
+                phrase = random.choice(loading_phrases)
 
                 # 如果已经有一部分文本了，附在后面；如果是空的，直接显示
                 display_text = state["final_text"]
