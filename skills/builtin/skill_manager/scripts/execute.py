@@ -178,6 +178,18 @@ async def _run_software_delivery_template_task(
             "tool_result": result,
         }
 
+    if bool(result.get("async_dispatch")):
+        queued_task_id = str(result.get("task_id") or "").strip()
+        return {
+            "ok": True,
+            "queued": True,
+            "task_id": queued_task_id,
+            "summary": str(result.get("summary") or "software_delivery queued").strip(),
+            "backend": _extract_backend_from_delivery_result(result, backend),
+            "source": source_label,
+            "tool_result": result,
+        }
+
     payload = (
         dict(result.get("data") or {}) if isinstance(result.get("data"), dict) else {}
     )
@@ -246,6 +258,8 @@ async def _create_with_software_delivery(
         source="skill_manager_create",
     )
     if not result.get("ok"):
+        return result
+    if bool(result.get("queued")):
         return result
 
     skill_loader.reload_skills()
@@ -338,6 +352,8 @@ async def _modify_with_software_delivery(
         skill_name=skill_name,
         source="skill_manager_modify",
     )
+    if bool(result.get("queued")):
+        return result
     if result.get("ok"):
         skill_loader.reload_skills()
     return result
@@ -490,6 +506,16 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
             instruction=str(instruction),
             backend=backend,
         )
+        if cli_result.get("queued"):
+            queued_task_id = str(cli_result.get("task_id") or "").strip()
+            return {
+                "text": (
+                    f"🔇🔇🔇🚀 Skill 修改任务已异步提交（task_id=`{queued_task_id}`）。"
+                    "请稍后通过 software_delivery status 查询进度。"
+                ),
+                "ui": {},
+                "task_id": queued_task_id,
+            }
         if cli_result.get("ok"):
             used_backend = str(cli_result.get("backend") or backend)
             return {
@@ -533,6 +559,16 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
             skill_name=str(params.get("skill_name") or ""),
             backend=backend,
         )
+        if cli_result.get("queued"):
+            queued_task_id = str(cli_result.get("task_id") or "").strip()
+            return {
+                "text": (
+                    f"🔇🔇🔇🚀 Skill 创建任务已异步提交（task_id=`{queued_task_id}`）。"
+                    "请稍后通过 software_delivery status 查询进度。"
+                ),
+                "ui": {},
+                "task_id": queued_task_id,
+            }
         if cli_result.get("ok"):
             resolved_name = str(cli_result.get("resolved_skill_name") or "").strip()
             used_backend = str(cli_result.get("backend") or backend)

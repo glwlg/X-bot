@@ -79,11 +79,48 @@ class WorkerKernelDaemon:
             )
             if task is None:
                 return
+            logger.info(
+                "Worker kernel claimed task id=%s worker=%s backend=%s source=%s",
+                task.task_id,
+                task.worker_id,
+                task.backend,
+                task.source,
+            )
             running = asyncio.create_task(
                 self._run_task(task),
                 name=f"worker-kernel-{task.task_id}",
             )
             self._running.add(running)
+
+    def _annotate_result(
+        self,
+        *,
+        task: TaskEnvelope,
+        result: TaskResult,
+        program_id: str,
+        version: str,
+    ) -> TaskResult:
+        payload = dict(result.payload or {})
+        text = str(payload.get("text") or "").strip()
+        if not text:
+            text = str(result.summary or result.error or "").strip()
+            if text:
+                payload["text"] = text
+
+        payload.setdefault("_result_writer", "worker_kernel")
+        payload.setdefault("_execution_path", "worker.kernel.daemon")
+        payload.setdefault("_claimed_by", str(task.claimed_by or self.worker_identity))
+        payload.setdefault("_program_id", str(program_id or ""))
+        payload.setdefault("_program_version", str(version or ""))
+        payload.setdefault("_task_source", str(task.source or ""))
+        payload.setdefault("_task_backend", str(task.backend or ""))
+
+        result.task_id = str(result.task_id or task.task_id)
+        result.worker_id = str(result.worker_id or self.worker_id)
+        result.payload = payload
+        if not str(result.summary or "").strip():
+            result.summary = str(text or "worker task completed")[:200]
+        return result
 
     async def _run_task(self, task: TaskEnvelope) -> None:
         program_id = str(task.metadata.get("program_id") or self.default_program_id)
@@ -126,6 +163,19 @@ class WorkerKernelDaemon:
                 error=message,
                 payload={"text": message},
             )
+        result = self._annotate_result(
+            task=task,
+            result=result,
+            program_id=program_id,
+            version=version,
+        )
+        logger.info(
+            "Worker kernel finished task id=%s ok=%s writer=%s summary=%s",
+            task.task_id,
+            bool(result.ok),
+            str((result.payload or {}).get("_result_writer") or ""),
+            str(result.summary or "")[:160],
+        )
         await self.queue.finish_task(task_id=task.task_id, result=result)
 
 

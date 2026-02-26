@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 from types import ModuleType
-from typing import Any, cast
+from typing import Any, Dict, cast
 
 from shared.contracts.programs import ProgramManifest
 from worker.program_api import WorkerProgram
@@ -28,48 +28,106 @@ class ProgramLoader:
         safe_version = str(version or "").strip()
         return (self.programs_root / safe_program / safe_version).resolve()
 
+    @staticmethod
+    def _bootstrap_manifest_payload(*, program_id: str, version: str) -> Dict[str, Any]:
+        manifest = ProgramManifest(
+            program_id=str(program_id or "").strip(),
+            version=str(version or "").strip(),
+            entrypoint="program.py",
+            checksum="bootstrap-core-agent-v2",
+            created_by="bootstrap-core-agent-v2",
+            metadata={"source": "bootstrap_core_agent_v2"},
+        )
+        return manifest.to_dict()
+
+    @staticmethod
+    def _bootstrap_entrypoint_source() -> str:
+        return "from worker.programs.core_agent_program import build_program\n"
+
+    @staticmethod
+    def _is_legacy_bootstrap_manifest(payload: Dict[str, Any]) -> bool:
+        if not isinstance(payload, dict):
+            return False
+        metadata = payload.get("metadata")
+        source = ""
+        if isinstance(metadata, dict):
+            source = str(metadata.get("source") or "").strip().lower()
+        checksum = str(payload.get("checksum") or "").strip().lower()
+        created_by = str(payload.get("created_by") or "").strip().lower()
+        return (
+            source in {"auto_bootstrap", "bootstrap"}
+            or checksum in {"bootstrap", ""}
+            or created_by in {"bootstrap", ""}
+        )
+
+    def _should_refresh_bootstrap(
+        self,
+        *,
+        manifest_path: Path,
+        entrypoint_path: Path,
+    ) -> bool:
+        if not manifest_path.exists() or not entrypoint_path.exists():
+            return True
+
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            return True
+        if not isinstance(payload, dict):
+            return True
+
+        if self._is_legacy_bootstrap_manifest(payload):
+            return True
+
+        source = ""
+        metadata = payload.get("metadata")
+        if isinstance(metadata, dict):
+            source = str(metadata.get("source") or "").strip().lower()
+        if source != "bootstrap_core_agent_v2":
+            return False
+
+        expected = self._bootstrap_entrypoint_source().strip()
+        try:
+            current = entrypoint_path.read_text(encoding="utf-8").strip()
+        except Exception:
+            return True
+        return current != expected
+
+    def _write_bootstrap_artifact(
+        self,
+        *,
+        program_id: str,
+        version: str,
+        manifest_path: Path,
+        entrypoint_path: Path,
+    ) -> None:
+        payload = self._bootstrap_manifest_payload(
+            program_id=program_id, version=version
+        )
+        manifest_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        entrypoint_path.write_text(
+            self._bootstrap_entrypoint_source(),
+            encoding="utf-8",
+        )
+
     def ensure_program_artifact(self, *, program_id: str, version: str) -> Path:
         version_dir = self._version_dir(program_id, version)
         version_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = (version_dir / "manifest.json").resolve()
         entrypoint_path = (version_dir / "program.py").resolve()
 
-        if not manifest_path.exists():
-            manifest = ProgramManifest(
-                program_id=str(program_id or "").strip(),
-                version=str(version or "").strip(),
-                entrypoint="program.py",
-                checksum="bootstrap",
-                created_by="bootstrap",
-                metadata={"source": "auto_bootstrap"},
-            )
-            manifest_path.write_text(
-                json.dumps(manifest.to_dict(), ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-
-        if not entrypoint_path.exists():
-            entrypoint_path.write_text(
-                (
-                    "from shared.contracts.dispatch import TaskResult\n"
-                    "\n"
-                    "class Program:\n"
-                    "    async def run(self, task, context):\n"
-                    "        text = str(task.instruction or '').strip()\n"
-                    "        if not text:\n"
-                    "            text = 'empty task instruction'\n"
-                    "        return TaskResult(\n"
-                    "            task_id=task.task_id,\n"
-                    "            worker_id=str(context.get('worker_id') or task.worker_id),\n"
-                    "            ok=True,\n"
-                    "            summary=text[:200],\n"
-                    "            payload={'text': text},\n"
-                    "        )\n"
-                    "\n"
-                    "def build_program():\n"
-                    "    return Program()\n"
-                ),
-                encoding="utf-8",
+        if self._should_refresh_bootstrap(
+            manifest_path=manifest_path,
+            entrypoint_path=entrypoint_path,
+        ):
+            self._write_bootstrap_artifact(
+                program_id=program_id,
+                version=version,
+                manifest_path=manifest_path,
+                entrypoint_path=entrypoint_path,
             )
 
         return version_dir

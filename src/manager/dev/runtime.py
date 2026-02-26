@@ -4,10 +4,13 @@ import asyncio
 import contextlib
 import os
 import shlex
+from datetime import datetime
+from pathlib import Path
 from typing import Any, Dict, List
 
 
 MAX_OUTPUT_CHARS = 12000
+MAX_LOG_CHARS = 1_000_000
 
 
 def _tail(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
@@ -15,6 +18,48 @@ def _tail(text: str, limit: int = MAX_OUTPUT_CHARS) -> str:
     if len(payload) <= limit:
         return payload
     return payload[-limit:]
+
+
+def _tail_for_log(text: str, limit: int = MAX_LOG_CHARS) -> str:
+    payload = str(text or "")
+    if len(payload) <= limit:
+        return payload
+    return payload[-limit:]
+
+
+def _append_exec_log(
+    *,
+    log_path: str,
+    command: List[str],
+    cwd: str,
+    timeout_sec: int,
+    exit_code: int,
+    stdout: str,
+    stderr: str,
+    timed_out: bool,
+) -> None:
+    safe_log_path = str(log_path or "").strip()
+    if not safe_log_path:
+        return
+
+    try:
+        target = Path(safe_log_path).resolve()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now().astimezone().isoformat(timespec="seconds")
+        lines = [
+            f"[{stamp}] command={_command_to_text(command)} cwd={cwd}",
+            f"timeout_sec={int(timeout_sec or 0)} timed_out={str(bool(timed_out)).lower()} exit_code={int(exit_code)}",
+            "--- stdout ---",
+            _tail_for_log(stdout),
+            "--- stderr ---",
+            _tail_for_log(stderr),
+            "--- end ---",
+            "",
+        ]
+        with target.open("a", encoding="utf-8") as handle:
+            handle.write("\n".join(lines))
+    except Exception:
+        return
 
 
 def _as_bool(value: Any, *, default: bool = False) -> bool:
@@ -48,13 +93,24 @@ def _build_coding_command(backend: str, instruction: str) -> tuple[str, List[str
             os.getenv("CODING_BACKEND_GEMINI_COMMAND", "gemini-cli") or ""
         ).strip()
         template = str(
-            os.getenv("CODING_BACKEND_GEMINI_ARGS_TEMPLATE", "--prompt {instruction}")
+            os.getenv(
+                "CODING_BACKEND_GEMINI_ARGS_TEMPLATE",
+                "--model gemini-3.1-pro --prompt {instruction}",
+            )
             or ""
         ).strip()
     else:
         cmd = str(os.getenv("CODING_BACKEND_CODEX_COMMAND", "codex") or "").strip()
         template = str(
-            os.getenv("CODING_BACKEND_CODEX_ARGS_TEMPLATE", "exec {instruction}") or ""
+            os.getenv(
+                "CODING_BACKEND_CODEX_ARGS_TEMPLATE",
+                (
+                    "exec --model gpt-5.3-codex "
+                    '-c model_reasoning_effort="xhigh" '
+                    "--sandbox workspace-write {instruction}"
+                ),
+            )
+            or ""
         ).strip()
 
     rendered = template.format(instruction=shlex.quote(safe_instruction))
@@ -82,6 +138,44 @@ def _inject_skip_git_repo_check(args: List[str]) -> List[str]:
     return patched
 
 
+def _codex_output_indicates_failure(result: Dict[str, Any]) -> bool:
+    if not isinstance(result, dict) or not bool(result.get("ok")):
+        return False
+    combined = "\n".join(
+        [
+            str(result.get("summary") or ""),
+            str(result.get("stderr") or ""),
+            str(result.get("stdout") or ""),
+        ]
+    ).lower()
+    failure_markers = (
+        "permission denied",
+        "read-only",
+        "mounted read-only",
+        "operation not permitted",
+        "couldn't create",
+        "could not create",
+        "cannot create",
+        "failed to create",
+        "failed to write",
+    )
+    return any(marker in combined for marker in failure_markers)
+
+
+def _force_command_failed(result: Dict[str, Any]) -> Dict[str, Any]:
+    payload = dict(result or {})
+    summary = str(
+        payload.get("summary") or payload.get("stderr") or payload.get("stdout") or ""
+    ).strip()
+    if not summary:
+        summary = "codex reported failure despite zero exit code"
+    payload["ok"] = False
+    payload["error_code"] = "command_failed"
+    payload["message"] = summary
+    payload["summary"] = summary
+    return payload
+
+
 def _command_to_text(command: List[str]) -> str:
     return " ".join([shlex.quote(part) for part in command])
 
@@ -101,6 +195,7 @@ async def run_exec(
     *,
     cwd: str,
     timeout_sec: int = 1200,
+    log_path: str = "",
 ) -> Dict[str, Any]:
     safe_command = [str(item) for item in list(command or []) if str(item)]
     if not safe_command:
@@ -150,8 +245,20 @@ async def run_exec(
         with contextlib.suppress(ProcessLookupError):
             proc.kill()
         stdout_raw, stderr_raw = await proc.communicate()
-        stdout = _tail(stdout_raw.decode("utf-8", errors="replace"))
-        stderr = _tail(stderr_raw.decode("utf-8", errors="replace"))
+        stdout_full = stdout_raw.decode("utf-8", errors="replace")
+        stderr_full = stderr_raw.decode("utf-8", errors="replace")
+        _append_exec_log(
+            log_path=log_path,
+            command=safe_command,
+            cwd=safe_cwd,
+            timeout_sec=int(timeout_sec or 0),
+            exit_code=-1,
+            stdout=stdout_full,
+            stderr=stderr_full,
+            timed_out=True,
+        )
+        stdout = _tail(stdout_full)
+        stderr = _tail(stderr_full)
         return {
             "ok": False,
             "error_code": "timeout",
@@ -162,10 +269,23 @@ async def run_exec(
             "stdout": stdout,
             "stderr": stderr,
             "summary": _tail(stderr or stdout),
+            "log_path": str(log_path or "").strip(),
         }
 
-    stdout = _tail(stdout_raw.decode("utf-8", errors="replace"))
-    stderr = _tail(stderr_raw.decode("utf-8", errors="replace"))
+    stdout_full = stdout_raw.decode("utf-8", errors="replace")
+    stderr_full = stderr_raw.decode("utf-8", errors="replace")
+    _append_exec_log(
+        log_path=log_path,
+        command=safe_command,
+        cwd=safe_cwd,
+        timeout_sec=int(timeout_sec or 0),
+        exit_code=int(proc.returncode or 0),
+        stdout=stdout_full,
+        stderr=stderr_full,
+        timed_out=False,
+    )
+    stdout = _tail(stdout_full)
+    stderr = _tail(stderr_full)
     summary = _tail((stderr or stdout).strip())
     return {
         "ok": int(proc.returncode or 0) == 0,
@@ -177,6 +297,7 @@ async def run_exec(
         "stdout": stdout,
         "stderr": stderr,
         "summary": summary,
+        "log_path": str(log_path or "").strip(),
     }
 
 
@@ -263,6 +384,7 @@ async def run_coding_backend(
     cwd: str,
     timeout_sec: int = 1800,
     source: str = "",
+    log_path: str = "",
 ) -> Dict[str, Any]:
     safe_instruction = str(instruction or "").strip()
     if not safe_instruction:
@@ -279,9 +401,12 @@ async def run_coding_backend(
         [cmd, *args],
         cwd=str(cwd or "").strip(),
         timeout_sec=max(60, int(timeout_sec or 1800)),
+        log_path=log_path,
     )
     first["backend"] = backend_name
     first["source"] = str(source or "").strip()
+    if backend_name == "codex" and _codex_output_indicates_failure(first):
+        first = _force_command_failed(first)
 
     auto_skip = _as_bool(
         os.getenv("CODING_BACKEND_CODEX_AUTO_SKIP_GIT_REPO_CHECK", "true"),
@@ -305,8 +430,11 @@ async def run_coding_backend(
         [cmd, *retry_args],
         cwd=str(cwd or "").strip(),
         timeout_sec=max(60, int(timeout_sec or 1800)),
+        log_path=log_path,
     )
     second["backend"] = backend_name
     second["source"] = str(source or "").strip()
     second["retry_hint"] = "skip_git_repo_check"
+    if backend_name == "codex" and _codex_output_indicates_failure(second):
+        second = _force_command_failed(second)
     return second

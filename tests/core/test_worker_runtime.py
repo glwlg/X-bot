@@ -103,6 +103,10 @@ async def test_worker_kernel_executes_task_and_writes_result(tmp_path, monkeypat
     assert result is not None
     assert result.ok is True
     assert "done" in str(result.payload.get("text") or "")
+    assert result.payload.get("_result_writer") == "worker_kernel"
+    assert result.payload.get("_execution_path") == "worker.kernel.daemon"
+    assert result.payload.get("_program_id") == "default-worker"
+    assert result.payload.get("_program_version") == "v1"
 
 
 @pytest.mark.asyncio
@@ -152,3 +156,45 @@ async def test_worker_kernel_marks_failed_on_program_error(tmp_path, monkeypatch
     assert result is not None
     assert result.ok is False
     assert "boom" in str(result.error or result.summary)
+    assert result.payload.get("_result_writer") == "worker_kernel"
+    assert result.payload.get("_program_id") == "default-worker"
+
+
+def test_program_loader_refreshes_legacy_bootstrap_artifact(tmp_path, monkeypatch):
+    programs_root = (tmp_path / "programs").resolve()
+    legacy_dir = (programs_root / "default-worker" / "v1").resolve()
+    legacy_dir.mkdir(parents=True, exist_ok=True)
+
+    legacy_manifest = {
+        "program_id": "default-worker",
+        "version": "v1",
+        "entrypoint": "program.py",
+        "checksum": "bootstrap",
+        "created_by": "bootstrap",
+        "metadata": {"source": "auto_bootstrap"},
+    }
+    (legacy_dir / "manifest.json").write_text(
+        json.dumps(legacy_manifest, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    (legacy_dir / "program.py").write_text(
+        "print('legacy bootstrap')\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("WORKER_PROGRAMS_ROOT", str(programs_root))
+    loader = ProgramLoader()
+    loader.ensure_program_artifact(program_id="default-worker", version="v1")
+
+    refreshed_manifest = json.loads(
+        (legacy_dir / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert refreshed_manifest.get("checksum") == "bootstrap-core-agent-v2"
+    assert refreshed_manifest.get("created_by") == "bootstrap-core-agent-v2"
+    assert (
+        str((refreshed_manifest.get("metadata") or {}).get("source") or "")
+        == "bootstrap_core_agent_v2"
+    )
+
+    entrypoint = (legacy_dir / "program.py").read_text(encoding="utf-8")
+    assert "from worker.programs.core_agent_program import build_program" in entrypoint

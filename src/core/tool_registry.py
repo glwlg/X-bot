@@ -263,7 +263,7 @@ class ToolRegistry:
                     "action": {
                         "type": "string",
                         "description": (
-                            "run | read_issue | plan | implement | validate | publish | status | resume | skill_create | skill_modify | skill_template"
+                            "run | read_issue | plan | implement | validate | publish | status | logs | resume | skill_create | skill_modify | skill_template"
                         ),
                     },
                     "task_id": {

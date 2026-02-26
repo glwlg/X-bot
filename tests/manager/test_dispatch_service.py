@@ -30,6 +30,9 @@ class _FakeRegistry:
 
 
 class _FakeQueue:
+    def __init__(self):
+        self.last_metadata = {}
+
     async def submit_task(
         self,
         *,
@@ -41,7 +44,7 @@ class _FakeQueue:
     ):
         _ = source
         _ = backend
-        _ = metadata
+        self.last_metadata = dict(metadata or {})
         return type(
             "_Queued",
             (),
@@ -56,7 +59,8 @@ class _FakeQueue:
 @pytest.mark.asyncio
 async def test_manager_dispatch_service_dispatches_async_task(monkeypatch):
     monkeypatch.setattr(service_module, "worker_registry", _FakeRegistry())
-    monkeypatch.setattr(service_module, "dispatch_queue", _FakeQueue())
+    fake_queue = _FakeQueue()
+    monkeypatch.setattr(service_module, "dispatch_queue", fake_queue)
 
     result = await service_module.manager_dispatch_service.dispatch_worker(
         instruction="请处理这个任务",
@@ -67,3 +71,9 @@ async def test_manager_dispatch_service_dispatches_async_task(monkeypatch):
     assert result["task_id"] == "tsk-queued-1"
     assert result["terminal"] is False
     assert result["task_outcome"] == "partial"
+    assert fake_queue.last_metadata.get("program_id") == "default-worker"
+    assert fake_queue.last_metadata.get("program_version") == "v1"
+    assert fake_queue.last_metadata.get("worker_name") == "Main Worker"
+    assert (
+        fake_queue.last_metadata.get("dispatch_component") == "manager_dispatch_service"
+    )

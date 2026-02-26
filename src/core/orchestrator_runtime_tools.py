@@ -113,6 +113,147 @@ class ToolCallDispatcher:
                 return fallback
         return ""
 
+    def _normalize_runtime_user_for_path(self) -> str:
+        runtime_user = str(self.runtime_user_id or "").strip()
+        if runtime_user.startswith("worker::"):
+            parts = runtime_user.split("::")
+            if len(parts) >= 3:
+                candidate = str(parts[2] or "").strip()
+                if candidate:
+                    return candidate
+        return runtime_user
+
+    def _normalize_legacy_user_path(
+        self,
+        *,
+        tool_name: str,
+        args: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if tool_name not in {"read", "write", "edit"}:
+            return args
+        if not self._is_manager_runtime():
+            return args
+
+        user_id = self._normalize_runtime_user_for_path()
+        if not user_id or user_id == "user1":
+            return args
+
+        path = str(args.get("path") or "").strip()
+        if not path:
+            return args
+
+        replacements = (
+            ("data/users/user1/", f"data/users/{user_id}/"),
+            ("./data/users/user1/", f"./data/users/{user_id}/"),
+            ("/app/data/users/user1/", f"/app/data/users/{user_id}/"),
+        )
+
+        normalized = path
+        for source, target in replacements:
+            if normalized.startswith(source):
+                normalized = target + normalized[len(source) :]
+                break
+
+        if normalized == path:
+            return args
+
+        patched = dict(args or {})
+        patched["path"] = normalized
+        return patched
+
+    def _is_manager_runtime(self) -> bool:
+        uid = str(self.runtime_user_id or "").strip().lower()
+        platform = str(self.platform_name or "").strip().lower()
+        return not uid.startswith("worker::") and platform != "worker_kernel"
+
+    @staticmethod
+    def _is_software_delivery_intent(text: str) -> bool:
+        raw = str(text or "").strip().lower()
+        if not raw:
+            return False
+
+        coding_keywords = (
+            "software_delivery",
+            "software delivery",
+            "github",
+            "issue",
+            "pull request",
+            "pr",
+            "代码",
+            "编码",
+            "开发",
+            "修复",
+            "bug",
+            "技能",
+            "skill",
+            "创建技能",
+            "修改技能",
+        )
+        return any(token in raw for token in coding_keywords)
+
+    @staticmethod
+    def _infer_software_delivery_action(
+        *,
+        requested_action: str,
+        user_request: str,
+        args: Dict[str, Any],
+    ) -> str:
+        action = str(requested_action or "").strip().lower() or "run"
+
+        skill_name = str(args.get("skill_name") or "").strip()
+        template_kind = str(args.get("template_kind") or "").strip().lower()
+        requirement = str(args.get("requirement") or "").strip()
+        instruction = str(args.get("instruction") or "").strip()
+        text = " ".join(
+            [item for item in [user_request, requirement, instruction] if item]
+        ).lower()
+
+        is_skill_intent = (
+            bool(skill_name)
+            or template_kind in {"skill_create", "skill_modify"}
+            or "技能" in text
+            or "skill" in text
+        )
+
+        repo_path = str(args.get("repo_path") or "").strip()
+        repo_url = str(args.get("repo_url") or "").strip()
+        issue = str(args.get("issue") or "").strip()
+        owner = str(args.get("owner") or "").strip()
+        repo = str(args.get("repo") or "").strip()
+        has_repo_hint = (
+            bool(repo_url)
+            or bool(issue)
+            or bool(owner and repo)
+            or (repo_path not in {"", ".", "./"})
+        )
+
+        if action in {"skill_create", "skill_modify", "skill_template"}:
+            return action
+        if action not in {"", "run", "plan"}:
+            return action
+        if not is_skill_intent or has_repo_hint:
+            return action if action in {"plan", "run"} else "run"
+
+        modify_tokens = (
+            "修改",
+            "修复",
+            "排查",
+            "优化",
+            "fix",
+            "modify",
+            "update",
+            "debug",
+        )
+        create_tokens = ("创建", "新建", "新增", "create", "build", "开发", "实现")
+
+        if any(token in text for token in modify_tokens):
+            return "skill_modify"
+        if any(token in text for token in create_tokens):
+            return "skill_create"
+        if skill_name:
+            return "skill_modify"
+        return "skill_create"
+
     def _should_retry_extension(self, result: Dict[str, Any]) -> bool:
         if not isinstance(result, dict):
             return False
@@ -170,6 +311,7 @@ class ToolCallDispatcher:
         execution_policy: Any,
         started: float,
     ) -> Dict[str, Any]:
+        tool_args = dict(args or {})
         tool_name = str(name or "").strip()
         if tool_name and tool_name not in self.available_tool_names:
             ext_alias = f"ext_{tool_name}"
@@ -196,6 +338,25 @@ class ToolCallDispatcher:
             user_data["called_tool_names"] = called_names[-50:]
 
         if tool_name in {"read", "write", "edit", "bash"}:
+            user_request = self._extract_user_request()
+            if (
+                tool_name == "bash"
+                and self._is_manager_runtime()
+                and "software_delivery" in self.available_tool_names
+                and self._is_software_delivery_intent(user_request)
+            ):
+                blocked = {
+                    "ok": False,
+                    "error_code": "software_delivery_required",
+                    "message": (
+                        "For code/skill troubleshooting in manager runtime, "
+                        "use software_delivery directly instead of bash probing."
+                    ),
+                    "failure_mode": "recoverable",
+                }
+                self.record_tool_profile(tool_name, blocked, started)
+                return blocked
+
             if not self.runtime_tool_allowed(
                 runtime_user_id=self.runtime_user_id,
                 platform=self.platform_name,
@@ -210,9 +371,13 @@ class ToolCallDispatcher:
                 }
                 self.record_tool_profile(tool_name, blocked, started)
                 return blocked
+            normalized_args = self._normalize_legacy_user_path(
+                tool_name=tool_name,
+                args=dict(args or {}),
+            )
             result = await self.tool_broker.execute_core_tool(
                 name=tool_name,
-                args=args,
+                args=normalized_args,
                 execution_policy=execution_policy,
                 task_workspace_root=self.task_workspace_root,
             )
@@ -287,36 +452,40 @@ class ToolCallDispatcher:
 
         if tool_name == "software_delivery":
             user_request = self._extract_user_request()
-            requested_action = str(args.get("action") or "run")
-            requested_requirement = str(args.get("requirement") or "")
-            requested_instruction = str(args.get("instruction") or "")
+            requested_action = self._infer_software_delivery_action(
+                requested_action=str(tool_args.get("action") or "run"),
+                user_request=user_request,
+                args=dict(tool_args),
+            )
+            requested_requirement = str(tool_args.get("requirement") or "")
+            requested_instruction = str(tool_args.get("instruction") or "")
             result = await dev_tools.software_delivery(
                 action=requested_action,
-                task_id=str(args.get("task_id") or ""),
+                task_id=str(tool_args.get("task_id") or ""),
                 requirement=requested_requirement or user_request,
                 instruction=requested_instruction
                 or requested_requirement
                 or user_request,
-                issue=str(args.get("issue") or ""),
-                repo_path=str(args.get("repo_path") or ""),
-                repo_url=str(args.get("repo_url") or ""),
-                cwd=str(args.get("cwd") or ""),
-                skill_name=str(args.get("skill_name") or ""),
-                source=str(args.get("source") or ""),
-                template_kind=str(args.get("template_kind") or ""),
-                owner=str(args.get("owner") or ""),
-                repo=str(args.get("repo") or ""),
-                backend=str(args.get("backend") or ""),
-                branch_name=str(args.get("branch_name") or ""),
-                base_branch=str(args.get("base_branch") or ""),
-                commit_message=str(args.get("commit_message") or ""),
-                pr_title=str(args.get("pr_title") or ""),
-                pr_body=str(args.get("pr_body") or ""),
-                timeout_sec=args.get("timeout_sec", 1800),
-                validation_commands=args.get("validation_commands"),
-                auto_publish=args.get("auto_publish", True),
-                auto_push=args.get("auto_push", True),
-                auto_pr=args.get("auto_pr", True),
+                issue=str(tool_args.get("issue") or ""),
+                repo_path=str(tool_args.get("repo_path") or ""),
+                repo_url=str(tool_args.get("repo_url") or ""),
+                cwd=str(tool_args.get("cwd") or ""),
+                skill_name=str(tool_args.get("skill_name") or ""),
+                source=str(tool_args.get("source") or ""),
+                template_kind=str(tool_args.get("template_kind") or ""),
+                owner=str(tool_args.get("owner") or ""),
+                repo=str(tool_args.get("repo") or ""),
+                backend=str(tool_args.get("backend") or ""),
+                branch_name=str(tool_args.get("branch_name") or ""),
+                base_branch=str(tool_args.get("base_branch") or ""),
+                commit_message=str(tool_args.get("commit_message") or ""),
+                pr_title=str(tool_args.get("pr_title") or ""),
+                pr_body=str(tool_args.get("pr_body") or ""),
+                timeout_sec=tool_args.get("timeout_sec", 1800),
+                validation_commands=tool_args.get("validation_commands"),
+                auto_publish=tool_args.get("auto_publish", True),
+                auto_push=tool_args.get("auto_push", True),
+                auto_pr=tool_args.get("auto_pr", True),
             )
             self.record_tool_profile(tool_name, result, started)
             return result

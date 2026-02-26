@@ -1,3 +1,6 @@
+import asyncio
+from pathlib import Path
+
 import pytest
 
 import manager.dev.service as service_module
@@ -24,6 +27,12 @@ class _FakeTaskStore:
         row = dict(payload)
         self.rows[str(row["task_id"])] = row
         return dict(row)
+
+    async def list_recent(self, limit=20):
+        _ = limit
+        values = list(self.rows.values())
+        values.reverse()
+        return [dict(item) for item in values]
 
 
 class _FakeWorkspace:
@@ -101,9 +110,20 @@ class _FakeGitHub:
         }
 
 
+async def _wait_background(service: ManagerDevService) -> None:
+    jobs = list(service._background_jobs.values())
+    if not jobs:
+        return
+    await asyncio.gather(*jobs)
+
+
 @pytest.mark.asyncio
 async def test_software_delivery_run_pipeline_success(monkeypatch):
-    async def fake_run_coding_backend(**_kwargs):
+    async def fake_run_coding_backend(**kwargs):
+        log_path = str(kwargs.get("log_path") or "").strip()
+        if log_path:
+            Path(log_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(log_path).write_text("backend log output\n", encoding="utf-8")
         return {
             "ok": True,
             "backend": "codex",
@@ -133,10 +153,62 @@ async def test_software_delivery_run_pipeline_success(monkeypatch):
     )
 
     assert result["ok"] is True
-    assert result["terminal"] is True
-    assert result["task_outcome"] == "done"
-    assert result["status"] == "done"
+    assert result["async_dispatch"] is True
+    assert result["status"] == "queued"
     assert result["task_id"].startswith("dev-")
+
+    await _wait_background(service)
+    status = await service.software_delivery(action="status", task_id=result["task_id"])
+    assert status["ok"] is True
+    assert status["status"] == "done"
+    assert status["data"]["log_path"].endswith(f"{result['task_id']}.log")
+    assert "backend log output" in status["data"]["log_tail"]
+
+
+@pytest.mark.asyncio
+async def test_software_delivery_logs_action_returns_log_tail(tmp_path):
+    service = ManagerDevService()
+    service.tasks = _FakeTaskStore()
+
+    log_path = tmp_path / "dev-logs.log"
+    log_path.write_text("codex step 1\ncodex step 2\n", encoding="utf-8")
+    await service.tasks.create(
+        {
+            "task_id": "dev-logs",
+            "status": "implementing",
+            "goal": "debug logs",
+            "logs": {"path": str(log_path)},
+        }
+    )
+
+    result = await service.software_delivery(action="logs", task_id="dev-logs")
+
+    assert result["ok"] is True
+    assert result["summary"] == "task logs"
+    assert result["task_id"] == "dev-logs"
+    assert result["status"] == "implementing"
+    assert "codex step 2" in result["text"]
+    assert result["data"]["log_path"] == str(log_path)
+
+
+@pytest.mark.asyncio
+async def test_software_delivery_logs_action_without_log_file_returns_placeholder():
+    service = ManagerDevService()
+    service.tasks = _FakeTaskStore()
+
+    await service.tasks.create(
+        {
+            "task_id": "dev-empty-log",
+            "status": "queued",
+            "goal": "debug logs",
+        }
+    )
+
+    result = await service.software_delivery(action="logs", task_id="dev-empty-log")
+
+    assert result["ok"] is True
+    assert result["summary"] == "task logs"
+    assert result["text"] == "no logs available"
 
 
 @pytest.mark.asyncio
@@ -153,6 +225,85 @@ async def test_software_delivery_read_issue(monkeypatch):
     issue_payload = result["data"]["issue"]
     assert issue_payload["number"] == 12
     assert issue_payload["owner"] == "acme"
+
+
+@pytest.mark.asyncio
+async def test_software_delivery_status_uses_latest_when_task_id_missing():
+    service = ManagerDevService()
+    service.tasks = _FakeTaskStore()
+
+    created = await service.tasks.create(
+        {
+            "task_id": "dev-42",
+            "status": "implemented",
+            "goal": "Fix postal code skill",
+        }
+    )
+
+    result = await service.software_delivery(action="status", task_id="")
+
+    assert result["ok"] is True
+    assert result["task_id"] == created["task_id"]
+    assert result["status"] == "implemented"
+
+
+@pytest.mark.asyncio
+async def test_software_delivery_status_without_tasks_returns_idle():
+    service = ManagerDevService()
+    service.tasks = _FakeTaskStore()
+
+    result = await service.software_delivery(action="status", task_id="")
+
+    assert result["ok"] is True
+    assert result["status"] == "idle"
+    assert result["summary"] == "no software_delivery task found"
+
+
+@pytest.mark.asyncio
+async def test_software_delivery_status_with_unknown_task_id_uses_latest():
+    service = ManagerDevService()
+    service.tasks = _FakeTaskStore()
+
+    created = await service.tasks.create(
+        {
+            "task_id": "dev-42",
+            "status": "implemented",
+            "goal": "Fix postal code skill",
+        }
+    )
+
+    result = await service.software_delivery(action="status", task_id="dev-missing")
+
+    assert result["ok"] is True
+    assert result["task_id"] == created["task_id"]
+    assert result["status"] == "implemented"
+    assert result["data"]["requested_task_id"] == "dev-missing"
+    assert result["data"]["fallback_to_latest"] is True
+
+
+@pytest.mark.asyncio
+async def test_software_delivery_status_with_unknown_task_id_and_no_tasks_is_idle():
+    service = ManagerDevService()
+    service.tasks = _FakeTaskStore()
+
+    result = await service.software_delivery(action="status", task_id="dev-missing")
+
+    assert result["ok"] is True
+    assert result["status"] == "idle"
+    assert result["summary"] == "no software_delivery task found"
+
+
+def test_response_auto_terminal_for_fatal_failure():
+    service = ManagerDevService()
+    result = service._response(
+        ok=False,
+        summary="workspace is not a git repository",
+        error_code="workspace_failed",
+    )
+    assert result["ok"] is False
+    assert result["terminal"] is True
+    assert result["task_outcome"] == "failed"
+    assert result["failure_mode"] == "fatal"
 
 
 @pytest.mark.asyncio
@@ -180,11 +331,13 @@ async def test_software_delivery_skill_template_action(monkeypatch):
     )
 
     assert result["ok"] is True
-    assert result["terminal"] is True
-    assert result["task_outcome"] == "done"
-    data = result["data"]
-    assert data["mode"] == "skill_template"
-    assert data["template_action"] == "skill_create"
+    assert result["async_dispatch"] is True
+    assert result["status"] == "queued"
+
+    await _wait_background(service)
+    status = await service.software_delivery(action="status", task_id=result["task_id"])
+    assert status["ok"] is True
+    assert status["status"] == "done"
 
 
 @pytest.mark.asyncio
@@ -210,5 +363,6 @@ async def test_software_delivery_skill_template_fills_missing_fields(monkeypatch
     )
 
     assert result["ok"] is True
+    await _wait_background(service)
     assert captured["instruction"]
     assert str(captured["cwd"]).replace("\\", "/").endswith("skills/learned/demo_skill")

@@ -164,3 +164,350 @@ async def test_software_delivery_falls_back_to_user_request(monkeypatch):
     assert captured.get("action") == "skill_create"
     assert captured.get("instruction") == "帮我创建一个邮政编码查询的技能"
     assert captured.get("requirement") == "帮我创建一个邮政编码查询的技能"
+
+
+@pytest.mark.asyncio
+async def test_software_delivery_inferrs_skill_action_from_request(monkeypatch):
+    captured = {}
+
+    async def fake_software_delivery(**kwargs):
+        captured.update(dict(kwargs))
+        return {"ok": False, "summary": "workspace is not a git repository"}
+
+    monkeypatch.setattr(
+        runtime_tools_module.dev_tools,
+        "software_delivery",
+        fake_software_delivery,
+    )
+
+    async def append_event(_event: str):
+        return None
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="u-5",
+        platform_name="telegram",
+        task_id="task-5",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(
+            message=SimpleNamespace(text="帮我创建一个邮政编码查询的技能"),
+            user_data={},
+        ),
+        runtime=object(),
+        tool_broker=object(),
+        runtime_tool_allowed=lambda **_kwargs: True,
+        record_tool_profile=lambda *_args, **_kwargs: None,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"software_delivery"})
+
+    await dispatcher.execute(
+        name="software_delivery",
+        args={},
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert captured.get("action") == "skill_create"
+
+
+@pytest.mark.asyncio
+async def test_software_delivery_rewrites_plan_to_skill_modify_without_repo_hints(
+    monkeypatch,
+):
+    captured = {}
+
+    async def fake_software_delivery(**kwargs):
+        captured.update(dict(kwargs))
+        return {"ok": True, "summary": "ok"}
+
+    monkeypatch.setattr(
+        runtime_tools_module.dev_tools,
+        "software_delivery",
+        fake_software_delivery,
+    )
+
+    async def append_event(_event: str):
+        return None
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="u-7",
+        platform_name="telegram",
+        task_id="task-7",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(
+            message=SimpleNamespace(text="请排查并修复这个技能"),
+            user_data={},
+        ),
+        runtime=object(),
+        tool_broker=object(),
+        runtime_tool_allowed=lambda **_kwargs: True,
+        record_tool_profile=lambda *_args, **_kwargs: None,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"software_delivery"})
+
+    await dispatcher.execute(
+        name="software_delivery",
+        args={
+            "action": "plan",
+            "repo_path": ".",
+            "requirement": "排查并修复 ext_postal_code_query 技能",
+        },
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert captured.get("action") == "skill_modify"
+
+
+@pytest.mark.asyncio
+async def test_software_delivery_keeps_plan_when_repo_hint_present(monkeypatch):
+    captured = {}
+
+    async def fake_software_delivery(**kwargs):
+        captured.update(dict(kwargs))
+        return {"ok": True, "summary": "ok"}
+
+    monkeypatch.setattr(
+        runtime_tools_module.dev_tools,
+        "software_delivery",
+        fake_software_delivery,
+    )
+
+    async def append_event(_event: str):
+        return None
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="u-8",
+        platform_name="telegram",
+        task_id="task-8",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(
+            message=SimpleNamespace(text="请排查并修复这个技能"),
+            user_data={},
+        ),
+        runtime=object(),
+        tool_broker=object(),
+        runtime_tool_allowed=lambda **_kwargs: True,
+        record_tool_profile=lambda *_args, **_kwargs: None,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"software_delivery"})
+
+    await dispatcher.execute(
+        name="software_delivery",
+        args={
+            "action": "plan",
+            "repo_url": "https://github.com/acme/repo.git",
+            "requirement": "排查并修复 ext_postal_code_query 技能",
+        },
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert captured.get("action") == "plan"
+
+
+@pytest.mark.asyncio
+async def test_manager_blocks_bash_when_software_delivery_intent(monkeypatch):
+    async def append_event(_event: str):
+        return None
+
+    class _FakeToolBroker:
+        async def execute_core_tool(self, **kwargs):
+            return {"ok": True, "echo": kwargs}
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="u-2",
+        platform_name="telegram",
+        task_id="task-3",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(
+            message=SimpleNamespace(text="这个技能有问题，帮我看日志并修复代码"),
+            user_data={},
+        ),
+        runtime=object(),
+        tool_broker=_FakeToolBroker(),
+        runtime_tool_allowed=lambda **_kwargs: True,
+        record_tool_profile=lambda *_args, **_kwargs: None,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"bash", "software_delivery"})
+
+    result = await dispatcher.execute(
+        name="bash",
+        args={"command": "ls"},
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert result["ok"] is False
+    assert result["error_code"] == "software_delivery_required"
+
+
+@pytest.mark.asyncio
+async def test_worker_allows_bash_even_when_request_mentions_code(monkeypatch):
+    async def append_event(_event: str):
+        return None
+
+    class _FakeToolBroker:
+        async def execute_core_tool(self, **kwargs):
+            return {"ok": True, "echo": kwargs}
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="worker::worker-main::u-3",
+        platform_name="worker_kernel",
+        task_id="task-4",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(
+            message=SimpleNamespace(text="修复代码并查看日志"),
+            user_data={},
+        ),
+        runtime=object(),
+        tool_broker=_FakeToolBroker(),
+        runtime_tool_allowed=lambda **_kwargs: True,
+        record_tool_profile=lambda *_args, **_kwargs: None,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"bash", "software_delivery"})
+
+    result = await dispatcher.execute(
+        name="bash",
+        args={"command": "ls"},
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert result["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_manager_allows_bash_for_non_coding_ops(monkeypatch):
+    async def append_event(_event: str):
+        return None
+
+    class _FakeToolBroker:
+        async def execute_core_tool(self, **kwargs):
+            return {"ok": True, "echo": kwargs}
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="u-6",
+        platform_name="telegram",
+        task_id="task-6",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(
+            message=SimpleNamespace(text="帮我看下容器日志和磁盘占用"),
+            user_data={},
+        ),
+        runtime=object(),
+        tool_broker=_FakeToolBroker(),
+        runtime_tool_allowed=lambda **_kwargs: True,
+        record_tool_profile=lambda *_args, **_kwargs: None,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"bash", "software_delivery"})
+
+    result = await dispatcher.execute(
+        name="bash",
+        args={"command": "docker compose ps"},
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert result["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_manager_rewrites_legacy_user1_path_for_read_tool(monkeypatch):
+    async def append_event(_event: str):
+        return None
+
+    captured = {}
+
+    class _FakeToolBroker:
+        async def execute_core_tool(self, **kwargs):
+            captured.update(dict(kwargs or {}))
+            return {"ok": True}
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="257675041",
+        platform_name="telegram",
+        task_id="task-9",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(
+            message=SimpleNamespace(text="读取记忆"),
+            user_data={},
+        ),
+        runtime=object(),
+        tool_broker=_FakeToolBroker(),
+        runtime_tool_allowed=lambda **_kwargs: True,
+        record_tool_profile=lambda *_args, **_kwargs: None,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"read"})
+
+    result = await dispatcher.execute(
+        name="read",
+        args={"path": "data/users/user1/MEMORY.md", "start_line": 1, "max_lines": 10},
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert result["ok"] is True
+    assert captured["args"]["path"] == "data/users/257675041/MEMORY.md"
+
+
+@pytest.mark.asyncio
+async def test_worker_keeps_legacy_user1_path_unchanged(monkeypatch):
+    async def append_event(_event: str):
+        return None
+
+    captured = {}
+
+    class _FakeToolBroker:
+        async def execute_core_tool(self, **kwargs):
+            captured.update(dict(kwargs or {}))
+            return {"ok": True}
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="worker::worker-main::257675041",
+        platform_name="worker_kernel",
+        task_id="task-10",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(
+            message=SimpleNamespace(text="读取记忆"),
+            user_data={},
+        ),
+        runtime=object(),
+        tool_broker=_FakeToolBroker(),
+        runtime_tool_allowed=lambda **_kwargs: True,
+        record_tool_profile=lambda *_args, **_kwargs: None,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"read"})
+
+    result = await dispatcher.execute(
+        name="read",
+        args={"path": "data/users/user1/MEMORY.md", "start_line": 1, "max_lines": 10},
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert result["ok"] is True
+    assert captured["args"]["path"] == "data/users/user1/MEMORY.md"

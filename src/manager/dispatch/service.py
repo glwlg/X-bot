@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Any, Dict, List
 
 from core.worker_store import worker_registry
@@ -121,6 +122,15 @@ class ManagerDispatchService:
             }
 
         meta = dict(metadata or {})
+        if not str(meta.get("program_id") or "").strip():
+            meta["program_id"] = (
+                str(os.getenv("WORKER_DEFAULT_PROGRAM_ID", "default-worker")).strip()
+                or "default-worker"
+            )
+        if not str(meta.get("program_version") or "").strip():
+            meta["program_version"] = (
+                str(os.getenv("WORKER_DEFAULT_PROGRAM_VERSION", "v1")).strip() or "v1"
+            )
         selected = await self._choose_worker(
             goal=task_instruction,
             preferred_worker_id=worker_id,
@@ -132,6 +142,8 @@ class ManagerDispatchService:
             str(selected_worker_obj.get("name") or selected_worker_id).strip()
             or selected_worker_id
         )
+        meta.setdefault("worker_name", selected_worker_name)
+        meta.setdefault("dispatch_component", "manager_dispatch_service")
 
         queued = await dispatch_queue.submit_task(
             worker_id=selected_worker_id,
