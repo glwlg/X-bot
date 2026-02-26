@@ -176,7 +176,7 @@ class PromptComposer:
                 tool_name = f"ext_{skill_name.replace('-', '_')}"
                 allowed, _detail = tool_access_store.is_tool_allowed(
                     runtime_user_id=runtime_user_id,
-                    platform="worker_runtime",
+                    platform="worker_kernel",
                     tool_name=tool_name,
                     kind="tool",
                 )

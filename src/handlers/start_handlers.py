@@ -70,7 +70,7 @@ async def stop_command(ctx: UnifiedContext) -> None:
 
     from core.task_manager import task_manager
     from core.heartbeat_store import heartbeat_store
-    from worker_runtime.task_file_store import worker_task_file_store
+    from shared.queue.dispatch_queue import dispatch_queue
 
     active_info = task_manager.get_task_info(user_id)
     todo_path = active_info.get("todo_path") if isinstance(active_info, dict) else None
@@ -90,7 +90,7 @@ async def stop_command(ctx: UnifiedContext) -> None:
     cancelled_desc = await task_manager.cancel_task(user_id)
     worker_cancel = {"pending_cancelled": 0, "running_signaled": 0, "job_ids": []}
     try:
-        worker_cancel = await worker_task_file_store.cancel_for_user(
+        worker_cancel = await dispatch_queue.cancel_for_user(
             user_id=str(user_id),
             reason="cancelled_by_stop_command",
             include_running=True,

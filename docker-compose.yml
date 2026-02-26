@@ -30,7 +30,7 @@ services:
       - .env
     restart: unless-stopped
     network_mode: "host"
-    command: [ "python", "-m", "worker_runtime.daemon" ]
+    command: [ "python", "-m", "worker_main" ]
     volumes:
       - ./data:/app/data
       - ./downloads:/app/downloads

@@ -2,13 +2,13 @@ import asyncio
 import logging
 import re
 import shlex
-from datetime import datetime
 
 from core.heartbeat_store import heartbeat_store
 from core.platform.models import UnifiedContext
 from core.tool_access_store import tool_access_store
-from core.worker_runtime import worker_runtime
-from core.worker_store import worker_registry, worker_task_store
+from core.tools.dispatch_tools import dispatch_tools
+from core.worker_store import worker_registry
+from shared.queue.dispatch_queue import dispatch_queue
 from .base_handlers import check_permission_unified
 
 logger = logging.getLogger(__name__)
@@ -154,7 +154,6 @@ def _worker_usage_text() -> str:
         "`/worker tools <worker_id> allow=group:all deny=group:coding`\n"
         "`/worker tools <worker_id> reset`\n"
         "`/worker delete <worker_id>`\n"
-        "`/worker auth <codex|gemini-cli> <start|status>`\n"
         "`/worker help`"
     )
 
@@ -171,7 +170,6 @@ async def _resolve_active_worker(user_id: str) -> str:
 
 
 async def worker_command(ctx: UnifiedContext) -> None:
-    """Manage userland workers: /worker [list|create|use|run|delete|auth|tasks]."""
     if not await check_permission_unified(ctx):
         return
 
@@ -290,11 +288,11 @@ async def worker_command(ctx: UnifiedContext) -> None:
                 description="Worker 命令执行",
             )
         try:
-            result = await worker_runtime.execute_task(
-                worker_id=worker_id,
-                source="user_cmd",
+            result = await dispatch_tools.dispatch_worker(
                 instruction=instruction,
+                worker_id=worker_id,
                 backend=selected_backend,
+                source="user_cmd",
                 metadata={
                     "platform": ctx.message.platform,
                     "chat_id": ctx.message.chat.id,
@@ -302,46 +300,18 @@ async def worker_command(ctx: UnifiedContext) -> None:
                     "force_shell": force_shell,
                 },
             )
-
-            fallback_used = False
-            if (
-                not result.get("ok")
-                and not (force_shell or inferred_shell)
-                and str(selected_backend).strip().lower()
-                in {"codex", "gemini", "gemini-cli"}
-                and str(result.get("error", ""))
-                in {"cli_not_found", "exec_prepare_failed"}
-                and _looks_like_shell_command(instruction)
-            ):
-                fallback = await worker_runtime.execute_task(
-                    worker_id=worker_id,
-                    source="user_cmd",
-                    instruction=instruction,
-                    backend="shell",
-                    metadata={
-                        "platform": ctx.message.platform,
-                        "chat_id": ctx.message.chat.id,
-                        "user_id": str(user_id),
-                        "fallback_from_backend": str(selected_backend),
-                    },
-                )
-                if fallback.get("ok"):
-                    result = fallback
-                    fallback_used = True
-
             if result.get("ok"):
-                prefix = "✅ Worker 执行完成"
-                if fallback_used:
-                    prefix = "✅ Worker 执行完成（已自动降级到 shell backend）"
+                prefix = "✅ Worker 任务已派发"
                 await ctx.reply(
                     f"{prefix}\n"
                     f"- task_id: `{result.get('task_id')}`\n"
+                    f"- worker: `{result.get('worker_name')}`\n"
                     f"- backend: `{result.get('backend')}`\n\n"
-                    f"{result.get('summary') or ''}"
+                    "任务执行完成后会自动回传结果。"
                 )
             else:
                 await ctx.reply(
-                    f"❌ Worker 执行失败\n"
+                    f"❌ Worker 任务派发失败\n"
                     f"- task_id: `{result.get('task_id', '')}`\n"
                     f"- error: `{result.get('error', 'unknown')}`\n\n"
                     f"{result.get('summary') or ''}"
@@ -353,12 +323,19 @@ async def worker_command(ctx: UnifiedContext) -> None:
     if sub in {"tasks", "history"}:
         active = await _resolve_active_worker(user_id)
         include_sources, exclude_sources = _parse_tasks_filters(args)
-        rows = await worker_task_store.list_recent(
-            worker_id=active,
-            limit=10,
-            include_sources=include_sources,
-            exclude_sources=exclude_sources,
-        )
+        rows_obj = await dispatch_queue.list_tasks(worker_id=active, limit=20)
+        rows = []
+        include_set = set(include_sources or []) if include_sources else None
+        exclude_set = set(exclude_sources or []) if exclude_sources else set()
+        for item in rows_obj:
+            source = str(item.source or "").strip()
+            if include_set is not None and source not in include_set:
+                continue
+            if source in exclude_set:
+                continue
+            rows.append(item)
+            if len(rows) >= 10:
+                break
         if not rows:
             await ctx.reply("当前 worker 暂无匹配任务记录。")
             return
@@ -371,9 +348,9 @@ async def worker_command(ctx: UnifiedContext) -> None:
         for row in rows:
             lines.append(
                 (
-                    f"- `{row.get('task_id')}` | {row.get('status')} | {str(row.get('source'))} "
-                    f"| retry={int(row.get('retry_count', 0) or 0)} "
-                    f"| {str(row.get('result_summary') or '')[:100]}"
+                    f"- `{row.task_id}` | {row.status} | {row.source} "
+                    f"| retry={int(row.retry_count or 0)} "
+                    f"| {str(row.error or '')[:100]}"
                 )
             )
         await ctx.reply("\n".join(lines))
@@ -479,86 +456,9 @@ async def worker_command(ctx: UnifiedContext) -> None:
         return
 
     if sub == "auth":
-        parts = args.split()
-        if len(parts) < 2:
-            await ctx.reply("用法: `/worker auth <codex|gemini-cli> <start|status>`")
-            return
-        provider = parts[0].strip().lower()
-        action = parts[1].strip().lower()
-        if provider == "gemini":
-            provider = "gemini-cli"
-        if provider not in {"codex", "gemini-cli"}:
-            await ctx.reply("只支持 `codex` 或 `gemini-cli`。")
-            return
-
-        worker_id = await _resolve_active_worker(user_id)
-        worker = await worker_registry.get_worker(worker_id)
-        if not worker:
-            await ctx.reply("❌ 当前 worker 无效。")
-            return
-
-        auth_state = dict((worker.get("auth") or {}).get(provider) or {})
-        if action == "start":
-            manual = await worker_runtime.build_auth_start_command(worker_id, provider)
-            if not manual.get("ok"):
-                await ctx.reply(
-                    "❌ 无法生成授权命令\n"
-                    f"- worker: `{worker_id}`\n"
-                    f"- provider: `{provider}`\n"
-                    f"- error: `{manual.get('error', 'unknown')}`"
-                )
-                return
-
-            auth_state = {
-                "status": "pending",
-                "provider": provider,
-                "runtime_mode": manual.get("runtime_mode", ""),
-                "workspace_root": manual.get("workspace_root", ""),
-                "manual_command": manual.get("command", ""),
-                "last_update": datetime.now()
-                .astimezone()
-                .isoformat(timespec="seconds"),
-                "method": "manual_cli_login",
-            }
-            await worker_registry.set_auth_state(worker_id, provider, auth_state)
-            await ctx.reply(
-                "🔐 请在宿主机终端执行以下命令完成登录\n"
-                f"- worker: `{worker_id}`\n"
-                f"- provider: `{provider}`\n"
-                f"- runtime_mode: `{manual.get('runtime_mode', '')}`\n\n"
-                f"```bash\n{manual.get('command', '')}\n```"
-            )
-            return
-
-        if action == "status":
-            status_result = await worker_runtime.check_auth_status(worker_id, provider)
-            status = status_result.get("status", "unknown")
-            auth_state = {
-                **auth_state,
-                "status": status,
-                "provider": provider,
-                "runtime_mode": status_result.get("runtime_mode", ""),
-                "last_exit_code": status_result.get("exit_code"),
-                "last_summary": status_result.get("summary", ""),
-                "last_error": status_result.get("error", ""),
-                "last_update": datetime.now()
-                .astimezone()
-                .isoformat(timespec="seconds"),
-            }
-            await worker_registry.set_auth_state(worker_id, provider, auth_state)
-            await ctx.reply(
-                "🔎 授权状态\n"
-                f"- worker: `{worker_id}`\n"
-                f"- provider: `{provider}`\n"
-                f"- status: `{status}`\n"
-                f"- runtime_mode: `{status_result.get('runtime_mode', '')}`\n"
-                f"- authenticated: `{status_result.get('authenticated', False)}`\n"
-                f"- exit_code: `{status_result.get('exit_code', '')}`\n\n"
-                f"{status_result.get('summary', '')}"
-            )
-            return
-
-        await ctx.reply("用法: `/worker auth <codex|gemini-cli> <start|status>`")
+        await ctx.reply(
+            "`/worker auth` 已移除。Worker 认证由 Program 生命周期统一管理。"
+        )
         return
 
     await ctx.reply(_worker_usage_text())

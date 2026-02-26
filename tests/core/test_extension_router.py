@@ -138,3 +138,32 @@ def test_extension_router_news_writing_intent_keeps_writer_candidate(monkeypatch
     names = [item.name for item in candidates]
 
     assert "news_article_writer" in names
+
+
+def test_extension_router_skips_manager_only_skill(monkeypatch):
+    monkeypatch.setattr(
+        extension_router_module.skill_loader,
+        "get_skills_summary",
+        lambda: [
+            {
+                "name": "internal_dev_tool",
+                "description": "internal manager development capability",
+                "triggers": ["internal dev"],
+                "manager_only": True,
+                "input_schema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "rss_subscribe",
+                "description": "Subscribe to RSS feeds",
+                "triggers": ["rss"],
+                "input_schema": {"type": "object", "properties": {}},
+            },
+        ],
+    )
+
+    router = ExtensionRouter()
+    candidates = router.route("帮我订阅这个 RSS 地址", max_candidates=5)
+    names = [item.name for item in candidates]
+
+    assert "internal_dev_tool" not in names
+    assert "rss_subscribe" in names

@@ -20,7 +20,7 @@ class OrchestratorRuntimeContext:
     user_data: Dict[str, Any]
     runtime_user_id: str
     platform_name: str
-    worker_runtime_user: bool
+    worker_kernel_user: bool
     heartbeat_runtime_user: bool
     session_state_enabled: bool
     runtime_policy_ctx: Dict[str, Any]
@@ -44,11 +44,11 @@ class OrchestratorRuntimeContext:
 
         runtime_user_id = str(user_data.get("runtime_user_id") or "").strip() or user_id
         platform_name = str(getattr(msg, "platform", "") or "").strip().lower()
-        worker_runtime_user = (
-            platform_name == "worker_runtime" or runtime_user_id.startswith("worker::")
+        worker_kernel_user = (
+            platform_name == "worker_kernel" or runtime_user_id.startswith("worker::")
         )
         heartbeat_runtime_user = platform_name == "heartbeat_daemon"
-        session_state_enabled = not worker_runtime_user and not heartbeat_runtime_user
+        session_state_enabled = not worker_kernel_user and not heartbeat_runtime_user
 
         runtime_policy_ctx = tool_access_store.resolve_runtime_policy(
             runtime_user_id=runtime_user_id,
@@ -72,7 +72,7 @@ class OrchestratorRuntimeContext:
             user_data=user_data,
             runtime_user_id=runtime_user_id,
             platform_name=platform_name,
-            worker_runtime_user=worker_runtime_user,
+            worker_kernel_user=worker_kernel_user,
             heartbeat_runtime_user=heartbeat_runtime_user,
             session_state_enabled=session_state_enabled,
             runtime_policy_ctx=runtime_policy_ctx,
@@ -90,8 +90,8 @@ class OrchestratorRuntimeContext:
     def _task_inbox_source(self) -> str:
         if self.heartbeat_runtime_user:
             return "heartbeat"
-        if self.worker_runtime_user:
-            return "worker_runtime"
+        if self.worker_kernel_user:
+            return "worker_kernel"
         return "user_chat"
 
     async def ensure_task_inbox(self, *, task_goal: str) -> str:

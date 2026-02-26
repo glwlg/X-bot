@@ -20,6 +20,7 @@ class ToolRegistry:
             self._list_workers_tool(),
             self._dispatch_worker_tool(),
             self._worker_status_tool(),
+            self._software_delivery_tool(),
         ]
 
     def get_extension_tools(
@@ -243,6 +244,124 @@ class ToolRegistry:
                         "type": "integer",
                         "description": "Recent task limit (1-50)",
                         "default": 10,
+                    },
+                },
+            },
+        }
+
+    def _software_delivery_tool(self) -> Dict[str, Any]:
+        return {
+            "name": "software_delivery",
+            "description": (
+                "Manager software delivery pipeline. "
+                "Use to read GitHub issues, plan implementation, run coding backend, "
+                "validate changes, and publish commit/PR results."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": (
+                            "run | read_issue | plan | implement | validate | publish | status | resume | skill_create | skill_modify | skill_template"
+                        ),
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "Existing software delivery task id",
+                    },
+                    "requirement": {
+                        "type": "string",
+                        "description": "Development requirement or feature description",
+                    },
+                    "instruction": {
+                        "type": "string",
+                        "description": "Explicit coding instruction, mainly for template actions",
+                    },
+                    "issue": {
+                        "type": "string",
+                        "description": "GitHub issue URL or owner/repo#number",
+                    },
+                    "repo_path": {
+                        "type": "string",
+                        "description": "Local repository path",
+                    },
+                    "repo_url": {
+                        "type": "string",
+                        "description": "Git repository URL for clone/pull",
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Working directory for template coding actions",
+                    },
+                    "skill_name": {
+                        "type": "string",
+                        "description": "Target skill name for template actions",
+                    },
+                    "source": {
+                        "type": "string",
+                        "description": "Trace source label for coding execution",
+                    },
+                    "template_kind": {
+                        "type": "string",
+                        "description": "When action=skill_template, choose skill_create or skill_modify",
+                    },
+                    "owner": {
+                        "type": "string",
+                        "description": "GitHub owner override",
+                    },
+                    "repo": {
+                        "type": "string",
+                        "description": "GitHub repo override",
+                    },
+                    "backend": {
+                        "type": "string",
+                        "description": "Coding backend: codex or gemini-cli",
+                    },
+                    "branch_name": {
+                        "type": "string",
+                        "description": "Target branch for implementation",
+                    },
+                    "base_branch": {
+                        "type": "string",
+                        "description": "Base branch for publish/PR",
+                    },
+                    "commit_message": {
+                        "type": "string",
+                        "description": "Commit message override",
+                    },
+                    "pr_title": {
+                        "type": "string",
+                        "description": "Pull request title override",
+                    },
+                    "pr_body": {
+                        "type": "string",
+                        "description": "Pull request body override",
+                    },
+                    "timeout_sec": {
+                        "type": "integer",
+                        "description": "Timeout for coding execution",
+                        "default": 1800,
+                    },
+                    "validation_commands": {
+                        "type": "array",
+                        "description": "Optional validation command list",
+                        "items": {"type": "string"},
+                    },
+                    "auto_publish": {
+                        "type": "boolean",
+                        "description": "When action=run/resume, include publish stage",
+                        "default": True,
+                    },
+                    "auto_push": {
+                        "type": "boolean",
+                        "description": "Push branch before PR",
+                        "default": True,
+                    },
+                    "auto_pr": {
+                        "type": "boolean",
+                        "description": "Create pull request after push",
+                        "default": True,
                     },
                 },
             },

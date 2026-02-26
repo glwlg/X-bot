@@ -6,6 +6,7 @@ from typing import Any, Awaitable, Callable, Dict, List, Set
 from core.skill_arg_planner import skill_arg_planner
 from core.task_inbox import task_inbox
 from core.tool_registry import tool_registry
+from core.tools.dev_tools import dev_tools
 from core.tools.dispatch_tools import dispatch_tools
 from core.tools.extension_tools import extension_tools
 from services.md_converter import adapt_md_file_for_platform
@@ -280,6 +281,42 @@ class ToolCallDispatcher:
             result = await dispatch_tools.worker_status(
                 worker_id=str(args.get("worker_id") or ""),
                 limit=int(args.get("limit", 10) or 10),
+            )
+            self.record_tool_profile(tool_name, result, started)
+            return result
+
+        if tool_name == "software_delivery":
+            user_request = self._extract_user_request()
+            requested_action = str(args.get("action") or "run")
+            requested_requirement = str(args.get("requirement") or "")
+            requested_instruction = str(args.get("instruction") or "")
+            result = await dev_tools.software_delivery(
+                action=requested_action,
+                task_id=str(args.get("task_id") or ""),
+                requirement=requested_requirement or user_request,
+                instruction=requested_instruction
+                or requested_requirement
+                or user_request,
+                issue=str(args.get("issue") or ""),
+                repo_path=str(args.get("repo_path") or ""),
+                repo_url=str(args.get("repo_url") or ""),
+                cwd=str(args.get("cwd") or ""),
+                skill_name=str(args.get("skill_name") or ""),
+                source=str(args.get("source") or ""),
+                template_kind=str(args.get("template_kind") or ""),
+                owner=str(args.get("owner") or ""),
+                repo=str(args.get("repo") or ""),
+                backend=str(args.get("backend") or ""),
+                branch_name=str(args.get("branch_name") or ""),
+                base_branch=str(args.get("base_branch") or ""),
+                commit_message=str(args.get("commit_message") or ""),
+                pr_title=str(args.get("pr_title") or ""),
+                pr_body=str(args.get("pr_body") or ""),
+                timeout_sec=args.get("timeout_sec", 1800),
+                validation_commands=args.get("validation_commands"),
+                auto_publish=args.get("auto_publish", True),
+                auto_push=args.get("auto_push", True),
+                auto_pr=args.get("auto_pr", True),
             )
             self.record_tool_profile(tool_name, result, started)
             return result

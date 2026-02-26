@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+import asyncio
+import logging
+import os
+import signal
+from typing import Any, Set
+
+from shared.contracts.dispatch import TaskEnvelope, TaskResult
+from shared.queue.dispatch_queue import dispatch_queue
+from worker.kernel.program_loader import program_loader
+
+logger = logging.getLogger(__name__)
+
+
+class WorkerKernelDaemon:
+    def __init__(self, *, queue=None, loader=None) -> None:
+        self.poll_sec = max(0.5, float(os.getenv("WORKER_KERNEL_POLL_SEC", "1.0")))
+        self.max_concurrency = max(
+            1,
+            int(os.getenv("WORKER_KERNEL_MAX_CONCURRENCY", "2")),
+        )
+        self.queue = queue if queue is not None else dispatch_queue
+        self.loader = loader if loader is not None else program_loader
+        self.worker_id = str(
+            os.getenv("WORKER_KERNEL_ID", "worker-main").strip() or "worker-main"
+        )
+        self.worker_identity = str(
+            os.getenv("WORKER_KERNEL_IDENTITY", "x-bot-worker").strip()
+            or "x-bot-worker"
+        )
+        self.default_program_id = str(
+            os.getenv("WORKER_DEFAULT_PROGRAM_ID", "default-worker").strip()
+            or "default-worker"
+        )
+        self.default_program_version = str(
+            os.getenv("WORKER_DEFAULT_PROGRAM_VERSION", "v1").strip() or "v1"
+        )
+        self._stop_event = asyncio.Event()
+        self._running: Set[asyncio.Task] = set()
+
+    async def start(self) -> None:
+        self.loader.ensure_program_artifact(
+            program_id=self.default_program_id,
+            version=self.default_program_version,
+        )
+        logger.info(
+            "Worker kernel started. worker_id=%s poll=%.1fs max=%s",
+            self.worker_id,
+            self.poll_sec,
+            self.max_concurrency,
+        )
+        while not self._stop_event.is_set():
+            try:
+                await self._tick()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.error("Worker kernel tick failed: %s", exc, exc_info=True)
+            try:
+                await asyncio.wait_for(self._stop_event.wait(), timeout=self.poll_sec)
+            except asyncio.TimeoutError:
+                continue
+
+        for task in list(self._running):
+            task.cancel()
+        if self._running:
+            await asyncio.gather(*self._running, return_exceptions=True)
+
+    async def stop(self) -> None:
+        self._stop_event.set()
+
+    async def _tick(self) -> None:
+        self._running = {task for task in self._running if not task.done()}
+        while len(self._running) < self.max_concurrency:
+            task = await self.queue.claim_next(
+                worker_id=self.worker_id,
+                claimer=self.worker_identity,
+            )
+            if task is None:
+                return
+            running = asyncio.create_task(
+                self._run_task(task),
+                name=f"worker-kernel-{task.task_id}",
+            )
+            self._running.add(running)
+
+    async def _run_task(self, task: TaskEnvelope) -> None:
+        program_id = str(task.metadata.get("program_id") or self.default_program_id)
+        version = str(
+            task.metadata.get("program_version") or self.default_program_version
+        )
+        try:
+            program = self.loader.load_program(program_id=program_id, version=version)
+            result = await program.run(
+                task,
+                {
+                    "worker_id": self.worker_id,
+                    "program_id": program_id,
+                    "program_version": version,
+                },
+            )
+            if not isinstance(result, TaskResult):
+                result_payload = dict(result) if isinstance(result, dict) else {}
+                result = TaskResult(
+                    task_id=task.task_id,
+                    worker_id=self.worker_id,
+                    ok=bool(result_payload.get("ok")),
+                    summary=str(result_payload.get("summary") or ""),
+                    error=str(result_payload.get("error") or ""),
+                    payload=result_payload,
+                )
+        except Exception as exc:
+            message = str(exc)
+            logger.error(
+                "Worker kernel task failed task_id=%s err=%s",
+                task.task_id,
+                message,
+                exc_info=True,
+            )
+            result = TaskResult(
+                task_id=task.task_id,
+                worker_id=self.worker_id,
+                ok=False,
+                summary=message,
+                error=message,
+                payload={"text": message},
+            )
+        await self.queue.finish_task(task_id=task.task_id, result=result)
+
+
+async def run_worker_kernel() -> None:
+    daemon = WorkerKernelDaemon()
+    loop = asyncio.get_running_loop()
+
+    def _handle_stop(*_args) -> None:
+        loop.create_task(daemon.stop())
+
+    for sig_name in ("SIGINT", "SIGTERM"):
+        sig = getattr(signal, sig_name, None)
+        if sig is not None:
+            try:
+                loop.add_signal_handler(sig, _handle_stop)
+            except NotImplementedError:
+                pass
+
+    await daemon.start()

@@ -131,6 +131,19 @@ class SkillLoader:
                 "network": "limited",
             }
 
+        manager_only_raw: Any = frontmatter.get("manager_only")
+        if manager_only_raw is None:
+            manager_only_raw = frontmatter.get("internal_only")
+        if manager_only_raw is None:
+            visibility = str(frontmatter.get("visibility") or "").strip().lower()
+            manager_only_raw = visibility == "manager_only"
+
+        if isinstance(manager_only_raw, bool):
+            manager_only = manager_only_raw
+        else:
+            manager_only_text = str(manager_only_raw or "").strip().lower()
+            manager_only = manager_only_text in {"1", "true", "yes", "on"}
+
         entrypoint_present = "entrypoint" in frontmatter
         raw_entrypoint = frontmatter.get("entrypoint")
         if entrypoint_present and isinstance(raw_entrypoint, str):
@@ -180,6 +193,7 @@ class SkillLoader:
             "allowed_tools": allowed_tools,
             "input_schema": input_schema,
             "permissions": permissions,
+            "manager_only": manager_only,
             "entrypoint": entrypoint,
             "cron_instruction": frontmatter.get("cron_instruction"),
             # Keep legacy fields for compatibility.
@@ -523,6 +537,7 @@ class SkillLoader:
                     "description": info.get("description", "")[:500],
                     "triggers": info.get("triggers", []),
                     "allowed_tools": info.get("allowed_tools", []),
+                    "manager_only": bool(info.get("manager_only")),
                     "input_schema": info.get("input_schema", {}),
                 }
             )

@@ -68,7 +68,7 @@ async def test_tool_dispatcher_replans_extension_args_after_invalid_args(monkeyp
 
     dispatcher = ToolCallDispatcher(
         runtime_user_id="worker::worker-main::u1",
-        platform_name="worker_runtime",
+        platform_name="worker_kernel",
         task_id="task-1",
         task_inbox_id="",
         task_workspace_root="/tmp",
@@ -115,3 +115,52 @@ async def test_tool_dispatcher_replans_extension_args_after_invalid_args(monkeyp
     assert len(calls) == 2
     assert calls[-1][1]["url"] == "https://example.com"
     assert result["arg_planner"]["attempt"] == 2
+
+
+@pytest.mark.asyncio
+async def test_software_delivery_falls_back_to_user_request(monkeypatch):
+    captured = {}
+
+    async def fake_software_delivery(**kwargs):
+        captured.update(dict(kwargs))
+        return {"ok": True, "summary": "ok"}
+
+    monkeypatch.setattr(
+        runtime_tools_module.dev_tools,
+        "software_delivery",
+        fake_software_delivery,
+    )
+
+    async def append_event(_event: str):
+        return None
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="u-1",
+        platform_name="telegram",
+        task_id="task-2",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(
+            message=SimpleNamespace(text="帮我创建一个邮政编码查询的技能"),
+            user_data={},
+        ),
+        runtime=object(),
+        tool_broker=object(),
+        runtime_tool_allowed=lambda **_kwargs: True,
+        record_tool_profile=lambda *_args, **_kwargs: None,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"software_delivery"})
+
+    result = await dispatcher.execute(
+        name="software_delivery",
+        args={"action": "skill_create", "skill_name": "postal_code_lookup_cn"},
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert result["ok"] is True
+    assert captured.get("action") == "skill_create"
+    assert captured.get("instruction") == "帮我创建一个邮政编码查询的技能"
+    assert captured.get("requirement") == "帮我创建一个邮政编码查询的技能"

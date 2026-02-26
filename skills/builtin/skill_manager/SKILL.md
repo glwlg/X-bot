@@ -102,5 +102,5 @@ entrypoint: scripts/execute.py
 ## 注意事项
 
 - **优先搜索**: 在创建新技能前，优先搜索已有的技能。
-- **编码执行位置**: 技能创建/修改由 **Manager** 直接在目标技能目录调用 `codex/gemini-cli` 完成，不走 Worker 编码权限。
+- **编码执行位置**: 技能创建/修改由 **Manager** 统一调用 `software_delivery` 的模板动作（`skill_create` / `skill_modify`）完成，`coding_backend` 仅作为内部执行组件，不走 Worker 编码权限。
 - **规范读取**: 编码前会先读取 `skills/builtin/skill_manager/SKILL_SPEC.md`，再按用户指令实现。

@@ -28,10 +28,9 @@ from core.config import (
     CORE_CHAT_WORKER_BACKEND,
     HEARTBEAT_ENABLED,
     HEARTBEAT_MODE,
-    WORKER_RUNTIME_MODE,
 )
 from core.heartbeat_worker import heartbeat_worker
-from worker_runtime.result_relay import worker_result_relay
+from manager.relay.result_relay import worker_result_relay
 from handlers import (
     start,
     handle_new_command,
@@ -93,6 +92,7 @@ async def init_services() -> None:
         from core.scheduler import (
             scheduler,
             load_jobs_from_db,
+            start_stock_scheduler,
             start_dynamic_skill_scheduler,
         )
 
@@ -103,8 +103,9 @@ async def init_services() -> None:
         # Initialize Jobs
         await load_jobs_from_db()
         logger.info(
-            "RSS/Stock built-in schedulers are disabled; heartbeat mechanism drives these checks."
+            "Starting built-in stock scheduler (10m in trading hours); RSS built-in scheduler remains disabled."
         )
+        start_stock_scheduler()
         # 启动动态 Skill 定时任务
         start_dynamic_skill_scheduler()
         logger.info("✅ Schedulers started.")
@@ -123,7 +124,6 @@ async def init_services() -> None:
                 "core_chat_worker_backend": CORE_CHAT_WORKER_BACKEND,
                 "heartbeat_enabled": HEARTBEAT_ENABLED,
                 "heartbeat_mode": HEARTBEAT_MODE,
-                "worker_runtime_mode": WORKER_RUNTIME_MODE,
             },
             actor="bootstrap",
             reason="init_services_snapshot",

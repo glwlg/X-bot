@@ -373,7 +373,10 @@ class ExtensionExecutor:
 
             rule = rules.get(tool_name)
             if not isinstance(rule, dict):
-                rule = {"tool_name": tool_name, "bash_prefixes": []}
+                rule = {
+                    "tool_name": tool_name,
+                    "bash_prefixes": [],
+                }
                 rules[tool_name] = rule
 
             raw_scope = str(match.group(2) or "").strip()
@@ -455,15 +458,24 @@ class ExtensionExecutor:
             {"role": "user", "parts": [{"text": workflow_payload}]},
         ]
 
+        tool_call_count = 0
+        last_tool_result: Dict[str, Any] = {}
+
         async def _tool_executor(
             name: str, tool_args: Dict[str, Any]
         ) -> Dict[str, Any]:
-            return await self._execute_standard_tool_call(
+            nonlocal tool_call_count
+            nonlocal last_tool_result
+            result = await self._execute_standard_tool_call(
                 runtime=runtime,
+                skill_name=skill_name,
                 tool_name=name,
                 tool_args=tool_args,
                 allowed_tool_rules=allowed_tool_rules,
             )
+            tool_call_count += 1
+            last_tool_result = dict(result or {}) if isinstance(result, dict) else {}
+            return result
 
         service = AiService()
         chunks: list[str] = []
@@ -487,6 +499,11 @@ class ExtensionExecutor:
             )
 
         text = "".join(chunks).strip()
+        if not text and isinstance(last_tool_result, dict):
+            text = str(
+                last_tool_result.get("summary") or last_tool_result.get("message") or ""
+            ).strip()
+
         if not text:
             return ExtensionRunResult(
                 ok=False,
@@ -500,13 +517,19 @@ class ExtensionExecutor:
             ok=True,
             skill_name=skill_name,
             text=text,
-            data={"workflow_only": True, "standard_skill": True},
+            data={
+                "workflow_only": True,
+                "standard_skill": True,
+                "tool_call_count": tool_call_count,
+                "last_tool_result": last_tool_result,
+            },
         )
 
     async def _execute_standard_tool_call(
         self,
         *,
         runtime: Any,
+        skill_name: str,
         tool_name: str,
         tool_args: Dict[str, Any],
         allowed_tool_rules: Dict[str, Dict[str, Any]],

@@ -1,6 +1,8 @@
 import asyncio
 import contextlib
+import logging
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
@@ -9,12 +11,14 @@ from typing import Any, Dict, List
 DEFAULT_BASH_TIMEOUT_SEC = 60
 MAX_BASH_OUTPUT = 32_000
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class PrimitiveRuntime:
     """Deterministic runtime for core file/shell primitives."""
 
-    workspace_root: str | None = None
+    workspace_root: str = ""
 
     def __post_init__(self) -> None:
         self.workspace_root = os.path.abspath(self.workspace_root or os.getcwd())
@@ -36,7 +40,9 @@ class PrimitiveRuntime:
                     continue
                 expanded = os.path.expanduser(raw)
                 if not os.path.isabs(expanded):
-                    expanded = os.path.abspath(os.path.join(self.workspace_root, expanded))
+                    expanded = os.path.abspath(
+                        os.path.join(str(self.workspace_root or os.getcwd()), expanded)
+                    )
                 roots.append(os.path.abspath(expanded))
 
         # Always include current core runtime source roots.
@@ -65,7 +71,9 @@ class PrimitiveRuntime:
             return False
 
     def _is_kernel_protected_path(self, target: str) -> bool:
-        return any(self._is_path_under(target, root) for root in self._kernel_protected_roots)
+        return any(
+            self._is_path_under(target, root) for root in self._kernel_protected_roots
+        )
 
     def _policy_block(self, message: str) -> Dict[str, Any]:
         return self._err("policy_blocked", message)
@@ -75,7 +83,7 @@ class PrimitiveRuntime:
             raise ValueError("path is required")
         expanded = os.path.expanduser(path)
         if not os.path.isabs(expanded):
-            expanded = os.path.join(self.workspace_root, expanded)
+            expanded = os.path.join(str(self.workspace_root or os.getcwd()), expanded)
         return os.path.abspath(expanded)
 
     async def read(
@@ -112,7 +120,10 @@ class PrimitiveRuntime:
         start_idx = start_line - 1
         end_idx = min(start_idx + max_lines, total)
         selected = lines[start_idx:end_idx]
-        numbered = [f"{idx + 1:>5}: {line.rstrip()}" for idx, line in enumerate(selected, start=start_idx)]
+        numbered = [
+            f"{idx + 1:>5}: {line.rstrip()}"
+            for idx, line in enumerate(selected, start=start_idx)
+        ]
 
         data = {
             "path": target,
@@ -138,7 +149,9 @@ class PrimitiveRuntime:
             return self._err("invalid_path", str(exc))
 
         if execution_policy == "heartbeat_readonly_policy":
-            return self._policy_block("heartbeat readonly mode forbids write operations")
+            return self._policy_block(
+                "heartbeat readonly mode forbids write operations"
+            )
         if self._is_kernel_protected_path(target):
             return self._policy_block(f"kernel-protected path is read-only: {target}")
 
@@ -151,7 +164,9 @@ class PrimitiveRuntime:
             if create_parents and parent:
                 os.makedirs(parent, exist_ok=True)
             elif parent and not os.path.exists(parent):
-                return self._err("parent_missing", f"Parent directory does not exist: {parent}")
+                return self._err(
+                    "parent_missing", f"Parent directory does not exist: {parent}"
+                )
 
             file_mode = "w" if write_mode == "overwrite" else "a"
             with open(target, file_mode, encoding=encoding) as f:
@@ -160,7 +175,11 @@ class PrimitiveRuntime:
             return self._err("write_failed", str(exc))
 
         return self._ok(
-            {"path": target, "bytes_written": len(content.encode(encoding, errors="ignore")), "mode": write_mode},
+            {
+                "path": target,
+                "bytes_written": len(content.encode(encoding, errors="ignore")),
+                "mode": write_mode,
+            },
             f"Wrote content to {target} ({write_mode})",
         )
 
@@ -202,20 +221,29 @@ class PrimitiveRuntime:
 
         for idx, item in enumerate(edits):
             if not isinstance(item, dict):
-                return self._err("invalid_args", f"edit at index {idx} must be an object")
+                return self._err(
+                    "invalid_args", f"edit at index {idx} must be an object"
+                )
 
             old_text = item.get("old_text")
             new_text = item.get("new_text")
             replace_all = bool(item.get("replace_all", False))
 
             if old_text is None or new_text is None:
-                return self._err("invalid_args", f"edit at index {idx} requires old_text and new_text")
+                return self._err(
+                    "invalid_args",
+                    f"edit at index {idx} requires old_text and new_text",
+                )
             if old_text == "":
-                return self._err("invalid_args", f"edit at index {idx} old_text cannot be empty")
+                return self._err(
+                    "invalid_args", f"edit at index {idx} old_text cannot be empty"
+                )
 
             count_before = updated.count(old_text)
             if count_before == 0:
-                return self._err("edit_not_found", f"edit at index {idx} old_text not found")
+                return self._err(
+                    "edit_not_found", f"edit at index {idx} old_text not found"
+                )
 
             if replace_all:
                 updated = updated.replace(old_text, new_text)
@@ -248,7 +276,8 @@ class PrimitiveRuntime:
                 "changed": changed,
                 "dry_run": dry_run,
             },
-            f"Applied {len(applied)} edit(s) to {target}" + (" (dry-run)" if dry_run else ""),
+            f"Applied {len(applied)} edit(s) to {target}"
+            + (" (dry-run)" if dry_run else ""),
         )
 
     async def bash(
@@ -274,13 +303,17 @@ class PrimitiveRuntime:
             if not os.path.isdir(workdir):
                 return self._err("not_directory", f"cwd is not a directory: {workdir}")
             if self._is_kernel_protected_path(workdir):
-                return self._policy_block(f"kernel-protected cwd is read-only: {workdir}")
+                return self._policy_block(
+                    f"kernel-protected cwd is read-only: {workdir}"
+                )
 
         lowered_cmd = command.lower()
         for root in self._kernel_protected_roots:
             marker = root.lower()
             if marker and marker in lowered_cmd:
-                return self._policy_block(f"command references kernel-protected path: {root}")
+                return self._policy_block(
+                    f"command references kernel-protected path: {root}"
+                )
 
         try:
             process = await asyncio.create_subprocess_shell(
@@ -307,7 +340,11 @@ class PrimitiveRuntime:
         err_text = (stderr or b"").decode("utf-8", errors="replace")
         combined = out_text
         if err_text:
-            combined = f"{combined}\n[stderr]\n{err_text}" if combined else f"[stderr]\n{err_text}"
+            combined = (
+                f"{combined}\n[stderr]\n{err_text}"
+                if combined
+                else f"[stderr]\n{err_text}"
+            )
 
         if len(combined) > MAX_BASH_OUTPUT:
             combined = combined[:MAX_BASH_OUTPUT] + "\n...[truncated]"

@@ -1,9 +1,6 @@
-import asyncio
-import contextlib
 import logging
 import os
 import re
-import shlex
 import shutil
 import sys
 import httpx
@@ -12,14 +9,13 @@ from typing import Tuple, Dict, Any
 
 from core.platform.models import UnifiedContext
 from core.skill_loader import skill_loader
+from manager.dev.service import manager_dev_service
 
 # Ensure we can import local modules (creator.py)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
-project_root = os.path.abspath(
-    os.path.join(current_dir, "..", "..", "..", "..")
-)
+project_root = os.path.abspath(os.path.join(current_dir, "..", "..", "..", ".."))
 
 import creator  # local import
 
@@ -39,6 +35,13 @@ def _as_bool(value: Any, default: bool = False) -> bool:
     return bool(default)
 
 
+def _to_int(value: Any, default: int) -> int:
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return int(default)
+
+
 def _normalize_backend(value: Any) -> str:
     raw = str(value or "").strip().lower()
     if raw in {"gemini", "gemini_cli", "gemini-cli"}:
@@ -56,7 +59,7 @@ def _resolve_coding_backend(params: dict) -> str:
         if key in params and str(params.get(key) or "").strip():
             return _normalize_backend(params.get(key))
 
-    env_backend = os.getenv("SKILL_MANAGER_CODING_BACKEND", "codex")
+    env_backend = os.getenv("CODING_BACKEND_DEFAULT", "codex")
     return _normalize_backend(env_backend)
 
 
@@ -112,183 +115,93 @@ def _extract_skill_name_hint(text: str) -> str:
     return str(matched.group(1) or "").strip()
 
 
-def _tail(text: str, max_chars: int = 1200) -> str:
-    payload = str(text or "").strip()
-    if len(payload) <= max_chars:
-        return payload
-    return payload[-max_chars:]
+def _extract_backend_from_delivery_result(result: Dict[str, Any], fallback: str) -> str:
+    if not isinstance(result, dict):
+        return _normalize_backend(fallback)
+
+    data = result.get("data")
+    if isinstance(data, dict):
+        backend = str(data.get("backend") or data.get("used_backend") or "").strip()
+        if backend:
+            return _normalize_backend(backend)
+        template_result = data.get("template_result")
+        if isinstance(template_result, dict):
+            nested_backend = str(template_result.get("backend") or "").strip()
+            if nested_backend:
+                return _normalize_backend(nested_backend)
+
+    backend = str(result.get("backend") or "").strip()
+    if backend:
+        return _normalize_backend(backend)
+    return _normalize_backend(fallback)
 
 
-def _is_codex_repo_trust_error(text: str) -> bool:
-    payload = str(text or "").lower()
-    return (
-        "not inside a trusted directory" in payload
-        and "--skip-git-repo-check" in payload
-    )
-
-
-def _inject_skip_git_repo_check(args: list[str]) -> list[str]:
-    if "--skip-git-repo-check" in args:
-        return list(args)
-    patched = list(args)
-    if "exec" in patched:
-        idx = patched.index("exec")
-        patched.insert(idx + 1, "--skip-git-repo-check")
-        return patched
-    patched.append("--skip-git-repo-check")
-    return patched
-
-
-def _build_coding_cli_command(backend: str, instruction: str) -> tuple[str, list[str]]:
-    safe_instruction = str(instruction or "").strip()
-    backend_name = _normalize_backend(backend)
-    if backend_name == "gemini-cli":
-        cmd = (
-            os.getenv("SKILL_MANAGER_GEMINI_COMMAND")
-            or "gemini-cli"
-        ).strip()
-        template = (
-            os.getenv("SKILL_MANAGER_GEMINI_ARGS_TEMPLATE")
-            or "--prompt {instruction}"
-        ).strip()
-    else:
-        cmd = (
-            os.getenv("SKILL_MANAGER_CODEX_COMMAND")
-            or "codex"
-        ).strip()
-        template = (
-            os.getenv("SKILL_MANAGER_CODEX_ARGS_TEMPLATE")
-            or "exec {instruction}"
-        ).strip()
-
-    rendered = template.format(instruction=shlex.quote(safe_instruction))
-    args = shlex.split(rendered)
-    return cmd, args
-
-
-async def _run_manager_coding_cli_task(
+async def _run_software_delivery_template_task(
     *,
-    backend: str,
+    _ctx: UnifiedContext,
+    _runtime: Any,
+    action: str,
     instruction: str,
-    source: str,
-    cwd: str = "",
+    cwd: str,
+    backend: str,
+    skill_name: str = "",
+    source: str = "",
 ) -> Dict[str, Any]:
-    backend_name = _normalize_backend(backend)
-    timeout_sec = max(30, int(os.getenv("SKILL_MANAGER_CLI_TIMEOUT_SEC", "900")))
-    cmd, initial_args = _build_coding_cli_command(backend_name, instruction)
-    run_cwd = str(cwd or os.getenv("SKILL_MANAGER_REPO_ROOT", project_root) or "").strip()
-    if not run_cwd:
-        run_cwd = project_root
-    auto_skip_repo_check = _as_bool(
-        os.getenv("SKILL_MANAGER_CODEX_AUTO_SKIP_GIT_REPO_CHECK", "true"),
-        default=True,
+    source_label = str(source or f"skill_manager_{action}").strip()
+    safe_action = str(action or "").strip().lower()
+    result = await manager_dev_service.software_delivery(
+        action=safe_action,
+        instruction=str(instruction or "").strip(),
+        cwd=str(cwd or "").strip(),
+        backend=_normalize_backend(backend),
+        skill_name=str(skill_name or "").strip(),
+        source=source_label,
+        timeout_sec=_to_int(os.getenv("CODING_BACKEND_TIMEOUT_SEC", "900"), 900),
+        auto_publish=False,
+        auto_push=False,
+        auto_pr=False,
     )
 
-    async def _run_once(run_args: list[str]) -> Dict[str, Any]:
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                cmd,
-                *run_args,
-                cwd=run_cwd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except FileNotFoundError:
-            return {
-                "ok": False,
-                "error": "cli_not_found",
-                "backend": backend_name,
-                "summary": f"{backend_name} command not found: {cmd}",
-                "source": source,
-            }
-        except Exception as exc:
-            return {
-                "ok": False,
-                "error": "exec_prepare_failed",
-                "backend": backend_name,
-                "summary": str(exc),
-                "source": source,
-            }
-
-        try:
-            stdout_raw, stderr_raw = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout_sec
-            )
-        except asyncio.TimeoutError:
-            with contextlib.suppress(ProcessLookupError):
-                proc.kill()
-            stdout_raw, stderr_raw = await proc.communicate()
-            stdout = stdout_raw.decode("utf-8", errors="ignore").strip()
-            stderr = stderr_raw.decode("utf-8", errors="ignore").strip()
-            return {
-                "ok": False,
-                "error": "cli_timeout",
-                "backend": backend_name,
-                "summary": f"{backend_name} timed out after {timeout_sec}s",
-                "stdout": _tail(stdout),
-                "stderr": _tail(stderr),
-                "source": source,
-            }
-
-        stdout = stdout_raw.decode("utf-8", errors="ignore").strip()
-        stderr = stderr_raw.decode("utf-8", errors="ignore").strip()
-        combined = "\n".join(item for item in (stdout, stderr) if item).strip()
-        if proc.returncode != 0:
-            return {
-                "ok": False,
-                "error": "cli_exec_failed",
-                "backend": backend_name,
-                "exit_code": int(proc.returncode or 0),
-                "summary": _tail(
-                    combined or f"{backend_name} exited with non-zero status"
-                ),
-                "stdout": _tail(stdout),
-                "stderr": _tail(stderr),
-                "source": source,
-            }
-
+    if not bool(result.get("ok")):
+        message = str(
+            result.get("summary")
+            or result.get("message")
+            or result.get("text")
+            or "software_delivery failed"
+        )
         return {
-            "ok": True,
-            "backend": backend_name,
-            "summary": _tail(combined or f"{backend_name} task completed"),
-            "stdout": _tail(stdout, max_chars=4000),
-            "stderr": _tail(stderr, max_chars=4000),
-            "source": source,
+            "ok": False,
+            "error": str(result.get("error_code") or "software_delivery_failed"),
+            "summary": message,
+            "backend": _extract_backend_from_delivery_result(result, backend),
+            "source": source_label,
+            "tool_result": result,
         }
 
-    first = await _run_once(initial_args)
-    if first.get("ok"):
-        return first
-
-    if backend_name != "codex" or not auto_skip_repo_check:
-        return first
-
-    if str(first.get("error") or "") != "cli_exec_failed":
-        return first
-
-    first_output = "\n".join(
-        [
-            str(first.get("summary") or ""),
-            str(first.get("stderr") or ""),
-            str(first.get("stdout") or ""),
-        ]
+    payload = (
+        dict(result.get("data") or {}) if isinstance(result.get("data"), dict) else {}
     )
-    if not _is_codex_repo_trust_error(first_output):
-        return first
-
-    retry_args = _inject_skip_git_repo_check(initial_args)
-    logger.warning(
-        "[SkillManager] codex trust check hit, retrying with --skip-git-repo-check"
+    raw_template_result = payload.get("template_result")
+    template_result: Dict[str, Any] = (
+        dict(raw_template_result) if isinstance(raw_template_result, dict) else {}
     )
-    second = await _run_once(retry_args)
-    if second.get("ok"):
-        second["retry_hint"] = "skip_git_repo_check"
-        return second
-    return second
+    summary = str(result.get("summary") or "").strip()
+    if not summary:
+        summary = str(template_result.get("summary") or "software_delivery completed")
+
+    return {
+        "ok": True,
+        "summary": summary,
+        "backend": _extract_backend_from_delivery_result(result, backend),
+        "source": source_label,
+        "tool_result": template_result or result,
+    }
 
 
-async def _create_with_manager_cli(
+async def _create_with_software_delivery(
     *,
+    ctx: UnifiedContext,
+    runtime: Any,
     requirement: str,
     skill_name: str,
     backend: str,
@@ -322,11 +235,15 @@ async def _create_with_manager_cli(
         "5. 完成后在回复末尾追加一行: CREATED_SKILL=<skill_name>。\n"
     )
 
-    result = await _run_manager_coding_cli_task(
-        backend=backend,
+    result = await _run_software_delivery_template_task(
+        _ctx=ctx,
+        _runtime=runtime,
+        action="skill_create",
         instruction=instruction,
-        source="skill_manager_create",
         cwd=target_dir,
+        backend=backend,
+        skill_name=target_name,
+        source="skill_manager_create",
     )
     if not result.get("ok"):
         return result
@@ -348,12 +265,7 @@ async def _create_with_manager_cli(
             resolved_name = created[0]
     if not resolved_name:
         hinted = _extract_skill_name_hint(
-            str(
-                result.get("summary")
-                or result.get("stdout")
-                or result.get("stderr")
-                or ""
-            )
+            str(result.get("summary") or result.get("tool_result") or "")
         )
         if hinted in after:
             resolved_name = hinted
@@ -361,7 +273,7 @@ async def _create_with_manager_cli(
     if not resolved_name:
         backend_name = str(result.get("backend") or _normalize_backend(backend))
         result["ok"] = False
-        result["error"] = "cli_create_skill_name_unresolved"
+        result["error"] = "coding_skill_name_unresolved"
         result["summary"] = (
             f"{backend_name} 已执行，但未能定位新技能目录。请在回复中明确 CREATED_SKILL=<name>。"
         )
@@ -380,8 +292,10 @@ async def _create_with_manager_cli(
     return result
 
 
-async def _modify_with_manager_cli(
+async def _modify_with_software_delivery(
     *,
+    ctx: UnifiedContext,
+    runtime: Any,
     skill_name: str,
     instruction: str,
     backend: str,
@@ -414,11 +328,15 @@ async def _modify_with_manager_cli(
         "2. 不要改动 src/ 与其它技能目录。\n"
         "3. 保持技能可加载（SKILL.md frontmatter 完整）。\n"
     )
-    result = await _run_manager_coding_cli_task(
-        backend=backend,
+    result = await _run_software_delivery_template_task(
+        _ctx=ctx,
+        _runtime=runtime,
+        action="skill_modify",
         instruction=cli_instruction,
-        source="skill_manager_modify",
         cwd=skill_dir,
+        backend=backend,
+        skill_name=skill_name,
+        source="skill_manager_modify",
     )
     if result.get("ok"):
         skill_loader.reload_skills()
@@ -488,10 +406,10 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
         target = url or skill_name or repo_name
 
         if not target:
-            return "❌ 请提供要安装的技能名称或 URL"
+            return {"text": "🔇🔇🔇❌ 请提供要安装的技能名称或 URL", "ui": {}}
 
         # User ID needed for adoption ownership
-        user_id = ctx.message.user.id if ctx.message.user else "0"
+        user_id = int(ctx.message.user.id) if ctx.message.user else 0
 
         success, message = await _install_skill(target, user_id)
 
@@ -565,7 +483,9 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
             return {"text": "🔇🔇🔇❌ 需要提供 skill_name 和 instruction", "ui": {}}
 
         backend = _resolve_coding_backend(params)
-        cli_result = await _modify_with_manager_cli(
+        cli_result = await _modify_with_software_delivery(
+            ctx=ctx,
+            runtime=runtime,
             skill_name=str(skill_name),
             instruction=str(instruction),
             backend=backend,
@@ -573,13 +493,21 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
         if cli_result.get("ok"):
             used_backend = str(cli_result.get("backend") or backend)
             return {
-                "text": f"🔇🔇🔇✅ Skill '{skill_name}' 已由 manager 使用 `{used_backend}` 修改并生效。",
+                "text": (
+                    f"🔇🔇🔇✅ Skill '{skill_name}' 已通过 `software_delivery` "
+                    f"模板任务（backend=`{used_backend}`）修改并生效。"
+                ),
                 "ui": {},
             }
 
-        summary = str(cli_result.get("summary") or cli_result.get("error") or "未知错误")
+        summary = str(
+            cli_result.get("summary") or cli_result.get("error") or "未知错误"
+        )
         return {
-            "text": f"🔇🔇🔇❌ manager 调用 `{backend}` 修改失败: {summary}",
+            "text": (
+                f"🔇🔇🔇❌ manager 调用 `software_delivery` 模板任务失败 "
+                f"(backend=`{backend}`): {summary}"
+            ),
             "ui": {},
         }
 
@@ -598,7 +526,9 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
             return {"text": "🔇🔇🔇❌ 请提供技能需求描述 (requirement)", "ui": {}}
 
         backend = _resolve_coding_backend(params)
-        cli_result = await _create_with_manager_cli(
+        cli_result = await _create_with_software_delivery(
+            ctx=ctx,
+            runtime=runtime,
             requirement=str(requirement),
             skill_name=str(params.get("skill_name") or ""),
             backend=backend,
@@ -608,18 +538,37 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
             used_backend = str(cli_result.get("backend") or backend)
             if resolved_name:
                 skill_loader.reload_skills()
+                skill_info = skill_loader.get_skill(resolved_name) or {}
+                has_scripts = bool(skill_info.get("scripts"))
                 return {
-                    "text": f"🔇🔇🔇✅ 技能 `{resolved_name}` 已由 manager 使用 `{used_backend}` 创建并生效。",
+                    "text": (
+                        f"🔇🔇🔇✅ 技能 `{resolved_name}` 已通过 `software_delivery` "
+                        f"模板任务（backend=`{used_backend}`）创建并生效。"
+                    ),
                     "ui": {},
+                    "created_skill_name": resolved_name,
+                    "used_backend": used_backend,
+                    "skill_md": str(cli_result.get("skill_md") or ""),
+                    "has_scripts": has_scripts,
                 }
             return {
-                "text": f"🔇🔇🔇✅ manager 使用 `{used_backend}` 完成技能创建，但未识别到技能名。请执行 `list skills` 确认。",
+                "text": (
+                    f"🔇🔇🔇✅ manager 通过 `software_delivery` 模板任务 "
+                    f"(backend=`{used_backend}`) 完成技能创建，但未识别到技能名。"
+                    "请执行 `list skills` 确认。"
+                ),
                 "ui": {},
+                "used_backend": used_backend,
             }
 
-        summary = str(cli_result.get("summary") or cli_result.get("error") or "未知错误")
+        summary = str(
+            cli_result.get("summary") or cli_result.get("error") or "未知错误"
+        )
         return {
-            "text": f"🔇🔇🔇❌ manager 调用 `{backend}` 创建技能失败: {summary}",
+            "text": (
+                f"🔇🔇🔇❌ manager 调用 `software_delivery` 模板任务失败 "
+                f"(backend=`{backend}`): {summary}"
+            ),
             "ui": {},
         }
 

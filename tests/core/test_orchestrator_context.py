@@ -12,7 +12,7 @@ def _runtime_context(**overrides) -> OrchestratorRuntimeContext:
         "user_data": {},
         "runtime_user_id": "u-1",
         "platform_name": "telegram",
-        "worker_runtime_user": False,
+        "worker_kernel_user": False,
         "heartbeat_runtime_user": False,
         "session_state_enabled": True,
         "runtime_policy_ctx": {"agent_kind": "manager"},
@@ -61,8 +61,8 @@ async def test_ensure_task_inbox_skips_when_session_state_disabled(monkeypatch):
     monkeypatch.setattr(context_module.task_inbox, "submit", fake_submit)
 
     runtime_ctx = _runtime_context(
-        platform_name="worker_runtime",
-        worker_runtime_user=True,
+        platform_name="worker_kernel",
+        worker_kernel_user=True,
         session_state_enabled=False,
         manager_runtime=False,
         runtime_agent_kind="worker",

@@ -100,6 +100,12 @@ X-Bot 现已支持多平台运行，一套代码，无缝体验：
     -   发送 "帮我关注英伟达股票" -> 自动添加自选股
     -   发送 "列出我的订阅" -> 自动查询用户状态文件
 
+### 🧑‍💻 Manager 软件交付能力 (New)
+-   **需求到代码**：Manager 可根据自然语言需求生成并修改项目代码。
+-   **Issue 驱动开发**：支持读取 GitHub Issue（正文/标签/评论）并按问题上下文实施修复或功能开发。
+-   **自动交付链路**：支持实现后自动验证、提交代码、推送分支、创建 PR，并可回写 Issue 评论。
+-   **任务可恢复**：开发任务状态持久化，支持中断后继续执行。
+
 ### 🧬 Skill 自进化系统 (V2)
 -   **无师自通**：遇到未知指令（如 "查询 GitHub 最新 Commit"），Bot 会自动编写 Python 代码并热加载新技能，实现即时能力扩展。
 -   **技能组合**：AI 懂得像搭积木一样组合现有技能。例如 "搜索并订阅 RSS" 会自动串联 `web_search` 和 `rss_subscribe`。
@@ -144,36 +150,19 @@ docker compose up --build -d
  - `/deluser <user_id>` : 从白名单移除用户
  - 所有白名单用户的权限数据将持久化保存在 `data/system/repositories/allowed_users.md`。
 
-### 6. Worker 编码后端授权（Codex / Gemini CLI）
-镜像已内置 `codex` 和 `gemini-cli`。首次使用前需要给 Worker 完成授权：
+### 6. Worker 执行层与 Coding Backend
+当前版本采用 Manager/Worker 硬分离架构：Manager 负责调度和编程能力，Worker 负责异步执行任务。
 
-1. 先设置 Worker 后端（示例）：
+1. 选择 Worker 后端（示例）：
 ```bash
 /worker backend worker-main codex
 # 或
 /worker backend worker-main gemini-cli
 ```
 
-2. 触发授权命令生成：
-```bash
-/worker auth codex start
-# 或
-/worker auth gemini-cli start
-```
+2. 若使用 `gemini-cli`，可在 `.env` 设置 `GEMINI_API_KEY` 并重启容器生效。
 
-3. Bot 会回一条“请在宿主机终端执行以下命令”，直接在宿主机执行该命令完成登录。
-   - `WORKER_RUNTIME_MODE=docker` 时，命令会是 `docker exec -it x-bot-worker ...`
-   - `WORKER_RUNTIME_MODE=local` 时，命令会是本机 `cd ... && codex .../gemini-cli ...`
-
-4. 完成后检查状态：
-```bash
-/worker auth codex status
-/worker auth gemini-cli status
-```
-
-补充：
-- 服务器场景更推荐环境变量方式，避免每次重建容器都重新登录。
-- Gemini CLI 可直接在 `.env` 配置 `GEMINI_API_KEY`（重启容器生效）。
+3. `/worker auth` 指令已移除，不再通过聊天命令管理 Worker 认证流程。
 
 ## 🤖 使用指南
 

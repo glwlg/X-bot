@@ -171,38 +171,10 @@ HEARTBEAT_READONLY_DISPATCH = (
 # Auto recovery budget for terminal/recoverable failures in orchestrator loop
 AUTO_RECOVERY_MAX_ATTEMPTS = int(os.getenv("AUTO_RECOVERY_MAX_ATTEMPTS", "3"))
 
-# Dual-layer worker runtime configuration
 USERLAND_ROOT = os.getenv(
     "USERLAND_ROOT", os.path.join(DATA_DIR, "userland", "workers")
 )
 WORKER_DEFAULT_BACKEND = os.getenv("WORKER_DEFAULT_BACKEND", "core-agent")
-WORKER_EXEC_TIMEOUT_SEC = int(os.getenv("WORKER_EXEC_TIMEOUT_SEC", "900"))
-WORKER_RUNTIME_MODE = (
-    os.getenv("WORKER_RUNTIME_MODE", "local").strip().lower() or "local"
-)
-WORKER_DOCKER_CONTAINER = os.getenv("WORKER_DOCKER_CONTAINER", "x-bot-worker")
-WORKER_DOCKER_DATA_DIR = os.getenv("WORKER_DOCKER_DATA_DIR", "/app/data")
-WORKER_CODEX_COMMAND = os.getenv("WORKER_CODEX_COMMAND", "codex")
-WORKER_GEMINI_CLI_COMMAND = os.getenv("WORKER_GEMINI_CLI_COMMAND", "gemini-cli")
-WORKER_SHELL_COMMAND = os.getenv("WORKER_SHELL_COMMAND", "sh")
-WORKER_CODEX_ARGS_TEMPLATE = os.getenv(
-    "WORKER_CODEX_ARGS_TEMPLATE", "exec {instruction}"
-)
-WORKER_GEMINI_ARGS_TEMPLATE = os.getenv(
-    "WORKER_GEMINI_ARGS_TEMPLATE", "--prompt {instruction}"
-)
-WORKER_AUTH_STATUS_TIMEOUT_SEC = int(os.getenv("WORKER_AUTH_STATUS_TIMEOUT_SEC", "45"))
-WORKER_CODEX_AUTH_START_ARGS = os.getenv("WORKER_CODEX_AUTH_START_ARGS", "login")
-WORKER_GEMINI_AUTH_START_ARGS = os.getenv("WORKER_GEMINI_AUTH_START_ARGS", "")
-WORKER_CODEX_AUTH_STATUS_ARGS = os.getenv(
-    "WORKER_CODEX_AUTH_STATUS_ARGS", "login status"
-)
-WORKER_GEMINI_AUTH_STATUS_ARGS = os.getenv(
-    "WORKER_GEMINI_AUTH_STATUS_ARGS", "-p ping --output-format text"
-)
-WORKER_FALLBACK_CORE_AGENT = (
-    os.getenv("WORKER_FALLBACK_CORE_AGENT", "true").lower() == "true"
-)
 
 # Core chat dispatch policy:
 # - worker_only: always dispatch to worker, no fallback

@@ -14,6 +14,12 @@ def test_tool_access_groups_and_defaults(tmp_path):
     bash_groups = store.groups_for_tool("bash", kind="tool")
     assert "group:execution" in bash_groups
 
+    coding_tool_groups = store.groups_for_tool("coding_backend", kind="tool")
+    assert "group:coding" in coding_tool_groups
+
+    generic_skill_groups = store.groups_for_tool("ext_internal_dev_tool", kind="tool")
+    assert "group:coding" not in generic_skill_groups
+
     allowed, detail = store.is_tool_allowed(
         runtime_user_id="worker::worker-main::u1",
         tool_name="ext_web_browser",
@@ -79,8 +85,17 @@ def test_regular_user_runtime_uses_core_manager_policy(tmp_path):
     assert allowed is False
     assert detail["reason"] in {"not_in_allow_list", "matched_deny_list"}
 
+    allowed_management, management_detail = store.is_tool_allowed(
+        runtime_user_id="u-plain-user",
+        platform="telegram",
+        tool_name="software_delivery",
+        kind="tool",
+    )
+    assert allowed_management is True
+    assert "group:management" in management_detail["groups"]
 
-def test_worker_runtime_still_uses_worker_policy(tmp_path):
+
+def test_worker_kernel_still_uses_worker_policy(tmp_path):
     store = ToolAccessStore()
     store.path = (tmp_path / "tool_access.json").resolve()
     store._payload = store._default_payload()
@@ -89,13 +104,13 @@ def test_worker_runtime_still_uses_worker_policy(tmp_path):
 
     resolved = store.resolve_runtime_policy(
         runtime_user_id="worker::worker-main::u-1",
-        platform="worker_runtime",
+        platform="worker_kernel",
     )
     assert resolved["agent_kind"] == "worker"
 
     allowed, _ = store.is_tool_allowed(
         runtime_user_id="worker::worker-main::u-1",
-        platform="worker_runtime",
+        platform="worker_kernel",
         tool_name="ext_web_browser",
         kind="tool",
     )
@@ -111,15 +126,24 @@ def test_worker_default_policy_denies_management_tools(tmp_path):
 
     allowed, detail = store.is_tool_allowed(
         runtime_user_id="worker::worker-main::u-1",
-        platform="worker_runtime",
+        platform="worker_kernel",
         tool_name="dispatch_worker",
         kind="tool",
     )
     assert allowed is False
     assert detail["reason"] in {"matched_deny_list", "not_in_allow_list"}
 
+    denied_dev, denied_dev_detail = store.is_tool_allowed(
+        runtime_user_id="worker::worker-main::u-1",
+        platform="worker_kernel",
+        tool_name="software_delivery",
+        kind="tool",
+    )
+    assert denied_dev is False
+    assert denied_dev_detail["reason"] in {"matched_deny_list", "not_in_allow_list"}
 
-def test_worker_runtime_memory_is_hard_disabled(tmp_path):
+
+def test_worker_kernel_memory_is_hard_disabled(tmp_path):
     store = ToolAccessStore()
     store.path = (tmp_path / "tool_access.json").resolve()
     store._payload = store._default_payload()
@@ -128,7 +152,7 @@ def test_worker_runtime_memory_is_hard_disabled(tmp_path):
 
     allowed, detail = store.is_tool_allowed(
         runtime_user_id="worker::worker-main::u-1",
-        platform="worker_runtime",
+        platform="worker_kernel",
         tool_name="open_nodes",
         kind="mcp",
     )

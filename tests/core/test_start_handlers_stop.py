@@ -7,7 +7,7 @@ import pytest
 import core.heartbeat_store as heartbeat_store_module
 import core.task_manager as task_manager_module
 import handlers.start_handlers as start_handlers
-import worker_runtime.task_file_store as task_file_store_module
+import shared.queue.dispatch_queue as dispatch_queue_module
 from core.platform.models import Chat, MessageType, UnifiedMessage, User
 
 
@@ -69,7 +69,7 @@ class _FakeHeartbeatStore:
         self.events.append((str(user_id), str(event)))
 
 
-class _FakeWorkerTaskFileStore:
+class _FakeDispatchQueue:
     def __init__(self, result):
         self.result = dict(result)
         self.calls: list[dict] = []
@@ -103,7 +103,7 @@ async def test_stop_command_cancels_worker_tasks_and_updates_heartbeat(monkeypat
         cancelled_desc="worker_dispatch",
     )
     fake_heartbeat_store = _FakeHeartbeatStore(active_task=None)
-    fake_worker_task_store = _FakeWorkerTaskFileStore(
+    fake_dispatch_queue = _FakeDispatchQueue(
         {
             "pending_cancelled": 2,
             "running_signaled": 1,
@@ -114,16 +114,16 @@ async def test_stop_command_cancels_worker_tasks_and_updates_heartbeat(monkeypat
     monkeypatch.setattr(task_manager_module, "task_manager", fake_task_manager)
     monkeypatch.setattr(heartbeat_store_module, "heartbeat_store", fake_heartbeat_store)
     monkeypatch.setattr(
-        task_file_store_module,
-        "worker_task_file_store",
-        fake_worker_task_store,
+        dispatch_queue_module,
+        "dispatch_queue",
+        fake_dispatch_queue,
     )
 
     ctx = _DummyContext("u-stop")
     await start_handlers.stop_command(ctx)
 
     assert fake_task_manager.cancel_calls == ["u-stop"]
-    assert fake_worker_task_store.calls == [
+    assert fake_dispatch_queue.calls == [
         {
             "user_id": "u-stop",
             "reason": "cancelled_by_stop_command",
@@ -150,7 +150,7 @@ async def test_stop_command_reports_no_active_task(monkeypatch):
 
     fake_task_manager = _FakeTaskManager(active_info=None, cancelled_desc=None)
     fake_heartbeat_store = _FakeHeartbeatStore(active_task=None)
-    fake_worker_task_store = _FakeWorkerTaskFileStore(
+    fake_dispatch_queue = _FakeDispatchQueue(
         {
             "pending_cancelled": 0,
             "running_signaled": 0,
@@ -161,9 +161,9 @@ async def test_stop_command_reports_no_active_task(monkeypatch):
     monkeypatch.setattr(task_manager_module, "task_manager", fake_task_manager)
     monkeypatch.setattr(heartbeat_store_module, "heartbeat_store", fake_heartbeat_store)
     monkeypatch.setattr(
-        task_file_store_module,
-        "worker_task_file_store",
-        fake_worker_task_store,
+        dispatch_queue_module,
+        "dispatch_queue",
+        fake_dispatch_queue,
     )
 
     ctx = _DummyContext("u-idle")

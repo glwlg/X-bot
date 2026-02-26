@@ -255,6 +255,7 @@ async def test_standard_skill_bash_prefix_policy_blocked():
 
     result = await executor._execute_standard_tool_call(
         runtime=FakeRuntime(),
+        skill_name="playwright-cli",
         tool_name="bash",
         tool_args={"command": "rm -rf /"},
         allowed_tool_rules={
@@ -267,3 +268,16 @@ async def test_standard_skill_bash_prefix_policy_blocked():
 
     assert result["ok"] is False
     assert result["error_code"] == "policy_blocked"
+
+
+def test_standard_skill_rejects_unsupported_allowed_tool_tokens():
+    executor = ExtensionExecutor()
+    rules = executor._parse_allowed_tool_rules(
+        {
+            "allowed_tools": [
+                "coding_backend(codex,gemini-cli)",
+                "coding(codex)",
+            ]
+        }
+    )
+    assert rules == {}

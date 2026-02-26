@@ -228,7 +228,7 @@ class ToolAccessStore:
             "group:all": "所有工具/技能/MCP",
             "group:fs": "文件系统工具：read/write/edit",
             "group:execution": "执行类能力：bash/exec/process 与 Worker 执行后端",
-            "group:coding": "编码类能力：codex/gemini-cli",
+            "group:coding": "编码类能力：coding_backend(codex/gemini-cli)",
             "group:feeds": "信息订阅类：rss/news feed",
             "group:ops": "部署运维类：deployment/docker",
             "group:automation": "自动化类：scheduler/reminder（不含 rss/stock）",
@@ -260,6 +260,9 @@ class ToolAccessStore:
         if name in {"read", "write", "edit"}:
             groups.add("group:fs")
             groups.add("group:primitives")
+        if name in {"coding_backend", "coding-backend"}:
+            groups.add("group:coding")
+            groups.add("group:execution")
         if name in SKILL_FUNCTION_GROUPS:
             groups.add("group:skills")
             groups.add(f"group:skill:{name}")
@@ -268,7 +271,12 @@ class ToolAccessStore:
         if name in {"bash", "exec", "process"}:
             groups.add("group:execution")
             groups.add("group:primitives")
-        if name in {"list_workers", "dispatch_worker", "worker_status"}:
+        if name in {
+            "list_workers",
+            "dispatch_worker",
+            "worker_status",
+            "software_delivery",
+        }:
             groups.add("group:management")
             groups.add("group:execution")
         if name in {"run_extension", "list_extensions"}:
