@@ -84,9 +84,13 @@ class PromptComposer:
             )
             logger.debug("Manager Prompt: \n" + manager_prompt)
             parts.append("\n" + manager_prompt)
+        elif str(mode or "").strip().lower() == "media_image":
+            parts.append(
+                "\n【当前任务要求】\n这是一次单纯的图片分析请求。你需要保持你的角色贴心语气，根据给出的图片，直接回答用户的问题。\n⚠️ 警告：当前环境下工具箱已被卸载，**严禁**输出任何类似于 <tool_call> 的工具调用XML标签！不要为了检索记忆而强行调用工具。直接给出纯文本回答！"
+            )
 
         # 拼接当前日期
-        parts.append("\n【当前时间】\n" + datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        parts.append("\n【当前日期】\n" + datetime.now().strftime("%Y-%m-%d"))
 
         logger.info(
             "Final Prompt: \n"

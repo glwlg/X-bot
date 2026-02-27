@@ -5,8 +5,16 @@ import json
 import asyncio
 from typing import Any, Awaitable, Callable, cast
 
-from core.config import GEMINI_MODEL, openai_async_client
+from core.config import get_client_for_model
+from core.model_config import (
+    load_models_config,
+    get_model_for_input,
+    get_model_id_for_api,
+)
 from services.openai_adapter import build_messages
+
+# 初始化模型配置（如果存在配置文件）
+load_models_config()
 
 logger = logging.getLogger(__name__)
 
@@ -126,12 +134,15 @@ class AiService:
         last_terminal_success_summary = ""
         last_terminal_tool_name = ""
 
+        # 根据消息内容选择合适的模型
+        current_model = self._get_model_for_request(message_history)
+
         current_history = build_messages(
             contents=message_history,
             system_instruction=system_instruction,
         )
         openai_tools = self._build_openai_tools(tools)
-        client = openai_async_client
+        client = get_client_for_model(current_model, is_async=True)
 
         try:
 
@@ -174,7 +185,7 @@ class AiService:
                 synth_history.append({"role": "user", "content": guidance})
                 try:
                     synth_response = await cast(Any, client).chat.completions.create(
-                        model=GEMINI_MODEL,
+                        model=get_model_id_for_api(current_model),
                         messages=synth_history,
                     )
                 except Exception as exc:
@@ -214,7 +225,7 @@ class AiService:
                 synth_history.append({"role": "user", "content": guidance})
                 try:
                     synth_response = await cast(Any, client).chat.completions.create(
-                        model=GEMINI_MODEL,
+                        model=get_model_id_for_api(current_model),
                         messages=synth_history,
                     )
                 except Exception as exc:
@@ -238,7 +249,7 @@ class AiService:
                         f"🤖 [AiService] Sending prompt to AI (Tools Mode):\n{current_history}"
                     )
                     request_kwargs: dict[str, Any] = {
-                        "model": GEMINI_MODEL,
+                        "model": get_model_id_for_api(current_model),
                         "messages": current_history,
                     }
                     if openai_tools:
@@ -752,7 +763,7 @@ class AiService:
                         f"🤖 [AiService] Sending prompt to AI (Stream Mode):\n{current_history}"
                     )
                     stream = await cast(Any, client).chat.completions.create(
-                        model=GEMINI_MODEL,
+                        model=get_model_id_for_api(current_model),
                         messages=current_history,
                         stream=True,
                     )
@@ -1077,3 +1088,32 @@ class AiService:
     def _should_apply_cost_guards(tool_name: str) -> bool:
         name = str(tool_name or "").strip().lower()
         return bool(name) and name.startswith("ext_")
+
+    @staticmethod
+    def _get_model_for_request(message_history: list) -> str:
+        """根据消息历史选择合适的模型"""
+        has_image = False
+
+        for msg in message_history or []:
+            if isinstance(msg, dict):
+                content = msg.get("content")
+                if isinstance(content, list):
+                    for item in content:
+                        if isinstance(item, dict):
+                            if item.get("type") == "image_url" or "image_url" in item:
+                                has_image = True
+                                break
+                        elif hasattr(item, "image_url"):
+                            has_image = True
+                            break
+                elif isinstance(content, dict):
+                    if "image_url" in content or content.get("type") == "image_url":
+                        has_image = True
+
+        input_type = "image" if has_image else "text"
+        model = get_model_for_input(input_type)
+        model_id = get_model_id_for_api(model)
+        logger.info(
+            f"[AiService] Selected model: {model_id} (full_key: {model}, input_type: {input_type})"
+        )
+        return model

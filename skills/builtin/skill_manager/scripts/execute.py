@@ -657,7 +657,7 @@ async def _install_skill(target: str, user_id: int) -> Tuple[bool, str]:
                 )
 
             # Adopt
-            result = await creator.adopt_skill(content, user_id)
+            result = await adopt_skill(content, user_id)
 
             if result["success"]:
                 # Skill is directly adopted and active
@@ -668,6 +668,79 @@ async def _install_skill(target: str, user_id: int) -> Tuple[bool, str]:
     except Exception as e:
         logger.error(f"Install skill error: {e}")
         return False, str(e)
+
+
+async def adopt_skill(content: str, user_id: int) -> dict:
+    """
+    Adopt an existing skill content (install from URL) directly into learned.
+    Only supports standard SKILL.md.
+    """
+    try:
+        skill_name = ""
+
+        # 1. Detect Type & Extract Name
+        if content.startswith("---"):
+            # Parse YAML frontmatter
+            import yaml
+
+            try:
+                parts = content.split("---", 2)
+                if len(parts) >= 3:
+                    frontmatter = yaml.safe_load(parts[1])
+                    skill_name = frontmatter.get("name")
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": f"Failed to parse SKILL.md frontmatter: {e}",
+                }
+        else:
+            return {
+                "success": False,
+                "error": "Invalid skill format. Must start with '---' (SKILL.md). Legacy format is not supported.",
+            }
+
+        if not skill_name:
+            return {
+                "success": False,
+                "error": "Could not extract 'name' from skill content.",
+            }
+
+        # 2. Save directly to Learned
+        skills_base = skill_loader.skills_dir
+        skill_dir = os.path.join(skills_base, "learned", skill_name)
+        os.makedirs(skill_dir, exist_ok=True)
+
+        # Save SKILL.md
+        md_path = os.path.join(skill_dir, "SKILL.md")
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        # Fix permissions
+        try:
+            builtin_dir = os.path.join(skills_base, "builtin")
+            if os.path.exists(builtin_dir):
+                st = os.stat(builtin_dir)
+                target_uid = st.st_uid
+                target_gid = st.st_gid
+
+                for root, dirs, files in os.walk(skill_dir):
+                    os.chown(root, target_uid, target_gid)
+                    for d in dirs:
+                        os.chown(os.path.join(root, d), target_uid, target_gid)
+                    for f in files:
+                        os.chown(os.path.join(root, f), target_uid, target_gid)
+        except Exception:
+            pass
+
+        filepath = md_path
+
+        logger.info(f"Adopted skill (Direct): {skill_name} -> {filepath}")
+
+        return {"success": True, "skill_name": skill_name, "path": filepath}
+
+    except Exception as e:
+        logger.error(f"Adopt skill error: {e}")
+        return {"success": False, "error": str(e)}
 
 
 def _delete_skill(skill_name: str) -> Tuple[bool, str]:

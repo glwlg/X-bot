@@ -12,7 +12,8 @@ import httpx
 from pathlib import Path
 from uuid import uuid4
 
-from core.config import GEMINI_MODEL, openai_client
+from core.config import get_client_for_model
+from core.model_config import get_current_model
 from services.openai_adapter import generate_text_sync
 
 logger = logging.getLogger(__name__)
@@ -257,11 +258,13 @@ async def summarize_webpage(url: str) -> str:
             "摘要应该简洁明了，一般不超过 200 字。"
         )
 
-        if openai_client is None:
+        model_to_use = get_current_model()
+        client_to_use = get_client_for_model(model_to_use, is_async=False)
+        if client_to_use is None:
             raise RuntimeError("OpenAI sync client is not initialized")
         summary = generate_text_sync(
-            sync_client=openai_client,
-            model=GEMINI_MODEL,
+            sync_client=client_to_use,
+            model=model_to_use,
             contents=prompt,
             config={
                 "system_instruction": system_instruction,

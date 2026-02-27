@@ -7,7 +7,8 @@ import re
 from pathlib import Path
 from typing import Any
 
-from core.config import GEMINI_MODEL, openai_async_client
+from core.config import get_client_for_model
+from core.model_config import get_current_model
 from core.soul_store import SoulPayload, soul_store
 from services.openai_adapter import generate_text
 
@@ -245,14 +246,16 @@ class WaitingPhraseStore:
     async def _generate_phrase_pools_with_llm(
         self, payload: SoulPayload
     ) -> tuple[list[str], list[str]] | None:
-        if openai_async_client is None:
+        model_to_use = get_current_model()
+        client_to_use = get_client_for_model(model_to_use, is_async=True)
+        if client_to_use is None:
             logger.warning("Skip waiting phrase generation: async client unavailable")
             return None
         prompt = self._build_generation_prompt(payload)
         try:
             raw = await generate_text(
-                async_client=openai_async_client,
-                model=GEMINI_MODEL,
+                async_client=client_to_use,
+                model=model_to_use,
                 contents=prompt,
                 config={
                     "response_mime_type": "application/json",
@@ -293,7 +296,7 @@ class WaitingPhraseStore:
                 self._render_markdown(
                     received=received,
                     loading=loading,
-                    model=GEMINI_MODEL,
+                    model=get_current_model(),
                     soul_path=str(soul_path),
                 ),
                 encoding="utf-8",

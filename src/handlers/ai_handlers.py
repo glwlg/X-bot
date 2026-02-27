@@ -11,10 +11,8 @@ import random
 from core.markdown_memory_store import markdown_memory_store
 from core.waiting_phrase_store import waiting_phrase_store
 
-from core.config import (
-    GEMINI_MODEL,
-    openai_async_client,
-)
+from core.config import get_client_for_model
+from core.model_config import get_current_model, get_image_model
 from core.platform.exceptions import MediaProcessingError, MessageSendError
 from services.openai_adapter import generate_text
 
@@ -492,7 +490,6 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
     """
     user_message = ctx.message.text
     # Legacy fallbacks
-    update = ctx.platform_event
     context = ctx.platform_ctx
 
     chat_id = ctx.message.chat.id
@@ -604,11 +601,13 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                 "- 只输出译文，不要解释。\n\n"
                 f"输入：{user_message}"
             )
-            if openai_async_client is None:
+            model_to_use = get_current_model()
+            client_to_use = get_client_for_model(model_to_use, is_async=True)
+            if client_to_use is None:
                 raise RuntimeError("OpenAI async client is not initialized")
             translated = await generate_text(
-                async_client=openai_async_client,
-                model=GEMINI_MODEL,
+                async_client=client_to_use,
+                model=model_to_use,
                 contents=translation_request,
                 config={"system_instruction": system_instruction},
             )
@@ -1036,11 +1035,13 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
             }
         ]
 
-        if openai_async_client is None:
+        model_to_use = get_image_model() or get_current_model()
+        client_to_use = get_client_for_model(model_to_use, is_async=True)
+        if client_to_use is None:
             raise RuntimeError("OpenAI async client is not initialized")
         analysis = await generate_text(
-            async_client=openai_async_client,
-            model=GEMINI_MODEL,
+            async_client=client_to_use,
+            model=model_to_use,
             contents=contents,
             config={
                 "system_instruction": prompt_composer.compose_base(
@@ -1152,11 +1153,13 @@ async def handle_ai_video(ctx: UnifiedContext) -> None:
             }
         ]
 
-        if openai_async_client is None:
+        model_to_use = get_image_model() or get_current_model()
+        client_to_use = get_client_for_model(model_to_use, is_async=True)
+        if client_to_use is None:
             raise RuntimeError("OpenAI async client is not initialized")
         analysis = await generate_text(
-            async_client=openai_async_client,
-            model=GEMINI_MODEL,
+            async_client=client_to_use,
+            model=model_to_use,
             contents=contents,
             config={
                 "system_instruction": prompt_composer.compose_base(
@@ -1234,7 +1237,7 @@ async def handle_sticker_message(ctx: UnifiedContext) -> None:
     caption = "请描述这个表情包的情感和内容"
 
     # Save to history
-    await add_message(ctx, user_id, "user", f"【用户发送了一个表情包】")
+    await add_message(ctx, user_id, "user", "【用户发送了一个表情包】")
 
     thinking_msg = await ctx.reply("🤔 这个表情包有点意思...")
     await ctx.send_chat_action(action="typing")
@@ -1267,11 +1270,13 @@ async def handle_sticker_message(ctx: UnifiedContext) -> None:
             }
         ]
 
-        if openai_async_client is None:
+        model_to_use = get_image_model() or get_current_model()
+        client_to_use = get_client_for_model(model_to_use, is_async=True)
+        if client_to_use is None:
             raise RuntimeError("OpenAI async client is not initialized")
         analysis = await generate_text(
-            async_client=openai_async_client,
-            model=GEMINI_MODEL,
+            async_client=client_to_use,
+            model=model_to_use,
             contents=contents,
             config={
                 "system_instruction": prompt_composer.compose_base(

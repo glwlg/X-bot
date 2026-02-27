@@ -10,6 +10,7 @@ import re
 import urllib.parse
 import dateutil.parser
 import feedparser
+import hashlib
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -109,6 +110,25 @@ def _resolve_entry_link(entry: object, fallback_url: str) -> str:
         return url
 
     return primary or fallback
+
+
+def _get_entry_hash(entry: object, feed_url: str) -> str:
+    """基于内容为 RSS 条目生成稳定的特征 hash"""
+    title = str(getattr(entry, "get", lambda *x: "")("title", "") or "")
+    if title:
+        raw_title = title
+        if _is_google_rss_redirect(feed_url) or "news.google.com" in str(feed_url):
+            # 对于 Google News, 标题通常会带有 " - 来源" 后缀，导致同义新闻聚合更新时 ID 虽然改变，标题大体一致
+            raw_title = re.sub(r"\s+-\s+[^-]+$", "", title).strip()
+
+        # 只取前 100 个字符进行哈希，防止微调，但对全量字符哈希也是足够安全并且确定的
+        return hashlib.md5(raw_title.encode("utf-8")).hexdigest()
+
+    # Fallback 到 ID 获取 link
+    fallback_id = str(getattr(entry, "id", getattr(entry, "link", None)) or "")
+    if fallback_id:
+        return hashlib.md5(fallback_id.encode("utf-8")).hexdigest()
+    return ""
 
 
 async def save_push_message_to_db(user_id: int, message: str):
@@ -263,7 +283,8 @@ async def load_jobs_from_db():
 
 async def generate_entry_summary(title: str, content: str, link: str) -> str:
     """使用 AI 生成 RSS 条目摘要"""
-    from core.config import GEMINI_MODEL, openai_async_client
+    from core.config import get_client_for_model
+    from core.model_config import get_current_model
     from services.openai_adapter import generate_text
 
     # 截断过长内容
@@ -281,11 +302,13 @@ async def generate_entry_summary(title: str, content: str, link: str) -> str:
     )
 
     try:
-        if openai_async_client is None:
+        model_to_use = get_current_model()
+        client_to_use = get_client_for_model(model_to_use, is_async=True)
+        if client_to_use is None:
             raise RuntimeError("OpenAI async client is not initialized")
         summary = await generate_text(
-            async_client=openai_async_client,
-            model=GEMINI_MODEL,
+            async_client=client_to_use,
+            model=model_to_use,
             contents=prompt,
         )
         return str(summary or "").strip()
@@ -356,17 +379,56 @@ async def fetch_formatted_rss_updates(
                 if not feed.entries:
                     continue
 
-                latest_entry = feed.entries[0]
-                entry_id = getattr(
-                    latest_entry, "id", getattr(latest_entry, "link", None)
-                )
-                if not entry_id:
-                    continue
+                current_ids = []
+                for entry in feed.entries[:20]:
+                    e_id = _get_entry_hash(entry, url)
+                    legacy_id = str(
+                        getattr(entry, "id", getattr(entry, "link", None)) or ""
+                    )
+
+                    if e_id and e_id not in current_ids:
+                        current_ids.append(e_id)
+
+                    # 同时保留原始的 ID (防止一次性将所有的老的新闻全推过来)
+                    if legacy_id and legacy_id not in current_ids:
+                        current_ids.append(legacy_id)
+
+                # 保留前 30 个哈希防止过长
+                new_hash_str = ",".join(current_ids[:30])
 
                 for sub in subs:
-                    last_hash = sub["last_entry_hash"]
-                    if entry_id != last_hash:
-                        # Found new content
+                    last_hash_str = str(sub.get("last_entry_hash") or "")
+                    last_hashes = [
+                        h.strip() for h in last_hash_str.split(",") if h.strip()
+                    ]
+
+                    entries_to_push = []
+                    if not last_hashes:
+                        # 新订阅，只取最新的一条推送
+                        if feed.entries:
+                            entries_to_push.append(feed.entries[0])
+                    else:
+                        for entry in feed.entries:
+                            e_id = _get_entry_hash(entry, url)
+                            legacy_id = str(
+                                getattr(entry, "id", getattr(entry, "link", None)) or ""
+                            )
+
+                            # 防止老旧系统由于 hash 变换导致全量推送，如果在上一次 hashes 中存在老 legacy_id 或是我们计算的等价的 e_id，都要进行拦截
+                            if len(last_hashes) == 1 and (
+                                e_id in last_hashes or legacy_id in last_hashes
+                            ):
+                                break
+
+                            if (e_id and e_id not in last_hashes) and (
+                                legacy_id not in last_hashes
+                            ):
+                                entries_to_push.append(entry)
+
+                            if len(entries_to_push) >= 3:  # 每次最多推 3 条
+                                break
+
+                    for latest_entry in entries_to_push:
                         title = str(
                             getattr(latest_entry, "get", lambda *_: "")(
                                 "title", "无标题"
@@ -377,15 +439,15 @@ async def fetch_formatted_rss_updates(
                         feed_title = feed.feed.get("title", "RSS 订阅")
 
                         # Content summary logic...
-                        content = ""
+                        content_field = ""
                         if hasattr(latest_entry, "summary"):
-                            content = latest_entry.summary
+                            content_field = latest_entry.summary
                         elif hasattr(latest_entry, "content") and latest_entry.content:
-                            content = latest_entry.content[0].get("value", "")
+                            content_field = latest_entry.content[0].get("value", "")
                         elif hasattr(latest_entry, "description"):
-                            content = latest_entry.description
+                            content_field = latest_entry.description
 
-                        content_clean = re.sub(r"<[^>]+>", "", content).strip()
+                        content_clean = re.sub(r"<[^>]+>", "", content_field).strip()
 
                         if content_clean:
                             summary = await generate_entry_summary(
@@ -408,7 +470,7 @@ async def fetch_formatted_rss_updates(
                             "link": link,
                             "user_id": uid,
                             "feed_url": sub["feed_url"],
-                            "entry_id": entry_id,
+                            "entry_id": new_hash_str,
                             "etag": getattr(feed, "etag", None),
                             "modified": getattr(feed, "modified", None),
                         }

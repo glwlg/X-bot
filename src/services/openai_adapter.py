@@ -106,9 +106,11 @@ def build_chat_kwargs(
     contents: Any,
     config: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    from core.model_config import get_model_id_for_api
+
     cfg = config if isinstance(config, dict) else {}
     kwargs = {
-        "model": model,
+        "model": get_model_id_for_api(model),
         "messages": build_messages(
             contents=contents,
             system_instruction=str(cfg.get("system_instruction") or "") or None,

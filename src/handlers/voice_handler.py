@@ -12,7 +12,8 @@ import re
 from typing import Any, cast
 from telegram.error import BadRequest
 
-from core.config import VOICE_MODEL, is_user_allowed, openai_async_client
+from core.config import is_user_allowed, get_client_for_model
+from core.model_config import get_voice_model
 from core.platform.exceptions import MediaProcessingError
 from services.openai_adapter import build_messages
 from user_context import add_message, get_user_context
@@ -278,7 +279,8 @@ def _build_audio_contents(
 
 async def _run_audio_prompt(prompt: str, voice_bytes: bytes, mime_type: str) -> str:
     last_error: Exception | None = None
-    client: Any = openai_async_client
+    voice_model = get_voice_model()
+    client: Any = get_client_for_model(voice_model, is_async=True)
     if client is None:
         logger.error("Voice model call skipped: OpenAI async client is not initialized")
         return ""
@@ -293,7 +295,7 @@ async def _run_audio_prompt(prompt: str, voice_bytes: bytes, mime_type: str) -> 
     for candidate_mime, candidate_bytes, source in attempts:
         try:
             response = await cast(Any, client).chat.completions.create(
-                model=VOICE_MODEL,
+                model=voice_model,
                 messages=build_messages(
                     contents=_build_audio_contents(
                         prompt, candidate_bytes, candidate_mime
@@ -304,7 +306,7 @@ async def _run_audio_prompt(prompt: str, voice_bytes: bytes, mime_type: str) -> 
             last_error = exc
             logger.warning(
                 "Voice model call failed with model=%s mime=%s source=%s err=%s",
-                VOICE_MODEL,
+                voice_model,
                 candidate_mime,
                 source,
                 exc,
@@ -315,7 +317,7 @@ async def _run_audio_prompt(prompt: str, voice_bytes: bytes, mime_type: str) -> 
         if text and _looks_like_audio_missing_reply(text):
             logger.info(
                 "Voice model could not consume audio: model=%s mime=%s",
-                VOICE_MODEL,
+                voice_model,
                 candidate_mime,
             )
             continue

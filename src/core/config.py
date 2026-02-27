@@ -1,5 +1,7 @@
 """
 配置模块 - 管理环境变量和常量
+
+模型配置已统一迁移到 config/models.json
 """
 
 import os
@@ -28,38 +30,74 @@ DINGTALK_CLIENT_SECRET = os.getenv("DINGTALK_CLIENT_SECRET")
 # 日志配置
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
-GEMINI_BASE_URL = os.getenv("GEMINI_BASE_URL")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-LLM_BASE_URL = os.getenv("LLM_BASE_URL") or GEMINI_BASE_URL
-LLM_API_KEY = os.getenv("LLM_API_KEY") or GEMINI_API_KEY
-CORE_MODEL = os.getenv("CORE_MODEL", "gpt-4o-mini")
-VOICE_MODEL = os.getenv("VOICE_MODEL", "gemini-2.5-flash")
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", CORE_MODEL)
-
-ROUTING_MODEL = os.getenv("ROUTING_MODEL", CORE_MODEL)
-# 代码生成模型（用于 Skill 创建，建议使用更强力的模型）
-CREATOR_MODEL = os.getenv("CREATOR_MODEL", CORE_MODEL)
-
-IMAGE_MODEL = os.getenv("OPENAI_IMAGE_MODEL") or os.getenv("IMAGE_MODEL", "gpt-image-1")
+# 模型配置路径
+MODELS_CONFIG_PATH = os.getenv("MODELS_CONFIG_PATH", "config/models.json")
 
 
-if not LLM_API_KEY:
-    raise ValueError(
-        "LLM_API_KEY (or legacy GEMINI_API_KEY) environment variable not set!"
+# ============================================================================
+# OpenAI Client 初始化 - 从 models.json 获取配置
+# ============================================================================
+
+_clients_cache = {}
+
+
+def get_client_for_model(model_key: str | None = None, is_async: bool = True):
+    """获取指定模型对应的 OpenAI 客户端"""
+    if OpenAI is None or AsyncOpenAI is None:
+        return None
+
+    # Importing here to avoid circular dependencies
+    from core.model_config import (
+        get_api_key_for_model,
+        get_base_url_for_model,
+        get_current_model,
     )
 
-if OpenAI is not None and AsyncOpenAI is not None:
-    openai_client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL or None)
-    openai_async_client = AsyncOpenAI(
-        api_key=LLM_API_KEY,
-        base_url=LLM_BASE_URL or None,
-    )
-else:
-    openai_client = None
-    openai_async_client = None
+    key = model_key or get_current_model()
+    api_key = get_api_key_for_model(key)
+    base_url = get_base_url_for_model(key)
 
+    if not api_key:
+        return None
+
+    cache_key = f"{api_key}:{base_url}:{is_async}"
+    if cache_key not in _clients_cache:
+        if is_async:
+            _clients_cache[cache_key] = AsyncOpenAI(api_key=api_key, base_url=base_url)
+        else:
+            _clients_cache[cache_key] = OpenAI(api_key=api_key, base_url=base_url)
+
+    return _clients_cache[cache_key]
+
+
+# 为了兼容尚未迁移的旧代码，提供一个代理客户端
+class AsyncOpenAIProxy:
+    def __getattr__(self, name):
+        client = get_client_for_model(None, True)
+        if not client:
+            raise RuntimeError("No client available for primary model")
+        return getattr(client, name)
+
+
+class SyncOpenAIProxy:
+    def __getattr__(self, name):
+        client = get_client_for_model(None, False)
+        if not client:
+            raise RuntimeError("No client available for primary model")
+        return getattr(client, name)
+
+
+openai_client = SyncOpenAIProxy() if OpenAI else None
+openai_async_client = AsyncOpenAIProxy() if AsyncOpenAI else None
+
+# 兼容旧代码，提供模型名称常量
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gpt-4o-mini")
+
+
+# ============================================================================
 # 用户访问控制
-# 从环境变量加载管理员列表
+# ============================================================================
+
 ADMIN_USER_IDS_STR = os.getenv("ADMIN_USER_IDS") or os.getenv("ALLOWED_USER_IDS", "")
 ADMIN_USER_IDS = set()
 if ADMIN_USER_IDS_STR.strip():
@@ -79,23 +117,16 @@ async def is_user_allowed(user_id: int | str) -> bool:
     if uid_str in ADMIN_USER_IDS:
         return True
 
-    # 2. 如果没有设置任何管理员，且没有启用白名单模式（默认），是否允许所有人？
-    # 现在的逻辑是：如果设置了 ADMIN_USER_IDS，则作为白名单基础。
-
     # 检查白名单存储
     from core.state_store import check_user_allowed_in_db
 
     try:
-        # 存储层支持 str user_id
         if await check_user_allowed_in_db(uid_str):
             return True
     except Exception:
-        # 存储层可能还没初始化或出错
         pass
 
-    # 如果管理员列表为空，是否开放？
-    # 为了安全，如果有 DB 但不在里面，且有 Admin 设置，则拒绝。
-    # 如果 Admin 也没设置，通常意味着开放模式。
+    # 如果管理员列表为空，开放模式
     if not ADMIN_USER_IDS:
         return True
 
@@ -107,7 +138,11 @@ def is_user_admin(user_id: int | str) -> bool:
     return str(user_id).strip() in ADMIN_USER_IDS
 
 
+# ============================================================================
 # 下载配置
+# ============================================================================
+
+
 def _is_docker_runtime() -> bool:
     return os.path.exists("/.dockerenv") or (
         os.getenv("RUNNING_IN_DOCKER", "").lower() == "true"
@@ -150,8 +185,6 @@ SEARXNG_URL = os.getenv("SEARXNG_URL")
 SERVER_IP = os.getenv("SERVER_IP")
 
 # Deployment Staging Path (Optional, for Docker deployment feature)
-# This path is used for cloning and building repositories
-# Must be an absolute path that matches the Docker volume mount
 X_DEPLOYMENT_STAGING_PATH = os.getenv("X_DEPLOYMENT_STAGING_PATH")
 
 # Heartbeat runtime configuration

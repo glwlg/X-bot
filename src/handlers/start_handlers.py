@@ -1,4 +1,3 @@
-import os
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from core.platform.models import UnifiedContext
@@ -309,8 +308,9 @@ async def button_callback(ctx: UnifiedContext) -> int:
             ]
             reply_markup = InlineKeyboardMarkup(keyboard)
 
-            # 安全获取环境变量
-            openai_model = os.getenv("CORE_MODEL", "gpt-4o-mini")
+            from core.model_config import get_current_model
+
+            openai_model = get_current_model()
 
             await ctx.edit_message(
                 msg_id,
@@ -475,7 +475,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
         # 尝试通知用户发生错误，如果 edit 失败
         try:
             await ctx.reply("❌ 操作失败，请重试或输入 /start 重启。")
-        except:
+        except Exception:
             pass
 
     return CONVERSATION_END

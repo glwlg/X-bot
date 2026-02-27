@@ -7,7 +7,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, cast
 
-from .config import GEMINI_MODEL, openai_async_client
+from .config import get_client_for_model
+from .model_config import get_current_model
 from .skill_loader import skill_loader
 from .tool_registry import tool_registry
 from services.ai_service import AiService
@@ -405,7 +406,7 @@ class ExtensionExecutor:
         runtime: Any,
         allowed_tool_rules: Dict[str, Dict[str, Any]],
     ) -> ExtensionRunResult | None:
-        if openai_async_client is None:
+        if get_client_for_model(is_async=True) is None:
             return ExtensionRunResult(
                 ok=False,
                 skill_name=skill_name,
@@ -600,7 +601,7 @@ class ExtensionExecutor:
         workflow = str(skill.get("skill_md_content") or "").strip()
         if not workflow:
             return None
-        if openai_async_client is None:
+        if get_client_for_model(is_async=True) is None:
             return ExtensionRunResult(
                 ok=False,
                 skill_name=skill_name,
@@ -608,7 +609,7 @@ class ExtensionExecutor:
                 message=f"Skill {skill_name} has no executable entrypoint",
                 failure_mode="recoverable",
             )
-        client = cast(Any, openai_async_client)
+        client = cast(Any, get_client_for_model(is_async=True))
 
         user_text = str(getattr(getattr(ctx, "message", None), "text", "") or "")
         schema = skill.get("input_schema") or {"type": "object", "properties": {}}
@@ -634,7 +635,7 @@ class ExtensionExecutor:
         response = None
         try:
             response = await client.chat.completions.create(
-                model=GEMINI_MODEL,
+                model=get_current_model(),
                 messages=messages,
                 temperature=0,
                 response_format={"type": "json_object"},
@@ -642,7 +643,7 @@ class ExtensionExecutor:
         except Exception:
             try:
                 response = await client.chat.completions.create(
-                    model=GEMINI_MODEL,
+                    model=get_current_model(),
                     messages=messages,
                     temperature=0,
                 )
