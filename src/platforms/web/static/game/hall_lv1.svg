@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="380" viewBox="0 0 700 380">
+  <rect x="0" y="0" width="700" height="380" rx="24" fill="#0f243d"/>
+  <rect x="10" y="10" width="680" height="360" rx="18" fill="#112a46" stroke="#5ba8df" stroke-width="4"/>
+  <g fill="#17395c" opacity="0.95">
+    <rect x="48" y="82" width="118" height="48" rx="8"/>
+    <rect x="208" y="82" width="118" height="48" rx="8"/>
+    <rect x="368" y="82" width="118" height="48" rx="8"/>
+    <rect x="528" y="82" width="118" height="48" rx="8"/>
+    <rect x="48" y="222" width="118" height="48" rx="8"/>
+    <rect x="208" y="222" width="118" height="48" rx="8"/>
+    <rect x="368" y="222" width="118" height="48" rx="8"/>
+    <rect x="528" y="222" width="118" height="48" rx="8"/>
+  </g>
+  <text x="350" y="350" text-anchor="middle" font-family="Arial" font-size="18" fill="#86c8fb">执行者工作大厅</text>
+</svg>

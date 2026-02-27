@@ -88,6 +88,15 @@ class DispatchQueue:
             task = TaskEnvelope.from_dict(row)
             if task.task_id != safe_task_id:
                 continue
+            if task.status == "cancelled":
+                task.updated_at = now_iso()
+                if not str(task.ended_at or "").strip():
+                    task.ended_at = task.updated_at
+                if not str(task.error or "").strip():
+                    task.error = str(result.error or "").strip()
+                updated_task = task
+                rows[idx] = task.to_dict()
+                break
             task.status = "done" if bool(result.ok) else "failed"
             task.error = str(result.error or "").strip()
             task.ended_at = now_iso()
@@ -102,6 +111,17 @@ class DispatchQueue:
         await self.tasks.write_all(rows)
         await self.results.append(result.to_dict())
         return updated_task
+
+    async def get_task(self, task_id: str) -> TaskEnvelope | None:
+        safe_task_id = str(task_id or "").strip()
+        if not safe_task_id:
+            return None
+        rows = await self.tasks.read_all()
+        for row in rows:
+            task = TaskEnvelope.from_dict(row)
+            if task.task_id == safe_task_id:
+                return task
+        return None
 
     async def list_tasks(
         self,

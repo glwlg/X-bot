@@ -39,3 +39,38 @@ async def test_dispatch_queue_submit_claim_finish(monkeypatch, tmp_path):
     recent = await queue.list_tasks(worker_id="worker-main", limit=5)
     assert recent
     assert recent[0].task_id == submitted.task_id
+
+
+@pytest.mark.asyncio
+async def test_finish_task_does_not_override_cancelled_status(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("MANAGER_DISPATCH_ROOT", raising=False)
+    queue = DispatchQueue()
+
+    submitted = await queue.submit_task(
+        worker_id="worker-main",
+        instruction="run check",
+        source="manager_dispatch",
+        metadata={"user_id": "u-stop"},
+    )
+    claimed = await queue.claim_next(worker_id="worker-main", claimer="worker-daemon")
+    assert claimed is not None
+
+    cancelled = await queue.cancel_for_user(
+        user_id="u-stop",
+        reason="cancelled_by_stop_command",
+        include_running=True,
+    )
+    assert cancelled["running_signaled"] == 1
+
+    result = TaskResult(
+        task_id=submitted.task_id,
+        worker_id="worker-main",
+        ok=True,
+        summary="done",
+        payload={"text": "done"},
+    )
+    finished = await queue.finish_task(task_id=submitted.task_id, result=result)
+    assert finished is not None
+    assert finished.status == "cancelled"
+    assert finished.error == "cancelled_by_stop_command"

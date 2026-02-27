@@ -168,6 +168,37 @@ HEARTBEAT_READONLY_DISPATCH = (
     os.getenv("HEARTBEAT_READONLY_DISPATCH", "false").lower() == "true"
 )
 
+
+def _as_int(value: str, default: int) -> int:
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return default
+
+
+def _as_float(value: str, default: float) -> float:
+    try:
+        return float(str(value).strip())
+    except Exception:
+        return default
+
+
+WEB_DASHBOARD_ENABLED = os.getenv("WEB_DASHBOARD_ENABLED", "false").lower() == "true"
+WEB_DASHBOARD_HOST = os.getenv("WEB_DASHBOARD_HOST", "127.0.0.1").strip() or "127.0.0.1"
+WEB_DASHBOARD_PORT = max(1, _as_int(os.getenv("WEB_DASHBOARD_PORT", "8765"), 8765))
+WEB_DASHBOARD_POLL_SEC = max(
+    0.5,
+    _as_float(os.getenv("WEB_DASHBOARD_POLL_SEC", "2.0"), 2.0),
+)
+WEB_DASHBOARD_EVENT_BUFFER = max(
+    200,
+    _as_int(os.getenv("WEB_DASHBOARD_EVENT_BUFFER", "1200"), 1200),
+)
+WEB_DASHBOARD_ALLOW_WRITE = (
+    os.getenv("WEB_DASHBOARD_ALLOW_WRITE", "true").lower() == "true"
+)
+WEB_DASHBOARD_TOKEN = os.getenv("WEB_DASHBOARD_TOKEN", "").strip()
+
 # Auto recovery budget for terminal/recoverable failures in orchestrator loop
 AUTO_RECOVERY_MAX_ATTEMPTS = int(os.getenv("AUTO_RECOVERY_MAX_ATTEMPTS", "3"))
 

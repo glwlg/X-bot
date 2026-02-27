@@ -28,6 +28,7 @@ from core.config import (
     CORE_CHAT_WORKER_BACKEND,
     HEARTBEAT_ENABLED,
     HEARTBEAT_MODE,
+    WEB_DASHBOARD_ENABLED,
 )
 from core.heartbeat_worker import heartbeat_worker
 from core.waiting_phrase_store import waiting_phrase_store
@@ -69,6 +70,7 @@ from core.platform.registry import adapter_manager
 from core.platform.models import MessageType
 from platforms.telegram.adapter import TelegramAdapter
 from platforms.discord.adapter import DiscordAdapter
+from platforms.web.server import web_dashboard_server
 
 # 日志配置
 logging.basicConfig(
@@ -202,6 +204,8 @@ async def main():
     await init_services()
     waiting_phrase_store.schedule_startup_refresh()
     await heartbeat_worker.start()
+    if WEB_DASHBOARD_ENABLED:
+        await web_dashboard_server.start()
 
     # if tg_app:
     #     await setup_telegram_commands(tg_app)
@@ -397,6 +401,7 @@ async def main():
     finally:
         logger.info("Shutting down...")
         await heartbeat_worker.stop()
+        await web_dashboard_server.stop()
         await worker_result_relay.stop()
         await adapter_manager.stop_all()
 

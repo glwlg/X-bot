@@ -16,6 +16,10 @@ logger = logging.getLogger(__name__)
 class WorkerKernelDaemon:
     def __init__(self, *, queue=None, loader=None) -> None:
         self.poll_sec = max(0.5, float(os.getenv("WORKER_KERNEL_POLL_SEC", "1.0")))
+        self.cancel_poll_sec = max(
+            0.05,
+            float(os.getenv("WORKER_TASK_CANCEL_POLL_SEC", "0.5")),
+        )
         self.max_concurrency = max(
             1,
             int(os.getenv("WORKER_KERNEL_MAX_CONCURRENCY", "2")),
@@ -92,6 +96,19 @@ class WorkerKernelDaemon:
             )
             self._running.add(running)
 
+    async def _wait_for_task_cancel(self, task_id: str) -> TaskEnvelope | None:
+        safe_task_id = str(task_id or "").strip()
+        if not safe_task_id:
+            return None
+        while not self._stop_event.is_set():
+            current = await self.queue.get_task(safe_task_id)
+            if current is None:
+                return None
+            if current.status == "cancelled":
+                return current
+            await asyncio.sleep(self.cancel_poll_sec)
+        return None
+
     def _annotate_result(
         self,
         *,
@@ -127,16 +144,108 @@ class WorkerKernelDaemon:
         version = str(
             task.metadata.get("program_version") or self.default_program_version
         )
+        cancel_watch_task: asyncio.Task | None = None
+        run_program_task: asyncio.Task | None = None
         try:
             program = self.loader.load_program(program_id=program_id, version=version)
-            result = await program.run(
-                task,
-                {
-                    "worker_id": self.worker_id,
-                    "program_id": program_id,
-                    "program_version": version,
-                },
+            run_program_task = asyncio.create_task(
+                program.run(
+                    task,
+                    {
+                        "worker_id": self.worker_id,
+                        "program_id": program_id,
+                        "program_version": version,
+                    },
+                ),
+                name=f"worker-program-{task.task_id}",
             )
+            cancel_watch_task = asyncio.create_task(
+                self._wait_for_task_cancel(task.task_id),
+                name=f"worker-cancel-watch-{task.task_id}",
+            )
+            done, _pending = await asyncio.wait(
+                {run_program_task, cancel_watch_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+            if cancel_watch_task in done:
+                try:
+                    cancelled_task = cancel_watch_task.result()
+                except Exception as exc:
+                    logger.warning(
+                        "Worker kernel cancel watcher failed task_id=%s err=%s",
+                        task.task_id,
+                        exc,
+                    )
+                    cancelled_task = None
+                if cancelled_task is not None and not run_program_task.done():
+                    run_program_task.cancel()
+                    try:
+                        await run_program_task
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception as exc:
+                        logger.debug(
+                            "Worker kernel ignored program exception after cancel "
+                            "task_id=%s err=%s",
+                            task.task_id,
+                            exc,
+                        )
+
+                    reason = (
+                        str(cancelled_task.error or "").strip() or "cancelled_by_user"
+                    )
+                    message = "worker task cancelled"
+                    result = TaskResult(
+                        task_id=task.task_id,
+                        worker_id=self.worker_id,
+                        ok=False,
+                        summary=message,
+                        error=reason,
+                        payload={
+                            "text": message,
+                            "cancelled": True,
+                            "cancel_reason": reason,
+                        },
+                    )
+                    result = self._annotate_result(
+                        task=task,
+                        result=result,
+                        program_id=program_id,
+                        version=version,
+                    )
+                    logger.info(
+                        "Worker kernel cancelled running task id=%s reason=%s",
+                        task.task_id,
+                        reason,
+                    )
+                    await self.queue.finish_task(task_id=task.task_id, result=result)
+                    return
+
+            if cancel_watch_task and not cancel_watch_task.done():
+                cancel_watch_task.cancel()
+                try:
+                    await cancel_watch_task
+                except asyncio.CancelledError:
+                    pass
+
+            if run_program_task is None:
+                raise RuntimeError("worker run task not created")
+            try:
+                if run_program_task.done():
+                    result = run_program_task.result()
+                else:
+                    result = await run_program_task
+            except asyncio.CancelledError:
+                message = "worker task cancelled"
+                result = TaskResult(
+                    task_id=task.task_id,
+                    worker_id=self.worker_id,
+                    ok=False,
+                    summary=message,
+                    error=message,
+                    payload={"text": message, "cancelled": True},
+                )
             if not isinstance(result, TaskResult):
                 result_payload = dict(result) if isinstance(result, dict) else {}
                 result = TaskResult(
@@ -163,6 +272,13 @@ class WorkerKernelDaemon:
                 error=message,
                 payload={"text": message},
             )
+        finally:
+            if cancel_watch_task and not cancel_watch_task.done():
+                cancel_watch_task.cancel()
+                try:
+                    await cancel_watch_task
+                except asyncio.CancelledError:
+                    pass
         result = self._annotate_result(
             task=task,
             result=result,

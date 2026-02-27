@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>X 机器人运行沙盘</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/assets/arena.css" />
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
+  </head>
+  <body>
+    <div class="arena-app">
+      <header class="arena-topbar">
+        <div>
+          <p class="label">X 机器人运行时</p>
+          <h1>管理者与执行者运行沙盘</h1>
+          <p class="sub">用于可视化 manager/worker 工作状态、任务流转和结果回传。</p>
+        </div>
+        <div class="top-actions">
+          <div class="action-bar">
+            <button class="btn ghost" id="sound-toggle" type="button">音效：关</button>
+            <span class="chip" id="day-cycle">昼夜：白天 08:00</span>
+            <a class="btn ghost" href="/config">打开配置中心</a>
+          </div>
+          <div class="chips">
+            <span class="chip" id="chip-status">事件流：连接中</span>
+            <span class="chip" id="chip-users">用户：0</span>
+            <span class="chip" id="chip-workers">执行者：0</span>
+            <span class="chip" id="chip-pending">待处理：0</span>
+          </div>
+        </div>
+      </header>
+
+      <main class="arena-grid">
+        <section class="board card">
+          <div class="board-head">
+            <h2>运行地图</h2>
+            <span id="manager-tick">管理者巡检：--</span>
+          </div>
+
+          <div class="map" id="map-root">
+            <div class="phaser-stage" id="phaser-stage"></div>
+            <div class="map-hud level-hud">
+              <div class="dock" id="dock-office-level">办公室状态：稳定</div>
+              <div class="dock" id="dock-hall-level">大厅状态：稳定</div>
+              <div class="dock" id="dock-delivery-level">交付区状态：稳定</div>
+            </div>
+            <div class="map-hud flow-hud">
+              <div class="dock" id="dock-queue">待派发：0</div>
+              <div class="dock" id="dock-running">执行中：0</div>
+              <div class="dock" id="dock-done">已关闭：0</div>
+              <div class="dock" id="dock-mail">已回传：0</div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="stats card">
+          <h2>运行统计</h2>
+          <div class="stat-list">
+            <div class="stat-row"><span>待处理</span><strong id="stat-pending">0</strong></div>
+            <div class="stat-row"><span>执行中</span><strong id="stat-running">0</strong></div>
+            <div class="stat-row"><span>已完成</span><strong id="stat-done">0</strong></div>
+            <div class="stat-row"><span>失败</span><strong id="stat-failed">0</strong></div>
+            <div class="stat-row"><span>待巡检用户</span><strong id="stat-due">0</strong></div>
+          </div>
+          <div class="heartbeat-card">
+            <p class="small">心跳脉冲</p>
+            <div class="pulse" id="heartbeat-pulse"></div>
+            <p class="small" id="heartbeat-note">等待下一次巡检</p>
+          </div>
+
+          <div class="reception-card">
+            <div class="reception-head">
+              <span>交付监控</span>
+              <strong id="service-score">回传率 100%</strong>
+            </div>
+            <div class="service-bar">
+              <div id="service-fill"></div>
+            </div>
+            <div class="combo-row">
+              <span id="combo-label">已回传 0 / 已关闭 0</span>
+              <span id="combo-reward">待回传 0</span>
+            </div>
+            <svg id="service-trend" viewBox="0 0 160 44" preserveAspectRatio="none" aria-label="服务趋势图">
+              <polyline id="service-trend-line" points="0,40 160,40" />
+            </svg>
+            <p class="small" id="service-note">等待交付任务</p>
+            <ul id="delivery-feed"></ul>
+          </div>
+
+          <div class="facility-card">
+            <div class="reception-head">
+              <span>区域状态详情</span>
+              <strong id="facility-level">状态 稳定</strong>
+            </div>
+            <p class="small" id="facility-name">选中：经理办公室</p>
+            <p class="small" id="facility-metrics">待巡检 0 / 总用户 0</p>
+            <div class="service-bar">
+              <div id="facility-load-fill"></div>
+            </div>
+            <p class="small" id="facility-tip">点击地图建筑查看详情</p>
+          </div>
+
+          <div class="facility-card">
+            <div class="reception-head">
+              <span>执行者状态</span>
+              <strong id="worker-health">活跃 0/0</strong>
+            </div>
+            <ul id="worker-status-list"></ul>
+          </div>
+        </aside>
+
+        <section class="timeline card">
+          <div class="timeline-head">
+            <h2>事件时间线</h2>
+            <span id="timeline-seq">序号：0</span>
+          </div>
+          <ul id="timeline-list"></ul>
+        </section>
+      </main>
+    </div>
+
+    <script src="/assets/arena.js" defer></script>
+  </body>
+</html>

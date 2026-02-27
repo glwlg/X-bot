@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="360" height="240" viewBox="0 0 360 240">
+  <rect x="0" y="0" width="360" height="240" rx="20" fill="#122f4f"/>
+  <rect x="8" y="8" width="344" height="224" rx="16" fill="#123150" stroke="#74c2ff" stroke-width="4"/>
+  <rect x="20" y="20" width="150" height="84" rx="10" fill="#17416a" stroke="#89d0ff" stroke-width="2"/>
+  <rect x="190" y="20" width="150" height="84" rx="10" fill="#17416a" stroke="#89d0ff" stroke-width="2"/>
+  <rect x="58" y="132" width="244" height="66" rx="10" fill="#2e5d89"/>
+  <rect x="76" y="146" width="74" height="32" rx="4" fill="#17416a"/>
+  <rect x="206" y="146" width="74" height="32" rx="4" fill="#17416a"/>
+  <circle cx="32" cy="196" r="10" fill="#72d4a6"/>
+  <circle cx="328" cy="196" r="10" fill="#72d4a6"/>
+  <text x="180" y="214" text-anchor="middle" font-family="Arial" font-size="14" fill="#b2e1ff">经理办公室</text>
+</svg>

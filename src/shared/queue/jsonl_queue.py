@@ -15,11 +15,67 @@ class FileLock:
         *,
         timeout_sec: float = 8.0,
         poll_sec: float = 0.05,
+        stale_sec: float = 300.0,
     ) -> None:
         self.lock_path = lock_path
         self.timeout_sec = max(0.2, float(timeout_sec))
         self.poll_sec = max(0.01, float(poll_sec))
+        self.stale_sec = max(self.timeout_sec * 2.0, float(stale_sec))
         self._held = False
+
+    @staticmethod
+    def _pid_alive(pid: int) -> bool:
+        if int(pid) <= 0:
+            return False
+        try:
+            os.kill(int(pid), 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except Exception:
+            return True
+        return True
+
+    def _read_lock_pid(self) -> int | None:
+        try:
+            raw = self.lock_path.read_text(encoding="utf-8")
+        except Exception:
+            return None
+        for line in raw.splitlines():
+            if not line.startswith("pid="):
+                continue
+            value = line.partition("=")[2].strip()
+            if not value:
+                return None
+            try:
+                return int(value)
+            except Exception:
+                return None
+        return None
+
+    def _is_stale(self) -> bool:
+        pid = self._read_lock_pid()
+        if pid is not None:
+            return not self._pid_alive(pid)
+
+        try:
+            mtime = float(self.lock_path.stat().st_mtime)
+        except Exception:
+            return False
+        age_sec = max(0.0, time.time() - mtime)
+        return age_sec >= self.stale_sec
+
+    def _cleanup_stale_lock(self) -> bool:
+        if not self._is_stale():
+            return False
+        try:
+            self.lock_path.unlink()
+            return True
+        except FileNotFoundError:
+            return True
+        except Exception:
+            return False
 
     async def __aenter__(self) -> "FileLock":
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -31,11 +87,17 @@ class FileLock:
                     os.O_CREAT | os.O_EXCL | os.O_WRONLY,
                     0o644,
                 )
-                os.write(fd, f"pid={os.getpid()}\n".encode("utf-8"))
+                now = time.time()
+                os.write(
+                    fd,
+                    f"pid={os.getpid()}\ncreated_at={now:.6f}\n".encode("utf-8"),
+                )
                 os.close(fd)
                 self._held = True
                 return self
             except FileExistsError:
+                if self._cleanup_stale_lock():
+                    continue
                 if time.monotonic() >= deadline:
                     raise TimeoutError(f"queue lock timeout: {self.lock_path}")
                 await asyncio.sleep(self.poll_sec)

@@ -160,6 +160,68 @@ async def test_worker_kernel_marks_failed_on_program_error(tmp_path, monkeypatch
     assert result.payload.get("_program_id") == "default-worker"
 
 
+@pytest.mark.asyncio
+async def test_worker_kernel_stops_running_task_after_queue_cancel(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("WORKER_KERNEL_ID", "worker-main")
+    monkeypatch.setenv("WORKER_DEFAULT_PROGRAM_ID", "default-worker")
+    monkeypatch.setenv("WORKER_DEFAULT_PROGRAM_VERSION", "v1")
+    monkeypatch.setenv("WORKER_TASK_CANCEL_POLL_SEC", "0.05")
+
+    programs_root = (tmp_path / "system" / "worker_programs").resolve()
+    _write_program(
+        programs_root,
+        program_id="default-worker",
+        version="v1",
+        code=(
+            "import asyncio\n"
+            "from shared.contracts.dispatch import TaskResult\n"
+            "class Program:\n"
+            "    async def run(self, task, context):\n"
+            "        await asyncio.sleep(30)\n"
+            "        return TaskResult(task_id=task.task_id, worker_id=context['worker_id'], ok=True, summary='late', payload={'text':'late'})\n"
+            "def build_program():\n"
+            "    return Program()\n"
+        ),
+    )
+
+    queue = DispatchQueue()
+    submitted = await queue.submit_task(
+        worker_id="worker-main",
+        instruction="long run",
+        source="manager_dispatch",
+        metadata={
+            "user_id": "u-stop",
+            "program_id": "default-worker",
+            "program_version": "v1",
+        },
+    )
+
+    daemon = WorkerKernelDaemon(queue=queue, loader=ProgramLoader())
+    await daemon._tick()
+    assert daemon._running
+
+    cancelled = await queue.cancel_for_user(
+        user_id="u-stop",
+        reason="cancelled_by_stop_command",
+        include_running=True,
+    )
+    assert cancelled["running_signaled"] == 1
+
+    await asyncio.wait_for(asyncio.gather(*daemon._running), timeout=3)
+
+    task_row = await queue.get_task(submitted.task_id)
+    assert task_row is not None
+    assert task_row.status == "cancelled"
+    assert task_row.error == "cancelled_by_stop_command"
+
+    result = await queue.latest_result(submitted.task_id)
+    assert result is not None
+    assert result.ok is False
+    assert result.payload.get("cancelled") is True
+    assert result.payload.get("cancel_reason") == "cancelled_by_stop_command"
+
+
 def test_program_loader_refreshes_legacy_bootstrap_artifact(tmp_path, monkeypatch):
     programs_root = (tmp_path / "programs").resolve()
     legacy_dir = (programs_root / "default-worker" / "v1").resolve()
