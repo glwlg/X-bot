@@ -62,7 +62,13 @@
 - **新增** / **编辑** / **删除**监控项
 - 需先在首页绑定平台账号
 
-### 🔐 登录 (LoginView)
+### � 自选股 (WatchlistView)
+- 路由：`/modules/watchlist`
+- 管理自选股列表，展示股票代码和名称
+- **新增** / **编辑** / **删除**自选股
+- 需先在首页绑定平台账号
+
+### �🔐 登录 (LoginView)
 - 路由：`/login`
 - 邮箱 + 密码登录
 - JWT Token 持久化
@@ -106,6 +112,7 @@ src/
 | `/api/v1/rss` | RSS 订阅 CRUD |
 | `/api/v1/scheduler` | 定时任务 CRUD + 启停 |
 | `/api/v1/monitor` | 心跳监控清单 CRUD |
+| `/api/v1/watchlist` | 自选股 CRUD |
 | `/api/v1/accounting` | 记账全部接口 |
 
 ## 快速开始

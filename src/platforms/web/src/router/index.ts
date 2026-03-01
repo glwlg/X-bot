@@ -33,6 +33,12 @@ const router = createRouter({
             meta: { title: '心跳监控', fullscreen: true },
         },
         {
+            path: '/modules/watchlist',
+            name: 'ModuleWatchlist',
+            component: () => import('@/views/Modules/WatchlistView.vue'),
+            meta: { title: '自选股管理', fullscreen: true },
+        },
+        {
             path: '/accounting',
             component: () => import('@/layouts/AccountingLayout.vue'),
             meta: { fullscreen: true },

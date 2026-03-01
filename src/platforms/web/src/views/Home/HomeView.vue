@@ -7,7 +7,7 @@ import { getRecordsSummary, type MonthlySummary } from '@/api/accounting'
 import { ThemeToggle } from '@/components/ThemeToggle'
 import request from '@/api/request'
 import {
-  BookOpen, Rss, Clock, Activity, ArrowRight, LogOut, Link2, Unlink, Plus
+  BookOpen, Rss, Clock, Activity, TrendingUp, ArrowRight, LogOut, Link2, Unlink, Plus
 } from 'lucide-vue-next'
 
 const router = useRouter()
@@ -128,6 +128,15 @@ const modules = [
         enabled: true,
         action: () => router.push('/modules/monitor'),
     },
+    {
+        id: 'watchlist',
+        name: '自选股',
+        desc: '管理自选股列表，跟踪关注的股票行情',
+        icon: TrendingUp,
+        color: 'emerald',
+        enabled: true,
+        action: () => router.push('/modules/watchlist'),
+    },
 ]
 
 const platformLabels: Record<string, string> = {
@@ -160,6 +169,12 @@ const colorMap: Record<string, { bg: string; icon: string; border: string; hover
         icon: 'bg-purple-500',
         border: 'border-purple-200 dark:border-purple-800',
         hover: 'hover:shadow-purple-100 dark:hover:shadow-purple-900/30',
+    },
+    emerald: {
+        bg: 'bg-emerald-50 dark:bg-emerald-900/20',
+        icon: 'bg-emerald-500',
+        border: 'border-emerald-200 dark:border-emerald-800',
+        hover: 'hover:shadow-emerald-100 dark:hover:shadow-emerald-900/30',
     },
 }
 </script>
