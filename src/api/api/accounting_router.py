@@ -10,7 +10,7 @@ from datetime import datetime
 from api.core.database import get_async_session
 from api.auth.users import current_active_user
 from api.auth.models import User
-from api.models.accounting import Book, Account, Category, Record, Budget
+from api.models.accounting import Book, Account, Category, Record, Budget, ScheduledTask
 
 router = APIRouter()
 
@@ -54,6 +54,19 @@ class BudgetUpdate(BaseModel):
     month: str
     total_amount: float
     category_id: Optional[int] = None
+
+
+class ScheduledTaskCreate(BaseModel):
+    name: str
+    frequency: str
+    next_run: str
+    type: str
+    amount: float
+    account_name: str = ""
+    target_account_name: str = ""
+    category_name: str = "未分类"
+    payee: str = ""
+    remark: str = ""
 
 
 # ─── Helper: verify book ownership ───────────────────────────────────
@@ -1153,3 +1166,146 @@ async def create_or_update_budget(
 
     await session.commit()
     return {"message": "预算保存成功"}
+
+
+# ─── Scheduled Tasks CRUD ───────────────────────────────────────────
+
+
+@router.get("/scheduled-tasks")
+async def get_scheduled_tasks(
+    book_id: int,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    await _get_book(book_id, user, session)
+    result = await session.execute(
+        select(ScheduledTask)
+        .where(ScheduledTask.book_id == book_id)
+        .order_by(ScheduledTask.next_run.asc())
+    )
+    tasks = result.scalars().all()
+    
+    enriched = []
+    for t in tasks:
+        # Resolve names for display
+        cat_name = ""
+        acc_name = ""
+        target_acc_name = ""
+        if t.category_id:
+            cat = await session.get(Category, t.category_id)
+            if cat: cat_name = cat.name
+        if t.account_id:
+            acc = await session.get(Account, t.account_id)
+            if acc: acc_name = acc.name
+        if t.target_account_id:
+            tacc = await session.get(Account, t.target_account_id)
+            if tacc: target_acc_name = tacc.name
+            
+        enriched.append({
+            "id": t.id,
+            "name": t.name,
+            "frequency": t.frequency,
+            "next_run": t.next_run.isoformat(),
+            "type": t.type,
+            "amount": float(t.amount),
+            "category_name": cat_name,
+            "account_name": acc_name,
+            "target_account_name": target_acc_name,
+            "payee": t.payee or "",
+            "remark": t.remark or "",
+            "is_active": t.is_active
+        })
+    return enriched
+
+
+@router.post("/scheduled-tasks")
+async def create_scheduled_task(
+    book_id: int,
+    data: ScheduledTaskCreate,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    await _get_book(book_id, user, session)
+
+    # 1. Category
+    cat_name = data.category_name.strip() or "未分类"
+    res = await session.execute(
+        select(Category).where(
+            Category.book_id == book_id,
+            Category.name == cat_name,
+            Category.type == data.type,
+        )
+    )
+    cat = res.scalars().first()
+    if not cat:
+        cat = Category(book_id=book_id, name=cat_name, type=data.type)
+        session.add(cat)
+        await session.flush()
+
+    # 2. Accounts
+    from_acc_id = None
+    to_acc_id = None
+    if data.account_name:
+        res_acc1 = await session.execute(
+            select(Account).where(
+                Account.book_id == book_id, Account.name == data.account_name
+            )
+        )
+        acc1 = res_acc1.scalars().first()
+        if not acc1:
+            acc1 = Account(book_id=book_id, name=data.account_name)
+            session.add(acc1)
+            await session.flush()
+        from_acc_id = acc1.id
+
+    if data.target_account_name:
+        res_acc2 = await session.execute(
+            select(Account).where(
+                Account.book_id == book_id, Account.name == data.target_account_name
+            )
+        )
+        acc2 = res_acc2.scalars().first()
+        if not acc2:
+            acc2 = Account(book_id=book_id, name=data.target_account_name)
+            session.add(acc2)
+            await session.flush()
+        to_acc_id = acc2.id
+
+    try:
+        next_r = datetime.fromisoformat(data.next_run)
+    except:
+        next_r = datetime.utcnow()
+
+    task = ScheduledTask(
+        book_id=book_id,
+        name=data.name,
+        frequency=data.frequency,
+        next_run=next_r,
+        type=data.type,
+        amount=data.amount,
+        account_id=from_acc_id,
+        target_account_id=to_acc_id,
+        category_id=cat.id,
+        payee=data.payee,
+        remark=data.remark,
+        creator_id=user.id
+    )
+    session.add(task)
+    await session.commit()
+    return {"id": task.id, "message": "周期任务创建成功"}
+
+
+@router.delete("/scheduled-tasks/{task_id}")
+async def delete_scheduled_task(
+    book_id: int,
+    task_id: int,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    await _get_book(book_id, user, session)
+    task = await session.get(ScheduledTask, task_id)
+    if not task or task.book_id != book_id:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    await session.delete(task)
+    await session.commit()
+    return {"message": "删除成功"}

@@ -76,3 +76,32 @@ class Budget(Base):
     category_id: Mapped[int] = mapped_column(
         ForeignKey("accounting_categories.id", ondelete="CASCADE"), nullable=True
     )
+
+class ScheduledTask(Base):
+    __tablename__ = "accounting_scheduled_tasks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    book_id: Mapped[int] = mapped_column(
+        ForeignKey("accounting_books.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    # 频率: 每天 / 每周 / 每月 / 每年
+    frequency: Mapped[str] = mapped_column(String(20), nullable=False)
+    next_run: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    
+    # Payload for the auto-generated record
+    type: Mapped[str] = mapped_column(String(20), nullable=False)
+    amount: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounting_accounts.id"), nullable=True
+    )
+    target_account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounting_accounts.id"), nullable=True
+    )
+    category_id: Mapped[int] = mapped_column(
+        ForeignKey("accounting_categories.id"), nullable=True
+    )
+    payee: Mapped[str] = mapped_column(String(100), nullable=True)
+    remark: Mapped[str] = mapped_column(String(500), nullable=True)
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    creator_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+
