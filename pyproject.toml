@@ -41,6 +41,15 @@ dependencies = [
     "mistune>=3.0.0",
     "ddgs>=9.10.0",
     "exa-py>=2.4.0",
+    # Template backend integration
+    "fastapi>=0.109.0",
+    "uvicorn[standard]>=0.27.0,<0.31.0",
+    "pydantic-settings>=2.0.0,<3.0.0",
+    "sqlalchemy[asyncio]>=2.0.0,<2.1.0",
+    "fastapi-users[oauth,sqlalchemy]>=15.0.3",
+    "passlib[bcrypt]>=1.7.4",
+    "python-multipart>=0.0.20,<0.1.0",
+    "toml>=0.10.2",
 ]
 
 [project.optional-dependencies]
