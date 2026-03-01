@@ -145,9 +145,19 @@ class TelegramAdapter(BotAdapter):
         await self.application.updater.start_polling()
 
     async def stop(self) -> None:
-        await self.application.updater.stop()
-        await self.application.stop()
-        await self.application.shutdown()
+        try:
+            if getattr(self.application, "updater", None):
+                await self.application.updater.stop()
+        except RuntimeError:
+            pass
+        except Exception as e:
+            logger.warning(f"Error stopping Telegram updater: {e}")
+
+        try:
+            await self.application.stop()
+            await self.application.shutdown()
+        except Exception as e:
+            logger.warning(f"Error shutting down Telegram app: {e}")
 
     async def reply_text(
         self, context: UnifiedContext, text: str, ui: Optional[Dict] = None, **kwargs
