@@ -1,10 +1,11 @@
 import uvicorn
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from api.api.router import api_router
 from api.auth.router import router as auth_router
@@ -55,15 +56,14 @@ app.mount(
 )
 
 
-@app.get("/{full_path:path}")
-async def serve_spa(full_path: str):
-    # Try to serve requested file
-    file_path = os.path.join(static_dir, full_path)
-    if os.path.isfile(file_path):
-        return FileResponse(file_path)
-
-    # SPA Fallback
+def _serve_spa_html(full_path: str) -> FileResponse | HTMLResponse:
+    """Serve index.html with optional accounting PWA overrides."""
     index_path = os.path.join(static_dir, "index.html")
+
+    # Try to serve a real static file first
+    file_path = os.path.join(static_dir, full_path)
+    if full_path and os.path.isfile(file_path):
+        return FileResponse(file_path)
 
     # Generate Accounting-specific PWA headers on the fly
     if full_path.startswith("accounting"):
@@ -87,6 +87,19 @@ async def serve_spa(full_path: str):
             pass
 
     return FileResponse(index_path)
+
+
+@app.exception_handler(StarletteHTTPException)
+async def spa_exception_handler(request: Request, exc: StarletteHTTPException):
+    """For 404s on non-API paths, serve the SPA index.html (client-side routing)."""
+    if exc.status_code == 404 and not request.url.path.startswith("/api/"):
+        return _serve_spa_html(request.url.path.lstrip("/"))
+    # For API 404s or other HTTP errors, return JSON as normal
+    return HTMLResponse(
+        content=f'{{"detail":"{exc.detail}"}}',
+        status_code=exc.status_code,
+        media_type="application/json",
+    )
 
 
 if __name__ == "__main__":
