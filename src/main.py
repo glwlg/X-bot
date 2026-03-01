@@ -28,10 +28,11 @@ from core.config import (
     CORE_CHAT_WORKER_BACKEND,
     HEARTBEAT_ENABLED,
     HEARTBEAT_MODE,
-    WORKER_RUNTIME_MODE,
+    WEB_DASHBOARD_ENABLED,
 )
 from core.heartbeat_worker import heartbeat_worker
-from worker_runtime.result_relay import worker_result_relay
+from core.waiting_phrase_store import waiting_phrase_store
+from manager.relay.result_relay import worker_result_relay
 from handlers import (
     start,
     handle_new_command,
@@ -69,6 +70,7 @@ from core.platform.registry import adapter_manager
 from core.platform.models import MessageType
 from platforms.telegram.adapter import TelegramAdapter
 from platforms.discord.adapter import DiscordAdapter
+from platforms.web.server import web_dashboard_server
 
 # 日志配置
 logging.basicConfig(
@@ -93,6 +95,7 @@ async def init_services() -> None:
         from core.scheduler import (
             scheduler,
             load_jobs_from_db,
+            start_stock_scheduler,
             start_dynamic_skill_scheduler,
         )
 
@@ -103,8 +106,9 @@ async def init_services() -> None:
         # Initialize Jobs
         await load_jobs_from_db()
         logger.info(
-            "RSS/Stock built-in schedulers are disabled; heartbeat mechanism drives these checks."
+            "Starting built-in stock scheduler (10m in trading hours); RSS built-in scheduler remains disabled."
         )
+        start_stock_scheduler()
         # 启动动态 Skill 定时任务
         start_dynamic_skill_scheduler()
         logger.info("✅ Schedulers started.")
@@ -123,7 +127,6 @@ async def init_services() -> None:
                 "core_chat_worker_backend": CORE_CHAT_WORKER_BACKEND,
                 "heartbeat_enabled": HEARTBEAT_ENABLED,
                 "heartbeat_mode": HEARTBEAT_MODE,
-                "worker_runtime_mode": WORKER_RUNTIME_MODE,
             },
             actor="bootstrap",
             reason="init_services_snapshot",
@@ -199,7 +202,10 @@ async def main():
 
     # --- Global Initialization (Decoupled from TG) ---
     await init_services()
+    waiting_phrase_store.schedule_startup_refresh()
     await heartbeat_worker.start()
+    if WEB_DASHBOARD_ENABLED:
+        await web_dashboard_server.start()
 
     # if tg_app:
     #     await setup_telegram_commands(tg_app)
@@ -395,6 +401,7 @@ async def main():
     finally:
         logger.info("Shutting down...")
         await heartbeat_worker.stop()
+        await web_dashboard_server.stop()
         await worker_result_relay.stop()
         await adapter_manager.stop_all()
 

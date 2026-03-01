@@ -1,0 +1,69 @@
+import pytest
+
+import manager.dev.runtime as runtime_module
+
+
+def test_codex_default_template_enables_workspace_write(monkeypatch):
+    monkeypatch.delenv("CODING_BACKEND_CODEX_ARGS_TEMPLATE", raising=False)
+    cmd, args = runtime_module._build_coding_command("codex", "do something")
+    assert cmd == "codex"
+    assert "exec" in args
+    assert "--model" in args
+    model_index = args.index("--model")
+    assert args[model_index + 1] == "gpt-5.3-codex"
+    assert "-c" in args
+    config_index = args.index("-c")
+    assert args[config_index + 1] == "model_reasoning_effort=xhigh"
+    assert "--sandbox" in args
+    assert "workspace-write" in args
+
+
+def test_gemini_default_template_sets_gemini_3_1_pro(monkeypatch):
+    monkeypatch.delenv("CODING_BACKEND_GEMINI_ARGS_TEMPLATE", raising=False)
+    cmd, args = runtime_module._build_coding_command("gemini-cli", "do something")
+    assert cmd == "gemini-cli"
+    assert "--model" in args
+    model_index = args.index("--model")
+    assert args[model_index + 1] == "gemini-3.1-pro"
+    assert "--prompt" in args
+
+
+def test_codex_output_failure_detection_from_readonly_message():
+    result = {
+        "ok": True,
+        "summary": "I couldn't create file because environment is mounted read-only",
+        "stdout": "",
+        "stderr": "",
+    }
+    assert runtime_module._codex_output_indicates_failure(result) is True
+
+    patched = runtime_module._force_command_failed(result)
+    assert patched["ok"] is False
+    assert patched["error_code"] == "command_failed"
+
+
+@pytest.mark.asyncio
+async def test_run_coding_backend_turns_zero_exit_readonly_into_failure(monkeypatch):
+    async def fake_run_exec(command, *, cwd, timeout_sec=1200, log_path=""):
+        _ = (command, cwd, timeout_sec, log_path)
+        return {
+            "ok": True,
+            "error_code": "",
+            "message": "",
+            "summary": "I couldn't create TEST_WRITE.txt because this environment is mounted read-only.",
+            "stdout": "",
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(runtime_module, "run_exec", fake_run_exec)
+
+    result = await runtime_module.run_coding_backend(
+        instruction="create file",
+        backend="codex",
+        cwd="/tmp",
+        timeout_sec=120,
+        source="test",
+    )
+
+    assert result["ok"] is False
+    assert result["error_code"] == "command_failed"

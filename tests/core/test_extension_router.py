@@ -92,7 +92,7 @@ def test_extension_router_news_intent_prefers_search_tools(monkeypatch):
         "get_skills_summary",
         lambda: [
             {
-                "name": "searxng_search",
+                "name": "web_search",
                 "description": "聚合网络搜索",
                 "triggers": ["搜索", "search"],
                 "input_schema": {"type": "object", "properties": {}},
@@ -110,7 +110,7 @@ def test_extension_router_news_intent_prefers_search_tools(monkeypatch):
     candidates = router.route("今天有什么有意思的新闻", max_candidates=3)
 
     assert candidates
-    assert candidates[0].name == "searxng_search"
+    assert candidates[0].name == "web_search"
 
 
 def test_extension_router_news_writing_intent_keeps_writer_candidate(monkeypatch):
@@ -119,7 +119,7 @@ def test_extension_router_news_writing_intent_keeps_writer_candidate(monkeypatch
         "get_skills_summary",
         lambda: [
             {
-                "name": "searxng_search",
+                "name": "web_search",
                 "description": "聚合网络搜索",
                 "triggers": ["搜索", "search"],
                 "input_schema": {"type": "object", "properties": {}},
@@ -138,3 +138,32 @@ def test_extension_router_news_writing_intent_keeps_writer_candidate(monkeypatch
     names = [item.name for item in candidates]
 
     assert "news_article_writer" in names
+
+
+def test_extension_router_skips_manager_only_skill(monkeypatch):
+    monkeypatch.setattr(
+        extension_router_module.skill_loader,
+        "get_skills_summary",
+        lambda: [
+            {
+                "name": "internal_dev_tool",
+                "description": "internal manager development capability",
+                "triggers": ["internal dev"],
+                "manager_only": True,
+                "input_schema": {"type": "object", "properties": {}},
+            },
+            {
+                "name": "rss_subscribe",
+                "description": "Subscribe to RSS feeds",
+                "triggers": ["rss"],
+                "input_schema": {"type": "object", "properties": {}},
+            },
+        ],
+    )
+
+    router = ExtensionRouter()
+    candidates = router.route("帮我订阅这个 RSS 地址", max_candidates=5)
+    names = [item.name for item in candidates]
+
+    assert "internal_dev_tool" not in names
+    assert "rss_subscribe" in names

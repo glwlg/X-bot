@@ -4,11 +4,14 @@ Skill 管理 handlers - /teach, /skills 等命令
 
 import logging
 import os
+import re
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 from core.platform.models import UnifiedContext
 
 from core.config import is_user_admin
+from core.extension_executor import ExtensionExecutor
+from core.primitive_runtime import PrimitiveRuntime
 from core.skill_loader import skill_loader
 from handlers.base_handlers import check_permission_unified, CONVERSATION_END
 
@@ -57,31 +60,49 @@ async def handle_teach_input(ctx: UnifiedContext) -> int:
 
 async def process_teach(ctx: UnifiedContext, requirement: str) -> int:
     """处理新能力学习"""
-    user_id = ctx.message.user.id
-
     msg = await ctx.reply("🤔 正在理解您的需求并生成技能...")
 
-    creator = skill_loader.import_skill_module("skill_manager", "creator.py")
-    if not creator:
-        await ctx.reply("❌ Skill Manager 加载失败")
-        return CONVERSATION_END
+    executor = ExtensionExecutor()
+    runtime = PrimitiveRuntime()
+    result = await executor.execute(
+        "skill_manager",
+        {"action": "create", "requirement": requirement},
+        ctx=ctx,
+        runtime=runtime,
+    )
 
-    result = await creator.create_skill(requirement, user_id)
-
-    if not result["success"]:
+    if not result.ok:
         await ctx.edit_message(
             getattr(msg, "message_id", getattr(msg, "id", None)),
-            f"❌ 生成失败:{result.get('error', '未知错误')}",
+            f"❌ 生成失败:{result.message or result.error_code or '未知错误'}",
         )
         return CONVERSATION_END
 
-    skill_name = result["skill_name"]
-    skill_md = result.get("skill_md", "")
-    has_scripts = result.get("has_scripts", False)
+    payload = dict(result.data or {}) if isinstance(result.data, dict) else {}
+    skill_name = str(payload.get("created_skill_name") or "").strip()
+    skill_md = str(payload.get("skill_md") or "")
+    has_scripts = bool(payload.get("has_scripts"))
 
-    skill_name = result["skill_name"]
-    skill_md = result.get("skill_md", "")
-    has_scripts = result.get("has_scripts", False)
+    if not skill_name:
+        text = str(result.text or "")
+        matched = re.search(r"技能\s*`([a-zA-Z0-9_\-]+)`", text)
+        if matched:
+            skill_name = str(matched.group(1) or "").strip()
+
+    if skill_name and not skill_md:
+        skill_info = skill_loader.get_skill(skill_name) or {}
+        skill_md_path = str(skill_info.get("skill_md_path") or "").strip()
+        if skill_md_path and os.path.exists(skill_md_path):
+            try:
+                with open(skill_md_path, "r", encoding="utf-8") as f:
+                    skill_md = f.read()
+            except Exception:
+                skill_md = ""
+        if not has_scripts:
+            has_scripts = bool(skill_info.get("scripts"))
+
+    if not skill_name:
+        skill_name = "unknown"
 
     skill_loader.reload_skills()
 
@@ -199,6 +220,8 @@ async def skills_command(ctx: UnifiedContext) -> None:
     learned = []
 
     for name, info in index.items():
+        if bool(info.get("manager_only")):
+            continue
         description = info.get("description", "")[:60]
         # 标准格式没有 triggers,显示描述
         line = f"• **{name}**: {description}"

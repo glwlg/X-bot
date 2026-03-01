@@ -19,10 +19,9 @@ class TestIdentity:
                 runtime_policy_ctx={"agent_kind": "core-manager"},
             )
 
-            assert "你是 X-Bot 的 Core Manager" in base
             assert "SOUL" in base
             assert "I am a helpful assistant with a distinct personality." in base
-            assert "不要暴露内部实现细节" in base
+            assert "Worker 池" in base
 
     def test_worker_identity_prompt(self):
         with patch(

@@ -6,12 +6,10 @@ import pytest
 
 import core.agent_orchestrator as orchestrator_module
 import core.heartbeat_worker as heartbeat_worker_module
-import core.worker_runtime as worker_runtime_module
 from core.agent_orchestrator import AgentOrchestrator
 from core.heartbeat_store import heartbeat_store
 from core.heartbeat_worker import HeartbeatWorker
 from core.markdown_memory_store import markdown_memory_store
-from core.worker_runtime import WorkerRuntime
 
 
 class _DummyContext:
@@ -135,116 +133,6 @@ async def test_manager_reply_uses_worker_name_and_hides_internal_worker_tokens(
     assert "worker_id" not in answer.lower()
     assert "backend" not in answer.lower()
     assert captured_metadata.get("user_id") == "dispatch-user"
-
-
-class _FakeWorkerRegistry:
-    def __init__(self, workspace_root: str):
-        self.worker = {
-            "id": "worker-main",
-            "name": "Nova Ops",
-            "backend": "core-agent",
-            "workspace_root": workspace_root,
-            "status": "ready",
-        }
-
-    async def get_worker(self, worker_id: str):
-        if worker_id == "worker-main":
-            return dict(self.worker)
-        return None
-
-    async def update_worker(self, worker_id: str, **fields):
-        if worker_id != "worker-main":
-            return None
-        self.worker.update(fields)
-        return dict(self.worker)
-
-
-class _FakeWorkerTaskStore:
-    def __init__(self):
-        self.updated: list[dict] = []
-
-    async def create_task(self, **kwargs):
-        return {
-            "task_id": "wt-core-1",
-            "created_at": "2026-02-16T00:00:00+00:00",
-            **kwargs,
-        }
-
-    async def update_task(self, task_id: str, **fields):
-        row = {"task_id": task_id, **fields}
-        self.updated.append(row)
-        return row
-
-
-@pytest.mark.asyncio
-async def test_worker_core_agent_can_use_tools(monkeypatch, tmp_path):
-    fake_registry = _FakeWorkerRegistry(str(tmp_path / "workers" / "worker-main"))
-    fake_store = _FakeWorkerTaskStore()
-    monkeypatch.setattr(worker_runtime_module, "worker_registry", fake_registry)
-    monkeypatch.setattr(worker_runtime_module, "worker_task_store", fake_store)
-    monkeypatch.setattr(
-        worker_runtime_module.tool_access_store,
-        "is_backend_allowed",
-        lambda **_kwargs: (True, {"reason": "test_override"}),
-    )
-
-    orchestrator = AgentOrchestrator()
-    called_tools: list[tuple[str, dict]] = []
-
-    async def fake_execute_core_tool(
-        name,
-        args,
-        execution_policy,
-        task_workspace_root,
-    ):
-        _ = execution_policy
-        _ = task_workspace_root
-        called_tools.append((str(name), dict(args or {})))
-        return {"ok": True, "summary": "worker-ready", "result": "worker-ready"}
-
-    async def fake_stream(
-        message_history,
-        tools=None,
-        tool_executor=None,
-        system_instruction=None,
-        event_callback=None,
-    ):
-        _ = message_history
-        _ = tools
-        _ = system_instruction
-        tool_result = await tool_executor("bash", {"command": "echo worker-ready"})
-        text = f"工具执行完成：{str(tool_result.get('summary') or 'ok')}"
-        if event_callback:
-            await event_callback("final_response", {"text_preview": text})
-        yield text
-
-    monkeypatch.setattr(
-        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
-    )
-    monkeypatch.setattr(
-        orchestrator.tool_broker, "execute_core_tool", fake_execute_core_tool
-    )
-    monkeypatch.setattr(
-        orchestrator.ai_service, "generate_response_stream", fake_stream
-    )
-    monkeypatch.setattr(orchestrator_module, "agent_orchestrator", orchestrator)
-
-    runtime = WorkerRuntime()
-    runtime.runtime_mode = "local"
-
-    result = await runtime.execute_task(
-        worker_id="worker-main",
-        source="user_chat",
-        instruction="执行 worker 自检",
-        backend="core-agent",
-        metadata={"user_id": "tool-user"},
-    )
-
-    assert result["ok"] is True
-    assert "工具执行完成" in str(result.get("result") or "")
-    assert called_tools
-    assert called_tools[0][0] == "bash"
-    assert called_tools[0][1]["command"] == "echo worker-ready"
 
 
 @pytest.mark.asyncio

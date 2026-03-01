@@ -71,6 +71,7 @@ async def test_orchestrator_default_tools_are_primitives(monkeypatch):
         "list_workers",
         "dispatch_worker",
         "worker_status",
+        "software_delivery",
     ]
     assert "call_skill" not in captured["tool_names"]
 
@@ -489,9 +490,9 @@ async def test_orchestrator_uses_runtime_user_id_override_for_worker_policy(
     captured = {}
 
     candidate = ExtensionCandidate(
-        name="searxng_search",
+        name="web_search",
         description="search",
-        tool_name="ext_searxng_search",
+        tool_name="ext_web_search",
         input_schema={"type": "object", "properties": {}},
         schema_summary="required=[], fields=[]",
         triggers=["search", "天气"],
@@ -523,13 +524,13 @@ async def test_orchestrator_uses_runtime_user_id_override_for_worker_policy(
 
     ctx = DummyContext()
     ctx.message.user.id = "42"
-    ctx.message.platform = "worker_runtime"
+    ctx.message.platform = "worker_kernel"
     ctx.user_data = {"runtime_user_id": "worker::worker-main::42"}
     message_history = [{"role": "user", "parts": [{"text": "查天气"}]}]
 
     _ = [chunk async for chunk in orchestrator.handle_message(ctx, message_history)]
 
-    assert "ext_searxng_search" in captured["tool_names"]
+    assert "ext_web_search" in captured["tool_names"]
     assert "list_workers" not in captured["tool_names"]
 
 

@@ -19,15 +19,20 @@ class DummyAdapter:
         self.calls = []
         self.edit_calls = []
         self.fail_first_too_long = False
+        self.fail_first_timeout = False
 
     async def reply_text(self, context, text, ui=None, **kwargs):
         self.calls.append({"text": text, "ui": ui, "kwargs": kwargs})
         return {"message_id": len(self.calls)}
 
     async def edit_text(self, context, message_id, text, **kwargs):
-        self.edit_calls.append({"message_id": message_id, "text": text, "kwargs": kwargs})
+        self.edit_calls.append(
+            {"message_id": message_id, "text": text, "kwargs": kwargs}
+        )
         if self.fail_first_too_long and len(self.edit_calls) == 1:
             raise MessageSendError("Message_too_long")
+        if self.fail_first_timeout and len(self.edit_calls) == 1:
+            raise MessageSendError("Timed out")
         return {"message_id": message_id, "text": text}
 
 
@@ -94,3 +99,17 @@ async def test_reply_coerces_non_string_payload():
 
     assert len(adapter.calls) == 1
     assert adapter.calls[0]["text"] == "-1"
+
+
+@pytest.mark.asyncio
+async def test_edit_message_falls_back_to_reply_on_timeout_error():
+    adapter = DummyAdapter()
+    adapter.fail_first_timeout = True
+    ctx = _build_context(adapter)
+
+    result = await ctx.edit_message("mid-timeout", "timeout fallback")
+
+    assert len(adapter.edit_calls) == 1
+    assert len(adapter.calls) == 1
+    assert adapter.calls[0]["text"] == "timeout fallback"
+    assert result == {"message_id": 1}

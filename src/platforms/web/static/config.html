@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>X 机器人配置中心</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;500;600&family=Noto+Sans+SC:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/assets/config.css" />
+  </head>
+  <body>
+    <div class="config-app">
+      <header class="topbar">
+        <div>
+          <p class="label">X 机器人控制台</p>
+          <h1>配置中心</h1>
+          <p class="sub">系统配置 / 管理者配置 / 执行者配置</p>
+        </div>
+        <a class="btn" href="/">返回沙盘</a>
+      </header>
+
+      <main class="layout">
+        <section class="panel tabs-panel">
+          <div class="tabs" id="config-tabs">
+            <button class="tab active" data-tab="system">系统配置</button>
+            <button class="tab" data-tab="manager">管理者配置</button>
+            <button class="tab" data-tab="worker">执行者配置</button>
+          </div>
+
+          <section class="tab-content active" id="tab-system">
+            <div class="panel-head">
+              <h2>系统配置</h2>
+              <span id="system-status">加载中...</span>
+            </div>
+            <div class="kv-grid" id="system-grid"></div>
+            <details class="advanced-box">
+              <summary>高级设置</summary>
+              <label>
+                看板令牌
+                <input id="token" type="password" placeholder="仅写操作需要" />
+              </label>
+            </details>
+          </section>
+
+          <section class="tab-content" id="tab-manager">
+            <div class="panel-head">
+              <h2>管理者配置</h2>
+              <span id="manager-status">空闲</span>
+            </div>
+            <form id="manager-form" class="form-grid">
+              <label class="full">
+                管理者 SOUL（核心）
+                <textarea id="manager-soul" placeholder="请输入管理者 SOUL 内容"></textarea>
+              </label>
+              <div class="actions full">
+                <button type="button" id="manager-reload">重新加载当前配置</button>
+                <button type="submit" id="manager-apply">保存管理者配置</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="tab-content" id="tab-worker">
+            <div class="panel-head">
+              <h2>执行者配置</h2>
+              <span id="worker-status">空闲</span>
+            </div>
+
+            <form id="worker-create-form" class="form-grid">
+              <label>
+                新执行者名称
+                <input id="new-worker-name" type="text" placeholder="例如 atlas" />
+              </label>
+              <label>
+                执行后端
+                <select id="new-worker-backend">
+                  <option value="core-agent">核心代理</option>
+                  <option value="codex">编码引擎</option>
+                  <option value="gemini-cli">双子引擎</option>
+                  <option value="shell">系统终端</option>
+                </select>
+              </label>
+              <div class="actions full">
+                <button type="submit">新增执行者</button>
+              </div>
+            </form>
+
+            <form id="worker-edit-form" class="form-grid">
+              <label>
+                选择执行者
+                <select id="worker-select"></select>
+              </label>
+              <label>
+                执行者名称
+                <input id="worker-name" type="text" />
+              </label>
+              <label>
+                执行后端
+                <select id="worker-backend">
+                  <option value="core-agent">核心代理</option>
+                  <option value="codex">编码引擎</option>
+                  <option value="gemini-cli">双子引擎</option>
+                  <option value="shell">系统终端</option>
+                </select>
+              </label>
+              <label>
+                运行状态
+                <select id="worker-runtime-status">
+                  <option value="ready">就绪</option>
+                  <option value="busy">忙碌</option>
+                  <option value="paused">暂停</option>
+                </select>
+              </label>
+              <label class="full">
+                执行者 SOUL
+                <textarea id="worker-soul" placeholder="请输入执行者 SOUL 内容"></textarea>
+              </label>
+              <div class="actions full">
+                <button type="button" id="worker-delete" class="danger">删除执行者</button>
+                <button type="button" id="worker-reload">重新加载执行者配置</button>
+                <button type="submit" id="worker-apply">保存执行者配置</button>
+              </div>
+            </form>
+          </section>
+        </section>
+
+        <section class="panel">
+          <div class="panel-head">
+            <h2>执行者列表</h2>
+            <span id="workers-note">加载中...</span>
+          </div>
+          <div id="worker-cards" class="worker-cards"></div>
+        </section>
+      </main>
+    </div>
+    <script src="/assets/config.js" defer></script>
+  </body>
+</html>
