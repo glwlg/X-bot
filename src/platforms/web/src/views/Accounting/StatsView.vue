@@ -10,301 +10,30 @@ import {
 } from '@/api/accounting'
 import { ChevronDown, ChevronRight, Loader2 } from 'lucide-vue-next'
 import * as echarts from 'echarts'
+import {
+    createDefaultCustomRangeState,
+    getRangeWindow,
+    isCustomPreset,
+    rangeOptions,
+    toIsoLocal,
+    type Granularity,
+    type RangePreset,
+} from './statsRange'
 
 type StatType = '支出' | '收入'
-type Granularity = 'day' | 'week' | 'month' | 'quarter' | 'year'
-type RangePreset =
-    | 'all_time'
-    | 'this_year'
-    | 'this_quarter'
-    | 'this_month'
-    | 'this_week'
-    | 'last_12_months'
-    | 'last_30_days'
-    | 'last_6_weeks'
-    | 'year_range'
-    | 'quarter_range'
-    | 'month_range'
-    | 'week_range'
-    | 'day_range'
-
-interface RangeWindow {
-    start: Date
-    end: Date
-    granularity: Granularity
-    label: string
-}
 
 const store = useAccountingStore()
 const router = useRouter()
 const now = new Date()
 
 const statType = ref<StatType>('支出')
-const rangePreset = ref<RangePreset>('this_month')
+const rangePreset = ref<RangePreset>('last_12_months')
+const customRange = ref(createDefaultCustomRangeState(now))
 const showRangeDialog = ref(false)
 
-const yearNow = now.getFullYear()
-const quarterNow = Math.floor(now.getMonth() / 3) + 1
-
-const customYearStart = ref(yearNow - 1)
-const customYearEnd = ref(yearNow)
-
-const customQuarterStartYear = ref(yearNow)
-const customQuarterStartQuarter = ref(1)
-const customQuarterEndYear = ref(yearNow)
-const customQuarterEndQuarter = ref(quarterNow)
-
-const pad2 = (n: number) => String(n).padStart(2, '0')
-
-const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate())
-const addDays = (d: Date, days: number) => new Date(d.getFullYear(), d.getMonth(), d.getDate() + days)
-const startOfWeek = (d: Date) => {
-    const day = d.getDay() === 0 ? 7 : d.getDay()
-    return addDays(startOfDay(d), -(day - 1))
-}
-const startOfMonth = (d: Date) => new Date(d.getFullYear(), d.getMonth(), 1)
-const startOfQuarter = (d: Date) => new Date(d.getFullYear(), Math.floor(d.getMonth() / 3) * 3, 1)
-
-const toDateValue = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
-const toMonthValue = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`
-
-const getIsoWeekStart = (year: number, week: number) => {
-    const jan4 = new Date(year, 0, 4)
-    const jan4Day = jan4.getDay() === 0 ? 7 : jan4.getDay()
-    const week1Monday = addDays(jan4, -(jan4Day - 1))
-    return addDays(week1Monday, (week - 1) * 7)
-}
-
-const toWeekValue = (d: Date) => {
-    const target = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
-    const dayNum = target.getUTCDay() || 7
-    target.setUTCDate(target.getUTCDate() + 4 - dayNum)
-    const yearStart = new Date(Date.UTC(target.getUTCFullYear(), 0, 1))
-    const weekNo = Math.ceil((((target.getTime() - yearStart.getTime()) / 86400000) + 1) / 7)
-    return `${target.getUTCFullYear()}-W${pad2(weekNo)}`
-}
-
-const parseDateValue = (value: string) => {
-    const m = value.match(/^(\d{4})-(\d{2})-(\d{2})$/)
-    if (!m) return startOfDay(now)
-    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]))
-}
-
-const parseMonthValue = (value: string) => {
-    const m = value.match(/^(\d{4})-(\d{2})$/)
-    if (!m) return startOfMonth(now)
-    return new Date(Number(m[1]), Number(m[2]) - 1, 1)
-}
-
-const parseWeekValue = (value: string) => {
-    const m = value.match(/^(\d{4})-W(\d{2})$/)
-    if (!m) return startOfWeek(now)
-    return getIsoWeekStart(Number(m[1]), Number(m[2]))
-}
-
-const customMonthStart = ref(toMonthValue(new Date(yearNow, Math.max(0, now.getMonth() - 2), 1)))
-const customMonthEnd = ref(toMonthValue(new Date(yearNow, now.getMonth(), 1)))
-
-const customWeekStart = ref(toWeekValue(addDays(startOfWeek(now), -35)))
-const customWeekEnd = ref(toWeekValue(startOfWeek(now)))
-
-const customDayStart = ref(toDateValue(addDays(startOfDay(now), -29)))
-const customDayEnd = ref(toDateValue(startOfDay(now)))
-
-const yearOptions = computed(() => {
-    const result: number[] = []
-    for (let y = yearNow - 8; y <= yearNow + 2; y++) {
-        result.push(y)
-    }
-    return result
-})
-
-const quarterOptions = [1, 2, 3, 4]
-
-const rangeOptions: Array<{ key: RangePreset; label: string }> = [
-    { key: 'all_time', label: '全部时间' },
-    { key: 'this_year', label: '本年' },
-    { key: 'this_quarter', label: '本季' },
-    { key: 'this_month', label: '本月' },
-    { key: 'this_week', label: '本周' },
-    { key: 'last_12_months', label: '近12个月' },
-    { key: 'last_30_days', label: '近30天' },
-    { key: 'last_6_weeks', label: '近6周' },
-    { key: 'year_range', label: '年范围' },
-    { key: 'quarter_range', label: '季范围' },
-    { key: 'month_range', label: '月范围' },
-    { key: 'week_range', label: '周范围' },
-    { key: 'day_range', label: '日范围' },
-]
-
-const isCustomRange = computed(() => {
-    return ['year_range', 'quarter_range', 'month_range', 'week_range', 'day_range'].includes(rangePreset.value)
-})
-
-const normalizeWindow = (a: Date, b: Date) => {
-    let start = a
-    let end = b
-    if (start.getTime() > end.getTime()) {
-        start = b
-        end = a
-    }
-    if (start.getTime() === end.getTime()) {
-        end = addDays(end, 1)
-    }
-    return { start, end }
-}
-
-const monthsBetween = (start: Date, end: Date) => {
-    return (end.getFullYear() - start.getFullYear()) * 12 + (end.getMonth() - start.getMonth())
-}
-
-const getRangeWindow = (): RangeWindow => {
-    const today = new Date()
-
-    if (rangePreset.value === 'all_time') {
-        return {
-            start: new Date(1970, 0, 1),
-            end: addDays(startOfDay(today), 1),
-            granularity: 'year',
-            label: '全部时间',
-        }
-    }
-
-    if (rangePreset.value === 'this_year') {
-        return {
-            start: new Date(today.getFullYear(), 0, 1),
-            end: new Date(today.getFullYear() + 1, 0, 1),
-            granularity: 'month',
-            label: `${today.getFullYear()}年`,
-        }
-    }
-
-    if (rangePreset.value === 'this_quarter') {
-        const start = startOfQuarter(today)
-        return {
-            start,
-            end: new Date(start.getFullYear(), start.getMonth() + 3, 1),
-            granularity: 'week',
-            label: `${today.getFullYear()}年Q${Math.floor(today.getMonth() / 3) + 1}`,
-        }
-    }
-
-    if (rangePreset.value === 'this_month') {
-        const start = startOfMonth(today)
-        return {
-            start,
-            end: new Date(start.getFullYear(), start.getMonth() + 1, 1),
-            granularity: 'day',
-            label: `${today.getFullYear()}年${today.getMonth() + 1}月`,
-        }
-    }
-
-    if (rangePreset.value === 'this_week') {
-        const start = startOfWeek(today)
-        return {
-            start,
-            end: addDays(start, 7),
-            granularity: 'day',
-            label: '本周',
-        }
-    }
-
-    if (rangePreset.value === 'last_12_months') {
-        const thisMonth = startOfMonth(today)
-        return {
-            start: new Date(thisMonth.getFullYear(), thisMonth.getMonth() - 11, 1),
-            end: new Date(thisMonth.getFullYear(), thisMonth.getMonth() + 1, 1),
-            granularity: 'month',
-            label: '近12个月',
-        }
-    }
-
-    if (rangePreset.value === 'last_30_days') {
-        return {
-            start: addDays(startOfDay(today), -29),
-            end: addDays(startOfDay(today), 1),
-            granularity: 'day',
-            label: '近30天',
-        }
-    }
-
-    if (rangePreset.value === 'last_6_weeks') {
-        const thisWeekStart = startOfWeek(today)
-        return {
-            start: addDays(thisWeekStart, -35),
-            end: addDays(thisWeekStart, 7),
-            granularity: 'week',
-            label: '近6周',
-        }
-    }
-
-    if (rangePreset.value === 'year_range') {
-        const startYear = Math.min(customYearStart.value, customYearEnd.value)
-        const endYear = Math.max(customYearStart.value, customYearEnd.value)
-        const span = endYear - startYear + 1
-        return {
-            start: new Date(startYear, 0, 1),
-            end: new Date(endYear + 1, 0, 1),
-            granularity: span > 5 ? 'year' : 'month',
-            label: `${startYear}-${endYear}年`,
-        }
-    }
-
-    if (rangePreset.value === 'quarter_range') {
-        const start = new Date(customQuarterStartYear.value, (customQuarterStartQuarter.value - 1) * 3, 1)
-        const endBase = new Date(customQuarterEndYear.value, (customQuarterEndQuarter.value - 1) * 3, 1)
-        const normalized = normalizeWindow(start, new Date(endBase.getFullYear(), endBase.getMonth() + 3, 1))
-        const spanMonths = monthsBetween(normalized.start, normalized.end)
-        const sQuarter = Math.floor(normalized.start.getMonth() / 3) + 1
-        const eQuarter = Math.floor((normalized.end.getMonth() - 1 + 12) % 12 / 3) + 1
-        const eQuarterYear = normalized.end.getMonth() === 0 ? normalized.end.getFullYear() - 1 : normalized.end.getFullYear()
-        return {
-            start: normalized.start,
-            end: normalized.end,
-            granularity: spanMonths > 24 ? 'year' : 'quarter',
-            label: `${normalized.start.getFullYear()}Q${sQuarter} - ${eQuarterYear}Q${eQuarter}`,
-        }
-    }
-
-    if (rangePreset.value === 'month_range') {
-        const startMonth = parseMonthValue(customMonthStart.value)
-        const endMonth = parseMonthValue(customMonthEnd.value)
-        const normalized = normalizeWindow(startMonth, new Date(endMonth.getFullYear(), endMonth.getMonth() + 1, 1))
-        const spanMonths = monthsBetween(normalized.start, normalized.end)
-        return {
-            start: normalized.start,
-            end: normalized.end,
-            granularity: spanMonths > 6 ? 'month' : 'day',
-            label: `${toMonthValue(normalized.start)} 至 ${toMonthValue(addDays(normalized.end, -1))}`,
-        }
-    }
-
-    if (rangePreset.value === 'week_range') {
-        const startWeek = parseWeekValue(customWeekStart.value)
-        const endWeek = parseWeekValue(customWeekEnd.value)
-        const normalized = normalizeWindow(startWeek, addDays(endWeek, 7))
-        const spanDays = Math.round((normalized.end.getTime() - normalized.start.getTime()) / 86400000)
-        return {
-            start: normalized.start,
-            end: normalized.end,
-            granularity: spanDays > 84 ? 'month' : 'week',
-            label: `${toWeekValue(normalized.start)} 至 ${toWeekValue(addDays(normalized.end, -1))}`,
-        }
-    }
-
-    const startDay = parseDateValue(customDayStart.value)
-    const endDay = parseDateValue(customDayEnd.value)
-    const normalized = normalizeWindow(startDay, addDays(endDay, 1))
-    const spanDays = Math.round((normalized.end.getTime() - normalized.start.getTime()) / 86400000)
-    return {
-        start: normalized.start,
-        end: normalized.end,
-        granularity: spanDays > 180 ? 'month' : (spanDays > 45 ? 'week' : 'day'),
-        label: `${toDateValue(normalized.start)} 至 ${toDateValue(addDays(normalized.end, -1))}`,
-    }
-}
-
-const timeLabel = computed(() => getRangeWindow().label)
+const timeWindow = computed(() => getRangeWindow(rangePreset.value, customRange.value, now))
+const timeLabel = computed(() => timeWindow.value.label)
+const isCustomRange = computed(() => isCustomPreset(rangePreset.value))
 
 const categoryData = ref<CategorySummaryItem[]>([])
 const trendData = ref<PeriodSummaryItem[]>([])
@@ -323,55 +52,21 @@ const pieRef = ref<HTMLElement | null>(null)
 const barRef = ref<HTMLElement | null>(null)
 let pieChart: echarts.ECharts | null = null
 let barChart: echarts.ECharts | null = null
+let pieResizeObserver: ResizeObserver | null = null
+let barResizeObserver: ResizeObserver | null = null
+let delayedRenderTimer: ReturnType<typeof setTimeout> | null = null
 let loadVersion = 0
 
 const formatMoney = (n: number) =>
     new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(n)
 
-const totalCategory = () => categoryData.value.reduce((s, c) => s + c.amount, 0)
+const totalCategory = () => categoryData.value.reduce((sum, item) => sum + item.amount, 0)
 
-const toIsoLocal = (d: Date) => {
-    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`
-}
-
-const loadData = async () => {
-    if (!store.currentBookId) return
-
-    const current = ++loadVersion
-    const window = getRangeWindow()
-    currentGranularity.value = window.granularity
-    loading.value = true
-    try {
-        const [categoryRes, trendRes] = await Promise.all([
-            getCategorySummaryByRange(
-                store.currentBookId,
-                toIsoLocal(window.start),
-                toIsoLocal(window.end),
-                statType.value,
-            ),
-            getRangeSummary(
-                store.currentBookId,
-                toIsoLocal(window.start),
-                toIsoLocal(window.end),
-                window.granularity,
-            ),
-        ])
-
-        if (current !== loadVersion) return
-        categoryData.value = categoryRes.data
-        trendData.value = trendRes.data
-    } finally {
-        if (current === loadVersion) {
-            loading.value = false
-        }
-    }
-
-    if (current !== loadVersion) return
-    await nextTick()
-    renderPie()
-    renderBar()
-    pieChart?.resize()
-    barChart?.resize()
+const formatPeriodLabel = (period: string) => {
+    if (currentGranularity.value === 'day') return period.slice(5)
+    if (currentGranularity.value === 'week') return period.replace(/^\d{4}-/, '')
+    if (currentGranularity.value === 'month') return period.replace('-', '/')
+    return period
 }
 
 const tealColors = [
@@ -379,14 +74,21 @@ const tealColors = [
     '#d946ef', '#f43f5e', '#f97316', '#eab308', '#22c55e',
 ]
 
-const renderPie = () => {
-    if (!pieRef.value) return
-    if (!pieChart) pieChart = echarts.init(pieRef.value)
+const canInitChart = (el: HTMLElement | null) => {
+    return Boolean(el && el.clientWidth > 0 && el.clientHeight > 0)
+}
 
-    const data = categoryData.value.map((c, i) => ({
-        name: c.category,
-        value: c.amount,
-        itemStyle: { color: tealColors[i % tealColors.length] },
+const renderPie = () => {
+    if (!canInitChart(pieRef.value)) return false
+    if (!pieChart && pieRef.value) {
+        pieChart = echarts.init(pieRef.value)
+    }
+    if (!pieChart) return false
+
+    const data = categoryData.value.map((item, index) => ({
+        name: item.category,
+        value: item.amount,
+        itemStyle: { color: tealColors[index % tealColors.length] },
     }))
 
     pieChart.setOption({
@@ -402,11 +104,7 @@ const renderPie = () => {
             type: 'text',
             left: 'center',
             top: '42%',
-            style: {
-                text: '全部',
-                fill: '#9ca3af',
-                fontSize: 12,
-            },
+            style: { text: '全部', fill: '#9ca3af', fontSize: 12 },
         }, {
             type: 'text',
             left: 'center',
@@ -419,18 +117,16 @@ const renderPie = () => {
             },
         }],
     })
-}
-
-const formatPeriodLabel = (period: string) => {
-    if (currentGranularity.value === 'day') return period.slice(5)
-    if (currentGranularity.value === 'week') return period.replace(/^\d{4}-/, '')
-    if (currentGranularity.value === 'month') return period.replace('-', '/')
-    return period
+    pieChart.resize()
+    return true
 }
 
 const renderBar = () => {
-    if (!barRef.value) return
-    if (!barChart) barChart = echarts.init(barRef.value)
+    if (!canInitChart(barRef.value)) return false
+    if (!barChart && barRef.value) {
+        barChart = echarts.init(barRef.value)
+    }
+    if (!barChart) return false
 
     const xAxisData = trendData.value.map(item => formatPeriodLabel(item.period))
     const seriesData = trendData.value.map(item => statType.value === '支出' ? item.expense : item.income)
@@ -465,15 +161,77 @@ const renderBar = () => {
             },
         }],
     })
+    barChart.resize()
+    return true
 }
 
-const selectRange = (value: RangePreset) => {
-    rangePreset.value = value
+const renderChartsSafely = async () => {
+    await nextTick()
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+
+    const pieReady = renderPie()
+    const barReady = renderBar()
+
+    if (pieReady && barReady) return
+
+    if (delayedRenderTimer) {
+        clearTimeout(delayedRenderTimer)
+    }
+    delayedRenderTimer = setTimeout(() => {
+        renderPie()
+        renderBar()
+    }, 120)
+}
+
+const loadData = async () => {
+    if (!store.currentBookId) return
+
+    const current = ++loadVersion
+    const window = timeWindow.value
+    currentGranularity.value = window.granularity
+    loading.value = true
+
+    try {
+        const [categoryRes, trendRes] = await Promise.all([
+            getCategorySummaryByRange(
+                store.currentBookId,
+                toIsoLocal(window.start),
+                toIsoLocal(window.end),
+                statType.value,
+            ),
+            getRangeSummary(
+                store.currentBookId,
+                toIsoLocal(window.start),
+                toIsoLocal(window.end),
+                window.granularity,
+            ),
+        ])
+
+        if (current !== loadVersion) return
+        categoryData.value = categoryRes.data
+        trendData.value = trendRes.data
+    } catch (error) {
+        if (current !== loadVersion) return
+        console.error('stats load failed', error)
+        categoryData.value = []
+        trendData.value = []
+    } finally {
+        if (current === loadVersion) {
+            loading.value = false
+        }
+    }
+
+    if (current !== loadVersion) return
+    await renderChartsSafely()
+}
+
+const selectRange = (nextPreset: RangePreset) => {
+    rangePreset.value = nextPreset
     showRangeDialog.value = false
 }
 
 const makeDetailQuery = () => {
-    const window = getRangeWindow()
+    const window = timeWindow.value
     return {
         start: toIsoLocal(window.start),
         end: toIsoLocal(window.end),
@@ -500,40 +258,42 @@ watch([statType, rangePreset], () => {
 })
 
 watch(
-    [
-        customYearStart,
-        customYearEnd,
-        customQuarterStartYear,
-        customQuarterStartQuarter,
-        customQuarterEndYear,
-        customQuarterEndQuarter,
-        customMonthStart,
-        customMonthEnd,
-        customWeekStart,
-        customWeekEnd,
-        customDayStart,
-        customDayEnd,
-    ],
+    () => customRange.value,
     () => {
         if (isCustomRange.value) {
             loadData()
         }
-    }
+    },
+    { deep: true }
 )
-
-const handleResize = () => {
-    pieChart?.resize()
-    barChart?.resize()
-}
 
 onMounted(async () => {
     if (!store.currentBookId) await store.fetchBooks()
     await loadData()
-    window.addEventListener('resize', handleResize)
+
+    if (typeof ResizeObserver !== 'undefined') {
+        pieResizeObserver = new ResizeObserver(() => pieChart?.resize())
+        barResizeObserver = new ResizeObserver(() => barChart?.resize())
+        if (pieRef.value) pieResizeObserver.observe(pieRef.value)
+        if (barRef.value) barResizeObserver.observe(barRef.value)
+    }
+
+    window.addEventListener('resize', renderChartsSafely)
 })
 
 onBeforeUnmount(() => {
-    window.removeEventListener('resize', handleResize)
+    window.removeEventListener('resize', renderChartsSafely)
+
+    pieResizeObserver?.disconnect()
+    barResizeObserver?.disconnect()
+    pieResizeObserver = null
+    barResizeObserver = null
+
+    if (delayedRenderTimer) {
+        clearTimeout(delayedRenderTimer)
+        delayedRenderTimer = null
+    }
+
     pieChart?.dispose()
     barChart?.dispose()
     pieChart = null
@@ -559,111 +319,112 @@ onBeforeUnmount(() => {
     <div v-if="isCustomRange" class="mx-4 mt-1 rounded-2xl bg-white dark:bg-slate-800 shadow-sm border border-gray-100 dark:border-slate-700 p-4 space-y-3">
       <template v-if="rangePreset === 'year_range'">
         <div class="grid grid-cols-2 gap-2">
-          <select v-model.number="customYearStart" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
-            <option v-for="y in yearOptions" :key="`ys-${y}`" :value="y">{{ y }}年</option>
+          <select v-model.number="customRange.yearStart" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
+            <option v-for="y in 11" :key="`ys-${y}`" :value="now.getFullYear() - 9 + y">{{ now.getFullYear() - 9 + y }}年</option>
           </select>
-          <select v-model.number="customYearEnd" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
-            <option v-for="y in yearOptions" :key="`ye-${y}`" :value="y">{{ y }}年</option>
+          <select v-model.number="customRange.yearEnd" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
+            <option v-for="y in 11" :key="`ye-${y}`" :value="now.getFullYear() - 9 + y">{{ now.getFullYear() - 9 + y }}年</option>
           </select>
         </div>
       </template>
 
       <template v-else-if="rangePreset === 'quarter_range'">
         <div class="grid grid-cols-2 gap-2">
-          <select v-model.number="customQuarterStartYear" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
-            <option v-for="y in yearOptions" :key="`qsy-${y}`" :value="y">{{ y }}年</option>
+          <input v-model.number="customRange.quarterStartYear" type="number" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+          <select v-model.number="customRange.quarterStartQuarter" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
+            <option v-for="q in [1,2,3,4]" :key="`qs-${q}`" :value="q">Q{{ q }}</option>
           </select>
-          <select v-model.number="customQuarterStartQuarter" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
-            <option v-for="q in quarterOptions" :key="`qsq-${q}`" :value="q">Q{{ q }}</option>
-          </select>
-          <select v-model.number="customQuarterEndYear" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
-            <option v-for="y in yearOptions" :key="`qey-${y}`" :value="y">{{ y }}年</option>
-          </select>
-          <select v-model.number="customQuarterEndQuarter" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
-            <option v-for="q in quarterOptions" :key="`qeq-${q}`" :value="q">Q{{ q }}</option>
+          <input v-model.number="customRange.quarterEndYear" type="number" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+          <select v-model.number="customRange.quarterEndQuarter" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm">
+            <option v-for="q in [1,2,3,4]" :key="`qe-${q}`" :value="q">Q{{ q }}</option>
           </select>
         </div>
       </template>
 
       <template v-else-if="rangePreset === 'month_range'">
         <div class="grid grid-cols-2 gap-2">
-          <input v-model="customMonthStart" type="month" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
-          <input v-model="customMonthEnd" type="month" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+          <input v-model="customRange.monthStart" type="month" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+          <input v-model="customRange.monthEnd" type="month" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
         </div>
       </template>
 
       <template v-else-if="rangePreset === 'week_range'">
         <div class="grid grid-cols-2 gap-2">
-          <input v-model="customWeekStart" type="week" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
-          <input v-model="customWeekEnd" type="week" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+          <input v-model="customRange.weekStart" type="week" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+          <input v-model="customRange.weekEnd" type="week" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
         </div>
       </template>
 
       <template v-else-if="rangePreset === 'day_range'">
         <div class="grid grid-cols-2 gap-2">
-          <input v-model="customDayStart" type="date" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
-          <input v-model="customDayEnd" type="date" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+          <input v-model="customRange.dayStart" type="date" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
+          <input v-model="customRange.dayEnd" type="date" class="px-3 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900 text-sm" />
         </div>
       </template>
     </div>
 
-    <div v-if="loading" class="p-12 text-center text-theme-muted">
-      <Loader2 class="w-5 h-5 animate-spin mx-auto mb-2 text-teal-400" />
+    <div class="mx-4 mt-2 rounded-2xl bg-white dark:bg-slate-800 shadow-sm border border-gray-100 dark:border-slate-700 p-4">
+      <div class="relative z-10 flex items-center justify-between mb-1">
+        <h3 class="font-bold text-theme-primary">分类统计</h3>
+        <button type="button" @click="goCategoryDetail" class="p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-700">
+          <ChevronRight class="w-4 h-4 text-teal-500" />
+        </button>
+      </div>
+      <p class="text-xs text-theme-muted mb-3">
+        ¥{{ formatMoney(totalCategory()) }} · {{ timeLabel }} · {{ statType }}
+      </p>
+
+      <div class="flex gap-2 mb-3">
+        <button
+          @click="statType = '支出'"
+          :class="['px-3 py-1 rounded-full text-xs font-medium transition', statType === '支出' ? 'bg-teal-500 text-white' : 'bg-gray-100 dark:bg-slate-700 text-theme-secondary']"
+        >支出</button>
+        <button
+          @click="statType = '收入'"
+          :class="['px-3 py-1 rounded-full text-xs font-medium transition', statType === '收入' ? 'bg-teal-500 text-white' : 'bg-gray-100 dark:bg-slate-700 text-theme-secondary']"
+        >收入</button>
+      </div>
+
+      <div class="relative">
+        <div ref="pieRef" class="w-full h-[220px] pointer-events-none"></div>
+        <div v-if="loading" class="absolute inset-0 flex items-center justify-center bg-white/30 dark:bg-slate-800/30 rounded-xl">
+          <Loader2 class="w-5 h-5 animate-spin text-teal-400" />
+        </div>
+      </div>
     </div>
 
-    <template v-else>
-      <div class="mx-4 mt-2 rounded-2xl bg-white dark:bg-slate-800 shadow-sm border border-gray-100 dark:border-slate-700 p-4">
-        <div class="flex items-center justify-between mb-1">
-          <h3 class="font-bold text-theme-primary">分类统计</h3>
-          <button @click="goCategoryDetail" class="p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-700">
-            <ChevronRight class="w-4 h-4 text-teal-500" />
-          </button>
-        </div>
-        <p class="text-xs text-theme-muted mb-3">
-          ¥{{ formatMoney(totalCategory()) }} · {{ timeLabel }} · {{ statType }}
-        </p>
-
-        <div class="flex gap-2 mb-3">
-          <button
-            @click="statType = '支出'"
-            :class="['px-3 py-1 rounded-full text-xs font-medium transition', statType === '支出' ? 'bg-teal-500 text-white' : 'bg-gray-100 dark:bg-slate-700 text-theme-secondary']"
-          >支出</button>
-          <button
-            @click="statType = '收入'"
-            :class="['px-3 py-1 rounded-full text-xs font-medium transition', statType === '收入' ? 'bg-teal-500 text-white' : 'bg-gray-100 dark:bg-slate-700 text-theme-secondary']"
-          >收入</button>
-        </div>
-
-        <div ref="pieRef" class="w-full h-[220px]"></div>
+    <div class="mx-4 mt-4 rounded-2xl bg-white dark:bg-slate-800 shadow-sm border border-gray-100 dark:border-slate-700 p-4">
+      <div class="relative z-10 flex items-center justify-between mb-1">
+        <h3 class="font-bold text-theme-primary">年度统计</h3>
+        <button type="button" @click="goTrendDetail" class="p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-700">
+          <ChevronRight class="w-4 h-4 text-teal-500" />
+        </button>
       </div>
+      <p class="text-xs text-theme-muted mb-3">{{ timeLabel }} · 按{{ granularityLabel }} · {{ statType }}</p>
 
-      <div class="mx-4 mt-4 rounded-2xl bg-white dark:bg-slate-800 shadow-sm border border-gray-100 dark:border-slate-700 p-4">
-        <div class="flex items-center justify-between mb-1">
-          <h3 class="font-bold text-theme-primary">年度统计</h3>
-          <button @click="goTrendDetail" class="p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-700">
-            <ChevronRight class="w-4 h-4 text-teal-500" />
-          </button>
-        </div>
-        <p class="text-xs text-theme-muted mb-3">{{ timeLabel }} · 按{{ granularityLabel }} · {{ statType }}</p>
-        <div ref="barRef" class="w-full h-[220px]"></div>
-      </div>
-
-      <div class="mx-4 mt-4 rounded-2xl bg-white dark:bg-slate-800 shadow-sm border border-gray-100 dark:border-slate-700 p-4">
-        <div class="flex items-center justify-between mb-1">
-          <h3 class="font-bold text-theme-primary">多人统计</h3>
-          <button @click="goTeamDetail" class="p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-700">
-            <ChevronRight class="w-4 h-4 text-teal-500" />
-          </button>
-        </div>
-        <p class="text-xs text-theme-muted mb-3">¥0 · {{ timeLabel }} · 支出</p>
-        <div class="w-32 h-32 mx-auto rounded-full border-[8px] border-gray-100 dark:border-slate-700 flex items-center justify-center">
-          <div class="text-center">
-            <p class="text-xs text-theme-muted">全部</p>
-            <p class="text-lg font-bold text-theme-primary">0</p>
-          </div>
+      <div class="relative">
+        <div ref="barRef" class="w-full h-[220px] pointer-events-none"></div>
+        <div v-if="loading" class="absolute inset-0 flex items-center justify-center bg-white/30 dark:bg-slate-800/30 rounded-xl">
+          <Loader2 class="w-5 h-5 animate-spin text-teal-400" />
         </div>
       </div>
-    </template>
+    </div>
+
+    <div class="mx-4 mt-4 rounded-2xl bg-white dark:bg-slate-800 shadow-sm border border-gray-100 dark:border-slate-700 p-4">
+      <div class="flex items-center justify-between mb-1">
+        <h3 class="font-bold text-theme-primary">多人统计</h3>
+        <button type="button" @click="goTeamDetail" class="p-1 rounded hover:bg-gray-100 dark:hover:bg-slate-700">
+          <ChevronRight class="w-4 h-4 text-teal-500" />
+        </button>
+      </div>
+      <p class="text-xs text-theme-muted mb-3">¥0 · {{ timeLabel }} · 支出</p>
+      <div class="w-32 h-32 mx-auto rounded-full border-[8px] border-gray-100 dark:border-slate-700 flex items-center justify-center">
+        <div class="text-center">
+          <p class="text-xs text-theme-muted">全部</p>
+          <p class="text-lg font-bold text-theme-primary">0</p>
+        </div>
+      </div>
+    </div>
 
     <div
       v-if="showRangeDialog"

@@ -70,6 +70,8 @@ export interface PeriodSummaryItem {
     period: string
     income: number
     expense: number
+    income_count?: number
+    expense_count?: number
 }
 
 export interface StatsOverview {
@@ -163,9 +165,10 @@ export const getCategorySummaryByRange = (
     start_date: string,
     end_date: string,
     type: string = '支出',
+    category: string = '',
 ) =>
     request.get<CategorySummaryItem[]>('/accounting/records/category-summary-range', {
-        params: { book_id: bookId, start_date, end_date, type }
+        params: { book_id: bookId, start_date, end_date, type, category }
     })
 
 export const getRangeSummary = (
@@ -173,9 +176,10 @@ export const getRangeSummary = (
     start_date: string,
     end_date: string,
     granularity: 'day' | 'week' | 'month' | 'quarter' | 'year' = 'month',
+    category: string = '',
 ) =>
     request.get<PeriodSummaryItem[]>('/accounting/records/range-summary', {
-        params: { book_id: bookId, start_date, end_date, granularity }
+        params: { book_id: bookId, start_date, end_date, granularity, category }
     })
 
 export const getYearlySummary = (bookId: number) =>

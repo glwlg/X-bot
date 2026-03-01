@@ -539,6 +539,7 @@ async def category_summary_range(
     start_date: str,
     end_date: str,
     type: str = "支出",
+    category: str = "",
     user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session),
 ):
@@ -546,7 +547,7 @@ async def category_summary_range(
     await _get_book(book_id, user, session)
     start, end = _parse_time_window(start_date, end_date)
 
-    result = await session.execute(
+    query = (
         select(
             Category.name.label("category"),
             func.sum(Record.amount).label("total"),
@@ -561,6 +562,15 @@ async def category_summary_range(
         .group_by(Category.name)
         .order_by(func.sum(Record.amount).desc())
     )
+
+    category_name = category.strip()
+    if category_name and category_name not in {"全部", "全部分类"}:
+        if category_name == "未分类":
+            query = query.where(Record.category_id.is_(None))
+        else:
+            query = query.where(Category.name == category_name)
+
+    result = await session.execute(query)
     rows = result.all()
     return [
         {"category": r.category or "未分类", "amount": float(r.total or 0)}
@@ -574,6 +584,7 @@ async def range_summary(
     start_date: str,
     end_date: str,
     granularity: str = "month",
+    category: str = "",
     user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session),
 ):
@@ -585,12 +596,14 @@ async def range_summary(
     if granularity not in allowed:
         raise HTTPException(status_code=400, detail="granularity 不合法")
 
-    result = await session.execute(
+    query = (
         select(
             func.strftime("%Y-%m-%d", Record.record_time).label("day"),
             Record.type,
             func.sum(Record.amount).label("total"),
+            func.count(Record.id).label("record_count"),
         )
+        .join(Category, Record.category_id == Category.id, isouter=True)
         .where(
             Record.book_id == book_id,
             Record.record_time >= start,
@@ -599,9 +612,18 @@ async def range_summary(
         .group_by("day", Record.type)
         .order_by("day")
     )
+
+    category_name = category.strip()
+    if category_name and category_name not in {"全部", "全部分类"}:
+        if category_name == "未分类":
+            query = query.where(Record.category_id.is_(None))
+        else:
+            query = query.where(Category.name == category_name)
+
+    result = await session.execute(query)
     rows = result.all()
 
-    grouped: dict[str, dict[str, float | str]] = {}
+    grouped: dict[str, dict[str, float | int | str]] = {}
     for row in rows:
         day = row.day
         if not day:
@@ -613,15 +635,27 @@ async def range_summary(
 
         key = _period_key_for_datetime(dt, granularity)
         if key not in grouped:
-            grouped[key] = {"period": key, "income": 0.0, "expense": 0.0}
+            grouped[key] = {
+                "period": key,
+                "income": 0.0,
+                "expense": 0.0,
+                "income_count": 0,
+                "expense_count": 0,
+            }
 
         if row.type == "收入":
             grouped[key]["income"] = float(grouped[key]["income"]) + float(
                 row.total or 0
             )
+            grouped[key]["income_count"] = int(grouped[key]["income_count"]) + int(
+                row.record_count or 0
+            )
         elif row.type == "支出":
             grouped[key]["expense"] = float(grouped[key]["expense"]) + float(
                 row.total or 0
+            )
+            grouped[key]["expense_count"] = int(grouped[key]["expense_count"]) + int(
+                row.record_count or 0
             )
 
     return [grouped[k] for k in sorted(grouped.keys())]

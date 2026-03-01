@@ -28,6 +28,7 @@ app = FastAPI(
     description="FastAPI Backend Template with Auth and DB",
     version="0.1.0",
     lifespan=lifespan,
+    redirect_slashes=False,
 )
 
 # CORS 配置
