@@ -43,6 +43,18 @@ export const login = (email: string, password: string) => {
     })
 }
 
+// 注册
+export const register = (email: string, password: string) => {
+    return request.post('/auth/register', {
+        email,
+        password,
+        is_active: true,
+        is_superuser: true,
+        is_verified: true,
+        role: "admin"
+    })
+}
+
 // 登出
 export const logout = () => {
     return request.post('/auth/jwt/logout')
