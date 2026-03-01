@@ -540,6 +540,9 @@ async def import_csv(
     user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session),
 ):
+    import logging
+
+    logger = logging.getLogger(__name__)
     await _get_book(book_id, user, session)
 
     contents = await file.read()
@@ -557,28 +560,89 @@ async def import_csv(
             status_code=400, detail="无法识别文件编码，请使用 UTF-8 格式"
         )
 
-    csv_reader = csv.DictReader(io.StringIO(decoded))
+    # 自动检测分隔符（CSV 可能是 tab/comma/semicolon）
+    first_line = decoded.split("\n")[0] if decoded else ""
+    if "\t" in first_line:
+        delimiter = "\t"
+    elif ";" in first_line and "," not in first_line:
+        delimiter = ";"
+    else:
+        delimiter = ","
+
+    logger.info(
+        f"CSV import: detected delimiter={repr(delimiter)}, first_line={first_line[:200]}"
+    )
+
+    csv_reader = csv.DictReader(io.StringIO(decoded), delimiter=delimiter)
+
+    # 标准化列头：去除空格和不可见字符
+    if csv_reader.fieldnames:
+        clean_names = []
+        for name in csv_reader.fieldnames:
+            # 去掉 BOM、空格、零宽字符
+            cleaned = (
+                name.strip()
+                .replace("\ufeff", "")
+                .replace("\u200b", "")
+                .replace("\xa0", "")
+            )
+            clean_names.append(cleaned)
+        csv_reader.fieldnames = clean_names
+        logger.info(f"CSV import: cleaned fieldnames = {clean_names}")
 
     accounts_cache: dict[str, Account] = {}
     categories_cache: dict[str, Category] = {}
 
     records = []
-    for row in csv_reader:
-        rtype = row.get("类型", "支出")
-        amount_str = row.get("金额", "0").replace("¥", "").replace(",", "").strip()
+    skipped = 0
+    for row_idx, row in enumerate(csv_reader):
+        # 标准化 row keys
+        normalized_row: dict[str, str] = {}
+        for k, v in row.items():
+            if k is not None:
+                clean_key = (
+                    k.strip()
+                    .replace("\ufeff", "")
+                    .replace("\u200b", "")
+                    .replace("\xa0", "")
+                )
+                normalized_row[clean_key] = (v or "").strip()
+
+        if row_idx == 0:
+            logger.info(f"CSV import: first row keys = {list(normalized_row.keys())}")
+            logger.info(
+                f"CSV import: first row vals = {list(normalized_row.values())[:8]}"
+            )
+
+        rtype = normalized_row.get("类型", "支出")
+
+        # 金额解析：去除 ¥ 和逗号
+        amount_raw = normalized_row.get("金额", "0")
+        amount_str = (
+            amount_raw.replace("¥", "").replace(",", "").replace("，", "").strip()
+        )
         try:
-            amount = float(amount_str)
+            amount = abs(float(amount_str))
         except ValueError:
+            logger.warning(f"CSV row {row_idx}: bad amount={amount_raw!r}")
+            skipped += 1
             continue
 
-        date_str = row.get("日期", "")
+        if amount == 0:
+            skipped += 1
+            continue
+
+        # 日期解析
+        date_str = normalized_row.get("日期", "")
         record_time = datetime.utcnow()
         if date_str:
             for fmt in (
                 "%Y/%m/%d %H:%M",
+                "%Y/%m/%d %H:%M:%S",
                 "%Y-%m-%d %H:%M:%S",
                 "%Y-%m-%d %H:%M",
                 "%Y-%m-%d",
+                "%Y/%m/%d",
             ):
                 try:
                     record_time = datetime.strptime(date_str.strip(), fmt)
@@ -586,12 +650,13 @@ async def import_csv(
                 except ValueError:
                     continue
 
-        remark = row.get("备注", "")
-        payee = row.get("商家", "")
-        cat_name = row.get("分类", "未分类")
+        remark = normalized_row.get("备注", "")
+        payee = normalized_row.get("商家", "")
+        cat_name = normalized_row.get("分类", "") or "未分类"
 
-        from_acc_name = row.get("付款", "")
-        to_acc_name = row.get("收款", "")
+        # 账户字段：优先用"付款"/"收款"，其次用"账户"
+        from_acc_name = normalized_row.get("付款", "") or normalized_row.get("账户", "")
+        to_acc_name = normalized_row.get("收款", "")
 
         cat = await _get_or_create_category(
             session, book_id, cat_name, rtype, categories_cache
@@ -611,8 +676,8 @@ async def import_csv(
             target_account_id=to_acc.id if to_acc else None,
             category_id=cat.id if cat else None,
             record_time=record_time,
-            payee=payee[:100],
-            remark=remark[:500],
+            payee=payee[:100] if payee else "",
+            remark=remark[:500] if remark else "",
             creator_id=user.id,
         )
         records.append(rec)
@@ -620,4 +685,8 @@ async def import_csv(
     session.add_all(records)
     await session.commit()
 
-    return {"message": f"成功导入 {len(records)} 条记录"}
+    logger.info(f"CSV import: imported {len(records)} records, skipped {skipped}")
+    return {
+        "message": f"成功导入 {len(records)} 条记录"
+        + (f"，跳过 {skipped} 条" if skipped else "")
+    }

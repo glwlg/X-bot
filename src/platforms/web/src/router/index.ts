@@ -17,6 +17,7 @@ const router = createRouter({
         {
             path: '/accounting',
             component: () => import('@/layouts/AccountingLayout.vue'),
+            meta: { fullscreen: true },
             children: [
                 {
                     path: '',
