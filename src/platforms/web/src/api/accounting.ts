@@ -68,6 +68,14 @@ export interface StatsOverview {
     net_assets: number
 }
 
+export interface Budget {
+    id: number
+    month: string
+    total_amount: number
+    category_id: number | null
+    category_name: string | null
+}
+
 // ─── Books ──────────────────────────────────────────────────────────
 export const getBooks = () =>
     request.get<Book[]>('/accounting/books')
@@ -145,6 +153,13 @@ export const getCategories = (bookId: number) =>
 // ─── Stats Overview ─────────────────────────────────────────────────
 export const getStatsOverview = (bookId: number) =>
     request.get<StatsOverview>('/accounting/stats/overview', { params: { book_id: bookId } })
+
+// ─── Budgets ────────────────────────────────────────────────────────
+export const getBudgets = (bookId: number, month?: string) =>
+    request.get<Budget[]>('/accounting/budgets', { params: { book_id: bookId, month } })
+
+export const createOrUpdateBudget = (bookId: number, data: { month: string, total_amount: number, category_id?: number | null }) =>
+    request.post('/accounting/budgets', data, { params: { book_id: bookId } })
 
 // ─── CSV Import ─────────────────────────────────────────────────────
 export const importCsv = (bookId: number, file: File) => {

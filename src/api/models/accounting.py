@@ -61,3 +61,18 @@ class Record(Base):
     payee: Mapped[str] = mapped_column(String(100), nullable=True)
     remark: Mapped[str] = mapped_column(String(500), nullable=True)
     creator_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+
+
+class Budget(Base):
+    __tablename__ = "accounting_budgets"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    book_id: Mapped[int] = mapped_column(
+        ForeignKey("accounting_books.id", ondelete="CASCADE"), nullable=False
+    )
+    month: Mapped[str] = mapped_column(String(7), nullable=False)  # Format: YYYY-MM
+    total_amount: Mapped[float] = mapped_column(
+        Numeric(12, 2), default=0, nullable=False
+    )
+    category_id: Mapped[int] = mapped_column(
+        ForeignKey("accounting_categories.id", ondelete="CASCADE"), nullable=True
+    )

@@ -2,8 +2,8 @@
 import { ref, onMounted, computed, watch, nextTick } from 'vue'
 import { useAccountingStore } from '@/stores/accounting'
 import {
-    getRecordsSummary, getDailySummary, getRecords, createBook,
-    type MonthlySummary, type DailySummaryItem, type RecordItem, type Book
+    getRecordsSummary, getDailySummary, getRecords, createBook, getBudgets,
+    type MonthlySummary, type DailySummaryItem, type RecordItem, type Book, type Budget
 } from '@/api/accounting'
 import {
     ChevronDown, ChevronRight, Plus, Loader2
@@ -20,6 +20,7 @@ const currentMonth = ref(now.getMonth() + 1)
 const summary = ref<MonthlySummary>({ income: 0, expense: 0, balance: 0 })
 const dailyData = ref<DailySummaryItem[]>([])
 const recentRecords = ref<RecordItem[]>([])
+const currentBudget = ref<Budget | null>(null)
 const loading = ref(false)
 const showAddDialog = ref(false)
 const showBookDropdown = ref(false)
@@ -46,14 +47,19 @@ const loadData = async () => {
     if (!store.currentBookId) return
     loading.value = true
     try {
-        const [sumRes, dailyRes, recRes] = await Promise.all([
+        const formattedMonth = `${currentYear.value}-${String(currentMonth.value).padStart(2, '0')}`
+        const [sumRes, dailyRes, recRes, budgetRes] = await Promise.all([
             getRecordsSummary(store.currentBookId, currentYear.value, currentMonth.value),
             getDailySummary(store.currentBookId, currentYear.value, currentMonth.value),
             getRecords(store.currentBookId, 5),
+            getBudgets(store.currentBookId, formattedMonth)
         ])
         summary.value = sumRes.data
         dailyData.value = dailyRes.data
         recentRecords.value = recRes.data
+        const globalB = budgetRes.data.find(b => !b.category_id)
+        currentBudget.value = globalB || null
+        
         await nextTick()
         renderChart()
     } catch (e) {
@@ -313,7 +319,6 @@ onMounted(async () => {
         </ul>
       </div>
 
-      <!-- Budget Card (placeholder) -->
       <div class="mx-4 mt-4 rounded-2xl bg-white dark:bg-slate-800 shadow-sm border border-gray-100 dark:border-slate-700 p-4">
         <RouterLink to="/accounting/budgets" class="flex items-center justify-between mb-4 cursor-pointer hover:opacity-80 transition">
           <h3 class="font-semibold text-theme-primary">{{ monthLabel }}预算</h3>
@@ -325,16 +330,21 @@ onMounted(async () => {
             <p class="text-lg font-bold text-theme-primary">{{ formatMoney(summary.expense) }}</p>
           </div>
           <!-- Ring -->
-          <div class="w-24 h-24 rounded-full border-[8px] border-gray-100 dark:border-slate-700 flex items-center justify-center relative">
+          <RouterLink to="/accounting/budgets" class="w-24 h-24 rounded-full border-[8px] flex items-center justify-center relative cursor-pointer hover:opacity-80 transition"
+            :class="[(summary.expense / (currentBudget?.total_amount || 1)) > 0.9 ? 'border-rose-400' : (currentBudget ? 'border-teal-400' : 'border-gray-100 dark:border-slate-700')]">
             <div class="text-center">
               <p class="text-[10px] text-theme-muted">剩余</p>
-              <p class="text-sm font-bold text-theme-primary">点击添加</p>
-              <p class="text-[10px] text-theme-muted">预算0</p>
+              <p :class="['text-sm font-bold', currentBudget ? ((currentBudget.total_amount - summary.expense) < 0 ? 'text-rose-500' : 'text-theme-primary') : 'text-theme-primary']">
+                {{ currentBudget ? formatMoney(currentBudget.total_amount - summary.expense) : '点击添加' }}
+              </p>
+              <p v-if="currentBudget" class="text-[10px] text-theme-muted">总额{{ formatMoney(currentBudget.total_amount) }}</p>
             </div>
-          </div>
+          </RouterLink>
           <div class="text-center">
             <p class="text-xs text-theme-muted">剩余日均</p>
-            <p class="text-lg font-bold text-theme-primary">0</p>
+            <p class="text-lg font-bold text-theme-primary">
+              {{ currentBudget && (currentBudget.total_amount - summary.expense) > 0 ? formatMoney((currentBudget.total_amount - summary.expense) / (new Date(currentYear, currentMonth, 0).getDate() - now.getDate() + 1)) : '0' }}
+            </p>
           </div>
         </div>
       </div>

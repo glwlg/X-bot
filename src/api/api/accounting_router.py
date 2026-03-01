@@ -10,7 +10,7 @@ from datetime import datetime
 from api.core.database import get_async_session
 from api.auth.users import current_active_user
 from api.auth.models import User
-from api.models.accounting import Book, Account, Category, Record
+from api.models.accounting import Book, Account, Category, Record, Budget
 
 router = APIRouter()
 
@@ -48,6 +48,12 @@ class BalanceAdjust(BaseModel):
     method: str = (
         "差额补记收支"  # 差额补记收支 / 差额补记转账 / 更改当前余额 / 设置初始余额
     )
+
+
+class BudgetUpdate(BaseModel):
+    month: str
+    total_amount: float
+    category_id: Optional[int] = None
 
 
 # ─── Helper: verify book ownership ───────────────────────────────────
@@ -1075,3 +1081,75 @@ async def import_csv(
         "message": f"成功导入 {len(records)} 条记录"
         + (f"，跳过 {skipped} 条" if skipped else "")
     }
+
+
+# ─── Budgets CRUD ───────────────────────────────────────────────────
+
+
+@router.get("/budgets")
+async def get_budgets(
+    book_id: int,
+    month: str = None,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    await _get_book(book_id, user, session)
+    query = select(Budget).where(Budget.book_id == book_id)
+    if month:
+        query = query.where(Budget.month == month)
+
+    result = await session.execute(query.order_by(Budget.month.desc()))
+    budgets = result.scalars().all()
+
+    enriched = []
+    for b in budgets:
+        cat_name = ""
+        if b.category_id:
+            cat = await session.get(Category, b.category_id)
+            if cat:
+                cat_name = cat.name
+        enriched.append(
+            {
+                "id": b.id,
+                "month": b.month,
+                "total_amount": float(b.total_amount),
+                "category_id": b.category_id,
+                "category_name": cat_name,
+            }
+        )
+    return enriched
+
+
+@router.post("/budgets")
+async def create_or_update_budget(
+    book_id: int,
+    data: BudgetUpdate,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    await _get_book(book_id, user, session)
+
+    # Check if a budget already exists
+    query = select(Budget).where(Budget.book_id == book_id, Budget.month == data.month)
+    if data.category_id:
+        query = query.where(Budget.category_id == data.category_id)
+    else:
+        query = query.where(Budget.category_id.is_(None))
+
+    res = await session.execute(query)
+    existing = res.scalars().first()
+
+    if existing:
+        existing.total_amount = data.total_amount
+        budget = existing
+    else:
+        budget = Budget(
+            book_id=book_id,
+            month=data.month,
+            total_amount=data.total_amount,
+            category_id=data.category_id,
+        )
+        session.add(budget)
+
+    await session.commit()
+    return {"message": "预算保存成功"}
