@@ -83,3 +83,29 @@ async def update_task_status(
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class TaskUpdate(BaseModel):
+    crontab: str | None = None
+    instruction: str | None = None
+
+
+@router.put("/{task_id}")
+async def update_task(
+    task_id: int,
+    task: TaskUpdate,
+    current_user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    platform_uid = await _resolve_platform_uid(current_user, session)
+    try:
+        ok = await state_store.update_scheduled_task(
+            task_id, platform_uid, crontab=task.crontab, instruction=task.instruction
+        )
+        if not ok:
+            raise HTTPException(status_code=404, detail="Task not found")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

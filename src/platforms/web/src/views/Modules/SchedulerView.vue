@@ -1,15 +1,16 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronLeft, Plus, Trash2, Clock, CalendarClock } from 'lucide-vue-next'
+import { ChevronLeft, Plus, Trash2, Clock, CalendarClock, Pencil } from 'lucide-vue-next'
 import request from '@/api/request'
 
 const router = useRouter()
 
 const tasks = ref<any[]>([])
 const loading = ref(false)
-const showCreate = ref(false)
-const createForm = ref({ crontab: '', instruction: '' })
+const showDialog = ref(false)
+const editingId = ref<number | null>(null)
+const formData = ref({ crontab: '', instruction: '' })
 
 const loadData = async () => {
     loading.value = true
@@ -23,18 +24,38 @@ const loadData = async () => {
     }
 }
 
-const handleCreate = async () => {
-    if (!createForm.value.crontab || !createForm.value.instruction) return
+const openCreate = () => {
+    editingId.value = null
+    formData.value = { crontab: '', instruction: '' }
+    showDialog.value = true
+}
+
+const openEdit = (task: any) => {
+    editingId.value = task.id
+    formData.value = { crontab: task.crontab, instruction: task.instruction }
+    showDialog.value = true
+}
+
+const handleSave = async () => {
+    if (!formData.value.crontab || !formData.value.instruction) return
     try {
-        await request('/scheduler', {
-            method: 'POST',
-            data: createForm.value
-        })
-        showCreate.value = false
-        createForm.value = { crontab: '', instruction: '' }
+        if (editingId.value) {
+            await request(`/scheduler/${editingId.value}`, {
+                method: 'PUT',
+                data: formData.value
+            })
+        } else {
+            await request('/scheduler', {
+                method: 'POST',
+                data: formData.value
+            })
+        }
+        showDialog.value = false
+        formData.value = { crontab: '', instruction: '' }
+        editingId.value = null
         loadData()
-    } catch (e) {
-        console.error(e)
+    } catch (e: any) {
+        alert(e?.response?.data?.detail || '操作失败')
     }
 }
 
@@ -73,7 +94,7 @@ onMounted(() => {
           <ChevronLeft class="w-6 h-6" />
         </button>
         <h1 class="text-lg font-bold text-slate-800 dark:text-white">定时任务</h1>
-        <button @click="showCreate = true" class="p-2 -mr-2 text-blue-600 dark:text-blue-400">
+        <button @click="openCreate" class="p-2 -mr-2 text-blue-600 dark:text-blue-400">
           <Plus class="w-6 h-6" />
         </button>
       </div>
@@ -97,19 +118,22 @@ onMounted(() => {
           :class="{'opacity-60': !task.is_active}"
         >
           <div class="flex items-start justify-between">
-            <div>
+            <div class="flex-1 min-w-0 mr-3">
               <div class="flex items-center gap-2 mb-1">
                 <Clock class="w-4 h-4 text-slate-400" />
                 <span class="font-mono text-sm text-slate-600 dark:text-slate-300">{{ task.crontab }}</span>
               </div>
               <h3 class="font-bold text-slate-800 dark:text-white">{{ task.instruction }}</h3>
             </div>
-            <div class="flex items-center gap-3">
+            <div class="flex items-center gap-2 shrink-0">
               <label class="relative inline-flex items-center cursor-pointer">
                 <input type="checkbox" :checked="task.is_active" @change="toggleStatus(task)" class="sr-only peer">
                 <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-500"></div>
               </label>
-              <button @click="handleDelete(task.id)" class="text-slate-400 hover:text-rose-500 transition p-1 border border-transparent hover:border-rose-100 rounded-md shrink-0">
+              <button @click="openEdit(task)" class="text-slate-400 hover:text-blue-500 transition p-1 border border-transparent hover:border-blue-100 rounded-md">
+                <Pencil class="w-4 h-4" />
+              </button>
+              <button @click="handleDelete(task.id)" class="text-slate-400 hover:text-rose-500 transition p-1 border border-transparent hover:border-rose-100 rounded-md">
                 <Trash2 class="w-4 h-4" />
               </button>
             </div>
@@ -118,24 +142,24 @@ onMounted(() => {
       </div>
     </main>
 
-    <div v-if="showCreate" class="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
+    <div v-if="showDialog" class="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4">
       <div class="bg-white dark:bg-slate-800 rounded-2xl w-full max-w-sm overflow-hidden animate-in fade-in zoom-in-95 duration-200">
         <div class="p-4 border-b border-slate-100 dark:border-slate-700">
-          <h2 class="text-lg font-bold text-center">添加任务</h2>
+          <h2 class="text-lg font-bold text-center">{{ editingId ? '编辑任务' : '添加任务' }}</h2>
         </div>
         <div class="p-4 space-y-4">
           <div>
             <label class="block text-sm text-slate-500 mb-1">指令内容</label>
-            <input v-model="createForm.instruction" type="text" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" placeholder="例如: 播报今天的天气">
+            <input v-model="formData.instruction" type="text" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" placeholder="例如: 播报今天的天气">
           </div>
           <div>
             <label class="block text-sm text-slate-500 mb-1">Crontab 表达式</label>
-            <input v-model="createForm.crontab" type="text" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" placeholder="0 8 * * *">
+            <input v-model="formData.crontab" type="text" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl px-4 py-3 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500" placeholder="0 8 * * *">
           </div>
         </div>
         <div class="p-4 flex gap-3 border-t border-slate-100 dark:border-slate-700">
-          <button @click="showCreate = false" class="flex-1 py-3 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl font-medium">取消</button>
-          <button @click="handleCreate" class="flex-1 py-3 bg-blue-500 text-white rounded-xl font-medium shadow-lg shadow-blue-500/30">保存</button>
+          <button @click="showDialog = false" class="flex-1 py-3 bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300 rounded-xl font-medium">取消</button>
+          <button @click="handleSave" class="flex-1 py-3 bg-blue-500 text-white rounded-xl font-medium shadow-lg shadow-blue-500/30">保存</button>
         </div>
       </div>
     </div>

@@ -62,3 +62,29 @@ async def delete_rss(
         return {"success": True}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+class SubUpdate(BaseModel):
+    title: str | None = None
+    feed_url: str | None = None
+
+
+@router.put("/{sub_id}")
+async def update_rss(
+    sub_id: int,
+    sub: SubUpdate,
+    current_user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    platform_uid = await _resolve_platform_uid(current_user, session)
+    try:
+        ok = await state_store.update_subscription(
+            sub_id, platform_uid, title=sub.title, feed_url=sub.feed_url
+        )
+        if not ok:
+            raise HTTPException(status_code=404, detail="Subscription not found")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
