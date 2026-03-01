@@ -45,7 +45,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 # Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
-RUN npm install -g @playwright/cli@latest \
+RUN npm install -g \
+    @playwright/cli@latest \
+    @openai/codex@latest \
+    @google/gemini-cli@latest \
+    && if ! command -v gemini-cli >/dev/null 2>&1; then \
+        printf '#!/usr/bin/env sh\nexec gemini "$@"\n' > /usr/local/bin/gemini-cli; \
+        chmod +x /usr/local/bin/gemini-cli; \
+    fi \
     && npx -y playwright install chrome
 
 # Set the working directory in the container

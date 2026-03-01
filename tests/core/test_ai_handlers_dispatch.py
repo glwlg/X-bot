@@ -193,3 +193,50 @@ def test_stream_cut_index_falls_back_to_limit_without_boundary():
     text = "abcdefghijklmnopqrstuvwxyz"
     cut = ai_handlers._stream_cut_index(text, 10)
     assert cut == 10
+
+
+def test_build_runtime_phrase_pools_reads_generated_phrase_store(monkeypatch):
+    monkeypatch.setattr(
+        ai_handlers.waiting_phrase_store,
+        "load_phrase_pools_for_runtime_user",
+        lambda _uid: (
+            ["📨 阿黑已收到，马上处理。", "⚡ 正在安排执行顺序..."],
+            ["🤖 正在并行调用工具...", "📚 正在交叉验证结果..."],
+        ),
+    )
+
+    received, loading = ai_handlers._build_runtime_phrase_pools("u-1")
+
+    assert "📨 阿黑已收到，马上处理。" in received
+    assert "🤖 正在并行调用工具..." in loading
+    assert "⚡ 信号已接收，开始解析..." not in received
+    assert "🤖 调用赛博算力中..." not in loading
+
+
+def test_build_runtime_phrase_pools_fallbacks_when_generated_phrase_empty(monkeypatch):
+    monkeypatch.setattr(
+        ai_handlers.waiting_phrase_store,
+        "load_phrase_pools_for_runtime_user",
+        lambda _uid: ([], []),
+    )
+
+    received, loading = ai_handlers._build_runtime_phrase_pools("u-empty")
+
+    assert "⚡ 信号已接收，开始解析..." in received
+    assert "🤖 调用赛博算力中..." in loading
+
+
+def test_build_runtime_phrase_pools_fallbacks_on_soul_errors(monkeypatch):
+    def _raise_error(_uid: str):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(
+        ai_handlers.waiting_phrase_store,
+        "load_phrase_pools_for_runtime_user",
+        _raise_error,
+    )
+
+    received, loading = ai_handlers._build_runtime_phrase_pools("u-3")
+
+    assert "⚡ 信号已接收，开始解析..." in received
+    assert "🤖 调用赛博算力中..." in loading

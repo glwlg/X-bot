@@ -34,7 +34,7 @@ TOKEN_ALIASES = {
 
 SKILL_FUNCTION_GROUPS = {
     "deep_research": {"group:research"},
-    "searxng_search": {"group:research"},
+    "web_search": {"group:research"},
     "web_browser": {"group:research"},
     "docker_ops": {"group:ops"},
     "deployment_manager": {"group:ops"},
@@ -45,7 +45,6 @@ SKILL_FUNCTION_GROUPS = {
     "account_manager": {"group:account", "group:security"},
     "skill_manager": {"group:skill-admin"},
     "download_video": {"group:media"},
-    "generate_image": {"group:media"},
     "news_article_writer": {"group:content", "group:research"},
     "xlsx": {"group:data"},
 }
@@ -57,10 +56,12 @@ class ToolAccessStore:
     CORE_MANAGER_DEFAULT_ALLOW = [
         "group:primitives",
         "group:management",
+        "group:automation",
     ]
     WORKER_DEFAULT_DENY = [
         "group:coding",
         "group:management",
+        "group:automation",
     ]
 
     def __init__(self):
@@ -227,12 +228,12 @@ class ToolAccessStore:
             "group:all": "所有工具/技能/MCP",
             "group:fs": "文件系统工具：read/write/edit",
             "group:execution": "执行类能力：bash/exec/process 与 Worker 执行后端",
-            "group:coding": "编码类能力：codex/gemini-cli",
+            "group:coding": "编码类能力：coding_backend(codex/gemini-cli)",
             "group:feeds": "信息订阅类：rss/news feed",
             "group:ops": "部署运维类：deployment/docker",
             "group:automation": "自动化类：scheduler/reminder（不含 rss/stock）",
             "group:finance": "金融行情类：stock_watch",
-            "group:media": "多媒体类：download_video/generate_image",
+            "group:media": "多媒体类：download_video",
             "group:account": "账号凭据类：account_manager",
             "group:memory": "记忆类：用户 MEMORY.md",
             "group:skill-admin": "技能治理类：skill_manager",
@@ -259,6 +260,9 @@ class ToolAccessStore:
         if name in {"read", "write", "edit"}:
             groups.add("group:fs")
             groups.add("group:primitives")
+        if name in {"coding_backend", "coding-backend"}:
+            groups.add("group:coding")
+            groups.add("group:execution")
         if name in SKILL_FUNCTION_GROUPS:
             groups.add("group:skills")
             groups.add(f"group:skill:{name}")
@@ -267,7 +271,12 @@ class ToolAccessStore:
         if name in {"bash", "exec", "process"}:
             groups.add("group:execution")
             groups.add("group:primitives")
-        if name in {"list_workers", "dispatch_worker", "worker_status"}:
+        if name in {
+            "list_workers",
+            "dispatch_worker",
+            "worker_status",
+            "software_delivery",
+        }:
             groups.add("group:management")
             groups.add("group:execution")
         if name in {"run_extension", "list_extensions"}:

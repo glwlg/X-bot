@@ -6,7 +6,8 @@ import os
 import re
 from typing import Any, Dict, List, cast
 
-from core.config import GEMINI_MODEL, openai_async_client
+from core.config import get_client_for_model
+from core.model_config import get_current_model
 from core.skill_loader import skill_loader
 
 logger = logging.getLogger(__name__)
@@ -258,9 +259,10 @@ class SkillArgPlanner:
         current_args: Dict[str, Any],
         validation_error: str,
     ) -> Dict[str, Any]:
-        if openai_async_client is None:
+        model_to_use = get_current_model()
+        client = cast(Any, get_client_for_model(model_to_use, is_async=True))
+        if client is None:
             return {}
-        client = cast(Any, openai_async_client)
 
         skill_markdown = str(skill.get("skill_md_content") or "")
         if len(skill_markdown) > SKILL_ARG_PLANNER_MAX_MD_CHARS:
@@ -289,7 +291,7 @@ class SkillArgPlanner:
         ]
 
         request_kwargs: Dict[str, Any] = {
-            "model": GEMINI_MODEL,
+            "model": model_to_use,
             "messages": messages,
             "temperature": 0,
         }

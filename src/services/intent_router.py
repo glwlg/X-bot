@@ -8,7 +8,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, cast
 
-from core.config import ROUTING_MODEL, openai_async_client
+from core.config import get_client_for_model
+from core.model_config import get_routing_model
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ class IntentRouter:
     """Simplified router - LLM decides everything in the main loop."""
 
     def __init__(self):
-        self.model = ROUTING_MODEL
+        pass
 
     async def classify(self, message: str) -> IntentDecision:
         routed = await self.route(message)
@@ -62,11 +63,12 @@ class IntentRouter:
             f"用户消息: {text}"
         )
         try:
-            client = openai_async_client
+            model = get_routing_model()
+            client = get_client_for_model(model, is_async=True)
             if client is None:
                 raise RuntimeError("OpenAI async client is not initialized")
             response = await cast(Any, client).chat.completions.create(
-                model=self.model,
+                model=model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0,
             )

@@ -72,10 +72,10 @@ async def save_feature_command(ctx: UnifiedContext) -> int:
 async def process_feature_request(ctx: UnifiedContext, description: str) -> int:
     """整理用户需求并保存"""
     from core.config import (
-        openai_async_client,
-        GEMINI_MODEL,
+        get_client_for_model,
         DATA_DIR,
     )  # lazy import to avoid top level issues if moved
+    from core.model_config import get_current_model
     from services.openai_adapter import generate_text
 
     msg = await ctx.reply("🤔 正在整理您的需求...")
@@ -97,11 +97,13 @@ async def process_feature_request(ctx: UnifiedContext, description: str) -> int:
 """
 
     try:
-        if openai_async_client is None:
+        model_to_use = get_current_model()
+        client_to_use = get_client_for_model(model_to_use, is_async=True)
+        if client_to_use is None:
             raise RuntimeError("OpenAI async client is not initialized")
         doc_content = await generate_text(
-            async_client=openai_async_client,
-            model=GEMINI_MODEL,
+            async_client=client_to_use,
+            model=model_to_use,
             contents=prompt,
         )
         doc_content = str(doc_content or "").strip()

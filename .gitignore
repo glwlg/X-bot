@@ -38,6 +38,9 @@ bot_data.db
 bot_data.db-journal
 cookies.txt
 
+# Config (sensitive)
+config/models.json
+
 # IDE
 .idea/
 .vscode/

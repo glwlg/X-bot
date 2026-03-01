@@ -1,21 +1,362 @@
 import logging
 import os
+import re
 import shutil
 import sys
 import httpx
+from datetime import datetime
 from typing import Tuple, Dict, Any
 
 from core.platform.models import UnifiedContext
 from core.skill_loader import skill_loader
+from manager.dev.service import manager_dev_service
 
 # Ensure we can import local modules (creator.py)
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
+project_root = os.path.abspath(os.path.join(current_dir, "..", "..", "..", ".."))
 
 import creator  # local import
 
 logger = logging.getLogger(__name__)
+
+
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return bool(default)
+    if isinstance(value, bool):
+        return value
+    rendered = str(value).strip().lower()
+    if rendered in {"1", "true", "yes", "on"}:
+        return True
+    if rendered in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
+
+
+def _to_int(value: Any, default: int) -> int:
+    try:
+        return int(str(value).strip())
+    except Exception:
+        return int(default)
+
+
+def _normalize_backend(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if raw in {"gemini", "gemini_cli", "gemini-cli"}:
+        return "gemini-cli"
+    return "codex"
+
+
+def _resolve_coding_backend(params: dict) -> str:
+    if _as_bool(params.get("use_gemini"), default=False):
+        return "gemini-cli"
+    if _as_bool(params.get("use_codex"), default=False):
+        return "codex"
+
+    for key in ("coding_backend", "backend", "provider"):
+        if key in params and str(params.get(key) or "").strip():
+            return _normalize_backend(params.get(key))
+
+    env_backend = os.getenv("CODING_BACKEND_DEFAULT", "codex")
+    return _normalize_backend(env_backend)
+
+
+def _sanitize_skill_name(value: Any) -> str:
+    payload = str(value or "").strip().lower()
+    if not payload:
+        return ""
+    payload = payload.replace("-", "_")
+    payload = re.sub(r"[^a-z0-9_]+", "_", payload)
+    payload = re.sub(r"_+", "_", payload).strip("_")
+    if not payload:
+        return ""
+    if payload[0].isdigit():
+        payload = f"skill_{payload}"
+    return payload[:64]
+
+
+def _default_skill_name() -> str:
+    return f"skill_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+
+def _skill_spec_path() -> str:
+    configured = str(
+        os.getenv(
+            "SKILL_MANAGER_SPEC_PATH",
+            "skills/builtin/skill_manager/SKILL_SPEC.md",
+        )
+        or ""
+    ).strip()
+    if not configured:
+        configured = "skills/builtin/skill_manager/SKILL_SPEC.md"
+    if os.path.isabs(configured):
+        return configured
+    return os.path.abspath(os.path.join(project_root, configured))
+
+
+def _to_project_rel(path: str) -> str:
+    try:
+        return os.path.relpath(path, project_root)
+    except Exception:
+        return path
+
+
+def _extract_skill_name_hint(text: str) -> str:
+    payload = str(text or "")
+    matched = re.search(
+        r"(?:created_skill|skill_name)\s*[:=]\s*([a-zA-Z0-9_\-]+)",
+        payload,
+        flags=re.IGNORECASE,
+    )
+    if not matched:
+        return ""
+    return str(matched.group(1) or "").strip()
+
+
+def _extract_backend_from_delivery_result(result: Dict[str, Any], fallback: str) -> str:
+    if not isinstance(result, dict):
+        return _normalize_backend(fallback)
+
+    data = result.get("data")
+    if isinstance(data, dict):
+        backend = str(data.get("backend") or data.get("used_backend") or "").strip()
+        if backend:
+            return _normalize_backend(backend)
+        template_result = data.get("template_result")
+        if isinstance(template_result, dict):
+            nested_backend = str(template_result.get("backend") or "").strip()
+            if nested_backend:
+                return _normalize_backend(nested_backend)
+
+    backend = str(result.get("backend") or "").strip()
+    if backend:
+        return _normalize_backend(backend)
+    return _normalize_backend(fallback)
+
+
+async def _run_software_delivery_template_task(
+    *,
+    _ctx: UnifiedContext,
+    _runtime: Any,
+    action: str,
+    instruction: str,
+    cwd: str,
+    backend: str,
+    skill_name: str = "",
+    source: str = "",
+) -> Dict[str, Any]:
+    source_label = str(source or f"skill_manager_{action}").strip()
+    safe_action = str(action or "").strip().lower()
+    result = await manager_dev_service.software_delivery(
+        action=safe_action,
+        instruction=str(instruction or "").strip(),
+        cwd=str(cwd or "").strip(),
+        backend=_normalize_backend(backend),
+        skill_name=str(skill_name or "").strip(),
+        source=source_label,
+        timeout_sec=_to_int(os.getenv("CODING_BACKEND_TIMEOUT_SEC", "900"), 900),
+        auto_publish=False,
+        auto_push=False,
+        auto_pr=False,
+    )
+
+    if not bool(result.get("ok")):
+        message = str(
+            result.get("summary")
+            or result.get("message")
+            or result.get("text")
+            or "software_delivery failed"
+        )
+        return {
+            "ok": False,
+            "error": str(result.get("error_code") or "software_delivery_failed"),
+            "summary": message,
+            "backend": _extract_backend_from_delivery_result(result, backend),
+            "source": source_label,
+            "tool_result": result,
+        }
+
+    if bool(result.get("async_dispatch")):
+        queued_task_id = str(result.get("task_id") or "").strip()
+        return {
+            "ok": True,
+            "queued": True,
+            "task_id": queued_task_id,
+            "summary": str(result.get("summary") or "software_delivery queued").strip(),
+            "backend": _extract_backend_from_delivery_result(result, backend),
+            "source": source_label,
+            "tool_result": result,
+        }
+
+    payload = (
+        dict(result.get("data") or {}) if isinstance(result.get("data"), dict) else {}
+    )
+    raw_template_result = payload.get("template_result")
+    template_result: Dict[str, Any] = (
+        dict(raw_template_result) if isinstance(raw_template_result, dict) else {}
+    )
+    summary = str(result.get("summary") or "").strip()
+    if not summary:
+        summary = str(template_result.get("summary") or "software_delivery completed")
+
+    return {
+        "ok": True,
+        "summary": summary,
+        "backend": _extract_backend_from_delivery_result(result, backend),
+        "source": source_label,
+        "tool_result": template_result or result,
+    }
+
+
+async def _create_with_software_delivery(
+    *,
+    ctx: UnifiedContext,
+    runtime: Any,
+    requirement: str,
+    skill_name: str,
+    backend: str,
+) -> Dict[str, Any]:
+    before = {
+        name
+        for name, info in (skill_loader.get_skill_index() or {}).items()
+        if str(info.get("source") or "") != "builtin"
+    }
+
+    requested_name = _sanitize_skill_name(skill_name)
+    target_name = requested_name or _default_skill_name()
+    learned_root = os.path.abspath(os.path.join(skill_loader.skills_dir, "learned"))
+    os.makedirs(learned_root, exist_ok=True)
+    target_dir = os.path.join(learned_root, target_name)
+    os.makedirs(target_dir, exist_ok=True)
+
+    spec_path = _skill_spec_path()
+    spec_hint = _to_project_rel(spec_path)
+    instruction = (
+        "你是 X-Bot 的技能工程师。请在当前工作目录创建一个新技能。\n"
+        f"当前工作目录: {target_dir}\n"
+        f"目标技能名: {target_name}\n"
+        f"开始前先阅读技能规范: {spec_hint}\n"
+        f"需求: {requirement}\n"
+        "约束:\n"
+        "1. 只允许修改当前工作目录及其子目录。\n"
+        "2. 必须生成 SKILL.md（YAML frontmatter + 说明文档）。\n"
+        "3. 如需代码，创建 scripts/execute.py，函数签名必须是 async def execute(ctx, params, runtime=None)。\n"
+        "4. 不要修改 src/ 与其它技能目录。\n"
+        "5. 完成后在回复末尾追加一行: CREATED_SKILL=<skill_name>。\n"
+    )
+
+    result = await _run_software_delivery_template_task(
+        _ctx=ctx,
+        _runtime=runtime,
+        action="skill_create",
+        instruction=instruction,
+        cwd=target_dir,
+        backend=backend,
+        skill_name=target_name,
+        source="skill_manager_create",
+    )
+    if not result.get("ok"):
+        return result
+    if bool(result.get("queued")):
+        return result
+
+    skill_loader.reload_skills()
+    after_index = skill_loader.get_skill_index() or {}
+    after = {
+        name
+        for name, info in after_index.items()
+        if str(info.get("source") or "") != "builtin"
+    }
+
+    resolved_name = ""
+    if target_name in after:
+        resolved_name = target_name
+    if not resolved_name:
+        created = sorted(after - before)
+        if len(created) == 1:
+            resolved_name = created[0]
+    if not resolved_name:
+        hinted = _extract_skill_name_hint(
+            str(result.get("summary") or result.get("tool_result") or "")
+        )
+        if hinted in after:
+            resolved_name = hinted
+
+    if not resolved_name:
+        backend_name = str(result.get("backend") or _normalize_backend(backend))
+        result["ok"] = False
+        result["error"] = "coding_skill_name_unresolved"
+        result["summary"] = (
+            f"{backend_name} 已执行，但未能定位新技能目录。请在回复中明确 CREATED_SKILL=<name>。"
+        )
+        return result
+
+    skill_info = skill_loader.get_skill(resolved_name) or {}
+    skill_md_path = str(skill_info.get("skill_md_path") or "").strip()
+    skill_md = ""
+    if skill_md_path and os.path.exists(skill_md_path):
+        with open(skill_md_path, "r", encoding="utf-8") as f:
+            skill_md = f.read()
+
+    result["resolved_skill_name"] = resolved_name
+    result["target_skill_name"] = target_name
+    result["skill_md"] = skill_md
+    return result
+
+
+async def _modify_with_software_delivery(
+    *,
+    ctx: UnifiedContext,
+    runtime: Any,
+    skill_name: str,
+    instruction: str,
+    backend: str,
+) -> Dict[str, Any]:
+    skill_info = skill_loader.get_skill(skill_name)
+    if not skill_info:
+        return {
+            "ok": False,
+            "error": f"skill_not_found:{skill_name}",
+            "summary": f"Skill '{skill_name}' 不存在",
+        }
+    if str(skill_info.get("source") or "") == "builtin":
+        return {
+            "ok": False,
+            "error": "builtin_skill_readonly",
+            "summary": "系统技能受保护，无法修改。",
+        }
+
+    skill_dir = str(skill_info.get("skill_dir") or "").strip()
+    spec_path = _skill_spec_path()
+    spec_hint = _to_project_rel(spec_path)
+    cli_instruction = (
+        "你是 X-Bot 的技能维护工程师，请修改一个已有技能。\n"
+        f"目标技能: {skill_name}\n"
+        f"当前工作目录: {skill_dir}\n"
+        f"开始前先阅读技能规范: {spec_hint}\n"
+        f"需求: {instruction}\n"
+        "限制:\n"
+        "1. 只修改当前工作目录及其子目录（SKILL.md / scripts/*.py）。\n"
+        "2. 不要改动 src/ 与其它技能目录。\n"
+        "3. 保持技能可加载（SKILL.md frontmatter 完整）。\n"
+    )
+    result = await _run_software_delivery_template_task(
+        _ctx=ctx,
+        _runtime=runtime,
+        action="skill_modify",
+        instruction=cli_instruction,
+        cwd=skill_dir,
+        backend=backend,
+        skill_name=skill_name,
+        source="skill_manager_modify",
+    )
+    if bool(result.get("queued")):
+        return result
+    if result.get("ok"):
+        skill_loader.reload_skills()
+    return result
 
 
 async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, Any]:
@@ -81,10 +422,10 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
         target = url or skill_name or repo_name
 
         if not target:
-            return "❌ 请提供要安装的技能名称或 URL"
+            return {"text": "🔇🔇🔇❌ 请提供要安装的技能名称或 URL", "ui": {}}
 
         # User ID needed for adoption ownership
-        user_id = ctx.message.user.id if ctx.message.user else "0"
+        user_id = int(ctx.message.user.id) if ctx.message.user else 0
 
         success, message = await _install_skill(target, user_id)
 
@@ -157,21 +498,44 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
         if not skill_name or not instruction:
             return {"text": "🔇🔇🔇❌ 需要提供 skill_name 和 instruction", "ui": {}}
 
-        user_id = ctx.message.user.id
-
-        # Use update_skill (AI Refactoring)
-        result = await creator.update_skill(skill_name, instruction, user_id)
-
-        if not result["success"]:
+        backend = _resolve_coding_backend(params)
+        cli_result = await _modify_with_software_delivery(
+            ctx=ctx,
+            runtime=runtime,
+            skill_name=str(skill_name),
+            instruction=str(instruction),
+            backend=backend,
+        )
+        if cli_result.get("queued"):
+            queued_task_id = str(cli_result.get("task_id") or "").strip()
             return {
-                "text": f"🔇🔇🔇❌ 修改失败: {result.get('error', '未知错误')}",
+                "text": (
+                    f"🔇🔇🔇🚀 Skill 修改任务已异步提交（task_id=`{queued_task_id}`）。"
+                    "请稍后通过 software_delivery status 查询进度。"
+                ),
+                "ui": {},
+                "task_id": queued_task_id,
+            }
+        if cli_result.get("ok"):
+            used_backend = str(cli_result.get("backend") or backend)
+            return {
+                "text": (
+                    f"🔇🔇🔇✅ Skill '{skill_name}' 已通过 `software_delivery` "
+                    f"模板任务（backend=`{used_backend}`）修改并生效。"
+                ),
                 "ui": {},
             }
 
-        # 重新加载技能
-        skill_loader.reload_skills()
-
-        return {"text": f"🔇🔇🔇✅ Skill '{skill_name}' 修改成功并已生效！", "ui": {}}
+        summary = str(
+            cli_result.get("summary") or cli_result.get("error") or "未知错误"
+        )
+        return {
+            "text": (
+                f"🔇🔇🔇❌ manager 调用 `software_delivery` 模板任务失败 "
+                f"(backend=`{backend}`): {summary}"
+            ),
+            "ui": {},
+        }
 
     elif action == "approve":
         return {"text": "🔇🔇🔇⚠️ 技能创建现已自动生效，不再需要手动批准。", "ui": {}}
@@ -183,21 +547,66 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
         }
 
     elif action == "create":
-        # New capability: Create Skill via Evolution Router (Smart)
         requirement = params.get("requirement") or params.get("instruction")
         if not requirement:
             return {"text": "🔇🔇🔇❌ 请提供技能需求描述 (requirement)", "ui": {}}
 
-        user_id = ctx.message.user.id
+        backend = _resolve_coding_backend(params)
+        cli_result = await _create_with_software_delivery(
+            ctx=ctx,
+            runtime=runtime,
+            requirement=str(requirement),
+            skill_name=str(params.get("skill_name") or ""),
+            backend=backend,
+        )
+        if cli_result.get("queued"):
+            queued_task_id = str(cli_result.get("task_id") or "").strip()
+            return {
+                "text": (
+                    f"🔇🔇🔇🚀 Skill 创建任务已异步提交（task_id=`{queued_task_id}`）。"
+                    "请稍后通过 software_delivery status 查询进度。"
+                ),
+                "ui": {},
+                "task_id": queued_task_id,
+            }
+        if cli_result.get("ok"):
+            resolved_name = str(cli_result.get("resolved_skill_name") or "").strip()
+            used_backend = str(cli_result.get("backend") or backend)
+            if resolved_name:
+                skill_loader.reload_skills()
+                skill_info = skill_loader.get_skill(resolved_name) or {}
+                has_scripts = bool(skill_info.get("scripts"))
+                return {
+                    "text": (
+                        f"🔇🔇🔇✅ 技能 `{resolved_name}` 已通过 `software_delivery` "
+                        f"模板任务（backend=`{used_backend}`）创建并生效。"
+                    ),
+                    "ui": {},
+                    "created_skill_name": resolved_name,
+                    "used_backend": used_backend,
+                    "skill_md": str(cli_result.get("skill_md") or ""),
+                    "has_scripts": has_scripts,
+                }
+            return {
+                "text": (
+                    f"🔇🔇🔇✅ manager 通过 `software_delivery` 模板任务 "
+                    f"(backend=`{used_backend}`) 完成技能创建，但未识别到技能名。"
+                    "请执行 `list skills` 确认。"
+                ),
+                "ui": {},
+                "used_backend": used_backend,
+            }
 
-        # Use Evolution Router to decide Strategy (Create vs Reuse vs Config)
-        from core.evolution_router import evolution_router
-
-        # result_msg = await evolution_router.evolve(requirement, user_id, ctx)
-        # ctx passed might trigger log error but no reply now
-        result_msg = await evolution_router.evolve(requirement, user_id, ctx)
-
-        return {"text": "🔇🔇🔇" + result_msg, "ui": {}}
+        summary = str(
+            cli_result.get("summary") or cli_result.get("error") or "未知错误"
+        )
+        return {
+            "text": (
+                f"🔇🔇🔇❌ manager 调用 `software_delivery` 模板任务失败 "
+                f"(backend=`{backend}`): {summary}"
+            ),
+            "ui": {},
+        }
 
     else:
         return {
@@ -248,7 +657,7 @@ async def _install_skill(target: str, user_id: int) -> Tuple[bool, str]:
                 )
 
             # Adopt
-            result = await creator.adopt_skill(content, user_id)
+            result = await adopt_skill(content, user_id)
 
             if result["success"]:
                 # Skill is directly adopted and active
@@ -259,6 +668,79 @@ async def _install_skill(target: str, user_id: int) -> Tuple[bool, str]:
     except Exception as e:
         logger.error(f"Install skill error: {e}")
         return False, str(e)
+
+
+async def adopt_skill(content: str, user_id: int) -> dict:
+    """
+    Adopt an existing skill content (install from URL) directly into learned.
+    Only supports standard SKILL.md.
+    """
+    try:
+        skill_name = ""
+
+        # 1. Detect Type & Extract Name
+        if content.startswith("---"):
+            # Parse YAML frontmatter
+            import yaml
+
+            try:
+                parts = content.split("---", 2)
+                if len(parts) >= 3:
+                    frontmatter = yaml.safe_load(parts[1])
+                    skill_name = frontmatter.get("name")
+            except Exception as e:
+                return {
+                    "success": False,
+                    "error": f"Failed to parse SKILL.md frontmatter: {e}",
+                }
+        else:
+            return {
+                "success": False,
+                "error": "Invalid skill format. Must start with '---' (SKILL.md). Legacy format is not supported.",
+            }
+
+        if not skill_name:
+            return {
+                "success": False,
+                "error": "Could not extract 'name' from skill content.",
+            }
+
+        # 2. Save directly to Learned
+        skills_base = skill_loader.skills_dir
+        skill_dir = os.path.join(skills_base, "learned", skill_name)
+        os.makedirs(skill_dir, exist_ok=True)
+
+        # Save SKILL.md
+        md_path = os.path.join(skill_dir, "SKILL.md")
+        with open(md_path, "w", encoding="utf-8") as f:
+            f.write(content)
+
+        # Fix permissions
+        try:
+            builtin_dir = os.path.join(skills_base, "builtin")
+            if os.path.exists(builtin_dir):
+                st = os.stat(builtin_dir)
+                target_uid = st.st_uid
+                target_gid = st.st_gid
+
+                for root, dirs, files in os.walk(skill_dir):
+                    os.chown(root, target_uid, target_gid)
+                    for d in dirs:
+                        os.chown(os.path.join(root, d), target_uid, target_gid)
+                    for f in files:
+                        os.chown(os.path.join(root, f), target_uid, target_gid)
+        except Exception:
+            pass
+
+        filepath = md_path
+
+        logger.info(f"Adopted skill (Direct): {skill_name} -> {filepath}")
+
+        return {"success": True, "skill_name": skill_name, "path": filepath}
+
+    except Exception as e:
+        logger.error(f"Adopt skill error: {e}")
+        return {"success": False, "error": str(e)}
 
 
 def _delete_skill(skill_name: str) -> Tuple[bool, str]:

@@ -138,4 +138,13 @@ MEMORY_MANAGEMENT_GUIDE = ""
 
 
 # """
-MANAGER_CORE_PROMPT = "# ## Worker 池\n{worker_pool_info}"
+MANAGER_CORE_PROMPT = (
+    "【注意事项】\n"
+    "1. 所有开发/改代码/修复 issue/提交 PR 任务，统一优先调用 `software_delivery`。\n"
+    "2. 技能开发属于模板化开发任务：调用 `software_delivery` 的 `skill_create` / `skill_modify`。\n"
+    "3. `software_delivery` 的编码动作是异步任务：发起一次后，后续使用 `software_delivery status` / `software_delivery logs` 查询进度，不要重复发起同一 run。\n"
+    "4. `coding_backend` 只是 `software_delivery` 内部实现，不要绕过 `software_delivery` 直接选择底层后端。\n"
+    "5. 编码工作由 Manager 自己执行，不要派发给 Worker。\n"
+    "6. 仅在编码/技能实现相关请求中优先 `software_delivery`；非编码运维场景可正常使用 `bash`。\n"
+    "【Worker 池】\n{worker_pool_info}"
+)

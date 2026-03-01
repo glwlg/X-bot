@@ -7,7 +7,8 @@ import logging
 from typing import Any
 from telegram.error import BadRequest
 
-from core.config import GEMINI_MODEL, is_user_allowed, openai_async_client
+from core.config import is_user_allowed, get_client_for_model
+from core.model_config import get_current_model
 from core.platform.exceptions import MediaProcessingError
 from services.openai_adapter import generate_text
 from user_context import add_message
@@ -163,11 +164,13 @@ async def handle_document(ctx: UnifiedContext) -> None:
 
         await ctx.edit_message(get_message_id(thinking_msg), "📄 正在分析文档内容...")
 
-        if openai_async_client is None:
+        model_to_use = get_current_model()
+        client_to_use = get_client_for_model(model_to_use, is_async=True)
+        if client_to_use is None:
             raise RuntimeError("OpenAI async client is not initialized")
         response_text = await generate_text(
-            async_client=openai_async_client,
-            model=GEMINI_MODEL,
+            async_client=client_to_use,
+            model=model_to_use,
             contents=f"用户问题：{caption}\n\n文档内容：\n{text}",
             config={
                 "system_instruction": (

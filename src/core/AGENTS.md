@@ -1,33 +1,37 @@
 # CORE KNOWLEDGE BASE
 
 ## OVERVIEW
-`src/core/` owns orchestration, tool routing, prompt composition, memory stores, and worker governance.
+`src/core/` owns manager orchestration, tool/runtime composition, canonical state I/O, prompt policy, memory, and heartbeat governance.
 
 ## WHERE TO LOOK
 | Task | Location | Notes |
 |------|----------|-------|
-| Tool injection and runtime dispatch | `src/core/agent_orchestrator.py`, `src/core/orchestrator_runtime_tools.py` | merges core/manager/extension tools and executes call path |
-| Tool definitions and profile gating | `src/core/tool_registry.py`, `src/core/tool_access_store.py` | `run_extension` and memory/tool restrictions live here |
-| Extension execution pipeline | `src/core/extension_router.py`, `src/core/extension_executor.py`, `src/core/tools/extension_tools.py` | central skill call and execution adapter layer |
-| Prompt policy and personality chain | `src/core/prompt_composer.py`, `src/core/prompts.py`, `src/core/soul_store.py` | system constraints + SOUL injection |
-| Task lifecycle and heartbeat | `src/core/task_inbox.py`, `src/core/task_manager.py`, `src/core/heartbeat_worker.py`, `src/core/heartbeat_store.py` | state transitions and periodic maintenance |
-| Memory and kernel state | `src/core/markdown_memory_store.py`, `src/core/kernel_config_store.py` | persistent context and kernel-level config |
+| Tool assembly and execution loop | `src/core/agent_orchestrator.py`, `src/core/orchestrator_runtime_tools.py`, `src/core/primitive_runtime.py` | merges core/manager/extension tools and drives call loop |
+| Tool definitions, broker, and profile gating | `src/core/tool_registry.py`, `src/core/tool_broker.py`, `src/core/tool_access_store.py`, `src/core/tool_profile_store.py` | runtime-visible tool set, access policy, compatibility surface |
+| Extension execution pipeline | `src/core/extension_router.py`, `src/core/extension_executor.py`, `src/core/tools/extension_tools.py`, `src/core/skill_loader.py` | skill routing, execution, and contract adaptation |
+| Prompt policy and personality chain | `src/core/prompt_composer.py`, `src/core/prompts.py`, `src/core/soul_store.py`, `src/core/model_config.py` | system constraints + SOUL + model choices |
+| Orchestrator context and event closure | `src/core/orchestrator_context.py`, `src/core/orchestrator_event_handler.py` | context snapshots and delivery completion handling |
+| Task lifecycle and heartbeat | `src/core/task_inbox.py`, `src/core/task_manager.py`, `src/core/heartbeat_worker.py`, `src/core/heartbeat_store.py`, `src/core/waiting_phrase_store.py` | state transitions and periodic maintenance |
+| Canonical state persistence | `src/core/state_store.py`, `src/core/state_paths.py`, `src/core/state_io.py`, `src/core/state_file.py`, `src/core/audit_store.py` | user/system state protocol and storage primitives |
+| Memory and kernel snapshots | `src/core/markdown_memory_store.py`, `src/core/kernel_config_store.py` | persistent context and runtime config history |
+| Platform abstraction layer | `src/core/platform/adapter.py`, `src/core/platform/registry.py`, `src/core/platform/models.py` | unified adapter API for multi-platform handlers |
 
 ## CONVENTIONS
-- Keep Core Manager as orchestrator/governor; avoid embedding user-facing business execution here.
-- Prefer primitive tool path first; escalate to heavier toolchains only when primitives cannot solve.
-- Preserve explicit task state transitions and source labeling across orchestration components.
-- Treat `tool_registry` + runtime tool merge as compatibility-sensitive API surface.
+- Keep Core Manager as orchestrator/governor; do not execute user business workflows directly in core loops.
+- Add tools via `tool_registry` + runtime merge path; keep tool names/signatures stable when possible.
+- Use `state_paths`/`state_io`/`state_store` for persistence; avoid ad-hoc direct path writes.
+- Preserve explicit task source/state transitions and loop guardrails across orchestration modules.
 
 ## ANTI-PATTERNS
-- Don't bypass `orchestrator_runtime_tools`/`tool_registry` with ad-hoc direct tool wiring.
-- Don't mix worker-only execution concerns back into manager orchestration control paths.
-- Don't weaken loop guards, retry boundaries, or timeout handling in agent/tool loops.
-- Don't add memory/storage shortcuts that skip repository/store abstractions.
+- Don't bypass `orchestrator_runtime_tools`/`tool_registry` with direct tool wiring.
+- Don't mix worker-kernel execution concerns into manager orchestration control paths.
+- Don't weaken retry boundaries, timeout handling, or loop guards in agent/tool loops.
+- Don't read/write state payloads outside canonical helpers (`state_file.py`, `state_io.py`).
 
 ## QUICK CHECKS
 ```bash
 uv run pytest tests/core/test_orchestrator_single_loop.py
 uv run pytest tests/core/test_orchestrator_delivery_closure.py
-uv run pytest tests/core/test_ai_service_retry_loop.py
+uv run pytest tests/core/test_orchestrator_runtime_tools.py
+uv run pytest tests/core/test_prompt_composer.py
 ```

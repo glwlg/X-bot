@@ -3,7 +3,10 @@ from types import SimpleNamespace
 
 import pytest
 
-import skills.builtin.generate_image.scripts.execute as generate_image_module
+generate_image_module = pytest.importorskip(
+    "skills.builtin.generate_image.scripts.execute",
+    reason="generate_image skill is temporarily disabled due to cost",
+)
 
 
 @pytest.mark.asyncio

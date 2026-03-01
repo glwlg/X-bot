@@ -12,7 +12,8 @@ import httpx
 from pathlib import Path
 from uuid import uuid4
 
-from core.config import GEMINI_MODEL, openai_client
+from core.config import get_client_for_model
+from core.model_config import get_current_model
 from services.openai_adapter import generate_text_sync
 
 logger = logging.getLogger(__name__)
@@ -24,6 +25,15 @@ URL_PATTERN = re.compile(r'https?://[^\s<>"{}|\\^`\[\]]+')
 def extract_urls(text: str) -> list[str]:
     """从文本中提取 URL"""
     return URL_PATTERN.findall(text)
+
+
+def _as_bool(value: str, *, default: bool = False) -> bool:
+    rendered = str(value or "").strip().lower()
+    if rendered in {"1", "true", "yes", "on"}:
+        return True
+    if rendered in {"0", "false", "no", "off"}:
+        return False
+    return bool(default)
 
 
 def _playwright_cli_command() -> list[str]:
@@ -139,6 +149,48 @@ async def fetch_with_playwright_cli_snapshot(url: str) -> str | None:
             pass
 
 
+async def fetch_with_jina_reader(url: str) -> str | None:
+    """使用 Jina Reader 提取网页 Markdown 内容"""
+    try:
+        jina_url = f"https://r.jina.ai/{url}"
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(
+                jina_url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "text/markdown",
+                },
+            )
+            response.raise_for_status()
+            text = response.text.strip()
+            if not text:
+                return None
+            return f"【通过 Jina Reader 获取的页面 Markdown 快照】\n\n{text}"
+    except Exception as e:
+        logger.warning(f"Jina Reader fetch failed for {url}: {e}")
+        return None
+
+
+async def fetch_with_http_raw(url: str) -> str | None:
+    """直接抓取原始 HTTP 页面内容。"""
+    try:
+        async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+            response = await client.get(
+                url,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                },
+            )
+            response.raise_for_status()
+            text = str(response.text or "").strip()
+            if not text:
+                return None
+            return f"【HTTP 原始页面内容】\n\n{text}"
+    except Exception as e:
+        logger.warning(f"HTTP fetch failed for {url}: {e}")
+        return None
+
+
 async def fetch_webpage_content(url: str) -> str | None:
     """
     获取网页内容
@@ -150,30 +202,34 @@ async def fetch_webpage_content(url: str) -> str | None:
         网页文本内容，如果失败返回 None
     """
 
-    prefer_cli = str(os.getenv("WEB_BROWSER_PREFER_PLAYWRIGHT_CLI", "true")).lower()
-    if prefer_cli in {"1", "true", "yes", "on"}:
+    prefer_cli = _as_bool(os.getenv("WEB_BROWSER_PREFER_PLAYWRIGHT_CLI", "true"))
+    if prefer_cli:
         cli_content = await fetch_with_playwright_cli_snapshot(url)
         if cli_content:
             return cli_content
 
-    logger.info("Playwright CLI unavailable, fallback to plain HTTP fetch: %s", url)
-    try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            response = await client.get(
-                url,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
-                },
-            )
-            response.raise_for_status()
-            text = str(response.text or "")
-            max_length = 12000
-            if len(text) > max_length:
-                text = text[:max_length] + "..."
-            return f"【HTTP 原始页面内容】\n\n{text}"
-    except Exception as e:
-        logger.error(f"Failed to fetch webpage: {e}")
-        return None
+        jina_content = await fetch_with_jina_reader(url)
+        if jina_content:
+            return jina_content
+
+        http_content = await fetch_with_http_raw(url)
+        if http_content:
+            return http_content
+    else:
+        http_content = await fetch_with_http_raw(url)
+        if http_content:
+            return http_content
+
+        jina_content = await fetch_with_jina_reader(url)
+        if jina_content:
+            return jina_content
+
+        cli_content = await fetch_with_playwright_cli_snapshot(url)
+        if cli_content:
+            return cli_content
+
+    logger.warning("All scraping methods failed or unavailable for: %s", url)
+    return None
 
 
 async def summarize_webpage(url: str) -> str:
@@ -202,11 +258,13 @@ async def summarize_webpage(url: str) -> str:
             "摘要应该简洁明了，一般不超过 200 字。"
         )
 
-        if openai_client is None:
+        model_to_use = get_current_model()
+        client_to_use = get_client_for_model(model_to_use, is_async=False)
+        if client_to_use is None:
             raise RuntimeError("OpenAI sync client is not initialized")
         summary = generate_text_sync(
-            sync_client=openai_client,
-            model=GEMINI_MODEL,
+            sync_client=client_to_use,
+            model=model_to_use,
             contents=prompt,
             config={
                 "system_instruction": system_instruction,

@@ -7,7 +7,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, cast
 
-from .config import GEMINI_MODEL, openai_async_client
+from .config import get_client_for_model
+from .model_config import get_current_model
 from .skill_loader import skill_loader
 from .tool_registry import tool_registry
 from services.ai_service import AiService
@@ -373,7 +374,10 @@ class ExtensionExecutor:
 
             rule = rules.get(tool_name)
             if not isinstance(rule, dict):
-                rule = {"tool_name": tool_name, "bash_prefixes": []}
+                rule = {
+                    "tool_name": tool_name,
+                    "bash_prefixes": [],
+                }
                 rules[tool_name] = rule
 
             raw_scope = str(match.group(2) or "").strip()
@@ -402,7 +406,7 @@ class ExtensionExecutor:
         runtime: Any,
         allowed_tool_rules: Dict[str, Dict[str, Any]],
     ) -> ExtensionRunResult | None:
-        if openai_async_client is None:
+        if get_client_for_model(is_async=True) is None:
             return ExtensionRunResult(
                 ok=False,
                 skill_name=skill_name,
@@ -455,15 +459,24 @@ class ExtensionExecutor:
             {"role": "user", "parts": [{"text": workflow_payload}]},
         ]
 
+        tool_call_count = 0
+        last_tool_result: Dict[str, Any] = {}
+
         async def _tool_executor(
             name: str, tool_args: Dict[str, Any]
         ) -> Dict[str, Any]:
-            return await self._execute_standard_tool_call(
+            nonlocal tool_call_count
+            nonlocal last_tool_result
+            result = await self._execute_standard_tool_call(
                 runtime=runtime,
+                skill_name=skill_name,
                 tool_name=name,
                 tool_args=tool_args,
                 allowed_tool_rules=allowed_tool_rules,
             )
+            tool_call_count += 1
+            last_tool_result = dict(result or {}) if isinstance(result, dict) else {}
+            return result
 
         service = AiService()
         chunks: list[str] = []
@@ -487,6 +500,11 @@ class ExtensionExecutor:
             )
 
         text = "".join(chunks).strip()
+        if not text and isinstance(last_tool_result, dict):
+            text = str(
+                last_tool_result.get("summary") or last_tool_result.get("message") or ""
+            ).strip()
+
         if not text:
             return ExtensionRunResult(
                 ok=False,
@@ -500,13 +518,19 @@ class ExtensionExecutor:
             ok=True,
             skill_name=skill_name,
             text=text,
-            data={"workflow_only": True, "standard_skill": True},
+            data={
+                "workflow_only": True,
+                "standard_skill": True,
+                "tool_call_count": tool_call_count,
+                "last_tool_result": last_tool_result,
+            },
         )
 
     async def _execute_standard_tool_call(
         self,
         *,
         runtime: Any,
+        skill_name: str,
         tool_name: str,
         tool_args: Dict[str, Any],
         allowed_tool_rules: Dict[str, Dict[str, Any]],
@@ -577,7 +601,7 @@ class ExtensionExecutor:
         workflow = str(skill.get("skill_md_content") or "").strip()
         if not workflow:
             return None
-        if openai_async_client is None:
+        if get_client_for_model(is_async=True) is None:
             return ExtensionRunResult(
                 ok=False,
                 skill_name=skill_name,
@@ -585,7 +609,7 @@ class ExtensionExecutor:
                 message=f"Skill {skill_name} has no executable entrypoint",
                 failure_mode="recoverable",
             )
-        client = cast(Any, openai_async_client)
+        client = cast(Any, get_client_for_model(is_async=True))
 
         user_text = str(getattr(getattr(ctx, "message", None), "text", "") or "")
         schema = skill.get("input_schema") or {"type": "object", "properties": {}}
@@ -611,7 +635,7 @@ class ExtensionExecutor:
         response = None
         try:
             response = await client.chat.completions.create(
-                model=GEMINI_MODEL,
+                model=get_current_model(),
                 messages=messages,
                 temperature=0,
                 response_format={"type": "json_object"},
@@ -619,7 +643,7 @@ class ExtensionExecutor:
         except Exception:
             try:
                 response = await client.chat.completions.create(
-                    model=GEMINI_MODEL,
+                    model=get_current_model(),
                     messages=messages,
                     temperature=0,
                 )
@@ -702,9 +726,15 @@ class ExtensionExecutor:
         rendered = str(text or "").strip()
         if not rendered:
             return False
+
+        if rendered.startswith("✅"):
+            return False
+
         lowered = rendered.lower()
         if lowered.startswith(("❌", "error", "failed", "invalid", "missing")):
             return True
+
+        preview = lowered[:250]
         patterns = (
             "missing required",
             "请提供",
@@ -720,4 +750,4 @@ class ExtensionExecutor:
             "tool_budget_guard",
             "semantic_loop_guard",
         )
-        return any(token in lowered or token in rendered for token in patterns)
+        return any(token in preview for token in patterns)

@@ -77,7 +77,7 @@ class HeartbeatWorker:
             os.getenv("HEARTBEAT_RSS_SIGNAL_ENABLED", "true").lower() == "true"
         )
         self.enable_stock_signal = (
-            os.getenv("HEARTBEAT_STOCK_SIGNAL_ENABLED", "true").lower() == "true"
+            os.getenv("HEARTBEAT_STOCK_SIGNAL_ENABLED", "false").lower() == "true"
         )
         self.push_file_enabled = (
             os.getenv("HEARTBEAT_PUSH_FILE_ENABLED", "true").lower() == "true"

@@ -46,6 +46,9 @@ class ExtensionRouter:
                 # Core primitives already provide direct read/write/edit/bash access.
                 continue
 
+            if bool(skill.get("manager_only")):
+                continue
+
             description = skill.get("description", "")
             triggers = skill.get("triggers", []) or []
             allowed_tools = skill.get("allowed_tools", []) or []
