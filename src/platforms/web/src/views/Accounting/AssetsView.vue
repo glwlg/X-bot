@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAccountingStore } from '@/stores/accounting'
 import { getAccounts, createAccount, type AccountItem } from '@/api/accounting'
-import { Plus, Eye, EyeOff, Loader2, Banknote, CreditCard, Landmark, X } from 'lucide-vue-next'
+import { Plus, Eye, EyeOff, Loader2, Banknote, CreditCard, Landmark, X, ChevronRight } from 'lucide-vue-next'
+
+const router = useRouter()
 
 
 const store = useAccountingStore()
@@ -146,7 +149,12 @@ onMounted(async () => {
           <span class="text-sm text-theme-muted">{{ showAmount ? `¥${formatMoney(groupTotal(items))}` : '****' }}</span>
         </div>
         <!-- Account Items -->
-        <div v-for="acc in items" :key="acc.id" class="flex items-center gap-3 px-4 py-3">
+        <div
+          v-for="acc in items"
+          :key="acc.id"
+          @click="router.push(`/accounting/account/${acc.id}`)"
+          class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-gray-50 dark:hover:bg-slate-700/50 transition"
+        >
           <div :class="['w-9 h-9 rounded-xl flex items-center justify-center', typeColor(type as string)]">
             <component :is="typeIcon(type as string)" class="w-4 h-4 text-white" />
           </div>
@@ -154,6 +162,7 @@ onMounted(async () => {
           <span class="text-teal-500 font-semibold text-sm">
             {{ showAmount ? `¥${formatMoney(acc.balance)}` : '****' }}
           </span>
+          <ChevronRight class="w-4 h-4 text-theme-muted" />
         </div>
       </div>
 

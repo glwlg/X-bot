@@ -36,6 +36,13 @@ const router = createRouter({
                     meta: { title: '资产' },
                 },
                 {
+                    path: 'account/:id',
+                    name: 'AccountDetail',
+                    component: () => import('@/views/Accounting/AccountDetailView.vue'),
+                    meta: { title: '账户详情' },
+                    props: true,
+                },
+                {
                     path: 'stats',
                     name: 'AccountingStats',
                     component: () => import('@/views/Accounting/StatsView.vue'),

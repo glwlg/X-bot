@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, distinct
+from sqlalchemy import select, func, distinct, or_, and_, case, literal
 from pydantic import BaseModel
 from typing import Optional
 import csv
@@ -39,6 +39,12 @@ class AccountUpdate(BaseModel):
     name: Optional[str] = None
     type: Optional[str] = None
     balance: Optional[float] = None
+    include_in_assets: Optional[bool] = None
+
+
+class BalanceAdjust(BaseModel):
+    target_balance: float
+    method: str = "差额补记收支"  # 差额补记收支 / 更改当前余额 / 设置初始余额
 
 
 # ─── Helper: verify book ownership ───────────────────────────────────
@@ -395,6 +401,67 @@ async def yearly_summary(
     return list(yearly.values())
 
 
+# ─── Helper: calculate dynamic account balance ──────────────────────
+
+
+async def _calc_account_balance(
+    session: AsyncSession,
+    account_id: int,
+    initial_balance: float,
+) -> float:
+    """当前余额 = 初始余额 + 该账户的收入 - 该账户的支出 + 转入 - 转出"""
+    # 作为付款账户（account_id）：支出减钱，收入加钱
+    # 作为收款账户（target_account_id）：转账加钱
+    result = await session.execute(
+        select(
+            func.coalesce(
+                func.sum(
+                    case(
+                        # 收入记录到该账户 -> +
+                        (
+                            and_(
+                                Record.account_id == account_id, Record.type == "收入"
+                            ),
+                            Record.amount,
+                        ),
+                        # 支出记录从该账户 -> -
+                        (
+                            and_(
+                                Record.account_id == account_id, Record.type == "支出"
+                            ),
+                            -Record.amount,
+                        ),
+                        # 转账：从该账户转出 -> -
+                        (
+                            and_(
+                                Record.account_id == account_id, Record.type == "转账"
+                            ),
+                            -Record.amount,
+                        ),
+                        # 转账：转入该账户 -> +
+                        (
+                            and_(
+                                Record.target_account_id == account_id,
+                                Record.type == "转账",
+                            ),
+                            Record.amount,
+                        ),
+                        else_=literal(0),
+                    )
+                ),
+                literal(0),
+            )
+        ).where(
+            or_(
+                Record.account_id == account_id,
+                Record.target_account_id == account_id,
+            )
+        )
+    )
+    tx_sum = float(result.scalar() or 0)
+    return initial_balance + tx_sum
+
+
 # ─── Accounts CRUD ───────────────────────────────────────────────────
 
 
@@ -409,15 +476,252 @@ async def list_accounts(
         select(Account).where(Account.book_id == book_id).order_by(Account.type)
     )
     accounts = result.scalars().all()
-    return [
-        {
-            "id": a.id,
-            "name": a.name,
-            "type": a.type,
-            "balance": float(a.balance),
-        }
-        for a in accounts
-    ]
+    enriched = []
+    for a in accounts:
+        current_balance = await _calc_account_balance(session, a.id, float(a.balance))
+        enriched.append(
+            {
+                "id": a.id,
+                "name": a.name,
+                "type": a.type,
+                "initial_balance": float(a.balance),
+                "balance": current_balance,
+            }
+        )
+    return enriched
+
+
+@router.get("/accounts/{account_id}")
+async def get_account_detail(
+    account_id: int,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """账户详情：包含动态余额和基本信息"""
+    acc = await session.get(Account, account_id)
+    if not acc:
+        raise HTTPException(status_code=404, detail="账户不存在")
+    await _get_book(acc.book_id, user, session)
+
+    current_balance = await _calc_account_balance(session, acc.id, float(acc.balance))
+    return {
+        "id": acc.id,
+        "name": acc.name,
+        "type": acc.type,
+        "initial_balance": float(acc.balance),
+        "balance": current_balance,
+        "book_id": acc.book_id,
+    }
+
+
+@router.get("/accounts/{account_id}/records")
+async def get_account_records(
+    account_id: int,
+    limit: int = Query(default=50, le=200),
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """某一账户的交易记录"""
+    acc = await session.get(Account, account_id)
+    if not acc:
+        raise HTTPException(status_code=404, detail="账户不存在")
+    await _get_book(acc.book_id, user, session)
+
+    result = await session.execute(
+        select(Record)
+        .where(
+            or_(
+                Record.account_id == account_id,
+                Record.target_account_id == account_id,
+            )
+        )
+        .order_by(Record.record_time.desc())
+        .limit(limit)
+    )
+    records = result.scalars().all()
+
+    # 计算每条记录后的余额（从最早到最新累加）
+    enriched = []
+    for r in records:
+        cat_name = ""
+        if r.category_id:
+            cat = await session.get(Category, r.category_id)
+            if cat:
+                cat_name = cat.name
+        acc_name = ""
+        if r.account_id:
+            a = await session.get(Account, r.account_id)
+            if a:
+                acc_name = a.name
+        enriched.append(
+            {
+                "id": r.id,
+                "type": r.type,
+                "amount": float(r.amount),
+                "category": cat_name,
+                "account": acc_name,
+                "payee": r.payee or "",
+                "remark": r.remark or "",
+                "record_time": r.record_time.isoformat() if r.record_time else "",
+            }
+        )
+    return enriched
+
+
+@router.get("/accounts/{account_id}/balance-trend")
+async def get_account_balance_trend(
+    account_id: int,
+    days: int = Query(default=30, le=365),
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """账户余额趋势（按日聚合 - 用于趋势图）"""
+    acc = await session.get(Account, account_id)
+    if not acc:
+        raise HTTPException(status_code=404, detail="账户不存在")
+    await _get_book(acc.book_id, user, session)
+
+    from datetime import timedelta
+
+    start = datetime.utcnow() - timedelta(days=days)
+
+    result = await session.execute(
+        select(
+            func.strftime("%Y-%m-%d", Record.record_time).label("day"),
+            func.sum(
+                case(
+                    (
+                        and_(Record.account_id == account_id, Record.type == "收入"),
+                        Record.amount,
+                    ),
+                    (
+                        and_(Record.account_id == account_id, Record.type == "支出"),
+                        -Record.amount,
+                    ),
+                    (
+                        and_(Record.account_id == account_id, Record.type == "转账"),
+                        -Record.amount,
+                    ),
+                    (
+                        and_(
+                            Record.target_account_id == account_id,
+                            Record.type == "转账",
+                        ),
+                        Record.amount,
+                    ),
+                    else_=literal(0),
+                )
+            ).label("daily_change"),
+        )
+        .where(
+            or_(
+                Record.account_id == account_id,
+                Record.target_account_id == account_id,
+            ),
+            Record.record_time >= start,
+        )
+        .group_by("day")
+        .order_by("day")
+    )
+    rows = result.all()
+
+    # 计算累积余额
+    initial = float(acc.balance)
+    # 先算 start 之前的所有交易累加
+    pre_result = await session.execute(
+        select(
+            func.coalesce(
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                Record.account_id == account_id, Record.type == "收入"
+                            ),
+                            Record.amount,
+                        ),
+                        (
+                            and_(
+                                Record.account_id == account_id, Record.type == "支出"
+                            ),
+                            -Record.amount,
+                        ),
+                        (
+                            and_(
+                                Record.account_id == account_id, Record.type == "转账"
+                            ),
+                            -Record.amount,
+                        ),
+                        (
+                            and_(
+                                Record.target_account_id == account_id,
+                                Record.type == "转账",
+                            ),
+                            Record.amount,
+                        ),
+                        else_=literal(0),
+                    )
+                ),
+                literal(0),
+            )
+        ).where(
+            or_(
+                Record.account_id == account_id,
+                Record.target_account_id == account_id,
+            ),
+            Record.record_time < start,
+        )
+    )
+    pre_sum = float(pre_result.scalar() or 0)
+    running = initial + pre_sum
+
+    trend = []
+    for row in rows:
+        running += float(row.daily_change or 0)
+        trend.append({"date": row.day, "balance": round(running, 2)})
+
+    return trend
+
+
+@router.post("/accounts/{account_id}/adjust-balance")
+async def adjust_balance(
+    account_id: int,
+    data: BalanceAdjust,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    """余额校正"""
+    acc = await session.get(Account, account_id)
+    if not acc:
+        raise HTTPException(status_code=404, detail="账户不存在")
+    await _get_book(acc.book_id, user, session)
+
+    current = await _calc_account_balance(session, acc.id, float(acc.balance))
+    diff = data.target_balance - current
+
+    if data.method == "更改当前余额" or data.method == "设置初始余额":
+        # 直接改初始余额使得当前余额 = target
+        acc.balance = float(acc.balance) + diff
+        await session.commit()
+    else:
+        # 差额补记收支：创建一条调整记录
+        if abs(diff) < 0.01:
+            return {"message": "余额无需调整"}
+        rec = Record(
+            book_id=acc.book_id,
+            type="收入" if diff > 0 else "支出",
+            amount=abs(diff),
+            account_id=acc.id,
+            category_id=None,
+            record_time=datetime.utcnow(),
+            payee="",
+            remark=f"余额校正: {current:.2f} → {data.target_balance:.2f}",
+            creator_id=user.id,
+        )
+        session.add(rec)
+        await session.commit()
+
+    new_balance = await _calc_account_balance(session, acc.id, float(acc.balance))
+    return {"message": "余额已调整", "balance": new_balance}
 
 
 @router.post("/accounts")
@@ -441,6 +745,7 @@ async def create_account(
         "id": acc.id,
         "name": acc.name,
         "type": acc.type,
+        "initial_balance": float(acc.balance),
         "balance": float(acc.balance),
     }
 
@@ -455,7 +760,6 @@ async def update_account(
     acc = await session.get(Account, account_id)
     if not acc:
         raise HTTPException(status_code=404, detail="账户不存在")
-    # Verify book ownership
     await _get_book(acc.book_id, user, session)
 
     if data.name is not None:
@@ -465,12 +769,29 @@ async def update_account(
     if data.balance is not None:
         acc.balance = data.balance
     await session.commit()
+    current = await _calc_account_balance(session, acc.id, float(acc.balance))
     return {
         "id": acc.id,
         "name": acc.name,
         "type": acc.type,
-        "balance": float(acc.balance),
+        "initial_balance": float(acc.balance),
+        "balance": current,
     }
+
+
+@router.delete("/accounts/{account_id}")
+async def delete_account(
+    account_id: int,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    acc = await session.get(Account, account_id)
+    if not acc:
+        raise HTTPException(status_code=404, detail="账户不存在")
+    await _get_book(acc.book_id, user, session)
+    await session.delete(acc)
+    await session.commit()
+    return {"message": "账户已删除"}
 
 
 # ─── Categories ──────────────────────────────────────────────────────
@@ -521,11 +842,14 @@ async def stats_overview(
     )
     days = days_result.scalar() or 0
 
-    # 净资产 = 所有账户余额之和
-    assets_result = await session.execute(
-        select(func.sum(Account.balance)).where(Account.book_id == book_id)
+    # 净资产 = 所有账户动态余额之和
+    acc_result = await session.execute(
+        select(Account).where(Account.book_id == book_id)
     )
-    net_assets = float(assets_result.scalar() or 0)
+    all_accounts = acc_result.scalars().all()
+    net_assets = 0.0
+    for a in all_accounts:
+        net_assets += await _calc_account_balance(session, a.id, float(a.balance))
 
     return {"days": days, "transactions": transactions, "net_assets": net_assets}
 

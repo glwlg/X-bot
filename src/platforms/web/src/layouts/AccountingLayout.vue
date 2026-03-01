@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { useRoute, RouterView, RouterLink } from 'vue-router'
 import { Home, Wallet, BarChart3, Grid2x2, UserCircle, ArrowLeft } from 'lucide-vue-next'
 
@@ -13,12 +14,18 @@ const tabs = [
 ]
 
 const isActiveTab = (path: string) => route.path === path
+
+// Hide layout chrome on sub-pages with own headers
+const isSubPage = computed(() => route.name === 'AccountDetail')
 </script>
 
 <template>
   <div class="flex flex-col h-full bg-gradient-to-b from-teal-50/50 to-white dark:from-slate-900 dark:to-slate-950">
-    <!-- Top bar with back button -->
-    <div class="sticky top-0 z-20 bg-gradient-to-r from-teal-500 to-teal-400 dark:from-teal-700 dark:to-teal-600 px-4 py-3 flex items-center gap-3 shadow-sm">
+    <!-- Top bar with back button (hidden on sub-pages) -->
+    <div
+      v-if="!isSubPage"
+      class="sticky top-0 z-20 bg-gradient-to-r from-teal-500 to-teal-400 dark:from-teal-700 dark:to-teal-600 px-4 py-3 flex items-center gap-3 shadow-sm"
+    >
       <RouterLink
         to="/home"
         class="flex items-center gap-1.5 text-white/90 hover:text-white transition text-sm font-medium"
@@ -34,8 +41,11 @@ const isActiveTab = (path: string) => route.path === path
       <RouterView />
     </div>
 
-    <!-- Bottom Tab Bar -->
-    <nav class="sticky bottom-0 z-20 flex border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]">
+    <!-- Bottom Tab Bar (hidden on sub-pages) -->
+    <nav
+      v-if="!isSubPage"
+      class="sticky bottom-0 z-20 flex border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]"
+    >
       <RouterLink
         v-for="tab in tabs"
         :key="tab.path"
@@ -55,3 +65,4 @@ const isActiveTab = (path: string) => route.path === path
     </nav>
   </div>
 </template>
+

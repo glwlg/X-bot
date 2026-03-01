@@ -21,6 +21,13 @@ export interface AccountItem {
     id: number
     name: string
     type: string
+    initial_balance: number
+    balance: number
+    book_id?: number
+}
+
+export interface BalanceTrendItem {
+    date: string
     balance: number
 }
 
@@ -105,6 +112,21 @@ export const createAccount = (bookId: number, data: { name: string; type: string
 
 export const updateAccount = (accountId: number, data: { name?: string; type?: string; balance?: number }) =>
     request.put<AccountItem>(`/accounting/accounts/${accountId}`, data)
+
+export const deleteAccount = (accountId: number) =>
+    request.delete(`/accounting/accounts/${accountId}`)
+
+export const getAccountDetail = (accountId: number) =>
+    request.get<AccountItem>(`/accounting/accounts/${accountId}`)
+
+export const getAccountRecords = (accountId: number, limit: number = 50) =>
+    request.get<RecordItem[]>(`/accounting/accounts/${accountId}/records`, { params: { limit } })
+
+export const getAccountBalanceTrend = (accountId: number, days: number = 30) =>
+    request.get<BalanceTrendItem[]>(`/accounting/accounts/${accountId}/balance-trend`, { params: { days } })
+
+export const adjustAccountBalance = (accountId: number, data: { target_balance: number; method: string }) =>
+    request.post(`/accounting/accounts/${accountId}/adjust-balance`, data)
 
 // ─── Categories ─────────────────────────────────────────────────────
 export const getCategories = (bookId: number) =>
