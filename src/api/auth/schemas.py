@@ -4,10 +4,9 @@
 
 from typing import Optional
 from datetime import datetime
-from pydantic import BaseModel
 from fastapi_users import schemas
 
-from src.api.auth.models import UserRole
+from api.auth.models import UserRole
 
 
 class UserRead(schemas.BaseUser[int]):

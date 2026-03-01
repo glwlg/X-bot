@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import Depends, HTTPException, status, Header
 import jwt
 
-from src.api.core.config import settings
+from api.core.config import settings
 
 
 async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
@@ -59,8 +59,8 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> dict:
             )
 
         # 从数据库获取用户信息
-        from src.api.core.database import get_session_maker
-        from src.api.auth.models import User
+        from api.core.database import get_session_maker
+        from api.auth.models import User
         from sqlalchemy import select
 
         session_maker = get_session_maker()

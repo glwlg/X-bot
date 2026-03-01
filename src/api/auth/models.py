@@ -11,7 +11,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from fastapi_users.db import SQLAlchemyBaseUserTable, SQLAlchemyBaseOAuthAccountTable
 import enum
 
-from src.api.core.database import Base
+from api.core.database import Base
 
 
 class UserRole(str, enum.Enum):

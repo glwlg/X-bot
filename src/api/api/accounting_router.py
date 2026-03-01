@@ -5,10 +5,10 @@ import csv
 import io
 from datetime import datetime
 
-from src.api.core.database import get_async_session
-from src.api.auth.users import current_active_user
-from src.api.auth.models import User
-from src.api.models.accounting import Book, Account, Category, Record
+from api.core.database import get_async_session
+from api.auth.users import current_active_user
+from api.auth.models import User
+from api.models.accounting import Book, Account, Category, Record
 
 router = APIRouter()
 

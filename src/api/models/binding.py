@@ -1,6 +1,6 @@
 from sqlalchemy import String, ForeignKey
 from sqlalchemy.orm import mapped_column, Mapped
-from src.api.core.database import Base
+from api.core.database import Base
 
 
 class PlatformUserBinding(Base):

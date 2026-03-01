@@ -5,16 +5,14 @@
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from typing import Optional
 
-from src.api.auth.users import (
+from api.auth.users import (
     fastapi_users,
     auth_backend,
     current_active_user,
-    current_superuser,
 )
-from src.api.auth.schemas import UserRead, UserCreate, UserUpdate
-from src.api.auth.models import User, UserRole
+from api.auth.schemas import UserRead, UserCreate, UserUpdate
+from api.auth.models import User, UserRole
 
 router = APIRouter()
 

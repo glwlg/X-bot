@@ -4,8 +4,7 @@ fastapi-users 配置
 包含用户管理器、认证策略、依赖注入等
 """
 
-from datetime import datetime
-from typing import Optional, AsyncGenerator
+from typing import Optional
 
 from fastapi import Depends, Request
 from fastapi_users import BaseUserManager, FastAPIUsers, IntegerIDMixin
@@ -17,9 +16,9 @@ from fastapi_users.authentication import (
 from fastapi_users.db import SQLAlchemyUserDatabase
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.core.database import get_async_session
-from src.api.auth.models import User, OAuthAccount
-from src.api.core.config import settings
+from api.core.database import get_async_session
+from api.auth.models import User, OAuthAccount
+from api.core.config import settings
 
 
 # ============== 用户数据库适配器 ==============

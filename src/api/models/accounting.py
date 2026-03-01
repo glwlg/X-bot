@@ -1,7 +1,7 @@
 from sqlalchemy import String, ForeignKey, Numeric, DateTime
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 from datetime import datetime
-from src.api.core.database import Base
+from api.core.database import Base
 
 
 class Book(Base):

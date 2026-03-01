@@ -6,11 +6,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 
-from src.api.api.router import api_router
-from src.api.auth.router import router as auth_router
-from src.api.api.binding_router import router as binding_router
-from src.api.api.accounting_router import router as accounting_router
-from src.api.core.database import init_db
+from api.api.router import api_router
+from api.auth.router import router as auth_router
+from api.api.binding_router import router as binding_router
+from api.api.accounting_router import router as accounting_router
+from api.core.database import init_db
 
 
 @asynccontextmanager
