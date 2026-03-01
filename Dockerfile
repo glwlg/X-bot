@@ -1,3 +1,12 @@
+# Build Frontend
+FROM node:22-alpine AS frontend-builder
+WORKDIR /app
+COPY src/platforms/web ./src/platforms/web
+WORKDIR /app/src/platforms/web
+RUN sed -i '/"overrides"/,+3d' package.json
+RUN npm install
+RUN npm run build
+
 # Use an official Python runtime as a parent image
 FROM python:3.14-slim
 
@@ -50,8 +59,8 @@ RUN npm install -g \
     @openai/codex@latest \
     @google/gemini-cli@latest \
     && if ! command -v gemini-cli >/dev/null 2>&1; then \
-        printf '#!/usr/bin/env sh\nexec gemini "$@"\n' > /usr/local/bin/gemini-cli; \
-        chmod +x /usr/local/bin/gemini-cli; \
+    printf '#!/usr/bin/env sh\nexec gemini "$@"\n' > /usr/local/bin/gemini-cli; \
+    chmod +x /usr/local/bin/gemini-cli; \
     fi \
     && npx -y playwright install chrome
 
@@ -69,6 +78,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # Copy the rest of the application's code
 COPY src/ .
+
+# Copy built frontend from builder stage
+COPY --from=frontend-builder /app/src/api/static/dist /app/src/api/static/dist
 
 # Command to run the application
 CMD ["python", "main.py"]

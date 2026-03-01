@@ -1,0 +1,246 @@
+/**
+ * OpsCore 主题系统样式文件
+ * 
+ * 本文件定义了亮色和暗色主题的CSS变量，以及主题切换的过渡动画。
+ * 
+ * 使用方法：
+ * 1. 使用 var(--color-*) 形式的CSS变量来定义颜色
+ * 2. 不要直接写死颜色值，应使用对应的CSS变量
+ * 3. 主题切换会自动应用，无需手动处理
+ */
+
+/* ========================================
+   基础主题变量定义
+   ======================================== */
+
+/* 亮色主题（默认） */
+:root,
+:root.light {
+    /* 背景色 */
+    --color-bg-primary: #ffffff;
+    --color-bg-secondary: #f8fafc;
+    --color-bg-tertiary: #f1f5f9;
+    --color-bg-elevated: #ffffff;
+    --color-bg-overlay: rgba(0, 0, 0, 0.5);
+    
+    /* 文字色 */
+    --color-text-primary: #1e293b;
+    --color-text-secondary: #475569;
+    --color-text-tertiary: #64748b;
+    --color-text-muted: #94a3b8;
+    --color-text-inverse: #ffffff;
+    
+    /* 边框色 */
+    --color-border-primary: #e2e8f0;
+    --color-border-secondary: #f1f5f9;
+    --color-border-focus: #7c3aed;
+    
+    /* 主色调 */
+    --color-primary-50: #f5f3ff;
+    --color-primary-100: #ede9fe;
+    --color-primary-200: #ddd6fe;
+    --color-primary-300: #c4b5fd;
+    --color-primary-400: #a78bfa;
+    --color-primary-500: #8b5cf6;
+    --color-primary-600: #7c3aed;
+    --color-primary-700: #6d28d9;
+    --color-primary-800: #5b21b6;
+    --color-primary-900: #4c1d95;
+    
+    /* 功能色 */
+    --color-success: #10b981;
+    --color-success-bg: #d1fae5;
+    --color-warning: #f59e0b;
+    --color-warning-bg: #fef3c7;
+    --color-error: #ef4444;
+    --color-error-bg: #fee2e2;
+    --color-info: #3b82f6;
+    --color-info-bg: #dbeafe;
+    
+    /* 阴影 */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+    
+    /* 滚动条 */
+    --scrollbar-track: #f1f5f9;
+    --scrollbar-thumb: #cbd5e1;
+    --scrollbar-thumb-hover: #94a3b8;
+}
+
+/* 暗色主题 */
+:root.dark {
+    /* 背景色 */
+    --color-bg-primary: #0f172a;
+    --color-bg-secondary: #1e293b;
+    --color-bg-tertiary: #334155;
+    --color-bg-elevated: #1e293b;
+    --color-bg-overlay: rgba(0, 0, 0, 0.75);
+    
+    /* 文字色 */
+    --color-text-primary: #f1f5f9;
+    --color-text-secondary: #cbd5e1;
+    --color-text-tertiary: #94a3b8;
+    --color-text-muted: #64748b;
+    --color-text-inverse: #0f172a;
+    
+    /* 边框色 */
+    --color-border-primary: #475569;
+    --color-border-secondary: #334155;
+    --color-border-focus: #a78bfa;
+    
+    /* 主色调（保持与亮色主题一致或稍作调整） */
+    --color-primary-50: #1e1b4b;
+    --color-primary-100: #312e81;
+    --color-primary-200: #3730a3;
+    --color-primary-300: #4338ca;
+    --color-primary-400: #6366f1;
+    --color-primary-500: #818cf8;
+    --color-primary-600: #a5b4fc;
+    --color-primary-700: #c7d2fe;
+    --color-primary-800: #e0e7ff;
+    --color-primary-900: #eef2ff;
+    
+    /* 功能色（适当调整以适应暗色背景） */
+    --color-success: #34d399;
+    --color-success-bg: rgba(16, 185, 129, 0.2);
+    --color-warning: #fbbf24;
+    --color-warning-bg: rgba(245, 158, 11, 0.2);
+    --color-error: #f87171;
+    --color-error-bg: rgba(239, 68, 68, 0.2);
+    --color-info: #60a5fa;
+    --color-info-bg: rgba(59, 130, 246, 0.2);
+    
+    /* 阴影（在暗色模式下减弱） */
+    --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.3);
+    --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.4);
+    --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.4), 0 4px 6px -4px rgb(0 0 0 / 0.4);
+    --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.5), 0 8px 10px -6px rgb(0 0 0 / 0.5);
+    
+    /* 滚动条 */
+    --scrollbar-track: #1e293b;
+    --scrollbar-thumb: #475569;
+    --scrollbar-thumb-hover: #64748b;
+}
+
+/* ========================================
+   主题切换过渡动画
+   ======================================== */
+
+/* 基础过渡设置 - 所有颜色变化都会有平滑过渡 */
+*,
+*::before,
+*::after {
+    transition-property: background-color, border-color, color, fill, stroke;
+    transition-duration: 200ms;
+    transition-timing-function: ease-in-out;
+}
+
+/* 排除特定元素 - 这些元素不应该有过渡效果 */
+.no-theme-transition,
+.no-theme-transition *,
+.no-theme-transition *::before,
+.no-theme-transition *::after {
+    transition: none !important;
+}
+
+/* 特定元素的过渡优化 */
+.theme-transition-fast {
+    transition-duration: 100ms;
+}
+
+.theme-transition-slow {
+    transition-duration: 400ms;
+}
+
+/* ========================================
+   使用CSS变量的实用类
+   ======================================== */
+
+/* 背景色类 */
+.bg-theme-primary { background-color: var(--color-bg-primary); }
+.bg-theme-secondary { background-color: var(--color-bg-secondary); }
+.bg-theme-tertiary { background-color: var(--color-bg-tertiary); }
+.bg-theme-elevated { background-color: var(--color-bg-elevated); }
+
+/* 文字色类 */
+.text-theme-primary { color: var(--color-text-primary); }
+.text-theme-secondary { color: var(--color-text-secondary); }
+.text-theme-tertiary { color: var(--color-text-tertiary); }
+.text-theme-muted { color: var(--color-text-muted); }
+.text-theme-inverse { color: var(--color-text-inverse); }
+
+/* 边框色类 */
+.border-theme-primary { border-color: var(--color-border-primary); }
+.border-theme-secondary { border-color: var(--color-border-secondary); }
+
+/* 阴影类 */
+.shadow-theme-sm { box-shadow: var(--shadow-sm); }
+.shadow-theme-md { box-shadow: var(--shadow-md); }
+.shadow-theme-lg { box-shadow: var(--shadow-lg); }
+
+/* ========================================
+   滚动条样式
+   ======================================== */
+
+/* Webkit 浏览器滚动条 */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--scrollbar-track);
+}
+
+::-webkit-scrollbar-thumb {
+    background: var(--scrollbar-thumb);
+    border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: var(--scrollbar-thumb-hover);
+}
+
+/* Firefox 滚动条 */
+* {
+    scrollbar-width: thin;
+    scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+/* ========================================
+   降级方案 - 不支持CSS变量的浏览器
+   ======================================== */
+
+/* 对于不支持CSS变量的浏览器，使用亮色主题作为默认 */
+@supports not (--css-variables: 1) {
+    body {
+        background-color: #f8f9fc;
+        color: #1e293b;
+    }
+}
+
+/* ========================================
+   打印样式
+   ======================================== */
+
+@media print {
+    /* 打印时强制使用亮色主题 */
+    :root {
+        --color-bg-primary: #ffffff !important;
+        --color-text-primary: #000000 !important;
+        --color-border-primary: #cccccc !important;
+    }
+    
+    /* 移除过渡动画 */
+    * {
+        transition: none !important;
+    }
+    
+    /* 确保背景色打印 */
+    * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+    }
+}

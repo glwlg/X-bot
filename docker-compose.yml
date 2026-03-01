@@ -38,3 +38,15 @@ services:
       - ./skills:/app/skills
       - ./config:/app/config
       - /var/run/docker.sock:/var/run/docker.sock
+
+  x-bot-api:
+    build: .
+    container_name: x-bot-api
+    env_file:
+      - .env
+    restart: unless-stopped
+    network_mode: "host"
+    command: [ "uv", "run", "uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000" ]
+    volumes:
+      - ./data:/app/data
+      - ./config:/app/config
