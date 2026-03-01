@@ -27,7 +27,7 @@ async def _resolve_platform_uid(user: User, session: AsyncSession) -> str:
     return platform_uid
 
 
-@router.get("/")
+@router.get("")
 async def get_monitors(
     current_user: User = Depends(current_active_user),
     session: AsyncSession = Depends(get_async_session),
@@ -36,7 +36,7 @@ async def get_monitors(
     return await hstore.list_checklist(platform_uid)
 
 
-@router.post("/")
+@router.post("")
 async def create_monitor(
     monitor: MonitorCreate,
     current_user: User = Depends(current_active_user),
