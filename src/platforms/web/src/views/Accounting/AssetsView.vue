@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAccountingStore } from '@/stores/accounting'
 import { getAccounts, createAccount, type AccountItem } from '@/api/accounting'
+import { appendOperationLog } from '@/utils/accountingLocal'
 import {
     Plus, Eye, EyeOff, Loader2, Banknote, CreditCard, Landmark, X, ChevronRight,
     Wallet, TrendingUp, ArrowDownLeft, ArrowUpRight
@@ -101,6 +102,11 @@ const handleCreateAccount = async () => {
             balance: newAccBalance.value,
         })
         accounts.value.push(res.data)
+        appendOperationLog(
+            store.currentBookId,
+            '新增账户',
+            `${res.data.name} · ${res.data.type} · ¥${res.data.balance.toFixed(2)}`,
+        )
         newAccName.value = ''
         newAccBalance.value = 0
         showAddAccount.value = false

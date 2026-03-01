@@ -11,6 +11,41 @@ export interface OperationLogEntry {
     created_at: string
     action: string
     detail: string
+    rollback: OperationLogRollback | null
+    rolled_back: boolean
+    rolled_back_at: string | null
+}
+
+export interface OperationLogRollbackRecordPayload {
+    type: '支出' | '收入' | '转账'
+    amount: number
+    category_name?: string
+    account_name?: string
+    target_account_name?: string
+    payee?: string
+    remark?: string
+    record_time?: string
+}
+
+export interface OperationLogRollbackAccountPayload {
+    name: string
+    type: string
+    balance: number
+    include_in_assets?: boolean
+}
+
+export type OperationLogRollback =
+    | {
+        kind: 'record'
+        data: OperationLogRollbackRecordPayload
+    }
+    | {
+        kind: 'account'
+        data: OperationLogRollbackAccountPayload
+    }
+
+interface AppendOperationLogOptions {
+    rollback?: OperationLogRollback
 }
 
 export interface GlobalSettingsState {
@@ -153,15 +188,19 @@ export const appendOperationLog = (
     bookId: number | null,
     action: string,
     detail: string,
+    options: AppendOperationLogOptions = {},
 ) => {
     const key = storageKey(bookId, 'operation-logs')
-    const logs = readJson<OperationLogEntry[]>(key, [])
+    const logs = readJson<OperationLogEntry[]>(key, []).map(normalizeOperationLog)
     const next: OperationLogEntry[] = [
         {
             id: randomId(),
             created_at: nowIso(),
             action,
             detail,
+            rollback: cloneRollback(options.rollback),
+            rolled_back: false,
+            rolled_back_at: null,
         },
         ...logs,
     ].slice(0, 300)
@@ -171,12 +210,44 @@ export const appendOperationLog = (
 
 export const loadOperationLogs = (bookId: number | null) => {
     const key = storageKey(bookId, 'operation-logs')
-    return readJson<OperationLogEntry[]>(key, [])
+    return readJson<OperationLogEntry[]>(key, []).map(normalizeOperationLog)
 }
 
 export const clearOperationLogs = (bookId: number | null) => {
     const key = storageKey(bookId, 'operation-logs')
     writeJson(key, [])
+}
+
+export const markOperationLogRolledBack = (bookId: number | null, logId: string) => {
+    const key = storageKey(bookId, 'operation-logs')
+    const logs = loadOperationLogs(bookId)
+    const next = logs.map(log => {
+        if (log.id !== logId) return log
+        return {
+            ...log,
+            rolled_back: true,
+            rolled_back_at: nowIso(),
+        }
+    })
+    writeJson(key, next)
+    return next
+}
+
+const cloneRollback = (rollback?: OperationLogRollback): OperationLogRollback | null => {
+    if (!rollback) return null
+    return JSON.parse(JSON.stringify(rollback)) as OperationLogRollback
+}
+
+const normalizeOperationLog = (entry: OperationLogEntry): OperationLogEntry => {
+    return {
+        id: entry.id,
+        created_at: entry.created_at,
+        action: entry.action,
+        detail: entry.detail,
+        rollback: entry.rollback ? cloneRollback(entry.rollback) : null,
+        rolled_back: Boolean(entry.rolled_back),
+        rolled_back_at: entry.rolled_back_at ?? null,
+    }
 }
 
 export const loadGlobalSettings = (): GlobalSettingsState => {

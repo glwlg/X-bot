@@ -2,12 +2,14 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useAccountingStore } from '@/stores/accounting'
-import { ChevronLeft, Trash2 } from 'lucide-vue-next'
+import { ChevronLeft, Loader2, Trash2 } from 'lucide-vue-next'
+import { createAccount, createRecord } from '@/api/accounting'
 import {
     appendOperationLog,
     clearOperationLogs,
     loadExtensionSettings,
     loadGlobalSettings,
+    markOperationLogRolledBack,
     loadOperationLogs,
     saveExtensionSettings,
     saveGlobalSettings,
@@ -47,8 +49,112 @@ const titleMap: Record<SettingsKind, string> = {
 
 const pageTitle = computed(() => titleMap[kind.value])
 
+const mainRef = ref<HTMLElement | null>(null)
+const refreshingLogs = ref(false)
+const rollbackingLogId = ref('')
+const pullStartY = ref<number | null>(null)
+const pullDistance = ref(0)
+const isPulling = ref(false)
+const pullThreshold = 72
+
+const pullHint = computed(() => {
+    if (refreshingLogs.value) return '刷新中...'
+    return pullDistance.value >= pullThreshold ? '松开刷新操作日志' : '下拉刷新操作日志'
+})
+
 const refreshLogs = () => {
     operationLogs.value = loadOperationLogs(store.currentBookId)
+}
+
+const triggerRefreshLogs = async () => {
+    if (refreshingLogs.value) return
+    refreshingLogs.value = true
+    try {
+        await new Promise(resolve => window.setTimeout(resolve, 220))
+        refreshLogs()
+    } finally {
+        refreshingLogs.value = false
+        pullDistance.value = 0
+        pullStartY.value = null
+        isPulling.value = false
+    }
+}
+
+const rollbackLabel = (log: OperationLogEntry) => {
+    if (!log.rollback) return '不可回滚'
+    return log.rollback.kind === 'record' ? '回滚交易' : '回滚账户'
+}
+
+const handleRollback = async (log: OperationLogEntry) => {
+    if (!store.currentBookId || !log.rollback || log.rolled_back) return
+
+    const targetText = log.rollback.kind === 'record' ? '这条交易' : '这个账户'
+    if (!confirm(`确认回滚并恢复${targetText}吗？`)) return
+
+    rollbackingLogId.value = log.id
+    try {
+        if (log.rollback.kind === 'record') {
+            await createRecord(store.currentBookId, log.rollback.data)
+            appendOperationLog(
+                store.currentBookId,
+                '回滚删除交易',
+                `${log.rollback.data.type} · ¥${log.rollback.data.amount.toFixed(2)} · ${log.rollback.data.category_name || '未分类'}`,
+            )
+        } else {
+            await createAccount(store.currentBookId, log.rollback.data)
+            appendOperationLog(
+                store.currentBookId,
+                '回滚删除账户',
+                `${log.rollback.data.name} · ${log.rollback.data.type} · ¥${log.rollback.data.balance.toFixed(2)}`,
+            )
+        }
+
+        operationLogs.value = markOperationLogRolledBack(store.currentBookId, log.id)
+        showSavedHint('回滚成功')
+    } catch (error) {
+        console.error('rollback operation failed', error)
+        alert('回滚失败，请稍后重试')
+    } finally {
+        rollbackingLogId.value = ''
+    }
+}
+
+const handleMainTouchStart = (event: TouchEvent) => {
+    if (kind.value !== 'logs' || refreshingLogs.value || !mainRef.value) return
+    if (mainRef.value.scrollTop > 0) return
+    pullStartY.value = event.touches[0]?.clientY ?? null
+    isPulling.value = true
+}
+
+const handleMainTouchMove = (event: TouchEvent) => {
+    if (kind.value !== 'logs' || !isPulling.value || pullStartY.value === null) return
+
+    const currentY = event.touches[0]?.clientY ?? pullStartY.value
+    const delta = currentY - pullStartY.value
+    if (delta <= 0) {
+        pullDistance.value = 0
+        return
+    }
+
+    pullDistance.value = Math.min(120, delta * 0.5)
+    if (pullDistance.value > 0) {
+        event.preventDefault()
+    }
+}
+
+const handleMainTouchEnd = () => {
+    if (kind.value !== 'logs') return
+    if (!isPulling.value) return
+
+    const shouldRefresh = pullDistance.value >= pullThreshold
+    if (shouldRefresh) {
+        triggerRefreshLogs()
+        return
+    }
+
+    pullDistance.value = 0
+    pullStartY.value = null
+    isPulling.value = false
 }
 
 const showSavedHint = (text: string) => {
@@ -107,7 +213,14 @@ onMounted(async () => {
       </div>
     </header>
 
-    <main class="flex-1 overflow-y-auto p-4 safe-bottom">
+    <main
+      ref="mainRef"
+      class="flex-1 overflow-y-auto p-4 safe-bottom"
+      @touchstart="handleMainTouchStart"
+      @touchmove="handleMainTouchMove"
+      @touchend="handleMainTouchEnd"
+      @touchcancel="handleMainTouchEnd"
+    >
       <div v-if="kind === 'global'" class="space-y-4">
         <div class="bg-white dark:bg-slate-800 rounded-2xl p-4 border border-slate-100 dark:border-slate-700 shadow-sm space-y-4">
           <div>
@@ -186,6 +299,13 @@ onMounted(async () => {
       </div>
 
       <div v-else class="space-y-4">
+        <div class="overflow-hidden transition-[height] duration-150" :style="{ height: `${Math.round(pullDistance)}px` }">
+          <div class="h-full flex items-end justify-center pb-2 text-xs text-slate-500 gap-1">
+            <Loader2 v-if="refreshingLogs" class="w-3 h-3 animate-spin" />
+            <span>{{ pullHint }}</span>
+          </div>
+        </div>
+
         <div class="bg-white dark:bg-slate-800 rounded-2xl border border-slate-100 dark:border-slate-700 shadow-sm overflow-hidden">
           <div v-if="operationLogs.length === 0" class="p-6 text-center text-sm text-slate-500">暂无操作日志</div>
           <div
@@ -195,7 +315,27 @@ onMounted(async () => {
           >
             <p class="text-sm font-medium text-slate-800 dark:text-white">{{ log.action }}</p>
             <p class="text-xs text-slate-500 mt-0.5">{{ log.detail }}</p>
-            <p class="text-[11px] text-slate-400 mt-1">{{ new Date(log.created_at).toLocaleString('zh-CN') }}</p>
+
+            <div class="mt-2 flex items-center justify-between gap-2">
+              <p class="text-[11px] text-slate-400">{{ new Date(log.created_at).toLocaleString('zh-CN') }}</p>
+
+              <button
+                v-if="log.rollback"
+                @click="handleRollback(log)"
+                :disabled="log.rolled_back || rollbackingLogId === log.id"
+                class="px-2.5 py-1 rounded-lg text-xs border transition disabled:opacity-60"
+                :class="log.rolled_back
+                  ? 'border-slate-200 text-slate-400 bg-slate-50 dark:border-slate-700 dark:bg-slate-900/50'
+                  : 'border-teal-200 text-teal-600 bg-teal-50 hover:bg-teal-100 dark:border-teal-700 dark:bg-teal-900/20'"
+              >
+                <Loader2 v-if="rollbackingLogId === log.id" class="w-3 h-3 animate-spin" />
+                <span v-else>{{ log.rolled_back ? '已回滚' : rollbackLabel(log) }}</span>
+              </button>
+            </div>
+
+            <p v-if="log.rolled_back && log.rolled_back_at" class="text-[11px] text-teal-600 mt-1">
+              已回滚于 {{ new Date(log.rolled_back_at).toLocaleString('zh-CN') }}
+            </p>
           </div>
         </div>
 

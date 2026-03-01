@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, nextTick } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { useAccountingStore } from '@/stores/accounting'
 import {
     getAccountDetail, getAccountRecords, getAccountBalanceTrend,
     updateAccount, adjustAccountBalance, deleteAccount,
@@ -10,9 +11,11 @@ import {
     ArrowLeft, Trash2, Pencil, X, Loader2, ChevronRight, Plus
 } from 'lucide-vue-next'
 import * as echarts from 'echarts'
+import { appendOperationLog } from '@/utils/accountingLocal'
 
 const router = useRouter()
 const route = useRoute()
+const store = useAccountingStore()
 const accountId = Number(route.params.id)
 
 const account = ref<AccountItem | null>(null)
@@ -48,6 +51,10 @@ const adjustMethods = [
 
 const togglingAssets = ref(false)
 
+const resolveLogBookId = () => {
+    return store.currentBookId || account.value?.book_id || null
+}
+
 const handleToggleAssets = async () => {
     if (!account.value || togglingAssets.value) return
     togglingAssets.value = true
@@ -55,6 +62,11 @@ const handleToggleAssets = async () => {
         const newVal = !account.value.include_in_assets
         await updateAccount(accountId, { include_in_assets: newVal })
         account.value.include_in_assets = newVal
+        appendOperationLog(
+            resolveLogBookId(),
+            '更新账户',
+            `${account.value.name} · 计入资产 ${newVal ? '开启' : '关闭'}`,
+        )
     } catch (e: any) {
         alert(e.response?.data?.detail || '状态更新失败')
     } finally {
@@ -149,6 +161,11 @@ const handleSaveEdit = async () => {
             name: editName.value,
             type: editType.value,
         })
+        appendOperationLog(
+            resolveLogBookId(),
+            '更新账户',
+            `${editName.value} · ${editType.value}`,
+        )
         await loadData()
         showEdit.value = false
     } finally {
@@ -170,6 +187,11 @@ const handleAdjust = async () => {
             target_balance: adjustTarget.value,
             method: adjustMethod.value,
         })
+        appendOperationLog(
+            resolveLogBookId(),
+            '更新账户余额',
+            `${account.value?.name || '账户'} · ${adjustMethod.value} · ¥${adjustTarget.value.toFixed(2)}`,
+        )
         await loadData()
         showAdjust.value = false
     } catch (e: any) {
@@ -180,8 +202,29 @@ const handleAdjust = async () => {
 }
 
 const handleDelete = async () => {
+    const snapshot = account.value
     try {
         await deleteAccount(accountId)
+        if (snapshot) {
+            appendOperationLog(
+                resolveLogBookId(),
+                '删除账户',
+                `${snapshot.name} · ${snapshot.type} · ¥${snapshot.balance.toFixed(2)}`,
+                {
+                    rollback: {
+                        kind: 'account',
+                        data: {
+                            name: snapshot.name,
+                            type: snapshot.type,
+                            balance: snapshot.balance,
+                            include_in_assets: snapshot.include_in_assets,
+                        },
+                    },
+                },
+            )
+        } else {
+            appendOperationLog(resolveLogBookId(), '删除账户', `ID ${accountId}`)
+        }
         router.push('/accounting/assets')
     } catch (e: any) {
         alert(e.response?.data?.detail || '删除失败')
@@ -382,7 +425,7 @@ onMounted(loadData)
     <div v-if="showDeleteConfirm" class="fixed inset-0 z-50 flex items-center justify-center bg-black/40" @click.self="showDeleteConfirm = false">
       <div class="bg-white dark:bg-slate-800 rounded-2xl p-6 w-[300px] shadow-xl text-center">
         <h3 class="text-lg font-semibold text-theme-primary mb-2">删除账户</h3>
-        <p class="text-sm text-theme-muted mb-5">确定要删除「{{ account?.name }}」吗？此操作不可撤销。</p>
+        <p class="text-sm text-theme-muted mb-5">确定要删除「{{ account?.name }}」吗？删除后可在操作日志里回滚。</p>
         <div class="flex gap-3">
           <button @click="showDeleteConfirm = false" class="flex-1 py-2.5 border border-gray-200 dark:border-slate-600 rounded-xl text-theme-secondary font-medium">取消</button>
           <button @click="handleDelete" class="flex-1 py-2.5 bg-rose-500 hover:bg-rose-600 text-white font-medium rounded-xl transition">删除</button>

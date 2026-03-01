@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { createRecord, getCategories, getAccounts, type CategoryItem, type AccountItem } from '@/api/accounting'
 import { X, Delete, Loader2 } from 'lucide-vue-next'
+import { appendOperationLog } from '@/utils/accountingLocal'
 
 const props = defineProps<{
     bookId: number
@@ -91,6 +92,11 @@ const handleSave = async () => {
             remark: remark.value,
             record_time: new Date().toISOString(),
         })
+        appendOperationLog(
+            props.bookId,
+            '新增交易',
+            `${activeTab.value} · ¥${amount.toFixed(2)} · ${selectedCategory.value || '未分类'}`,
+        )
         emit('saved')
     } catch (e) {
         console.error('Failed to save', e)

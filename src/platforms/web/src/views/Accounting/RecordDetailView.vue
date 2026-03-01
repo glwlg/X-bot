@@ -10,8 +10,10 @@ import {
     getAccounts,
     type CategoryItem,
     type AccountItem,
+    type RecordItem,
 } from '@/api/accounting'
 import { ChevronLeft, Loader2, Trash2 } from 'lucide-vue-next'
+import { appendOperationLog } from '@/utils/accountingLocal'
 
 const router = useRouter()
 const route = useRoute()
@@ -22,6 +24,7 @@ const saving = ref(false)
 const deleting = ref(false)
 const categories = ref<CategoryItem[]>([])
 const accounts = ref<AccountItem[]>([])
+const originalRecord = ref<RecordItem | null>(null)
 const loadFailed = ref(false)
 
 const getRecordId = () => {
@@ -106,6 +109,7 @@ const loadData = async () => {
         ])
 
         const record = recordRes.data
+        originalRecord.value = record
         categories.value = categoryRes.data
         accounts.value = accountRes.data
 
@@ -151,6 +155,11 @@ const handleSave = async () => {
             remark: form.value.remark?.trim() || '',
             record_time: recordTime || undefined,
         })
+        appendOperationLog(
+            store.currentBookId,
+            '更新交易',
+            `ID ${recordId} · ${form.value.type} · ¥${amount.toFixed(2)}`,
+        )
         alert('保存成功')
         await loadData()
     } catch (e) {
@@ -163,11 +172,37 @@ const handleSave = async () => {
 
 const handleDelete = async () => {
     if (!store.currentBookId || !recordId) return
-    if (!confirm('确定删除这条记录吗？删除后不可恢复。')) return
+    if (!confirm('确定删除这条记录吗？删除后可在操作日志里回滚。')) return
 
+    const snapshot = originalRecord.value
     deleting.value = true
     try {
         await deleteRecord(store.currentBookId, recordId)
+        if (snapshot) {
+            const rollbackType = snapshot.type === '收入' || snapshot.type === '转账' ? snapshot.type : '支出'
+            appendOperationLog(
+                store.currentBookId,
+                '删除交易',
+                `ID ${recordId} · ${snapshot.type} · ¥${snapshot.amount.toFixed(2)}`,
+                {
+                    rollback: {
+                        kind: 'record',
+                        data: {
+                            type: rollbackType,
+                            amount: snapshot.amount,
+                            category_name: snapshot.category || '未分类',
+                            account_name: snapshot.account || '',
+                            target_account_name: snapshot.target_account || '',
+                            payee: snapshot.payee || '',
+                            remark: snapshot.remark || '',
+                            record_time: snapshot.record_time,
+                        },
+                    },
+                },
+            )
+        } else {
+            appendOperationLog(store.currentBookId, '删除交易', `ID ${recordId}`)
+        }
         alert('删除成功')
         router.replace('/accounting/records')
     } catch (e) {
