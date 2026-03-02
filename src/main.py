@@ -53,6 +53,7 @@ from handlers import (
     stop_command,
     heartbeat_command,
     worker_command,
+    accounting_command,
 )
 from handlers.skill_handlers import (
     teach_command,
@@ -245,6 +246,7 @@ async def main():
     adapter_manager.on_command(
         "worker", worker_command, description="管理 Worker 执行层"
     )
+    adapter_manager.on_command("acc", accounting_command, description="快捷记账助手")
 
     # ----------------------------------------------
     # 3.1 DYNAMIC SKILL HANDLER REGISTRATION

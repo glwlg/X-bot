@@ -5,10 +5,12 @@ from datetime import datetime
 from core.platform.models import UnifiedContext
 from sqlalchemy import select
 
+from core.accounting_store import get_active_book_id
+
 # 必须通过 src 引用我们的 DB 和 Models
-from src.api.core.database import get_session_maker
-from src.api.models.binding import PlatformUserBinding
-from src.api.models.accounting import Book, Account, Category, Record
+from api.core.database import get_session_maker
+from api.models.binding import PlatformUserBinding
+from api.models.accounting import Book, Account, Category, Record
 
 logger = logging.getLogger(__name__)
 
@@ -58,14 +60,23 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
         user_id = binding.user_id
 
         # Get Book
-        stmt = select(Book).where(Book.owner_id == user_id)
-        book = (await session.execute(stmt)).scalars().first()
+        active_book_id = await get_active_book_id(user_id)
 
-        if not book:
+        stmt = select(Book).where(Book.owner_id == user_id)
+        books = (await session.execute(stmt)).scalars().all()
+
+        if not books:
             return {
                 "text": "❌ 您还未创建任何账本，请先在系统内创建一个账本。",
                 "ui": {},
             }
+
+        book = None
+        if active_book_id is not None:
+            book = next((b for b in books if b.id == active_book_id), None)
+
+        if not book:
+            book = books[0]
 
         # Helper logic to get or create
         async def get_or_create_account(name: str):
@@ -123,6 +134,6 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
         await session.commit()
 
     return {
-        "text": f"✅ 已成功记账！\n类型：{rtype} {amount} 元\n分类：{category_name}\n账户：{account_name}\n商家：{payee}\n备注：{remark}",
+        "text": f"✅ 已成功记入账本 `{book.name}`！\n类型：{rtype} {amount} 元\n分类：{category_name}\n账户：{account_name}\n商家：{payee}\n备注：{remark}",
         "ui": {},
     }

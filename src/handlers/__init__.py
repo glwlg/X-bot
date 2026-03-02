@@ -27,3 +27,4 @@ from .ai_handlers import (
 from .mcp_handlers import handle_browser_action
 from .heartbeat_handlers import heartbeat_command
 from .worker_handlers import worker_command
+from .accounting_handlers import accounting_command
