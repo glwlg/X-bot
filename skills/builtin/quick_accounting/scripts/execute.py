@@ -4,27 +4,162 @@ from datetime import datetime
 
 from core.platform.models import UnifiedContext
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 
 from core.accounting_store import get_active_book_id
 
 # 必须通过 src 引用我们的 DB 和 Models
 from api.core.database import get_session_maker
+from api.auth.models import User as _AuthUser  # noqa: F401
 from api.models.binding import PlatformUserBinding
 from api.models.accounting import Book, Account, Category, Record
 
 logger = logging.getLogger(__name__)
+VALID_RECORD_TYPES = {"支出", "收入", "转账"}
+
+
+def _failure_response(message: str, *, error_code: str) -> Dict[str, Any]:
+    text = f"❌ {message}"
+    return {
+        "success": False,
+        "error_code": error_code,
+        "text": text,
+        "failure_mode": "fatal",
+        "terminal": True,
+        "task_outcome": "failed",
+        "payload": {"text": text},
+        "ui": {},
+    }
+
+
+def _success_response(
+    *,
+    book_name: str,
+    book_id: int,
+    record_id: int,
+    record_type: str,
+    amount: float,
+    category_name: str,
+    account_name: str,
+    payee: str,
+    remark: str,
+) -> Dict[str, Any]:
+    text = (
+        f"✅ 已成功记入账本 `{book_name}`！\n"
+        f"账本ID：{book_id}｜记录ID：{record_id}\n"
+        f"类型：{record_type} {amount:.2f} 元\n"
+        f"分类：{category_name}\n"
+        f"账户：{account_name or '未填写'}\n"
+        f"商家：{payee or '未填写'}\n"
+        f"备注：{remark or '无'}"
+    )
+    return {
+        "success": True,
+        "text": text,
+        "terminal": True,
+        "task_outcome": "done",
+        "payload": {
+            "text": text,
+            "book_id": book_id,
+            "record_id": record_id,
+        },
+        "ui": {},
+    }
+
+
+def _resolve_binding_identity(ctx: UnifiedContext) -> tuple[str, str]:
+    platform = str(ctx.message.platform or "").strip() or "telegram"
+    platform_user_id = str(getattr(ctx.message.user, "id", "") or "").strip()
+    user_data = ctx.user_data if isinstance(ctx.user_data, dict) else {}
+
+    if platform == "worker_kernel":
+        source_platform = str(
+            user_data.get("source_platform")
+            or user_data.get("worker_delivery_platform")
+            or ""
+        ).strip()
+        source_user_id = str(
+            user_data.get("source_user_id")
+            or user_data.get("source_chat_id")
+            or user_data.get("worker_delivery_user_id")
+            or user_data.get("worker_delivery_chat_id")
+            or ""
+        ).strip()
+        if source_platform:
+            platform = source_platform
+        if source_user_id:
+            platform_user_id = source_user_id
+
+    if not platform_user_id:
+        platform_user_id = str(getattr(ctx.message.chat, "id", "") or "").strip()
+    return platform, platform_user_id
+
+
+def _extract_forced_ids(ctx: UnifiedContext) -> tuple[int | None, int | None]:
+    user_data = ctx.user_data if isinstance(ctx.user_data, dict) else {}
+    forced_user_id = user_data.get("accounting_user_id")
+    forced_book_id = user_data.get("accounting_book_id")
+
+    try:
+        parsed_user_id = int(forced_user_id) if forced_user_id is not None else None
+    except (ValueError, TypeError):
+        parsed_user_id = None
+
+    try:
+        parsed_book_id = int(forced_book_id) if forced_book_id is not None else None
+    except (ValueError, TypeError):
+        parsed_book_id = None
+
+    return parsed_user_id, parsed_book_id
+
+
+def _parse_record_time(record_time_str: str) -> datetime:
+    raw = str(record_time_str or "").strip()
+    if not raw or raw == "None":
+        return datetime.utcnow()
+
+    candidates = (
+        "%Y-%m-%d %H:%M:%S",
+        "%Y-%m-%d",
+    )
+    for fmt in candidates:
+        try:
+            parsed = datetime.strptime(raw, fmt)
+            return parsed
+        except ValueError:
+            continue
+
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.utcnow()
 
 
 async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, Any]:
     """Execute quick accounting from parsed LLM parameters."""
-    platform = ctx.message.platform or "telegram"
-    platform_user_id = str(ctx.message.user.id)
+    platform, platform_user_id = _resolve_binding_identity(ctx)
+    forced_user_id, forced_book_id = _extract_forced_ids(ctx)
 
     rtype = params.get("type", "支出")
     try:
         amount = float(params.get("amount", 0.0))
-    except ValueError, TypeError:
-        return {"text": f"❌ 金额解析错误，参数: {params.get('amount')}", "ui": {}}
+    except (ValueError, TypeError):
+        return _failure_response(
+            f"金额解析错误，参数：{params.get('amount')}",
+            error_code="invalid_amount",
+        )
+
+    if amount <= 0:
+        return _failure_response(
+            "金额必须大于 0",
+            error_code="invalid_amount",
+        )
+
+    if rtype not in VALID_RECORD_TYPES:
+        return _failure_response(
+            f"交易类型不支持：{rtype}",
+            error_code="invalid_type",
+        )
 
     category_name = str(params.get("category", "未分类")).strip()
     account_name = str(params.get("account", "")).strip()
@@ -33,107 +168,141 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
     remark = str(params.get("remark", "")).strip()
     record_time_str = str(params.get("record_time", "")).strip()
 
-    if not record_time_str or record_time_str == "None":
-        record_time = datetime.utcnow()
-    else:
-        try:
-            # 兼容 "YYYY-MM-DD HH:MM:SS"
-            record_time = datetime.strptime(record_time_str, "%Y-%m-%d %H:%M:%S")
-        except ValueError:
-            record_time = datetime.utcnow()
-
-    session_maker = get_session_maker()
-    async with session_maker() as session:
-        # Check binding
-        stmt = select(PlatformUserBinding).where(
-            PlatformUserBinding.platform == platform,
-            PlatformUserBinding.platform_user_id == platform_user_id,
+    record_time = _parse_record_time(record_time_str)
+    if not account_name:
+        return _failure_response(
+            "账户不能为空，请补充支付账户（如 微信 / 支付宝 / 现金）",
+            error_code="missing_account",
         )
-        binding = (await session.execute(stmt)).scalars().first()
+    if rtype == "转账" and not target_account_name:
+        return _failure_response(
+            "转账必须填写 target_account（收款账户）",
+            error_code="missing_target_account",
+        )
 
-        if not binding:
-            return {
-                "text": f"❌ 您未绑定账号，请先在网页端绑定（您的 ID：`{platform_user_id}`, 平台：`{platform}`）。",
-                "ui": {},
-            }
-
-        user_id = binding.user_id
-
-        # Get Book
-        active_book_id = await get_active_book_id(user_id)
-
-        stmt = select(Book).where(Book.owner_id == user_id)
-        books = (await session.execute(stmt)).scalars().all()
-
-        if not books:
-            return {
-                "text": "❌ 您还未创建任何账本，请先在系统内创建一个账本。",
-                "ui": {},
-            }
-
-        book = None
-        if active_book_id is not None:
-            book = next((b for b in books if b.id == active_book_id), None)
-
-        if not book:
-            book = books[0]
-
-        # Helper logic to get or create
-        async def get_or_create_account(name: str):
-            if not name:
-                return None
-            res = await session.execute(
-                select(Account).where(Account.book_id == book.id, Account.name == name)
-            )
-            acc = res.scalars().first()
-            if not acc:
-                acc = Account(book_id=book.id, name=name)
-                session.add(acc)
-                await session.flush()
-            return acc
-
-        async def get_or_create_category(name: str, ctype: str):
-            if not name:
-                return None
-            res = await session.execute(
-                select(Category).where(
-                    Category.book_id == book.id,
-                    Category.name == name,
-                    Category.type == ctype,
+    try:
+        session_maker = get_session_maker()
+        async with session_maker() as session:
+            if forced_user_id is not None:
+                user_id = forced_user_id
+            else:
+                stmt = select(PlatformUserBinding).where(
+                    PlatformUserBinding.platform == platform,
+                    PlatformUserBinding.platform_user_id == platform_user_id,
                 )
+                binding = (await session.execute(stmt)).scalars().first()
+
+                if not binding:
+                    return _failure_response(
+                        (
+                            "您未绑定账号，请先在网页端绑定"
+                            f"（平台：`{platform}`，ID：`{platform_user_id}`）"
+                        ),
+                        error_code="binding_not_found",
+                    )
+                user_id = int(binding.user_id)
+
+            book = None
+            if forced_book_id is not None:
+                stmt = select(Book).where(
+                    Book.id == forced_book_id,
+                    Book.owner_id == user_id,
+                )
+                book = (await session.execute(stmt)).scalars().first()
+                if not book:
+                    return _failure_response(
+                        "指定账本不存在或无权限。",
+                        error_code="book_not_found",
+                    )
+            else:
+                active_book_id = await get_active_book_id(user_id)
+
+                stmt = select(Book).where(Book.owner_id == user_id)
+                books = list((await session.execute(stmt)).scalars().all())
+                if not books:
+                    return _failure_response(
+                        "您还没有创建账本，请先在网页端创建一个账本。",
+                        error_code="book_not_found",
+                    )
+
+                if active_book_id is not None:
+                    book = next((b for b in books if b.id == active_book_id), None)
+                if not book:
+                    book = books[0]
+
+            async def get_or_create_account(name: str):
+                res = await session.execute(
+                    select(Account).where(
+                        Account.book_id == book.id, Account.name == name
+                    )
+                )
+                acc = res.scalars().first()
+                if not acc:
+                    acc = Account(book_id=book.id, name=name)
+                    session.add(acc)
+                    await session.flush()
+                return acc
+
+            async def get_or_create_category(name: str, ctype: str):
+                safe_name = name or "未分类"
+                res = await session.execute(
+                    select(Category).where(
+                        Category.book_id == book.id,
+                        Category.name == safe_name,
+                        Category.type == ctype,
+                    )
+                )
+                cat = res.scalars().first()
+                if not cat:
+                    cat = Category(book_id=book.id, name=safe_name, type=ctype)
+                    session.add(cat)
+                    await session.flush()
+                return cat
+
+            from_acc = await get_or_create_account(account_name)
+            to_acc = (
+                await get_or_create_account(target_account_name)
+                if rtype == "转账"
+                else None
             )
-            cat = res.scalars().first()
-            if not cat:
-                cat = Category(book_id=book.id, name=name, type=ctype)
-                session.add(cat)
-                await session.flush()
-            return cat
+            cat = await get_or_create_category(category_name, rtype)
 
-        # Actually create the records
-        from_acc = await get_or_create_account(account_name)
-        to_acc = (
-            await get_or_create_account(target_account_name)
-            if rtype == "转账"
-            else None
+            rec = Record(
+                book_id=book.id,
+                type=rtype,
+                amount=amount,
+                account_id=from_acc.id if from_acc else None,
+                target_account_id=to_acc.id if to_acc else None,
+                category_id=cat.id if cat else None,
+                record_time=record_time,
+                payee=payee[:100],
+                remark=remark[:500],
+                creator_id=user_id,
+            )
+            session.add(rec)
+            await session.commit()
+            await session.refresh(rec)
+
+            return _success_response(
+                book_name=str(book.name),
+                book_id=int(book.id),
+                record_id=int(rec.id),
+                record_type=rtype,
+                amount=amount,
+                category_name=(category_name or "未分类"),
+                account_name=account_name,
+                payee=payee,
+                remark=remark,
+            )
+    except SQLAlchemyError as exc:
+        logger.exception("quick_accounting database error: %s", exc)
+        return _failure_response(
+            "数据库写入失败，请稍后重试。",
+            error_code="database_error",
         )
-        cat = await get_or_create_category(category_name, rtype)
-
-        rec = Record(
-            book_id=book.id,
-            type=rtype,
-            amount=amount,
-            account_id=from_acc.id if from_acc else None,
-            target_account_id=to_acc.id if to_acc else None,
-            category_id=cat.id if cat else None,
-            record_time=record_time,
-            payee=payee[:100],
-            remark=remark[:500],
-            creator_id=user_id,
+    except Exception as exc:
+        logger.exception("quick_accounting unexpected error: %s", exc)
+        return _failure_response(
+            f"记账失败：{exc}",
+            error_code="unexpected_error",
         )
-        session.add(rec)
-        await session.commit()
-
-    return {
-        "text": f"✅ 已成功记入账本 `{book.name}`！\n类型：{rtype} {amount} 元\n分类：{category_name}\n账户：{account_name}\n商家：{payee}\n备注：{remark}",
-        "ui": {},
-    }

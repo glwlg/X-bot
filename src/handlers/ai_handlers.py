@@ -1006,21 +1006,33 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
         await ctx.reply("❌ 无法获取图片数据，请重新发送。")
         return
 
-    caption = media.caption or "请描述这张图片"
+    caption = media.caption or "请分析这张图片"
+    history_text = f"【用户发送了一张图片】 {caption}"
+    await add_message(ctx, user_id, "user", history_text)
 
-    # Save to history immediately
-    await add_message(ctx, user_id, "user", f"【用户发送了一张图片】 {caption}")
-
-    # 立即发送"正在分析"提示
     thinking_msg = await ctx.reply("🔍 让我仔细看看这张图...")
-
-    # 发送"正在输入"状态
     await ctx.send_chat_action(action="typing")
 
+    from core.agent_orchestrator import agent_orchestrator
+    from core.task_manager import task_manager
+
+    current_task = asyncio.current_task()
+    await task_manager.register_task(user_id, current_task, description="AI 图片分析")
+
     try:
-        # 构建带图片的内容
-        contents = [
+        history = await get_user_context(ctx, user_id)
+        if history and history[-1].get("role") == "user":
+            last_parts = history[-1].get("parts") or []
+            last_db_text = ""
+            if last_parts and isinstance(last_parts[0], dict):
+                last_db_text = str(last_parts[0].get("text") or "")
+            if last_db_text == history_text:
+                history.pop()
+
+        message_history = list(history)
+        message_history.append(
             {
+                "role": "user",
                 "parts": [
                     {"text": caption},
                     {
@@ -1031,56 +1043,102 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
                             ),
                         }
                     },
-                ]
+                ],
             }
-        ]
-
-        model_to_use = get_image_model() or get_current_model()
-        client_to_use = get_client_for_model(model_to_use, is_async=True)
-        if client_to_use is None:
-            raise RuntimeError("OpenAI async client is not initialized")
-        analysis = await generate_text(
-            async_client=client_to_use,
-            model=model_to_use,
-            contents=contents,
-            config={
-                "system_instruction": prompt_composer.compose_base(
-                    runtime_user_id=str(user_id),
-                    tools=[],
-                    runtime_policy_ctx={
-                        "agent_kind": "core-manager",
-                        "policy": {"tools": {"allow": [], "deny": []}},
-                    },
-                    mode="media_image",
-                )
-            },
         )
-        analysis = str(analysis or "").strip()
 
-        if analysis:
-            # 更新消息
-            # 更新消息
-            msg_id = getattr(
-                thinking_msg, "message_id", getattr(thinking_msg, "id", None)
+        final_text_response = ""
+        last_stream_update = 0.0
+
+        async for chunk_text in agent_orchestrator.handle_message(ctx, message_history):
+            if task_manager.is_cancelled(user_id):
+                raise asyncio.CancelledError()
+
+            piece = str(chunk_text or "")
+            if not piece:
+                continue
+
+            final_text_response += piece
+            now = time.time()
+            if now - last_stream_update > 1.0:
+                msg_id = getattr(
+                    thinking_msg, "message_id", getattr(thinking_msg, "id", None)
+                )
+                try:
+                    await ctx.edit_message(msg_id, final_text_response)
+                except MessageSendError as edit_err:
+                    if not _is_message_too_long_error(edit_err):
+                        raise
+                last_stream_update = now
+
+        if final_text_response:
+            ui_payload = _pop_pending_ui_payload(ctx.user_data)
+            rendered_response = await process_and_send_code_files(
+                ctx, final_text_response
             )
-            await ctx.edit_message(msg_id, analysis)
+            sent_msg = None
 
-            # Save model response to history
-            await add_message(ctx, user_id, "model", analysis)
+            try:
+                if len(final_text_response) > LONG_RESPONSE_FILE_THRESHOLD:
+                    preview_text = rendered_response.strip()
+                    if len(preview_text) > 1200:
+                        preview_text = (
+                            preview_text[:1200].rstrip()
+                            + "\n\n...（内容较长，完整结果见附件）"
+                        )
+                    if preview_text:
+                        payload = {"text": preview_text}
+                        if ui_payload:
+                            payload["ui"] = ui_payload
+                        sent_msg = await ctx.reply(payload)
+                    await ctx.reply("📝 内容较长，完整结果已转为 Markdown 文件发送。")
+                    sent_msg = await _send_response_as_markdown_file(
+                        ctx, final_text_response, prefix="photo_response"
+                    )
+                elif ui_payload:
+                    sent_msg = await ctx.reply(
+                        {
+                            "text": rendered_response,
+                            "ui": ui_payload,
+                        }
+                    )
+                else:
+                    msg_id = getattr(
+                        thinking_msg, "message_id", getattr(thinking_msg, "id", None)
+                    )
+                    await ctx.edit_message(msg_id, rendered_response)
+                    sent_msg = thinking_msg
+            except MessageSendError as send_err:
+                if not _is_message_too_long_error(send_err):
+                    raise
+                await ctx.reply("⚠️ 文本过长，正在转换为文件发送...")
+                sent_msg = await _send_response_as_markdown_file(
+                    ctx, final_text_response, prefix="photo_response"
+                )
 
-            # 记录统计
+            if sent_msg is not thinking_msg:
+                try:
+                    await thinking_msg.delete()
+                except Exception as del_e:
+                    logger.warning(f"Failed to delete thinking_msg: {del_e}")
+
+            await add_message(ctx, user_id, "model", final_text_response)
             await increment_stat(user_id, "photo_analyses")
-
         else:
             msg_id = getattr(
                 thinking_msg, "message_id", getattr(thinking_msg, "id", None)
             )
             await ctx.edit_message(msg_id, "抱歉，我无法分析这张图片。请稍后再试。")
 
+    except asyncio.CancelledError:
+        logger.info(f"AI photo analysis task cancelled for user {user_id}")
+        raise
     except Exception as e:
-        logger.error(f"AI photo analysis error: {e}")
+        logger.error(f"AI photo analysis error: {e}", exc_info=True)
         msg_id = getattr(thinking_msg, "message_id", getattr(thinking_msg, "id", None))
         await ctx.edit_message(msg_id, "❌ 图片分析失败，请稍后再试。")
+    finally:
+        task_manager.unregister_task(user_id)
 
 
 async def handle_ai_video(ctx: UnifiedContext) -> None:

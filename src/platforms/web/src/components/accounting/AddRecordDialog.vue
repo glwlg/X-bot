@@ -20,6 +20,11 @@ const tabs = ['支出', '收入', '转账'] as const
 // Amount input
 const amountStr = ref('0')
 
+const arithmeticOperators = new Set(['+', '-', '×', '÷'])
+
+const hasExpression = computed(() => /[+\-×÷()]/.test(amountStr.value))
+const actionKeyLabel = computed(() => (hasExpression.value ? '=' : 'OK'))
+
 // Categories
 const categories = ref<CategoryItem[]>([])
 const selectedCategory = ref('')
@@ -49,31 +54,224 @@ const displayCategories = computed(() => {
     return all
 })
 
+const formatCalculatedValue = (value: number) => {
+    if (!Number.isFinite(value)) return '0'
+    const fixed = value.toFixed(10)
+    const trimmed = fixed.replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1')
+    return trimmed === '-0' ? '0' : trimmed
+}
+
+const evaluateExpression = (expression: string): number | null => {
+    const sanitized = expression.replace(/\s+/g, '').replace(/×/g, '*').replace(/÷/g, '/')
+    if (!sanitized) return null
+
+    const tokens: Array<number | string> = []
+    let index = 0
+
+    const isDigitOrDot = (char: string) => /[0-9.]/.test(char)
+    const previousToken = () => (tokens.length ? tokens[tokens.length - 1] : null)
+
+    while (index < sanitized.length) {
+        const char = sanitized[index]
+        if (!char) break
+
+        if (isDigitOrDot(char) || (char === '-' && (index === 0 || ['+', '-', '*', '/', '('].includes(String(previousToken() ?? ''))) )) {
+            let next = index
+            let seenDot = false
+            if (sanitized[next] === '-') next += 1
+
+            while (next < sanitized.length) {
+                const cursor = sanitized[next]
+                if (!cursor) break
+                if (cursor === '.') {
+                    if (seenDot) return null
+                    seenDot = true
+                    next += 1
+                    continue
+                }
+                if (!/[0-9]/.test(cursor)) break
+                next += 1
+            }
+
+            const raw = sanitized.slice(index, next)
+            if (raw === '-' || raw === '.' || raw === '-.') return null
+            const number = Number(raw)
+            if (!Number.isFinite(number)) return null
+            tokens.push(number)
+            index = next
+            continue
+        }
+
+        if (['+', '-', '*', '/', '(', ')'].includes(char)) {
+            tokens.push(char)
+            index += 1
+            continue
+        }
+
+        return null
+    }
+
+    const values: number[] = []
+    const operators: string[] = []
+    const precedence = (op: string) => (op === '+' || op === '-' ? 1 : 2)
+
+    const applyTopOperator = () => {
+        const operator = operators.pop()
+        const right = values.pop()
+        const left = values.pop()
+        if (!operator || left === undefined || right === undefined) return false
+
+        if (operator === '+') values.push(left + right)
+        else if (operator === '-') values.push(left - right)
+        else if (operator === '*') values.push(left * right)
+        else if (operator === '/') {
+            if (right === 0) return false
+            values.push(left / right)
+        }
+        return true
+    }
+
+    for (const token of tokens) {
+        if (typeof token === 'number') {
+            values.push(token)
+            continue
+        }
+
+        if (token === '(') {
+            operators.push(token)
+            continue
+        }
+
+        if (token === ')') {
+            while (operators.length && operators[operators.length - 1] !== '(') {
+                if (!applyTopOperator()) return null
+            }
+            if (operators[operators.length - 1] !== '(') return null
+            operators.pop()
+            continue
+        }
+
+        while (
+            operators.length
+            && operators[operators.length - 1] !== '('
+            && precedence(operators[operators.length - 1] || '+') >= precedence(token)
+        ) {
+            if (!applyTopOperator()) return null
+        }
+        operators.push(token)
+    }
+
+    while (operators.length) {
+        if (operators[operators.length - 1] === '(') return null
+        if (!applyTopOperator()) return null
+    }
+
+    if (values.length !== 1) return null
+    return values[0] ?? null
+}
+
+const evaluateCurrentExpression = () => {
+    const result = evaluateExpression(amountStr.value)
+    if (result === null) return
+    amountStr.value = formatCalculatedValue(result)
+}
+
+const appendOperator = (operator: string) => {
+    const current = amountStr.value
+    const last = current.slice(-1)
+
+    if (current === '0' && operator !== '-') return
+    if (arithmeticOperators.has(last)) {
+        amountStr.value = `${current.slice(0, -1)}${operator}`
+        return
+    }
+    if (last === '(' && operator !== '-') return
+    amountStr.value += operator
+}
+
+const toggleParenthesis = () => {
+    const current = amountStr.value
+    const leftCount = (current.match(/\(/g) || []).length
+    const rightCount = (current.match(/\)/g) || []).length
+    const last = current.slice(-1)
+
+    const shouldOpen = leftCount === rightCount || arithmeticOperators.has(last) || last === '('
+    if (shouldOpen) {
+        if (current === '0') {
+            amountStr.value = '('
+            return
+        }
+        amountStr.value += '('
+        return
+    }
+
+    if (/[0-9)]/.test(last)) {
+        amountStr.value += ')'
+    }
+}
+
+const appendNumber = (digit: string) => {
+    if (amountStr.value === '0') {
+        amountStr.value = digit
+        return
+    }
+    amountStr.value += digit
+}
+
+const appendDot = () => {
+    const current = amountStr.value
+    const last = current.slice(-1)
+    if (arithmeticOperators.has(last) || last === '(' || last === ')') {
+        amountStr.value += '0.'
+        return
+    }
+
+    const segment = current.split(/[+\-×÷()]/).pop() || ''
+    if (segment.includes('.')) return
+    amountStr.value += '.'
+}
+
 const handleKeyPress = (key: string) => {
     if (key === 'C') {
         amountStr.value = '0'
-    } else if (key === '⌫') {
+        return
+    }
+
+    if (key === '⌫') {
         if (amountStr.value.length > 1) {
             amountStr.value = amountStr.value.slice(0, -1)
         } else {
             amountStr.value = '0'
         }
-    } else if (key === '.') {
-        if (!amountStr.value.includes('.')) {
-            amountStr.value += '.'
-        }
-    } else if (key === 'OK') {
-        handleSave()
-    } else {
-        // Number
-        if (amountStr.value === '0') {
-            amountStr.value = key
+        return
+    }
+
+    if (key === 'OK') {
+        if (actionKeyLabel.value === '=') {
+            evaluateCurrentExpression()
         } else {
-            // Limit decimal places
-            const parts = amountStr.value.split('.')
-            if (parts.length === 2 && (parts[1]?.length ?? 0) >= 2) return
-            amountStr.value += key
+            handleSave()
         }
+        return
+    }
+
+    if (key === '.') {
+        appendDot()
+        return
+    }
+
+    if (key === '()') {
+        toggleParenthesis()
+        return
+    }
+
+    if (arithmeticOperators.has(key)) {
+        appendOperator(key)
+        return
+    }
+
+    if (/^[0-9]$/.test(key)) {
+        appendNumber(key)
     }
 }
 
@@ -244,7 +442,7 @@ const keyRows = [
               style="grid-row: span 2"
             >
               <Loader2 v-if="saving" class="w-5 h-5 animate-spin mx-auto" />
-              <span v-else>OK</span>
+              <span v-else>{{ actionKeyLabel }}</span>
             </button>
             <button
               v-else-if="key === 'OK_BOT'"

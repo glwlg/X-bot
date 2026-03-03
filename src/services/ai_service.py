@@ -1096,6 +1096,21 @@ class AiService:
 
         for msg in message_history or []:
             if isinstance(msg, dict):
+                parts = msg.get("parts")
+                if isinstance(parts, list):
+                    for part in parts:
+                        if not isinstance(part, dict):
+                            continue
+                        inline_data = part.get("inline_data")
+                        if not isinstance(inline_data, dict):
+                            continue
+                        mime_type = str(inline_data.get("mime_type") or "").lower()
+                        if mime_type.startswith("image/"):
+                            has_image = True
+                            break
+                if has_image:
+                    break
+
                 content = msg.get("content")
                 if isinstance(content, list):
                     for item in content:

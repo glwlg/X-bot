@@ -1,13 +1,23 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAccountingStore } from '@/stores/accounting'
-import { getAccounts, createAccount, type AccountItem } from '@/api/accounting'
+import {
+    getAccounts,
+    createAccount,
+    getBalanceTrend,
+    type AccountItem,
+    type BalanceTrendScope,
+    type ScopedBalanceTrendItem,
+} from '@/api/accounting'
 import { appendOperationLog } from '@/utils/accountingLocal'
 import {
     Plus, Eye, EyeOff, Loader2, Banknote, CreditCard, Landmark, X, ChevronRight,
     Wallet, TrendingUp, ArrowDownLeft, ArrowUpRight
 } from 'lucide-vue-next'
+import * as echarts from 'echarts'
+import { toIsoLocal } from './statsRange'
+import netWorthBg from '@/assets/net-worth-ocean.svg'
 
 const router = useRouter()
 
@@ -17,12 +27,18 @@ const accounts = ref<AccountItem[]>([])
 const loading = ref(false)
 const showAmount = ref(true)
 const showAddAccount = ref(false)
+const chartRef = ref<HTMLElement | null>(null)
+const netTrendRows = ref<ScopedBalanceTrendItem[]>([])
+const netTrendLoading = ref(false)
 const pageRef = ref<HTMLElement | null>(null)
 const refreshing = ref(false)
 const pullStartY = ref<number | null>(null)
 const pullDistance = ref(0)
 const isPulling = ref(false)
 const pullThreshold = 72
+let trendChart: echarts.ECharts | null = null
+let trendObserver: ResizeObserver | null = null
+let delayedRenderTimer: ReturnType<typeof setTimeout> | null = null
 
 // New account form
 const newAccName = ref('')
@@ -45,9 +61,13 @@ const grouped = computed(() => {
 const groupTotal = (items: AccountItem[]) =>
     items.reduce((sum, a) => sum + a.balance, 0)
 
+const includedAccounts = computed(() => {
+    return accounts.value.filter(account => account.include_in_assets)
+})
+
 const totalAssets = computed(() => {
     let assets = 0, debts = 0
-    for (const acc of accounts.value) {
+    for (const acc of includedAccounts.value) {
         if (acc.balance >= 0) assets += acc.balance
         else debts += acc.balance
     }
@@ -90,6 +110,125 @@ const pullHint = computed(() => {
     return pullDistance.value >= pullThreshold ? '松开刷新' : '下拉刷新'
 })
 
+const renderTrendChart = () => {
+    if (!chartRef.value || chartRef.value.clientWidth <= 0 || chartRef.value.clientHeight <= 0) return false
+    if (!trendChart) trendChart = echarts.init(chartRef.value)
+
+    const labels = netTrendRows.value.map(item => item.period.replace('-', '/'))
+    const values = netTrendRows.value.map(item => item.balance)
+
+    trendChart.setOption({
+        grid: { top: 4, right: 6, bottom: 2, left: 6 },
+        xAxis: {
+            type: 'category',
+            data: labels.length > 0 ? labels : [''],
+            boundaryGap: false,
+            axisLine: { show: false },
+            axisTick: { show: false },
+            axisLabel: { show: false },
+        },
+        yAxis: {
+            type: 'value',
+            axisLine: { show: false },
+            axisTick: { show: false },
+            splitLine: { show: false },
+            axisLabel: { show: false },
+        },
+        series: [{
+            type: 'line',
+            smooth: true,
+            symbol: 'none',
+            data: values.length > 0 ? values : [0],
+            lineStyle: { width: 2, color: '#f8fafc' },
+            areaStyle: {
+                color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                    { offset: 0, color: 'rgba(255,255,255,0.42)' },
+                    { offset: 1, color: 'rgba(255,255,255,0.03)' },
+                ]),
+            },
+        }],
+    })
+    trendChart.resize()
+    return true
+}
+
+const renderTrendChartSafely = async () => {
+    await nextTick()
+    await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+
+    if (renderTrendChart()) return
+
+    if (delayedRenderTimer) clearTimeout(delayedRenderTimer)
+    delayedRenderTimer = setTimeout(() => {
+        renderTrendChart()
+    }, 120)
+}
+
+const loadNetTrend = async () => {
+    if (!store.currentBookId) {
+        netTrendRows.value = []
+        return
+    }
+
+    netTrendLoading.value = true
+    try {
+        const end = new Date()
+        const start = new Date(end)
+        start.setMonth(end.getMonth() - 11)
+        start.setDate(1)
+
+        const endExclusive = new Date(end)
+        endExclusive.setDate(endExclusive.getDate() + 1)
+
+        const res = await getBalanceTrend(
+            store.currentBookId,
+            toIsoLocal(start),
+            toIsoLocal(endExclusive),
+            'month',
+            'net',
+        )
+        netTrendRows.value = res.data
+    } catch (error) {
+        console.error('load net trend failed', error)
+        netTrendRows.value = []
+    } finally {
+        netTrendLoading.value = false
+    }
+
+    await renderTrendChartSafely()
+}
+
+const goBalanceTrend = (
+    scope: BalanceTrendScope,
+    options: {
+        accountType?: string
+        accountId?: number
+    } = {},
+) => {
+    const end = new Date()
+    const start = new Date(end)
+    start.setMonth(end.getMonth() - 11)
+    start.setDate(1)
+
+    const endExclusive = new Date(end)
+    endExclusive.setDate(endExclusive.getDate() + 1)
+
+    const query: Record<string, string> = {
+        scope,
+        start: toIsoLocal(start),
+        end: toIsoLocal(endExclusive),
+    }
+
+    if (options.accountType) {
+        query.account_type = options.accountType
+    }
+    if (options.accountId) {
+        query.account_id = String(options.accountId)
+    }
+
+    router.push({ name: 'BalanceTrendDetail', query })
+}
+
 
 
 const loadData = async () => {
@@ -98,6 +237,7 @@ const loadData = async () => {
     try {
         const res = await getAccounts(store.currentBookId)
         accounts.value = res.data
+        await loadNetTrend()
     } finally {
         loading.value = false
     }
@@ -118,6 +258,7 @@ const handleCreateAccount = async () => {
             '新增账户',
             `${res.data.name} · ${res.data.type} · ¥${res.data.balance.toFixed(2)}`,
         )
+        await loadNetTrend()
         newAccName.value = ''
         newAccBalance.value = 0
         showAddAccount.value = false
@@ -194,6 +335,24 @@ const handleTouchEnd = () => {
 onMounted(async () => {
     if (!store.currentBookId) await store.fetchBooks()
     await loadData()
+
+    if (typeof ResizeObserver !== 'undefined' && chartRef.value) {
+        trendObserver = new ResizeObserver(() => trendChart?.resize())
+        trendObserver.observe(chartRef.value)
+    }
+})
+
+onBeforeUnmount(() => {
+    trendObserver?.disconnect()
+    trendObserver = null
+
+    if (delayedRenderTimer) {
+        clearTimeout(delayedRenderTimer)
+        delayedRenderTimer = null
+    }
+
+    trendChart?.dispose()
+    trendChart = null
 })
 </script>
 
@@ -222,25 +381,57 @@ onMounted(async () => {
     </div>
 
     <!-- Net Worth Card -->
-    <div class="mx-4 rounded-2xl bg-gradient-to-br from-cyan-600 via-indigo-500 to-blue-600 p-5 text-white shadow-lg relative overflow-hidden">
-      <div class="absolute top-0 right-0 w-40 h-40 bg-white/5 rounded-full -translate-y-1/2 translate-x-1/2" />
+    <div
+      class="mx-4 rounded-3xl p-5 text-white shadow-lg relative overflow-hidden cursor-pointer"
+      :style="{
+        backgroundColor: '#0b5d8f',
+        backgroundImage: `linear-gradient(135deg, rgba(6, 30, 78, 0.55), rgba(8, 95, 150, 0.38)), url('${netWorthBg}')`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+      }"
+      @click="goBalanceTrend('net')"
+    >
+      <div class="absolute inset-0 opacity-10 bg-[radial-gradient(circle_at_20%_20%,rgba(255,255,255,0.35),transparent_45%),radial-gradient(circle_at_80%_70%,rgba(255,255,255,0.18),transparent_45%)]" />
       <div class="relative z-10">
-        <div class="flex items-center gap-3 mb-1">
-          <span class="text-3xl font-bold">
-            {{ showAmount ? `¥${formatMoney(totalAssets.net)}` : '****' }}
-          </span>
-          <button @click="showAmount = !showAmount" class="opacity-80 hover:opacity-100 transition">
-            <EyeOff v-if="showAmount" class="w-5 h-5" />
-            <Eye v-else class="w-5 h-5" />
+        <div class="flex items-center justify-between gap-3 mb-1">
+          <div class="flex items-center gap-2">
+            <span class="text-4xl font-bold tracking-tight drop-shadow-[0_2px_8px_rgba(0,0,0,0.35)]">
+              {{ showAmount ? `¥${formatMoney(totalAssets.net)}` : '****' }}
+            </span>
+            <button @click.stop="showAmount = !showAmount" class="opacity-85 hover:opacity-100 transition">
+              <EyeOff v-if="showAmount" class="w-5 h-5" />
+              <Eye v-else class="w-5 h-5" />
+            </button>
+          </div>
+
+          <button
+            @click.stop="goBalanceTrend('net')"
+            class="px-3 py-1.5 rounded-full border border-white/50 text-xs bg-white/15 hover:bg-white/20 transition"
+          >
+            余额趋势
           </button>
         </div>
-        <div class="flex gap-6 text-sm opacity-90">
-          <span>资产 {{ showAmount ? `¥${formatMoney(totalAssets.assets)}` : '****' }}</span>
-          <span>负债 {{ showAmount ? (totalAssets.debts < 0 ? `-¥${formatMoney(Math.abs(totalAssets.debts))}` : '¥0') : '****' }}</span>
+
+        <div class="flex gap-3 text-sm mt-2">
+          <button
+            @click.stop="goBalanceTrend('assets')"
+            class="px-3 py-1.5 rounded-xl bg-white/18 hover:bg-white/28 transition"
+          >
+            资产 {{ showAmount ? `¥${formatMoney(totalAssets.assets)}` : '****' }}
+          </button>
+          <button
+            @click.stop="goBalanceTrend('liabilities')"
+            class="px-3 py-1.5 rounded-xl bg-white/18 hover:bg-white/28 transition"
+          >
+            负债 {{ showAmount ? (totalAssets.debts < 0 ? `-¥${formatMoney(Math.abs(totalAssets.debts))}` : '¥0') : '****' }}
+          </button>
         </div>
       </div>
-      <!-- Mini chart placeholder -->
-      <div ref="chartRef" class="h-[60px] mt-3 opacity-60"></div>
+
+      <div ref="chartRef" class="h-[76px] mt-4 relative z-10"></div>
+      <div v-if="netTrendLoading" class="absolute inset-0 z-20 flex items-center justify-center bg-black/10">
+        <Loader2 class="w-4 h-4 animate-spin text-white" />
+      </div>
     </div>
 
     <!-- Loading -->
@@ -253,8 +444,18 @@ onMounted(async () => {
       <div v-for="(items, type) in grouped" :key="type" class="mx-4 mt-4 rounded-2xl bg-white dark:bg-slate-800 shadow-sm border border-gray-100 dark:border-slate-700 overflow-hidden">
         <!-- Group Header -->
         <div class="flex items-center justify-between px-4 py-3 border-b border-gray-50 dark:border-slate-700/50">
-          <span class="text-sm text-theme-muted font-medium">{{ type }}</span>
-          <span class="text-sm text-theme-muted">{{ showAmount ? `¥${formatMoney(groupTotal(items))}` : '****' }}</span>
+          <button
+            @click="goBalanceTrend('account_type', { accountType: type as string })"
+            class="text-sm text-theme-muted font-medium hover:text-teal-600 dark:hover:text-teal-400 transition"
+          >
+            {{ type }}
+          </button>
+          <button
+            @click="goBalanceTrend('account_type', { accountType: type as string })"
+            class="text-sm text-theme-muted hover:text-teal-600 dark:hover:text-teal-400 transition"
+          >
+            {{ showAmount ? `¥${formatMoney(groupTotal(items))}` : '****' }}
+          </button>
         </div>
         <!-- Account Items -->
         <div
@@ -267,9 +468,12 @@ onMounted(async () => {
             <component :is="typeIcon(type as string)" class="w-4 h-4 text-white" />
           </div>
           <span class="flex-1 font-medium text-theme-primary text-sm">{{ acc.name }}</span>
-          <span class="text-indigo-500 font-semibold text-sm">
+          <button
+            @click.stop="goBalanceTrend('account', { accountId: acc.id })"
+            class="text-teal-500 font-semibold text-sm hover:text-teal-600 transition"
+          >
             {{ showAmount ? `¥${formatMoney(acc.balance)}` : '****' }}
-          </span>
+          </button>
           <ChevronRight class="w-4 h-4 text-theme-muted" />
         </div>
       </div>

@@ -1,4 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query, Response
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    UploadFile,
+    File,
+    Query,
+    Response,
+    Form,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, distinct, or_, and_, case, literal, update, delete
 from pydantic import BaseModel
@@ -6,7 +15,11 @@ from typing import Optional
 import csv
 import io
 import json
-from datetime import datetime, timezone
+import os
+import asyncio
+from pathlib import Path
+from uuid import uuid4
+from datetime import datetime, timezone, timedelta
 
 from api.core.database import get_async_session
 from api.auth.users import current_active_user
@@ -22,6 +35,7 @@ from api.models.accounting import (
     StatsPanel,
     OperationLog,
 )
+from shared.queue.dispatch_queue import dispatch_queue
 
 router = APIRouter()
 
@@ -257,6 +271,135 @@ async def _serialize_record(session: AsyncSession, record: Record) -> dict:
         "remark": record.remark or "",
         "record_time": record.record_time.isoformat() if record.record_time else "",
     }
+
+
+def _web_accounting_upload_root() -> Path:
+    data_dir = str(os.getenv("DATA_DIR", "/app/data")).strip() or "/app/data"
+    root = Path(data_dir).expanduser().resolve() / "system" / "web_accounting_uploads"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _store_web_accounting_image(image_bytes: bytes, mime_type: str) -> str:
+    root = _web_accounting_upload_root()
+    ext = "jpg"
+    if "/" in mime_type:
+        maybe = str(mime_type.split("/", 1)[1] or "").strip().lower()
+        if maybe and maybe.isascii() and maybe.isalnum() and len(maybe) <= 8:
+            ext = maybe
+    path = root / f"{uuid4().hex}.{ext}"
+    path.write_bytes(image_bytes)
+    return str(path)
+
+
+async def _wait_for_dispatch_result(task_id: str, timeout_sec: float) -> dict:
+    interval = 0.5
+    deadline = asyncio.get_running_loop().time() + max(5.0, timeout_sec)
+    while asyncio.get_running_loop().time() < deadline:
+        result_obj = await dispatch_queue.latest_result(task_id)
+        if result_obj is not None:
+            payload = result_obj.to_dict()
+            raw = payload.get("payload")
+            payload_obj = dict(raw) if isinstance(raw, dict) else {}
+            record_id_raw = payload_obj.get("record_id") or payload_obj.get(
+                "accounting_record_id"
+            )
+            book_id_raw = payload_obj.get("book_id")
+            try:
+                record_id = int(record_id_raw)
+            except (TypeError, ValueError):
+                record_id = 0
+            try:
+                book_id = int(book_id_raw)
+            except (TypeError, ValueError):
+                book_id = 0
+
+            message = str(
+                payload_obj.get("message")
+                or payload_obj.get("text")
+                or payload.get("summary")
+                or payload.get("error")
+                or ""
+            ).strip()
+            return {
+                "ok": bool(payload.get("ok")) and record_id > 0,
+                "message": message[:500],
+                "record_id": record_id,
+                "book_id": book_id,
+            }
+
+        task_obj = await dispatch_queue.get_task(task_id)
+        if task_obj is None:
+            return {
+                "ok": False,
+                "message": "记账任务已丢失，请重试。",
+                "record_id": 0,
+                "book_id": 0,
+            }
+        if task_obj.status in {"failed", "cancelled"}:
+            return {
+                "ok": False,
+                "message": str(task_obj.error or "AI 未能完成记账").strip()[:500],
+                "record_id": 0,
+                "book_id": 0,
+            }
+
+        await asyncio.sleep(interval)
+
+    return {
+        "ok": False,
+        "message": "AI 识别超时，请稍后重试。",
+        "record_id": 0,
+        "book_id": 0,
+    }
+
+
+async def _run_web_image_quick_accounting(
+    *,
+    user: User,
+    book_id: int,
+    image_bytes: bytes,
+    mime_type: str,
+    note: str,
+) -> dict:
+    image_path = _store_web_accounting_image(image_bytes, mime_type)
+    timeout_sec = float(os.getenv("WEB_ACCOUNTING_AUTO_TIMEOUT_SEC", "110"))
+    worker_id = str(os.getenv("WEB_ACCOUNTING_MANAGER_ID", "manager-main")).strip()
+    if not worker_id:
+        worker_id = "manager-main"
+
+    instruction = (
+        "请先识别这张交易图片，再调用 ext_quick_accounting 完成真实记账。"
+        "优先提取：类型、金额、分类、账户、交易对象、时间。"
+        "若字段不完整，请基于常识补全，但不要虚构明显不存在的信息。"
+    )
+    user_note = str(note or "").strip()
+    if user_note:
+        instruction += f"\n\n补充说明：{user_note}"
+
+    try:
+        queued = await dispatch_queue.submit_task(
+            worker_id=worker_id,
+            instruction=instruction,
+            source="web_accounting_auto_image",
+            metadata={
+                "execution_mode": "web_accounting_auto_image",
+                "accounting_user_id": int(user.id),
+                "accounting_book_id": int(book_id),
+                "accounting_source": "web_clipboard",
+                "web_accounting_image_path": image_path,
+                "web_accounting_image_mime": mime_type,
+            },
+        )
+        result = await _wait_for_dispatch_result(queued.task_id, timeout_sec)
+        if result.get("book_id", 0) <= 0:
+            result["book_id"] = int(book_id)
+        return result
+    finally:
+        try:
+            Path(image_path).unlink(missing_ok=True)
+        except Exception:
+            pass
 
 
 def _parse_panel_filters(raw: str) -> list[str]:
@@ -700,6 +843,47 @@ async def create_record(
     return {"id": rec.id, "message": "记录已创建"}
 
 
+@router.post("/records/auto-from-image")
+async def auto_create_record_from_image(
+    book_id: int,
+    image: UploadFile = File(...),
+    note: str = Form(default=""),
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    await _get_book(book_id, user, session)
+
+    mime_type = str(image.content_type or "").strip().lower()
+    if not mime_type.startswith("image/"):
+        raise HTTPException(status_code=422, detail="仅支持图片识别记账")
+
+    image_bytes = await image.read()
+    if not image_bytes:
+        raise HTTPException(status_code=422, detail="图片内容为空")
+
+    max_bytes = 8 * 1024 * 1024
+    if len(image_bytes) > max_bytes:
+        raise HTTPException(status_code=413, detail="图片过大，请控制在 8MB 以内")
+
+    result = await _run_web_image_quick_accounting(
+        user=user,
+        book_id=book_id,
+        image_bytes=image_bytes,
+        mime_type=mime_type,
+        note=note,
+    )
+    if not result.get("ok"):
+        detail = str(result.get("message") or "AI 未能完成记账")
+        raise HTTPException(status_code=422, detail=detail)
+
+    return {
+        "ok": True,
+        "message": "记账成功",
+        "book_id": int(result.get("book_id") or book_id),
+        "record_id": int(result.get("record_id") or 0),
+    }
+
+
 # ─── Statistics ──────────────────────────────────────────────────────
 
 
@@ -732,6 +916,214 @@ def _period_key_for_datetime(dt: datetime, granularity: str) -> str:
         quarter = ((dt.month - 1) // 3) + 1
         return f"{dt.year}-Q{quarter}"
     return dt.strftime("%Y")
+
+
+def _next_period_start(dt: datetime, granularity: str) -> datetime:
+    base = dt.replace(hour=0, minute=0, second=0, microsecond=0)
+    if granularity == "day":
+        return base + timedelta(days=1)
+    if granularity == "week":
+        days_until_next_monday = 8 - base.isoweekday()
+        return base + timedelta(days=days_until_next_monday)
+    if granularity == "month":
+        if base.month == 12:
+            return datetime(base.year + 1, 1, 1)
+        return datetime(base.year, base.month + 1, 1)
+    if granularity == "quarter":
+        quarter = ((base.month - 1) // 3) + 1
+        next_month = quarter * 3 + 1
+        next_year = base.year
+        if next_month > 12:
+            next_month = 1
+            next_year += 1
+        return datetime(next_year, next_month, 1)
+    return datetime(base.year + 1, 1, 1)
+
+
+def _resolve_balance_scope_accounts(
+    accounts: list[Account],
+    scope: str,
+    account_type: str,
+    account_id: Optional[int],
+) -> list[Account]:
+    if scope == "account":
+        if account_id is None:
+            raise HTTPException(status_code=400, detail="account_id 不能为空")
+        matched = [account for account in accounts if account.id == account_id]
+        if not matched:
+            raise HTTPException(status_code=404, detail="账户不存在")
+        return matched
+
+    if scope == "account_type":
+        type_name = account_type.strip()
+        if not type_name:
+            raise HTTPException(status_code=400, detail="account_type 不能为空")
+        matched = [account for account in accounts if account.type == type_name]
+        if not matched:
+            raise HTTPException(status_code=404, detail="账户类型不存在")
+        return matched
+
+    if scope in {"net", "assets", "liabilities"}:
+        return [account for account in accounts if account.include_in_assets]
+
+    raise HTTPException(status_code=400, detail="scope 不合法")
+
+
+def _scope_balance_total(
+    scope: str,
+    balances: dict[int, float],
+    account_ids: list[int],
+) -> float:
+    values = [balances.get(account_id, 0.0) for account_id in account_ids]
+    if scope == "assets":
+        return sum(value for value in values if value > 0)
+    if scope == "liabilities":
+        return sum(value for value in values if value < 0)
+    return sum(values)
+
+
+def _apply_record_balance_change(
+    record: Record,
+    balances: dict[int, float],
+    account_id_set: set[int],
+) -> None:
+    amount = float(record.amount or 0)
+    from_id = record.account_id
+    to_id = record.target_account_id
+
+    if from_id in account_id_set:
+        if record.type == "收入":
+            balances[from_id] = balances.get(from_id, 0.0) + amount
+        elif record.type == "支出":
+            balances[from_id] = balances.get(from_id, 0.0) - amount
+        elif record.type == "转账":
+            balances[from_id] = balances.get(from_id, 0.0) - amount
+
+    if record.type == "转账" and to_id in account_id_set:
+        balances[to_id] = balances.get(to_id, 0.0) + amount
+
+
+def _record_scope_delta(record: Record, account_id_set: set[int]) -> float:
+    amount = float(record.amount or 0)
+    from_in_scope = (
+        record.account_id in account_id_set if record.account_id is not None else False
+    )
+    to_in_scope = (
+        record.target_account_id in account_id_set
+        if record.target_account_id is not None
+        else False
+    )
+
+    if record.type == "收入":
+        return amount if from_in_scope else 0.0
+    if record.type == "支出":
+        return -amount if from_in_scope else 0.0
+    if record.type == "转账":
+        if from_in_scope and not to_in_scope:
+            return -amount
+        if to_in_scope and not from_in_scope:
+            return amount
+    return 0.0
+
+
+@router.get("/balance-trend")
+async def get_balance_trend(
+    book_id: int,
+    start_date: str,
+    end_date: str,
+    granularity: str = "month",
+    scope: str = "net",
+    account_type: str = "",
+    account_id: Optional[int] = None,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    await _get_book(book_id, user, session)
+    start, end = _parse_time_window(start_date, end_date)
+
+    allowed_granularity = {"day", "week", "month", "quarter", "year"}
+    if granularity not in allowed_granularity:
+        raise HTTPException(status_code=400, detail="granularity 不合法")
+
+    accounts_result = await session.execute(
+        select(Account)
+        .where(Account.book_id == book_id)
+        .order_by(Account.type.asc(), Account.id.asc())
+    )
+    all_accounts = list(accounts_result.scalars().all())
+
+    scoped_accounts = _resolve_balance_scope_accounts(
+        all_accounts,
+        scope,
+        account_type,
+        account_id,
+    )
+    scoped_ids = [account.id for account in scoped_accounts]
+    scoped_id_set = set(scoped_ids)
+    balances = {account.id: float(account.balance or 0) for account in scoped_accounts}
+
+    records: list[Record] = []
+    if scoped_ids:
+        records_result = await session.execute(
+            select(Record)
+            .where(
+                Record.book_id == book_id,
+                Record.record_time < end,
+                or_(
+                    Record.account_id.in_(scoped_ids),
+                    Record.target_account_id.in_(scoped_ids),
+                ),
+            )
+            .order_by(Record.record_time.asc(), Record.id.asc())
+        )
+        records = list(records_result.scalars().all())
+
+    index = 0
+    while index < len(records) and records[index].record_time < start:
+        _apply_record_balance_change(records[index], balances, scoped_id_set)
+        index += 1
+
+    previous_balance = _scope_balance_total(scope, balances, scoped_ids)
+    rows = []
+    cursor = start
+
+    while cursor < end:
+        next_cursor = _next_period_start(cursor, granularity)
+        if next_cursor <= cursor:
+            next_cursor = cursor + timedelta(days=1)
+        if next_cursor > end:
+            next_cursor = end
+
+        period_income = 0.0
+        period_expense = 0.0
+        while index < len(records) and records[index].record_time < next_cursor:
+            record = records[index]
+            delta = _record_scope_delta(record, scoped_id_set)
+            if delta > 0:
+                period_income += delta
+            elif delta < 0:
+                period_expense += -delta
+
+            _apply_record_balance_change(record, balances, scoped_id_set)
+            index += 1
+
+        current_balance = _scope_balance_total(scope, balances, scoped_ids)
+        rows.append(
+            {
+                "period": _period_key_for_datetime(cursor, granularity),
+                "period_start": cursor.isoformat(),
+                "period_end": next_cursor.isoformat(),
+                "balance": round(current_balance, 2),
+                "change": round(current_balance - previous_balance, 2),
+                "income": round(period_income, 2),
+                "expense": round(period_expense, 2),
+            }
+        )
+
+        previous_balance = current_balance
+        cursor = next_cursor
+
+    return rows
 
 
 @router.get("/records/summary")

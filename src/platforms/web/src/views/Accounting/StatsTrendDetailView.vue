@@ -163,7 +163,7 @@ const periodRows = computed(() => {
                 ratio: (amount / total) * 100,
             }
         })
-        .sort((a, b) => b.amount - a.amount)
+        .sort((a, b) => b.period.localeCompare(a.period))
 })
 
 const renderChart = () => {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type ComponentPublicInstance } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAccountingStore } from '@/stores/accounting'
 import {
@@ -171,6 +171,22 @@ const indigoColors = [
 
 const canInitChart = (el: HTMLElement | null) => {
     return Boolean(el && el.clientWidth > 0 && el.clientHeight > 0)
+}
+
+const setPieRef = (el: Element | ComponentPublicInstance | null) => {
+    if (el && '$el' in el) {
+        pieRef.value = el.$el as HTMLElement
+        return
+    }
+    pieRef.value = el as HTMLElement | null
+}
+
+const setBarRef = (el: Element | ComponentPublicInstance | null) => {
+    if (el && '$el' in el) {
+        barRef.value = el.$el as HTMLElement
+        return
+    }
+    barRef.value = el as HTMLElement | null
 }
 
 const renderPie = () => {
@@ -551,6 +567,7 @@ watch(
 
 watch(enabledPanels, async () => {
     await loadPanelPreviews()
+    await renderChartsSafely()
 })
 
 onMounted(async () => {
@@ -691,7 +708,7 @@ onBeforeUnmount(() => {
           </div>
 
           <div class="relative">
-            <div ref="pieRef" class="w-full h-[220px] pointer-events-none"></div>
+            <div :ref="setPieRef" class="w-full h-[220px] pointer-events-none"></div>
             <div v-if="loading" class="absolute inset-0 flex items-center justify-center bg-white/30 dark:bg-slate-800/30 rounded-xl">
               <Loader2 class="w-5 h-5 animate-spin text-indigo-400" />
             </div>
@@ -702,7 +719,7 @@ onBeforeUnmount(() => {
           <p class="text-xs text-theme-muted mb-3">{{ timeLabel }} · 按{{ granularityLabel }} · {{ statType }}</p>
 
           <div class="relative">
-            <div ref="barRef" class="w-full h-[220px] pointer-events-none"></div>
+            <div :ref="setBarRef" class="w-full h-[220px] pointer-events-none"></div>
             <div v-if="loading" class="absolute inset-0 flex items-center justify-center bg-white/30 dark:bg-slate-800/30 rounded-xl">
               <Loader2 class="w-5 h-5 animate-spin text-indigo-400" />
             </div>

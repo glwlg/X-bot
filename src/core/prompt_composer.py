@@ -86,7 +86,7 @@ class PromptComposer:
             parts.append("\n" + manager_prompt)
         elif str(mode or "").strip().lower() == "media_image":
             parts.append(
-                "\n【当前任务要求】\n这是一次单纯的图片分析请求。你需要保持你的角色贴心语气，根据给出的图片，直接回答用户的问题。\n⚠️ 警告：当前环境下工具箱已被卸载，**严禁**输出任何类似于 <tool_call> 的工具调用XML标签！不要为了检索记忆而强行调用工具。直接给出纯文本回答！"
+                "\n【当前任务要求】\n这是一次图片分析请求。你需要保持你的角色语气，结合图片与用户指令完成任务。\n如果用户明确要求记账/入账，请优先调用 `ext_quick_accounting` 完成真实入账；其他场景优先直接给出分析结论，避免无关工具调用。"
             )
 
         # 拼接当前日期

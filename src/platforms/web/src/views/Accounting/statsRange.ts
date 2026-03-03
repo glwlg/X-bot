@@ -146,10 +146,14 @@ export const getRangeWindow = (
     preset: RangePreset,
     state: CustomRangeState,
     now: Date = new Date(),
+    allTimeStart: Date | null = null,
 ): RangeWindow => {
     if (preset === 'all_time') {
+        const start = allTimeStart instanceof Date && !Number.isNaN(allTimeStart.getTime())
+            ? startOfDay(allTimeStart)
+            : new Date(1970, 0, 1)
         return {
-            start: new Date(1970, 0, 1),
+            start,
             end: addDays(startOfDay(now), 1),
             granularity: 'year',
             label: '全部时间',

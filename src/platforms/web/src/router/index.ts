@@ -60,6 +60,12 @@ const router = createRouter({
                     meta: { title: '资产' },
                 },
                 {
+                    path: 'assets/trend',
+                    name: 'BalanceTrendDetail',
+                    component: () => import('@/views/Accounting/BalanceTrendDetailView.vue'),
+                    meta: { title: '余额趋势' },
+                },
+                {
                     path: 'account/:id',
                     name: 'AccountDetail',
                     component: () => import('@/views/Accounting/AccountDetailView.vue'),

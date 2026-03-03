@@ -32,6 +32,7 @@ from core.config import (
 )
 from core.heartbeat_worker import heartbeat_worker
 from core.waiting_phrase_store import waiting_phrase_store
+from manager.dispatch.manager_executor import manager_dispatch_executor
 from manager.relay.result_relay import worker_result_relay
 from handlers import (
     start,
@@ -390,6 +391,7 @@ async def main():
     try:
         await adapter_manager.start_all()
         await worker_result_relay.start()
+        await manager_dispatch_executor.start()
 
         # Keep alive
         logger.info("All adapters started. Press Ctrl+C to stop.")
@@ -399,6 +401,7 @@ async def main():
         logger.error(f"Fatal error: {e}", exc_info=True)
     finally:
         logger.info("Shutting down...")
+        await manager_dispatch_executor.stop()
         await heartbeat_worker.stop()
         await worker_result_relay.stop()
         await adapter_manager.stop_all()

@@ -1,17 +1,19 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch, nextTick } from 'vue'
+import { ref, onMounted, onBeforeUnmount, computed, watch, nextTick } from 'vue'
+import { useRouter } from 'vue-router'
 import { useAccountingStore } from '@/stores/accounting'
 import {
-    getRecordsSummary, getDailySummary, getRecords, createBook, getBudgets,
+    getRecordsSummary, getDailySummary, getRecords, createBook, getBudgets, autoCreateRecordFromImage,
     type MonthlySummary, type DailySummaryItem, type RecordItem, type Book, type Budget
 } from '@/api/accounting'
 import {
-    ChevronDown, ChevronRight, Plus, Loader2
+    ChevronDown, ChevronRight, Plus, Loader2, Zap
 } from 'lucide-vue-next'
 import AddRecordDialog from '@/components/accounting/AddRecordDialog.vue'
 import * as echarts from 'echarts'
 
 const store = useAccountingStore()
+const router = useRouter()
 
 const now = new Date()
 const currentYear = ref(now.getFullYear())
@@ -24,6 +26,16 @@ const currentBudget = ref<Budget | null>(null)
 const loading = ref(false)
 const showAddDialog = ref(false)
 const showBookDropdown = ref(false)
+const showClipboardPrompt = ref(false)
+const showIOSClipboardHint = ref(false)
+const clipboardImageFile = ref<File | null>(null)
+const clipboardPreviewUrl = ref('')
+const uploadImageInputRef = ref<HTMLInputElement | null>(null)
+const clipboardSubmitting = ref(false)
+const clipboardStage = ref<'uploading' | 'recognizing' | 'writing'>('uploading')
+const clipboardError = ref('')
+const successTip = ref('')
+let successTipTimer: ReturnType<typeof setTimeout> | null = null
 const pageRef = ref<HTMLElement | null>(null)
 const refreshing = ref(false)
 const pullStartY = ref<number | null>(null)
@@ -156,6 +168,142 @@ const onRecordAdded = () => {
     loadData()
 }
 
+const readClipboardImage = async (): Promise<File | null> => {
+    if (typeof window === 'undefined' || !window.isSecureContext) {
+        return null
+    }
+
+    if (!navigator.clipboard || typeof navigator.clipboard.read !== 'function') {
+        return null
+    }
+
+    try {
+        const items = await navigator.clipboard.read()
+        for (const item of items) {
+            const imageType = item.types.find(type => type.startsWith('image/'))
+            if (!imageType) continue
+            const blob = await item.getType(imageType)
+            const ext = imageType.split('/')[1] || 'png'
+            return new File([blob], `clipboard-${Date.now()}.${ext}`, { type: imageType })
+        }
+        return null
+    } catch (error) {
+        console.debug('read clipboard image failed', error)
+        return null
+    }
+}
+
+const showImageAutoAccountingPrompt = (file: File) => {
+    clipboardImageFile.value = file
+    releaseClipboardPreview()
+    clipboardPreviewUrl.value = URL.createObjectURL(file)
+    clipboardError.value = ''
+    clipboardSubmitting.value = false
+    clipboardStage.value = 'uploading'
+    showClipboardPrompt.value = true
+}
+
+const openUploadImagePicker = () => {
+    uploadImageInputRef.value?.click()
+}
+
+const handleUploadImageChange = (event: Event) => {
+    const input = event.target as HTMLInputElement | null
+    const file = input?.files?.[0] ?? null
+    if (input) {
+        input.value = ''
+    }
+    if (!file || !file.type.startsWith('image/')) {
+        return
+    }
+    showIOSClipboardHint.value = false
+    showImageAutoAccountingPrompt(file)
+}
+
+const releaseClipboardPreview = () => {
+    if (clipboardPreviewUrl.value) {
+        URL.revokeObjectURL(clipboardPreviewUrl.value)
+    }
+    clipboardPreviewUrl.value = ''
+}
+
+const closeClipboardPrompt = () => {
+    showClipboardPrompt.value = false
+    clipboardSubmitting.value = false
+    clipboardError.value = ''
+    clipboardImageFile.value = null
+    releaseClipboardPreview()
+}
+
+const showSuccessTip = (text: string) => {
+    successTip.value = text
+    if (successTipTimer) {
+        clearTimeout(successTipTimer)
+    }
+    successTipTimer = setTimeout(() => {
+        successTip.value = ''
+        successTipTimer = null
+    }, 1800)
+}
+
+const handleImageFabClick = async () => {
+    if (!store.currentBookId || clipboardSubmitting.value) return
+
+    const image = await readClipboardImage()
+    if (image) {
+        showImageAutoAccountingPrompt(image)
+        return
+    }
+
+    showIOSClipboardHint.value = true
+}
+
+const startClipboardAutoAccounting = async () => {
+    if (!store.currentBookId || !clipboardImageFile.value || clipboardSubmitting.value) return
+
+    clipboardSubmitting.value = true
+    clipboardError.value = ''
+    clipboardStage.value = 'uploading'
+    await new Promise(resolve => window.setTimeout(resolve, 180))
+
+    try {
+        clipboardStage.value = 'recognizing'
+        const res = await autoCreateRecordFromImage(store.currentBookId, clipboardImageFile.value)
+
+        const recordId = Number(res.data?.record_id || 0)
+        if (!Number.isFinite(recordId) || recordId <= 0) {
+            throw new Error('未返回有效记录ID')
+        }
+
+        clipboardStage.value = 'writing'
+        await new Promise(resolve => window.setTimeout(resolve, 160))
+
+        closeClipboardPrompt()
+        showSuccessTip('记账成功')
+        await loadData()
+        await router.push({ name: 'RecordDetail', params: { id: recordId } })
+    } catch (error: any) {
+        clipboardError.value = error?.response?.data?.detail || error?.message || '自动记账失败，请手动记账'
+    } finally {
+        clipboardSubmitting.value = false
+    }
+}
+
+const useManualRecordFromClipboardPrompt = () => {
+    closeClipboardPrompt()
+    showAddDialog.value = true
+}
+
+const useManualRecordFromIOSHint = () => {
+    showIOSClipboardHint.value = false
+    showAddDialog.value = true
+}
+
+const uploadImageFromIOSHint = () => {
+    showIOSClipboardHint.value = false
+    openUploadImagePicker()
+}
+
 const getScrollParent = () => {
     let node: HTMLElement | null = pageRef.value?.parentElement || null
     while (node) {
@@ -231,6 +379,14 @@ onMounted(async () => {
         await loadData()
     }
 })
+
+onBeforeUnmount(() => {
+    if (successTipTimer) {
+        clearTimeout(successTipTimer)
+        successTipTimer = null
+    }
+    releaseClipboardPreview()
+})
 </script>
 
 <template>
@@ -242,6 +398,14 @@ onMounted(async () => {
     @touchend="handleTouchEnd"
     @touchcancel="handleTouchEnd"
   >
+    <input
+      ref="uploadImageInputRef"
+      type="file"
+      accept="image/*"
+      class="hidden"
+      @change="handleUploadImageChange"
+    >
+
     <div class="overflow-hidden transition-[height] duration-150" :style="{ height: `${Math.round(pullDistance)}px` }">
       <div class="h-full flex items-end justify-center pb-2 text-xs text-slate-500 gap-1">
         <Loader2 v-if="refreshing" class="w-3 h-3 animate-spin" />
@@ -441,13 +605,131 @@ onMounted(async () => {
     </template>
 
     <!-- FAB -->
-    <button
+    <div
       v-if="store.currentBookId"
-      @click="showAddDialog = true"
-      class="fixed bottom-20 right-6 w-14 h-14 rounded-full bg-indigo-500 hover:bg-indigo-600 text-white shadow-lg hover:shadow-xl flex items-center justify-center transition-all z-30 active:scale-95"
+      class="fixed bottom-20 right-6 z-30 flex items-center gap-3"
+      style="-webkit-touch-callout: none; -webkit-user-select: none; user-select: none;"
     >
-      <Plus class="w-7 h-7" />
-    </button>
+      <button
+        @click="handleImageFabClick"
+        @contextmenu.prevent
+        class="w-12 h-12 rounded-full bg-amber-400 hover:bg-amber-500 text-slate-900 shadow-lg hover:shadow-xl flex items-center justify-center transition-all active:scale-95"
+        aria-label="图片识别记账"
+      >
+        <Zap class="w-5 h-5" />
+      </button>
+      <button
+        @click="showAddDialog = true"
+        @contextmenu.prevent
+        class="w-14 h-14 rounded-full bg-indigo-500 hover:bg-indigo-600 text-white shadow-lg hover:shadow-xl flex items-center justify-center transition-all active:scale-95"
+        aria-label="手动记账"
+      >
+        <Plus class="w-7 h-7" />
+      </button>
+    </div>
+
+    <div
+      v-if="successTip"
+      class="fixed top-20 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-xl bg-slate-900 text-white text-sm shadow-lg"
+    >
+      {{ successTip }}
+    </div>
+
+    <div
+      v-if="showClipboardPrompt"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+      @click.self="!clipboardSubmitting && closeClipboardPrompt()"
+    >
+      <div class="w-full max-w-[360px] rounded-2xl bg-white dark:bg-slate-800 border border-gray-100 dark:border-slate-700 shadow-xl p-4">
+        <template v-if="!clipboardSubmitting">
+          <h3 class="text-base font-semibold text-theme-primary mb-2">已选择图片</h3>
+          <p class="text-sm text-theme-muted">是否直接让 AI 识别并记账？</p>
+
+          <img
+            v-if="clipboardPreviewUrl"
+            :src="clipboardPreviewUrl"
+            alt="clipboard preview"
+            class="mt-3 w-full max-h-44 object-contain rounded-xl border border-gray-100 dark:border-slate-700 bg-slate-50 dark:bg-slate-900"
+          />
+
+          <p v-if="clipboardError" class="mt-3 text-sm text-rose-500">{{ clipboardError }}</p>
+
+          <div class="mt-4 flex gap-2">
+            <button
+              @click="closeClipboardPrompt"
+              class="flex-1 h-10 rounded-xl border border-gray-200 dark:border-slate-600 text-theme-secondary"
+            >
+              取消
+            </button>
+            <button
+              @click="useManualRecordFromClipboardPrompt"
+              class="flex-1 h-10 rounded-xl border border-indigo-200 text-indigo-500"
+            >
+              手动记账
+            </button>
+            <button
+              @click="startClipboardAutoAccounting"
+              class="flex-1 h-10 rounded-xl bg-indigo-500 text-white"
+            >
+              识别并记账
+            </button>
+          </div>
+        </template>
+
+        <template v-else>
+          <h3 class="text-base font-semibold text-theme-primary mb-3">正在处理</h3>
+          <div class="space-y-2 text-sm">
+            <div class="flex items-center justify-between rounded-xl px-3 py-2 bg-slate-50 dark:bg-slate-900">
+              <span>上传中</span>
+              <Loader2 v-if="clipboardStage === 'uploading'" class="w-4 h-4 animate-spin text-indigo-500" />
+              <span v-else class="text-emerald-500">完成</span>
+            </div>
+            <div class="flex items-center justify-between rounded-xl px-3 py-2 bg-slate-50 dark:bg-slate-900">
+              <span>AI识别中</span>
+              <Loader2 v-if="clipboardStage === 'recognizing'" class="w-4 h-4 animate-spin text-indigo-500" />
+              <span v-else-if="clipboardStage === 'writing'" class="text-emerald-500">完成</span>
+              <span v-else class="text-theme-muted">等待</span>
+            </div>
+            <div class="flex items-center justify-between rounded-xl px-3 py-2 bg-slate-50 dark:bg-slate-900">
+              <span>写入账本</span>
+              <Loader2 v-if="clipboardStage === 'writing'" class="w-4 h-4 animate-spin text-indigo-500" />
+              <span v-else class="text-theme-muted">等待</span>
+            </div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <div
+      v-if="showIOSClipboardHint"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4"
+      @click.self="showIOSClipboardHint = false"
+    >
+      <div class="w-full max-w-[360px] rounded-2xl bg-white dark:bg-slate-800 border border-gray-100 dark:border-slate-700 shadow-xl p-4">
+        <h3 class="text-base font-semibold text-theme-primary mb-2">未检测到可读取的剪贴板图片</h3>
+        <p class="text-sm text-theme-muted">你可以上传截图识别，或切换为手动记账。</p>
+        <div class="mt-4 flex gap-2 justify-end">
+          <button
+            @click="uploadImageFromIOSHint"
+            class="px-4 h-10 rounded-xl border border-indigo-200 text-indigo-500"
+          >
+            上传图片识别
+          </button>
+          <button
+            @click="showIOSClipboardHint = false"
+            class="px-4 h-10 rounded-xl border border-gray-200 dark:border-slate-600 text-theme-secondary"
+          >
+            取消
+          </button>
+          <button
+            @click="useManualRecordFromIOSHint"
+            class="px-4 h-10 rounded-xl bg-indigo-500 text-white"
+          >
+            手动记账
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- Add Record Dialog -->
     <AddRecordDialog

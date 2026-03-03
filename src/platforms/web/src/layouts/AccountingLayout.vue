@@ -20,6 +20,7 @@ const isPWA = typeof window !== 'undefined' &&
 
 // Hide layout chrome on sub-pages with own headers
 const isSubPage = computed(() => [
+    'BalanceTrendDetail',
     'AccountDetail',
     'RecordList',
     'RecordDetail',

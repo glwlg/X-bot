@@ -36,6 +36,23 @@ export interface BalanceTrendItem {
     balance: number
 }
 
+export type BalanceTrendScope =
+    | 'net'
+    | 'assets'
+    | 'liabilities'
+    | 'account_type'
+    | 'account'
+
+export interface ScopedBalanceTrendItem {
+    period: string
+    period_start: string
+    period_end: string
+    balance: number
+    change: number
+    income: number
+    expense: number
+}
+
 export interface CategoryItem {
     id: number
     name: string
@@ -47,6 +64,13 @@ export interface MonthlySummary {
     income: number
     expense: number
     balance: number
+}
+
+export interface AutoRecordFromImageResult {
+    ok: boolean
+    message: string
+    book_id: number
+    record_id: number
 }
 
 export interface DailySummaryItem {
@@ -126,6 +150,23 @@ export const createRecord = (bookId: number, data: {
 }) =>
     request.post('/accounting/records', data, { params: { book_id: bookId } })
 
+export const autoCreateRecordFromImage = (
+    bookId: number,
+    image: File,
+    note: string = '',
+) => {
+    const formData = new FormData()
+    formData.append('image', image)
+    if (note.trim()) {
+        formData.append('note', note.trim())
+    }
+    return request.post<AutoRecordFromImageResult>('/accounting/records/auto-from-image', formData, {
+        params: { book_id: bookId },
+        headers: { 'Content-Type': 'multipart/form-data' },
+        timeout: 150000,
+    })
+}
+
 export const getRecordDetail = (bookId: number, recordId: number) =>
     request.get<RecordItem>(`/accounting/records/${recordId}`, {
         params: { book_id: bookId }
@@ -180,6 +221,27 @@ export const getRangeSummary = (
 ) =>
     request.get<PeriodSummaryItem[]>('/accounting/records/range-summary', {
         params: { book_id: bookId, start_date, end_date, granularity, category }
+    })
+
+export const getBalanceTrend = (
+    bookId: number,
+    start_date: string,
+    end_date: string,
+    granularity: 'day' | 'week' | 'month' | 'quarter' | 'year' = 'month',
+    scope: BalanceTrendScope = 'net',
+    account_type: string = '',
+    account_id?: number,
+) =>
+    request.get<ScopedBalanceTrendItem[]>('/accounting/balance-trend', {
+        params: {
+            book_id: bookId,
+            start_date,
+            end_date,
+            granularity,
+            scope,
+            account_type: account_type || undefined,
+            account_id,
+        }
     })
 
 export const getYearlySummary = (bookId: number) =>
