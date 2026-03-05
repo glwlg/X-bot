@@ -8,7 +8,7 @@ from core.heartbeat_store import heartbeat_store
 from core.platform.models import UnifiedContext
 from core.tool_access_store import tool_access_store
 from core.tools.dispatch_tools import dispatch_tools
-from core.worker_store import worker_registry
+from core.worker_store import worker_registry, worker_task_store
 from shared.queue.dispatch_queue import dispatch_queue
 from .base_handlers import check_permission_unified
 
@@ -453,19 +453,73 @@ async def worker_command(ctx: UnifiedContext) -> None:
     if sub in {"tasks", "history"}:
         active = await _resolve_active_worker(user_id)
         include_sources, exclude_sources = _parse_tasks_filters(args)
-        rows_obj = await dispatch_queue.list_tasks(worker_id=active, limit=20)
-        rows = []
+        rows: list[Dict[str, Any]] = []
         include_set = set(include_sources or []) if include_sources else None
         exclude_set = set(exclude_sources or []) if exclude_sources else set()
-        for item in rows_obj:
+
+        # Keep WorkerTaskStore as the primary lifecycle view while using
+        # dispatch_queue as source-of-truth for latest status fields.
+        dispatch_rows_obj = await dispatch_queue.list_tasks(worker_id=active, limit=40)
+        dispatch_rows: list[Dict[str, Any]] = []
+        for item in dispatch_rows_obj:
             source = str(item.source or "").strip()
             if include_set is not None and source not in include_set:
                 continue
             if source in exclude_set:
                 continue
-            rows.append(item)
+            dispatch_rows.append(
+                {
+                    "task_id": str(item.task_id or ""),
+                    "status": str(item.status or ""),
+                    "source": source,
+                    "retry_count": int(item.retry_count or 0),
+                    "error": str(item.error or ""),
+                }
+            )
+        dispatch_by_id = {
+            str(row.get("task_id") or ""): row
+            for row in dispatch_rows
+            if str(row.get("task_id") or "").strip()
+        }
+
+        recent_from_store = await worker_task_store.list_recent(
+            worker_id=active,
+            limit=40,
+            include_sources=include_sources,
+            exclude_sources=exclude_sources,
+        )
+        seen_ids: set[str] = set()
+        for item in recent_from_store:
+            task_id = str(item.get("task_id") or "").strip()
+            if not task_id or task_id in seen_ids:
+                continue
+            merged = dict(
+                dispatch_by_id.get(task_id)
+                or {
+                    "task_id": task_id,
+                    "status": str(item.get("status") or ""),
+                    "source": str(item.get("source") or ""),
+                    "retry_count": int(item.get("retry_count") or 0),
+                    "error": str(item.get("error") or ""),
+                }
+            )
+            if not str(merged.get("error") or "").strip():
+                merged["error"] = str(item.get("error") or "")
+            rows.append(merged)
+            seen_ids.add(task_id)
             if len(rows) >= 10:
                 break
+
+        if len(rows) < 10:
+            for row in dispatch_rows:
+                task_id = str(row.get("task_id") or "").strip()
+                if not task_id or task_id in seen_ids:
+                    continue
+                rows.append(dict(row))
+                seen_ids.add(task_id)
+                if len(rows) >= 10:
+                    break
+
         if not rows:
             await ctx.reply("当前 worker 暂无匹配任务记录。")
             return
@@ -478,9 +532,9 @@ async def worker_command(ctx: UnifiedContext) -> None:
         for row in rows:
             lines.append(
                 (
-                    f"- `{row.task_id}` | {row.status} | {row.source} "
-                    f"| retry={int(row.retry_count or 0)} "
-                    f"| {str(row.error or '')[:100]}"
+                    f"- `{row.get('task_id')}` | {row.get('status')} | "
+                    f"{row.get('source')} | retry={int(row.get('retry_count') or 0)} "
+                    f"| {str(row.get('error') or '')[:100]}"
                 )
             )
         await ctx.reply("\n".join(lines))

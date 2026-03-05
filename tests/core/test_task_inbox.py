@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from core.task_inbox import TaskInbox
+import core.task_inbox as task_inbox_module
 
 
 def _build_isolated_inbox(tmp_path: Path) -> TaskInbox:
@@ -108,3 +109,34 @@ async def test_task_inbox_list_pending_by_priority(tmp_path):
     recent_outputs = await inbox.list_recent_outputs(user_id="u-2", limit=5)
     assert len(recent_outputs) == 2
     assert "output" in recent_outputs[0]
+
+
+def test_task_inbox_defaults_to_persistent(monkeypatch, tmp_path):
+    monkeypatch.setattr(task_inbox_module, "DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("TASK_INBOX_PERSIST", raising=False)
+    monkeypatch.delenv("TASK_INBOX_CLEAN_ON_START", raising=False)
+
+    inbox = TaskInbox()
+
+    assert inbox.persist is True
+    assert inbox.root.exists()
+    assert inbox.tasks_root.exists()
+    assert inbox.events_path.exists()
+
+
+def test_task_inbox_non_persist_mode_does_not_cleanup_existing_root(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(task_inbox_module, "DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("TASK_INBOX_PERSIST", "false")
+    monkeypatch.delenv("TASK_INBOX_CLEAN_ON_START", raising=False)
+
+    root = (tmp_path / "task_inbox").resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    sentinel = (root / "keep.txt").resolve()
+    sentinel.write_text("keep", encoding="utf-8")
+
+    inbox = TaskInbox()
+
+    assert inbox.persist is False
+    assert sentinel.exists()

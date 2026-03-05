@@ -2,7 +2,6 @@ import logging
 import os
 import re
 import shutil
-import sys
 import httpx
 from datetime import datetime
 from typing import Tuple, Dict, Any
@@ -11,13 +10,8 @@ from core.platform.models import UnifiedContext
 from core.skill_loader import skill_loader
 from manager.dev.service import manager_dev_service
 
-# Ensure we can import local modules (creator.py)
 current_dir = os.path.dirname(os.path.abspath(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
 project_root = os.path.abspath(os.path.join(current_dir, "..", "..", "..", ".."))
-
-import creator  # local import
 
 logger = logging.getLogger(__name__)
 

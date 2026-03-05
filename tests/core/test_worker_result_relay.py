@@ -4,7 +4,8 @@ import pytest
 
 import manager.relay.result_relay as relay_module
 from manager.relay.result_relay import WorkerResultRelay
-from shared.contracts.dispatch import TaskEnvelope
+from shared.contracts.dispatch import TaskEnvelope, TaskResult
+from shared.queue.dispatch_queue import DispatchQueue
 
 
 class _FakeAdapter:
@@ -19,6 +20,33 @@ class _FakeAdapter:
     async def send_document(self, **kwargs):
         self.documents.append(dict(kwargs))
         return {"ok": True}
+
+
+async def _create_finished_task(
+    queue: DispatchQueue,
+    *,
+    metadata: dict | None = None,
+    ok: bool = True,
+) -> TaskEnvelope:
+    submitted = await queue.submit_task(
+        worker_id="worker-main",
+        instruction="do",
+        source="user_chat",
+        metadata=dict(metadata or {}),
+    )
+    claimed = await queue.claim_next(worker_id="worker-main", claimer="worker-daemon")
+    assert claimed is not None
+    result = TaskResult(
+        task_id=submitted.task_id,
+        worker_id="worker-main",
+        ok=ok,
+        summary="done" if ok else "failed",
+        error="" if ok else "failed",
+        payload={"text": "done" if ok else "failed"},
+    )
+    finished = await queue.finish_task(task_id=submitted.task_id, result=result)
+    assert finished is not None
+    return finished
 
 
 @pytest.mark.asyncio
@@ -159,6 +187,10 @@ async def test_worker_result_relay_process_once_marks_delivered(monkeypatch):
             self.marked.append(str(task_id))
             return True
 
+        async def clear_relay_retry(self, task_id: str):
+            _ = task_id
+            return True
+
     fake_queue = _FakeDispatchQueue()
     monkeypatch.setattr(relay_module, "dispatch_queue", fake_queue)
 
@@ -167,3 +199,65 @@ async def test_worker_result_relay_process_once_marks_delivered(monkeypatch):
 
     assert fake_queue.marked == ["tsk-process-1"]
     assert fake_adapter.messages
+
+
+@pytest.mark.asyncio
+async def test_worker_result_relay_missing_target_schedules_retry(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("MANAGER_DISPATCH_ROOT", raising=False)
+    queue = DispatchQueue()
+    finished = await _create_finished_task(
+        queue,
+        metadata={"worker_name": "阿黑"},
+    )
+
+    monkeypatch.setattr(relay_module, "dispatch_queue", queue)
+    relay = WorkerResultRelay()
+    await relay.process_once()
+
+    task = await queue.get_task(finished.task_id)
+    assert task is not None
+    assert not str(task.delivered_at or "").strip()
+    relay_meta = dict((task.metadata or {}).get("_relay") or {})
+    assert int(relay_meta.get("attempts") or 0) == 1
+    assert str(relay_meta.get("state") or "") == "retrying"
+    assert str(relay_meta.get("next_retry_at") or "").strip()
+
+
+@pytest.mark.asyncio
+async def test_worker_result_relay_moves_to_dead_letter_after_max_retries(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("MANAGER_DISPATCH_ROOT", raising=False)
+    monkeypatch.setenv("WORKER_RESULT_RELAY_MAX_RETRIES", "2")
+    monkeypatch.setenv("WORKER_RESULT_RELAY_RETRY_BASE_SEC", "0")
+    monkeypatch.setenv("WORKER_RESULT_RELAY_RETRY_MAX_SEC", "0")
+
+    queue = DispatchQueue()
+    finished = await _create_finished_task(
+        queue,
+        metadata={"worker_name": "阿黑"},
+    )
+    monkeypatch.setattr(relay_module, "dispatch_queue", queue)
+
+    relay = WorkerResultRelay()
+    await relay.process_once()
+    await relay.process_once()
+
+    task = await queue.get_task(finished.task_id)
+    assert task is not None
+    assert not str(task.delivered_at or "").strip()
+    relay_meta = dict((task.metadata or {}).get("_relay") or {})
+    assert int(relay_meta.get("attempts") or 0) == 2
+    assert str(relay_meta.get("state") or "") == "dead_letter"
+    assert str(relay_meta.get("dead_letter_at") or "").strip()
+
+    # dead-letter tasks should stop retrying further attempts.
+    await relay.process_once()
+    task_again = await queue.get_task(finished.task_id)
+    assert task_again is not None
+    relay_meta_again = dict((task_again.metadata or {}).get("_relay") or {})
+    assert int(relay_meta_again.get("attempts") or 0) == 2

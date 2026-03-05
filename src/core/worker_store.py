@@ -438,40 +438,153 @@ class WorkerTaskStore:
         source: str,
         instruction: str,
         metadata: Dict[str, Any] | None = None,
+        task_id: str | None = None,
     ) -> Dict[str, Any]:
-        normalized_source = self._normalize_source(source)
-        created_at = self._now()
-        record = {
-            "task_id": f"wt-{int(datetime.now().timestamp())}-{uuid4().hex[:8]}",
-            "worker_id": _slugify(worker_id, fallback="worker-main"),
-            "source": normalized_source,
-            "instruction": str(instruction or "").strip(),
-            "status": "queued",
-            "result_summary": "",
-            "result": "",
-            "error": "",
-            "retry_count": 0,
-            "trace_id": f"trace-{int(datetime.now().timestamp())}",
-            "created_at": created_at,
-            "started_at": "",
-            "ended_at": "",
-            "metadata": metadata or {},
-            "output": {},
-            "events": [],
-        }
-        record["events"].append(
-            self._new_event(
-                task_id=record["task_id"],
-                source=normalized_source,
-                status="queued",
-                retry_count=0,
-                detail="task created",
-            )
+        safe_task_id = str(task_id or "").strip()
+        if not safe_task_id:
+            safe_task_id = f"wt-{int(datetime.now().timestamp())}-{uuid4().hex[:8]}"
+        return await self.upsert_task(
+            task_id=safe_task_id,
+            worker_id=worker_id,
+            source=source,
+            instruction=instruction,
+            status="queued",
+            metadata=metadata or {},
+            retry_count=0,
+            result_summary="task created",
         )
+
+    async def upsert_task(
+        self,
+        *,
+        task_id: str,
+        worker_id: str,
+        source: str,
+        instruction: str = "",
+        status: str = "",
+        metadata: Dict[str, Any] | None = None,
+        retry_count: int | None = None,
+        error: str | None = None,
+        started_at: str | None = None,
+        ended_at: str | None = None,
+        result_summary: str | None = None,
+        result: Any = None,
+        output: Dict[str, Any] | None = None,
+        created_at: str | None = None,
+    ) -> Dict[str, Any]:
+        safe_task_id = str(task_id or "").strip()
+        if not safe_task_id:
+            safe_task_id = f"wt-{int(datetime.now().timestamp())}-{uuid4().hex[:8]}"
+        normalized_source = self._normalize_source(source)
+        safe_worker_id = _slugify(worker_id, fallback="worker-main")
+        now_text = self._now()
+
         async with self._lock:
-            with self.path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        return dict(record)
+            rows = await self._read_all_unlocked()
+            target: Dict[str, Any] | None = None
+            for row in rows:
+                if str(row.get("task_id") or "") == safe_task_id:
+                    target = row
+                    break
+
+            created = False
+            if target is None:
+                created = True
+                target = {
+                    "task_id": safe_task_id,
+                    "worker_id": safe_worker_id,
+                    "source": normalized_source,
+                    "instruction": str(instruction or "").strip(),
+                    "status": "queued",
+                    "result_summary": "",
+                    "result": "",
+                    "error": "",
+                    "retry_count": 0,
+                    "trace_id": f"trace-{int(datetime.now().timestamp())}",
+                    "created_at": str(created_at or now_text).strip() or now_text,
+                    "updated_at": now_text,
+                    "started_at": "",
+                    "ended_at": "",
+                    "metadata": dict(metadata or {}),
+                    "output": {},
+                    "events": [],
+                }
+                rows.append(target)
+
+            previous_status = str(target.get("status", "")).strip().lower()
+            previous_retry = int(target.get("retry_count", 0) or 0)
+
+            target["worker_id"] = safe_worker_id
+            target["source"] = normalized_source
+            if str(instruction or "").strip() or created:
+                target["instruction"] = str(instruction or "").strip()
+
+            if metadata is not None:
+                target["metadata"] = dict(metadata or {})
+            else:
+                current_meta = target.get("metadata")
+                if not isinstance(current_meta, dict):
+                    target["metadata"] = {}
+
+            if status is not None and str(status or "").strip():
+                target["status"] = str(status or "").strip().lower()
+
+            if retry_count is not None:
+                try:
+                    target["retry_count"] = max(0, int(retry_count))
+                except Exception:
+                    target["retry_count"] = previous_retry
+
+            if started_at is not None:
+                target["started_at"] = str(started_at or "").strip()
+            if ended_at is not None:
+                target["ended_at"] = str(ended_at or "").strip()
+            if error is not None:
+                target["error"] = str(error or "").strip()[:400]
+            if result_summary is not None:
+                target["result_summary"] = str(result_summary or "").strip()[:400]
+            if result is not None:
+                target["result"] = result
+            if output is not None:
+                target["output"] = dict(output or {})
+
+            target["created_at"] = (
+                str(target.get("created_at") or created_at or now_text).strip() or now_text
+            )
+            target["updated_at"] = now_text
+            target["output"] = _normalize_worker_output(
+                target.get("output"),
+                result=target.get("result"),
+                result_summary=str(target.get("result_summary") or ""),
+                error=str(target.get("error") or ""),
+            )
+
+            events = target.get("events")
+            if not isinstance(events, list):
+                events = []
+            current_status = str(target.get("status", "")).strip().lower()
+            current_retry = int(target.get("retry_count", 0) or 0)
+            state_changed = current_status != previous_status
+            retry_changed = current_retry != previous_retry
+            if created or state_changed or retry_changed or (
+                error is not None and str(target.get("error") or "").strip()
+            ):
+                events.append(
+                    self._new_event(
+                        task_id=safe_task_id,
+                        source=normalized_source,
+                        status=current_status or previous_status or "queued",
+                        retry_count=current_retry,
+                        error=str(target.get("error") or ""),
+                        detail=str(target.get("result_summary") or "")[:180],
+                    )
+                )
+            target["events"] = events[-40:]
+
+            with self.path.open("w", encoding="utf-8") as f:
+                for row in rows:
+                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            return dict(target)
 
     async def _read_all_unlocked(self) -> List[Dict[str, Any]]:
         if not self.path.exists():

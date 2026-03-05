@@ -54,7 +54,6 @@ class ToolAccessStore:
     """Agent tool grouping and allow/deny policy store."""
 
     CORE_MANAGER_DEFAULT_ALLOW = [
-        "group:primitives",
         "group:management",
         "group:automation",
     ]
@@ -148,6 +147,11 @@ class ToolAccessStore:
                 legacy_core_allow_sets = [
                     {
                         "group:management",
+                    },
+                    {
+                        "group:primitives",
+                        "group:management",
+                        "group:automation",
                     },
                     {
                         "group:fs",

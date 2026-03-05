@@ -114,10 +114,10 @@ data/
 
 说明：
 
-- `/worker tasks` 的主要数据源是 `data/WORKER_TASKS.jsonl`。
+- `/worker tasks` 以 `data/WORKER_TASKS.jsonl`（`WorkerTaskStore`）为主，并与 `dispatch_queue` 合并，状态字段以队列快照为准。
 - `data/userland/workers/<worker_id>/` 为空通常表示该任务未产出文件型副作用（例如 `echo hello`）。
 - 任务事件标准字段：`source` / `status` / `created_at` / `started_at` / `ended_at` / `error` / `retry_count` / `events[]`。
-- `/worker tasks` 查询链路：`handlers/worker_handlers.py -> core.worker_store.WorkerTaskStore.list_recent -> data/WORKER_TASKS.jsonl`。
+- `/worker tasks` 查询链路：`handlers/worker_handlers.py -> core.worker_store.WorkerTaskStore.list_recent + shared.queue.dispatch_queue.list_tasks`（合并视图）。
 - heartbeat 运行态查询链路：`handlers/heartbeat_handlers.py -> core.heartbeat_store.get_state -> data/runtime_tasks/<user_id>/{HEARTBEAT.md,STATUS.json}`。
 - 对话检索链路：`/chatlog -> handlers/service_handlers.py -> core.state_store.search_messages -> data/users/<user_id>/chat/<YYYY-MM-DD>/<session_id>.md`。
 - 系统级状态文件：`data/system/repositories/{allowed_users.md,id_counters.md,video_cache.md}`。

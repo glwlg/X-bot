@@ -94,6 +94,15 @@ def test_regular_user_runtime_uses_core_manager_policy(tmp_path):
     assert allowed_management is True
     assert "group:management" in management_detail["groups"]
 
+    allowed_primitive, primitive_detail = store.is_tool_allowed(
+        runtime_user_id="u-plain-user",
+        platform="telegram",
+        tool_name="read",
+        kind="tool",
+    )
+    assert allowed_primitive is False
+    assert primitive_detail["reason"] in {"not_in_allow_list", "matched_deny_list"}
+
 
 def test_worker_kernel_still_uses_worker_policy(tmp_path):
     store = ToolAccessStore()

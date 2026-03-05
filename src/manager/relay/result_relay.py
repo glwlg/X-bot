@@ -4,6 +4,8 @@ import asyncio
 import inspect
 import logging
 import os
+import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
@@ -128,6 +130,24 @@ class WorkerResultRelay:
             os.getenv("WORKER_RESULT_RELAY_ENABLED", "true").strip().lower() == "true"
         )
         self.tick_sec = max(1.0, float(os.getenv("WORKER_RESULT_RELAY_TICK_SEC", "2")))
+        self.max_retries = max(
+            1,
+            int(os.getenv("WORKER_RESULT_RELAY_MAX_RETRIES", "6") or 6),
+        )
+        self.retry_base_sec = max(
+            0.0,
+            float(
+                os.getenv(
+                    "WORKER_RESULT_RELAY_RETRY_BASE_SEC",
+                    str(self.tick_sec),
+                )
+                or self.tick_sec
+            ),
+        )
+        self.retry_max_sec = max(
+            self.retry_base_sec,
+            float(os.getenv("WORKER_RESULT_RELAY_RETRY_MAX_SEC", "300") or 300),
+        )
         self._stop_event = asyncio.Event()
         self._loop_task: asyncio.Task | None = None
 
@@ -142,7 +162,13 @@ class WorkerResultRelay:
             self._run_loop(),
             name="worker-result-relay",
         )
-        logger.info("Worker result relay started. tick=%.1fs", self.tick_sec)
+        logger.info(
+            "Worker result relay started. tick=%.1fs max_retries=%s base=%.1fs max_backoff=%.1fs",
+            self.tick_sec,
+            self.max_retries,
+            self.retry_base_sec,
+            self.retry_max_sec,
+        )
 
     async def stop(self) -> None:
         self._stop_event.set()
@@ -170,9 +196,17 @@ class WorkerResultRelay:
     async def process_once(self) -> None:
         rows = await dispatch_queue.list_undelivered(limit=20)
         for task in rows:
+            if self._is_dead_letter(task):
+                continue
+            if self._is_backoff_pending(task):
+                continue
+
             platform, chat_id = await self._resolve_delivery_target(task)
             if not platform or not chat_id:
-                await dispatch_queue.mark_delivered(task.task_id)
+                await self._schedule_retry(
+                    task,
+                    reason="missing_delivery_target",
+                )
                 continue
 
             result_obj = await dispatch_queue.latest_result(task.task_id)
@@ -188,7 +222,84 @@ class WorkerResultRelay:
                 result=result_dict,
             )
             if delivered:
+                await dispatch_queue.clear_relay_retry(task.task_id)
                 await dispatch_queue.mark_delivered(task.task_id)
+            else:
+                await self._schedule_retry(
+                    task,
+                    reason="delivery_failed",
+                )
+
+    @staticmethod
+    def _relay_meta(task: TaskEnvelope) -> Dict[str, Any]:
+        metadata = dict(task.metadata or {})
+        relay = metadata.get("_relay")
+        if isinstance(relay, dict):
+            return dict(relay)
+        return {}
+
+    @staticmethod
+    def _parse_iso_ts(value: str) -> float:
+        text = str(value or "").strip()
+        if not text:
+            return 0.0
+        try:
+            return datetime.fromisoformat(text).timestamp()
+        except Exception:
+            return 0.0
+
+    def _is_dead_letter(self, task: TaskEnvelope) -> bool:
+        relay = self._relay_meta(task)
+        state = str(relay.get("state") or "").strip().lower()
+        return state == "dead_letter"
+
+    def _is_backoff_pending(self, task: TaskEnvelope) -> bool:
+        relay = self._relay_meta(task)
+        state = str(relay.get("state") or "").strip().lower()
+        if state != "retrying":
+            return False
+        next_retry_ts = self._parse_iso_ts(str(relay.get("next_retry_at") or ""))
+        return bool(next_retry_ts > time.time())
+
+    def _backoff_sec(self, next_attempt: int) -> float:
+        exponent = max(0, int(next_attempt) - 1)
+        delay = self.retry_base_sec * (2**exponent)
+        return min(self.retry_max_sec, delay)
+
+    async def _schedule_retry(
+        self,
+        task: TaskEnvelope,
+        *,
+        reason: str,
+    ) -> None:
+        relay = self._relay_meta(task)
+        current_attempts = max(0, int(relay.get("attempts") or 0))
+        next_attempt = current_attempts + 1
+        backoff_sec = self._backoff_sec(next_attempt)
+        state = await dispatch_queue.bump_relay_retry(
+            task_id=task.task_id,
+            reason=reason,
+            retry_after_sec=backoff_sec,
+            max_retries=self.max_retries,
+        )
+        if not isinstance(state, dict):
+            return
+        new_state = str(state.get("state") or "").strip().lower()
+        if new_state == "dead_letter":
+            logger.error(
+                "Worker relay dead-letter task=%s reason=%s attempts=%s",
+                task.task_id,
+                reason,
+                int(state.get("attempts") or 0),
+            )
+        else:
+            logger.info(
+                "Worker relay retry scheduled task=%s reason=%s attempts=%s backoff=%.1fs",
+                task.task_id,
+                reason,
+                int(state.get("attempts") or 0),
+                backoff_sec,
+            )
 
     async def _resolve_delivery_target(self, task: TaskEnvelope) -> tuple[str, str]:
         meta = dict(task.metadata or {})

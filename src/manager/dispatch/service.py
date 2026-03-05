@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import logging
 import os
 from typing import Any, Dict, List
 
-from core.worker_store import worker_registry
+from core.worker_store import worker_registry, worker_task_store
 from shared.queue.dispatch_queue import dispatch_queue
+
+logger = logging.getLogger(__name__)
 
 
 def _score_worker(goal: str, worker: Dict[str, Any]) -> int:
@@ -152,6 +155,24 @@ class ManagerDispatchService:
             backend=str(backend or ""),
             metadata=meta,
         )
+        try:
+            await worker_task_store.upsert_task(
+                task_id=queued.task_id,
+                worker_id=selected_worker_id,
+                source=str(source or "manager_dispatch"),
+                instruction=task_instruction,
+                status="queued",
+                metadata=meta,
+                retry_count=int(getattr(queued, "retry_count", 0) or 0),
+                created_at=str(getattr(queued, "created_at", "") or ""),
+                result_summary="queued by manager dispatch",
+            )
+        except Exception as exc:
+            logger.warning(
+                "Failed to mirror queued task into WorkerTaskStore task_id=%s err=%s",
+                str(getattr(queued, "task_id", "") or ""),
+                exc,
+            )
 
         manager_hint = (
             "worker dispatch accepted; "
