@@ -10,11 +10,10 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    filters,
 )
 from core.platform.adapter import BotAdapter
 from core.platform.models import UnifiedContext
-from core.platform.exceptions import MessageSendError, MessageEditNotSupported
+from core.platform.exceptions import MessageSendError
 from .mapper import map_update_to_message
 from .formatter import markdown_to_telegram_html
 

@@ -4,7 +4,7 @@
 
 import os
 import toml
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 

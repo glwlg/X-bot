@@ -3,9 +3,7 @@
 """
 import os
 import re
-import uuid
 import time
-import shutil
 import asyncio
 import logging
 from dataclasses import dataclass
@@ -15,7 +13,6 @@ from telegram.error import BadRequest
 
 from core.config import (
     DOWNLOAD_DIR,
-    PERMANENT_STORAGE_DIR,
     UPDATE_INTERVAL_SECONDS,
     UPDATE_INTERVAL_SECONDS,
     MAX_FILE_SIZE_MB,

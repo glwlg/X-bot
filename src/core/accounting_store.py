@@ -1,5 +1,4 @@
 import logging
-from typing import Any
 
 from core.state_io import read_json, write_json
 from core.state_paths import user_path

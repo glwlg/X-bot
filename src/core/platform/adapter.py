@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from typing import Any, Optional, Union
-from .models import UnifiedContext, UnifiedMessage
+from .models import UnifiedContext
 
 
 class BotAdapter(ABC):

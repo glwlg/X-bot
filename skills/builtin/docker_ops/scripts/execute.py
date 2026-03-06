@@ -25,7 +25,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None):
     action = params.get("action")
 
     # Lazy import to avoid circular dependency
-    from services.container_service import container_service
+    from .services.container_service import container_service
 
     if action == "list_services":
         res = await container_service.get_active_services()

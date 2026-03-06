@@ -8,8 +8,6 @@ import asyncio
 import signal
 from telegram.ext import (
     Application,
-    Application,
-    ContextTypes,
     ConversationHandler,
     PicklePersistence,
     filters,
@@ -28,7 +26,6 @@ from core.config import (
     CORE_CHAT_WORKER_BACKEND,
     HEARTBEAT_ENABLED,
     HEARTBEAT_MODE,
-    WEB_DASHBOARD_ENABLED,
 )
 from core.heartbeat_worker import heartbeat_worker
 from core.waiting_phrase_store import waiting_phrase_store
@@ -39,8 +36,6 @@ from handlers import (
     handle_new_command,
     help_command,
     button_callback,
-    button_callback,
-    back_to_main_and_cancel,
     cancel,
     handle_ai_chat,
     handle_ai_photo,
@@ -136,23 +131,7 @@ async def init_services() -> None:
         logger.error(f"❌ Error in init_services: {e}", exc_info=True)
 
 
-async def setup_telegram_commands(application: Application) -> None:
-    """Register Telegram Commands"""
-    await application.bot.set_my_commands(
-        [
-            ("start", "主菜单"),
-            ("new", "开启新对话"),
-            ("teach", "教我新能力"),
-            ("skills", "查看 Skills"),
-            ("feature", "提交需求"),
-            ("chatlog", "检索对话"),
-            ("translate", "沉浸式翻译"),
-            ("heartbeat", "心跳管理"),
-            ("worker", "管理 Worker 执行层"),
-            ("help", "使用帮助"),
-            ("cancel", "取消当前操作"),
-        ]
-    )
+
 
 
 async def log_update(update: Update, context):

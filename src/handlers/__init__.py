@@ -1,12 +1,10 @@
 from .start_handlers import (
     start,
     button_callback,
-    back_to_main_and_cancel,
     handle_new_command,
     help_command,
     stop_command,
 )
-from .admin_handlers import adduser_command, deluser_command
 from .base_handlers import check_permission_unified, cancel
 
 from .service_handlers import (
@@ -24,7 +22,6 @@ from .ai_handlers import (
     handle_ai_video,
     handle_sticker_message,
 )
-from .mcp_handlers import handle_browser_action
 from .heartbeat_handlers import heartbeat_command
 from .worker_handlers import worker_command
 from .accounting_handlers import accounting_command

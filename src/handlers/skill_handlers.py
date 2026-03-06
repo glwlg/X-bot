@@ -204,7 +204,6 @@ async def skills_command(ctx: UnifiedContext) -> None:
     """
     /skills 命令 - 列出所有可用 Skills
     """
-    from core.config import is_user_allowed
 
     if not await check_permission_unified(ctx):
         return

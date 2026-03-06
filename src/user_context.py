@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 SESSION_ID_KEY = "current_session_id"
 
 
-from typing import Union, Any
+from typing import Union
 from core.platform.models import UnifiedContext
 
 

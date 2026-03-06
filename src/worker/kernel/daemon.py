@@ -4,7 +4,7 @@ import asyncio
 import logging
 import os
 import signal
-from typing import Any, Set
+from typing import Set
 
 from core.worker_store import worker_task_store
 from shared.contracts.dispatch import TaskEnvelope, TaskResult, now_iso

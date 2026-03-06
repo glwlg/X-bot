@@ -1,8 +1,6 @@
-from typing import Dict, Type, Callable, Any
+from typing import Dict, Callable, Any
 from .adapter import BotAdapter
 import logging
-import asyncio
-import signal
 
 logger = logging.getLogger(__name__)
 

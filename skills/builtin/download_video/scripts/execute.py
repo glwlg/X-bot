@@ -10,7 +10,7 @@ from telegram.ext import ConversationHandler, filters
 from core.config import WAITING_FOR_VIDEO_URL
 from core.config import is_user_allowed
 from utils import extract_video_url
-from services.download_service import download_video
+from .services.download_service import download_video
 from user_context import add_message
 
 # Constants

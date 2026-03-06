@@ -4,7 +4,7 @@
 提供统一的异常处理机制，确保API返回一致的错误格式。
 """
 from typing import Any, Dict, Optional
-from fastapi import HTTPException, Request, status
+from fastapi import Request, status
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError

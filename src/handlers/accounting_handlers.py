@@ -1,12 +1,11 @@
 import logging
-import shlex
 
 from sqlalchemy import select
 
 from core.accounting_store import get_active_book_id, set_active_book_id
 from core.platform.models import UnifiedContext
 from api.core.database import get_session_maker
-from api.models.accounting import Book, Record
+from api.models.accounting import Book
 from api.models.binding import PlatformUserBinding
 from .base_handlers import check_permission_unified
 

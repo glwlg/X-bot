@@ -7,9 +7,7 @@ import time
 from typing import Any, Dict, List, cast
 
 from core.config import (
-    DATA_DIR,
     X_DEPLOYMENT_STAGING_PATH,
-    SERVER_IP,
     AUTO_RECOVERY_MAX_ATTEMPTS,
 )
 from core.extension_executor import ExtensionExecutor
@@ -21,15 +19,11 @@ from core.platform.models import UnifiedContext
 from core.primitive_runtime import PrimitiveRuntime
 from core.prompt_composer import prompt_composer
 from core.orchestrator_runtime_tools import RuntimeToolAssembler, ToolCallDispatcher
-from core.skill_loader import skill_loader
 from core.task_inbox import task_inbox
 from core.task_manager import task_manager
 from core.tool_access_store import tool_access_store
 from core.tool_broker import ToolBroker
 from core.tool_profile_store import tool_profile_store
-from core.tools.dispatch_tools import (
-    dispatch_tools,
-)  # compatibility export for tests/hooks
 from services.ai_service import AiService
 
 logger = logging.getLogger(__name__)

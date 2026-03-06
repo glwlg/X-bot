@@ -10,7 +10,7 @@ from core.state_store import (
     get_user_watchlist,
     add_watchlist_stock,
 )
-from services.stock_service import (
+from .services.stock_service import (
     fetch_stock_quotes,
     format_stock_message,
     search_stock_by_name,

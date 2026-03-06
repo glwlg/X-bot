@@ -5,7 +5,6 @@ from typing import Any, Dict, Iterable, List
 
 from core.prompts import (
     DEFAULT_SYSTEM_PROMPT,
-    MEMORY_MANAGEMENT_GUIDE,
     MANAGER_CORE_PROMPT,
 )
 from core.markdown_memory_store import markdown_memory_store
