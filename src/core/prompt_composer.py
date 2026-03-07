@@ -98,7 +98,7 @@ class PromptComposer:
             parts.append(skill_catalog)
 
         # 拼接当前日期
-        parts.append("\n【当前日期】\n" + datetime.now().strftime("%Y-%m-%d"))
+        # parts.append("\n【当前日期】\n" + datetime.now().strftime("%Y-%m-%d"))
 
         logger.info(
             "Final Prompt: \n"
