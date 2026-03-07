@@ -149,7 +149,14 @@ async def _collect_chunks(stream: AsyncIterator[str]) -> list[str]:
 
 
 async def run_core_agent(task: TaskEnvelope, context: Dict[str, Any]) -> TaskResult:
+    from shared.queue.dispatch_queue import dispatch_queue
+
     ctx = _build_context(task)
+
+    async def _progress_callback(snapshot: Dict[str, Any]) -> None:
+        await dispatch_queue.update_progress(task.task_id, snapshot)
+
+    ctx.user_data["worker_progress_callback"] = _progress_callback
     history = [{"role": "user", "parts": [{"text": str(task.instruction or "")}]}]
     timeout_sec = max(30, int(os.getenv("WORKER_CORE_AGENT_TIMEOUT_SEC", "1200")))
 

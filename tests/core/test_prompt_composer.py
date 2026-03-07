@@ -43,3 +43,76 @@ def test_prompt_composer_worker_pool_info_contains_summary_and_skill_hints(monke
     assert "worker-main" in text
     assert "图像与多媒体执行助手" in text
     assert "generate_image" in text
+
+
+def test_prompt_composer_filters_skill_catalog_by_runtime_policy(monkeypatch):
+    monkeypatch.setattr(
+        "core.skill_loader.skill_loader.get_skills_summary",
+        lambda: [
+            {
+                "name": "stock_watch",
+                "description": "行情查询",
+                "allowed_roles": [],
+            },
+            {
+                "name": "worker_management",
+                "description": "worker 调度",
+                "allowed_roles": ["manager"],
+            },
+            {
+                "name": "skill_manager",
+                "description": "技能治理",
+                "allowed_roles": [],
+            },
+        ],
+    )
+
+    def fake_allowed(**kwargs):
+        return (
+            kwargs["tool_name"] in {"ext_worker_management", "ext_skill_manager"},
+            {},
+        )
+
+    monkeypatch.setattr(
+        "core.tool_access_store.tool_access_store.is_tool_allowed",
+        fake_allowed,
+    )
+
+    text = prompt_composer._build_skill_catalog(
+        runtime_user_id="u-1",
+        platform="telegram",
+    )
+
+    assert "worker_management" in text
+    assert "skill_manager" in text
+    assert "stock_watch" not in text
+
+
+def test_prompt_composer_hides_manager_only_roles_from_worker(monkeypatch):
+    monkeypatch.setattr(
+        "core.skill_loader.skill_loader.get_skills_summary",
+        lambda: [
+            {
+                "name": "stock_watch",
+                "description": "行情查询",
+                "allowed_roles": [],
+            },
+            {
+                "name": "worker_management",
+                "description": "worker 调度",
+                "allowed_roles": ["manager"],
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        "core.tool_access_store.tool_access_store.is_tool_allowed",
+        lambda **_kwargs: (True, {}),
+    )
+
+    text = prompt_composer._build_skill_catalog(
+        runtime_user_id="worker::worker-main::u-1",
+        platform="worker_kernel",
+    )
+
+    assert "stock_watch" in text
+    assert "worker_management" not in text

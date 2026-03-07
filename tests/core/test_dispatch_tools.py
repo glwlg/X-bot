@@ -63,6 +63,45 @@ class _FakeDispatchQueue:
             )
         ]
 
+    async def delivery_health(
+        self, *, worker_id: str = "", dead_letter_limit: int = 20
+    ):
+        _ = dead_letter_limit
+        return {
+            "worker_id": worker_id,
+            "undelivered": 2,
+            "retrying": 1,
+            "dead_letter": 1,
+            "result_persist_error": 0,
+            "recent_dead_letters": [
+                {
+                    "task_id": "tsk-dead-1",
+                    "worker_id": worker_id or "worker-main",
+                    "status": "failed",
+                }
+            ],
+        }
+
+    async def requeue_dead_letter(
+        self,
+        *,
+        task_id: str,
+        reason: str = "manual_requeue",
+    ):
+        if str(task_id or "").strip() == "tsk-dead-1":
+            return {
+                "ok": True,
+                "task_id": "tsk-dead-1",
+                "retried": True,
+                "summary": f"requeued:{reason}",
+            }
+        return {
+            "ok": False,
+            "task_id": str(task_id or ""),
+            "retried": False,
+            "summary": "task not found",
+        }
+
 
 @pytest.mark.asyncio
 async def test_list_workers_delegates_to_manager_service(monkeypatch):
@@ -113,3 +152,39 @@ async def test_worker_status_reads_from_shared_dispatch_queue(monkeypatch):
     assert result["ok"] is True
     assert result["tasks"]
     assert result["tasks"][0]["worker_id"] == "worker-main"
+    assert int(result["delivery_health"]["dead_letter"]) == 1
+    assert "dead_letter=1" in str(result["summary"] or "")
+
+
+@pytest.mark.asyncio
+async def test_retry_dead_letter_delegates_to_dispatch_queue(monkeypatch):
+    monkeypatch.setattr(
+        dispatch_tools_module,
+        "dispatch_queue",
+        _FakeDispatchQueue(),
+    )
+
+    tools = dispatch_tools_module.DispatchTools()
+    result = await tools.retry_dead_letter(
+        task_id="tsk-dead-1",
+        reason="manual_operator_retry",
+    )
+
+    assert result["ok"] is True
+    assert result["retried"] is True
+    assert result["task_id"] == "tsk-dead-1"
+
+
+@pytest.mark.asyncio
+async def test_retry_dead_letter_requires_task_id(monkeypatch):
+    monkeypatch.setattr(
+        dispatch_tools_module,
+        "dispatch_queue",
+        _FakeDispatchQueue(),
+    )
+
+    tools = dispatch_tools_module.DispatchTools()
+    result = await tools.retry_dead_letter(task_id="   ")
+
+    assert result["ok"] is False
+    assert result["retried"] is False

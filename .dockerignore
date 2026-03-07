@@ -26,3 +26,5 @@ data/
 media/
 tmp/
 cookies.txt
+src/api/static/dist
+src/platforms/web/node_modules

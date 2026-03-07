@@ -1,0 +1,89 @@
+/**
+ * 全局样式重置
+ * 
+ * 注意：此文件中的基础样式会被 theme.css 中的主题变量覆盖
+ * 确保 theme.css 在 main.ts 中最后导入，以便正确覆盖样式
+ */
+
+/* ========================================
+   基础重置
+   ======================================== */
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  line-height: 1.5;
+  font-weight: 400;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 确保 body 和 #app 正确填充视口 */
+html, body, #app {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+body {
+  min-width: 320px;
+}
+
+/* ========================================
+   原生滚动条样式（作为后备）
+   主要滚动条样式在 theme.css 中定义
+   ======================================== */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+/* ========================================
+   禁用过渡动画的类（用于性能优化）
+   ======================================== */
+
+.no-transitions,
+.no-transitions * {
+  transition: none !important;
+  animation: none !important;
+}
+
+/* ========================================
+   无障碍辅助样式
+   ======================================== */
+
+/* 焦点样式 */
+:focus-visible {
+  outline: 2px solid var(--color-primary-500, #8b5cf6);
+  outline-offset: 2px;
+}
+
+/* 减少动画偏好 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

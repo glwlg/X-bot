@@ -2,9 +2,6 @@ import logging
 import discord
 from typing import Any, Optional, Callable, Dict, List, Tuple
 import re
-from telegram import (
-    Update as LegacyUpdate,
-)  # Keep for legacy compatibility if needed, but we try to avoid it
 from telegram import InlineKeyboardMarkup
 # logic: We map Discord interactions to UnifiedContext
 

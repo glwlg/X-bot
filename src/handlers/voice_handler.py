@@ -22,6 +22,15 @@ from .media_utils import extract_media_input
 
 logger = logging.getLogger(__name__)
 
+# Backward-compatible async client injection for tests/legacy callers.
+openai_async_client: Any = None
+
+
+def _resolve_voice_client(model_name: str) -> Any:
+    if openai_async_client is not None:
+        return openai_async_client
+    return get_client_for_model(model_name, is_async=True)
+
 
 def _normalize_transcribed_text(raw_text: str) -> str:
     text = str(raw_text or "").strip()
@@ -280,7 +289,7 @@ def _build_audio_contents(
 async def _run_audio_prompt(prompt: str, voice_bytes: bytes, mime_type: str) -> str:
     last_error: Exception | None = None
     voice_model = get_voice_model()
-    client: Any = get_client_for_model(voice_model, is_async=True)
+    client: Any = _resolve_voice_client(voice_model)
     if client is None:
         logger.error("Voice model call skipped: OpenAI async client is not initialized")
         return ""

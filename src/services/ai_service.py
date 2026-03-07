@@ -18,6 +18,15 @@ load_models_config()
 
 logger = logging.getLogger(__name__)
 
+# Backward-compatible async client injection for tests/legacy callers.
+openai_async_client: Any = None
+
+
+def _resolve_async_client(model_name: str) -> Any:
+    if openai_async_client is not None:
+        return openai_async_client
+    return get_client_for_model(model_name, is_async=True)
+
 
 def _split_text_for_streaming(text: str, max_chars: int) -> list[str]:
     payload = str(text or "")
@@ -142,7 +151,7 @@ class AiService:
             system_instruction=system_instruction,
         )
         openai_tools = self._build_openai_tools(tools)
-        client = get_client_for_model(current_model, is_async=True)
+        client = _resolve_async_client(current_model)
 
         try:
 
@@ -1096,6 +1105,21 @@ class AiService:
 
         for msg in message_history or []:
             if isinstance(msg, dict):
+                parts = msg.get("parts")
+                if isinstance(parts, list):
+                    for part in parts:
+                        if not isinstance(part, dict):
+                            continue
+                        inline_data = part.get("inline_data")
+                        if not isinstance(inline_data, dict):
+                            continue
+                        mime_type = str(inline_data.get("mime_type") or "").lower()
+                        if mime_type.startswith("image/"):
+                            has_image = True
+                            break
+                if has_image:
+                    break
+
                 content = msg.get("content")
                 if isinstance(content, list):
                     for item in content:

@@ -353,6 +353,71 @@ async def test_manager_blocks_bash_when_software_delivery_intent(monkeypatch):
     assert result["error_code"] == "software_delivery_required"
 
 
+def test_software_delivery_intent_ignores_plain_github_research():
+    assert (
+        ToolCallDispatcher._is_software_delivery_intent(
+            "看一下github上glwlg/x-bot这个项目这两天更新了什么"
+        )
+        is False
+    )
+    assert (
+        ToolCallDispatcher._is_software_delivery_intent(
+            "帮我修复这个 GitHub issue 对应的代码问题"
+        )
+        is True
+    )
+
+
+@pytest.mark.asyncio
+async def test_manager_allows_loaded_skill_cli_bash_when_request_mentions_code():
+    captured = {}
+
+    async def append_event(_event: str):
+        return None
+
+    class _FakeToolBroker:
+        async def execute_core_tool(self, **kwargs):
+            captured.update(dict(kwargs))
+            return {"ok": True, "summary": "ok"}
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="u-2",
+        platform_name="telegram",
+        task_id="task-3b",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(
+            message=SimpleNamespace(text="这个技能有问题，帮我看日志并修复代码"),
+            user_data={
+                "last_loaded_skill_dir": "/app/skills/builtin/worker_management",
+                "last_loaded_skill_entrypoint": "scripts/execute.py",
+            },
+        ),
+        runtime=object(),
+        tool_broker=_FakeToolBroker(),
+        runtime_tool_allowed=lambda **_kwargs: True,
+        record_tool_profile=lambda *_args, **_kwargs: None,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"bash", "software_delivery"})
+
+    result = await dispatcher.execute(
+        name="bash",
+        args={
+            "command": (
+                "cd /app/skills/builtin/worker_management "
+                "&& python scripts/execute.py dispatch hi"
+            )
+        },
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert result["ok"] is True
+    assert captured["name"] == "bash"
+
+
 @pytest.mark.asyncio
 async def test_worker_allows_bash_even_when_request_mentions_code(monkeypatch):
     async def append_event(_event: str):

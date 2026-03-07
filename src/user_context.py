@@ -5,8 +5,7 @@
 
 import uuid
 import logging
-from typing import Literal
-from telegram.ext import ContextTypes
+from typing import Any, Literal, TYPE_CHECKING
 
 from core.state_store import (
     save_message,
@@ -19,12 +18,18 @@ logger = logging.getLogger(__name__)
 SESSION_ID_KEY = "current_session_id"
 
 
-from typing import Union, Any
 from core.platform.models import UnifiedContext
+
+if TYPE_CHECKING:
+    from telegram.ext import ContextTypes
+
+    TelegramContext = ContextTypes.DEFAULT_TYPE
+else:
+    TelegramContext = Any
 
 
 async def get_or_create_session_id(
-    context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext], user_id: int | str
+    context: TelegramContext | UnifiedContext, user_id: int | str
 ) -> str:
     """获取当前 Session ID，如果内存没有，尝试从 DB 获取最新的"""
     store = getattr(context, "user_data", None)
@@ -42,7 +47,7 @@ async def get_or_create_session_id(
 
 
 async def get_user_context(
-    context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext], user_id: int | str
+    context: TelegramContext | UnifiedContext, user_id: int | str
 ) -> list[dict]:
     """
     获取用户的对话上下文 (Async)
@@ -56,7 +61,7 @@ async def get_user_context(
 
 
 async def add_message(
-    context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext],
+    context: TelegramContext | UnifiedContext,
     user_id: int | str,
     role: Literal["user", "model"],
     content: str,
@@ -68,7 +73,7 @@ async def add_message(
     await save_message(user_id, role, content, session_id)
 
 
-def clear_context(context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext]) -> None:
+def clear_context(context: TelegramContext | UnifiedContext) -> None:
     """
     清除用户的对话上下文 (开启新会话)
     不删除历史记录，只是生成新的 session_id
@@ -83,7 +88,7 @@ def clear_context(context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext]) -> 
 
 
 async def get_context_length(
-    context: Union[ContextTypes.DEFAULT_TYPE, UnifiedContext], user_id: int | str
+    context: TelegramContext | UnifiedContext, user_id: int | str
 ) -> int:
     """获取用户当前上下文的消息数量"""
     history = await get_user_context(context, user_id)

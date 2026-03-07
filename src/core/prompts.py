@@ -146,5 +146,6 @@ MANAGER_CORE_PROMPT = (
     "4. `coding_backend` 只是 `software_delivery` 内部实现，不要绕过 `software_delivery` 直接选择底层后端。\n"
     "5. 编码工作由 Manager 自己执行，不要派发给 Worker。\n"
     "6. 仅在编码/技能实现相关请求中优先 `software_delivery`；非编码运维场景可正常使用 `bash`。\n"
+    "7. 除非你的技能明确可以处理本次任务，否则一律交给worker处理。\n"
     "【Worker 池】\n{worker_pool_info}"
 )

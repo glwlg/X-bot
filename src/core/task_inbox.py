@@ -122,19 +122,21 @@ class TaskInbox:
 
     def __init__(self) -> None:
         self.persist = (
-            os.getenv("TASK_INBOX_PERSIST", "false").strip().lower() == "true"
+            os.getenv("TASK_INBOX_PERSIST", "true").strip().lower() == "true"
+        )
+        self.clean_on_start = (
+            os.getenv("TASK_INBOX_CLEAN_ON_START", "false").strip().lower() == "true"
         )
         self.root = (Path(DATA_DIR) / "task_inbox").resolve()
         self.tasks_root = (self.root / "tasks").resolve()
         self.events_path = (self.root / "events.jsonl").resolve()
         if self.persist:
+            if self.clean_on_start and self.root.exists():
+                shutil.rmtree(self.root, ignore_errors=True)
             self.root.mkdir(parents=True, exist_ok=True)
             self.tasks_root.mkdir(parents=True, exist_ok=True)
             if not self.events_path.exists():
                 self.events_path.write_text("", encoding="utf-8")
-        else:
-            if self.root.exists():
-                shutil.rmtree(self.root, ignore_errors=True)
 
         self._lock = asyncio.Lock()
         self._loaded = False

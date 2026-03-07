@@ -31,7 +31,7 @@ class DummyContext:
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_default_tools_are_primitives(monkeypatch):
+async def test_orchestrator_core_manager_default_tools_are_dispatch_only(monkeypatch):
     orchestrator = AgentOrchestrator()
     captured = {}
 
@@ -64,10 +64,6 @@ async def test_orchestrator_default_tools_are_primitives(monkeypatch):
 
     assert chunks == ["ok"]
     assert captured["tool_names"] == [
-        "read",
-        "write",
-        "edit",
-        "bash",
         "list_workers",
         "dispatch_worker",
         "worker_status",
@@ -299,7 +295,9 @@ async def test_orchestrator_prompt_includes_runtime_and_skill_briefs(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_uses_deployment_staging_path_for_primitives(monkeypatch):
+async def test_orchestrator_worker_runtime_uses_deployment_staging_path_for_primitives(
+    monkeypatch,
+):
     orchestrator = AgentOrchestrator()
     captured = {}
 
@@ -355,6 +353,8 @@ async def test_orchestrator_uses_deployment_staging_path_for_primitives(monkeypa
     )
 
     ctx = DummyContext()
+    ctx.message.platform = "worker_kernel"
+    ctx.user_data["runtime_user_id"] = "worker::worker-main::123"
     message_history = [{"role": "user", "parts": [{"text": "帮我部署一套n8n"}]}]
     _ = [chunk async for chunk in orchestrator.handle_message(ctx, message_history)]
 

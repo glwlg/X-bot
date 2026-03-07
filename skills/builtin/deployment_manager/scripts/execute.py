@@ -5,15 +5,35 @@ Deployment Manager Skill - 基础操作模块
 Agent 通过 SKILL.md 中定义的 SOP 编排 web_search、web_browser、docker_ops 完成部署。
 """
 
+from __future__ import annotations
+
+import argparse
 import asyncio
 import logging
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
 from urllib.parse import quote, urlparse
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SRC_ROOT = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
 import httpx
+
+from core.skill_cli import (
+    add_common_arguments,
+    merge_params,
+    prepare_default_env,
+    run_execute_cli,
+)
+
+prepare_default_env(REPO_ROOT)
 
 from core.config import (
     X_DEPLOYMENT_STAGING_PATH,
@@ -1513,3 +1533,118 @@ def register_handlers(adapter_manager):
                 await ctx.reply(response)
 
     adapter_manager.on_command("deploy", deploy_command, description="智能部署服务")
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Deployment manager skill CLI bridge.",
+    )
+    add_common_arguments(parser)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    auto_parser = subparsers.add_parser(
+        "auto-deploy",
+        help="Auto deploy a service or repository",
+    )
+    auto_parser.add_argument(
+        "request",
+        nargs="?",
+        default="",
+        help="Original user request text",
+    )
+    auto_parser.add_argument("--service", default="", help="Service name hint")
+    auto_parser.add_argument("--repo-url", default="", help="Repository URL")
+    auto_parser.add_argument("--target-dir", default="", help="Target directory")
+    auto_parser.add_argument("--project-name", default="", help="Project name")
+    auto_parser.add_argument(
+        "--host-port",
+        type=int,
+        default=DEFAULT_HOST_PORT,
+        help="Preferred host port",
+    )
+    auto_parser.add_argument(
+        "--force-redeploy",
+        choices=("true", "false"),
+        default="false",
+        help="Whether to force redeploy when target already exists",
+    )
+
+    subparsers.add_parser("status", help="List deployed projects")
+
+    delete_parser = subparsers.add_parser(
+        "delete-project",
+        help="Delete a project directory",
+    )
+    delete_parser.add_argument("name", help="Project name")
+
+    access_parser = subparsers.add_parser(
+        "access-info",
+        help="Show project access URLs",
+    )
+    access_parser.add_argument("name", help="Project name")
+
+    verify_parser = subparsers.add_parser(
+        "verify-access",
+        help="Verify a deployed project or URL",
+    )
+    verify_parser.add_argument("--name", default="", help="Project name")
+    verify_parser.add_argument("--url", default="", help="Explicit URL")
+    verify_parser.add_argument(
+        "--timeout",
+        type=int,
+        default=10,
+        help="Request timeout in seconds",
+    )
+    return parser
+
+
+def _params_from_args(args: argparse.Namespace) -> dict:
+    command = str(args.command or "").strip().lower()
+    if command == "auto-deploy":
+        return merge_params(
+            args,
+            {
+                "action": "auto_deploy",
+                "request": str(args.request or "").strip(),
+                "service": str(args.service or "").strip(),
+                "repo_url": str(args.repo_url or "").strip(),
+                "target_dir": str(args.target_dir or "").strip(),
+                "project_name": str(args.project_name or "").strip(),
+                "host_port": int(args.host_port or DEFAULT_HOST_PORT),
+                "force_redeploy": str(args.force_redeploy or "false").lower()
+                == "true",
+            },
+        )
+    if command == "status":
+        return merge_params(args, {"action": "status"})
+    if command == "delete-project":
+        return merge_params(
+            args,
+            {"action": "delete_project", "name": str(args.name or "").strip()},
+        )
+    if command == "access-info":
+        return merge_params(
+            args,
+            {"action": "get_access_info", "name": str(args.name or "").strip()},
+        )
+    if command == "verify-access":
+        return merge_params(
+            args,
+            {
+                "action": "verify_access",
+                "name": str(args.name or "").strip(),
+                "url": str(args.url or "").strip(),
+                "timeout": int(args.timeout or 10),
+            },
+        )
+    raise SystemExit(f"unsupported command: {command}")
+
+
+async def _run() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+    return await run_execute_cli(execute, args=args, params=_params_from_args(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_run()))

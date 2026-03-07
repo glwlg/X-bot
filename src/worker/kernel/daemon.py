@@ -4,9 +4,10 @@ import asyncio
 import logging
 import os
 import signal
-from typing import Any, Set
+from typing import Set
 
-from shared.contracts.dispatch import TaskEnvelope, TaskResult
+from core.worker_store import worker_task_store
+from shared.contracts.dispatch import TaskEnvelope, TaskResult, now_iso
 from shared.queue.dispatch_queue import dispatch_queue
 from worker.kernel.program_loader import program_loader
 
@@ -90,6 +91,7 @@ class WorkerKernelDaemon:
                 task.backend,
                 task.source,
             )
+            await self._mirror_task_claimed(task)
             running = asyncio.create_task(
                 self._run_task(task),
                 name=f"worker-kernel-{task.task_id}",
@@ -138,6 +140,68 @@ class WorkerKernelDaemon:
         if not str(result.summary or "").strip():
             result.summary = str(text or "worker task completed")[:200]
         return result
+
+    async def _mirror_task_claimed(self, task: TaskEnvelope) -> None:
+        try:
+            await worker_task_store.upsert_task(
+                task_id=task.task_id,
+                worker_id=task.worker_id,
+                source=task.source,
+                instruction=task.instruction,
+                status="running",
+                metadata=dict(task.metadata or {}),
+                retry_count=int(task.retry_count or 0),
+                started_at=str(task.started_at or ""),
+                error="",
+                result_summary="task claimed by worker kernel",
+                created_at=str(task.created_at or ""),
+            )
+        except Exception as exc:
+            logger.debug(
+                "Worker task store mirror(claimed) failed task_id=%s err=%s",
+                task.task_id,
+                exc,
+            )
+
+    async def _mirror_task_finished(
+        self,
+        *,
+        task: TaskEnvelope,
+        result: TaskResult,
+        final_status: str,
+    ) -> None:
+        try:
+            output_payload = dict(result.payload or {})
+            if not str(output_payload.get("text") or "").strip():
+                output_payload["text"] = str(
+                    result.summary or result.error or "worker task completed"
+                ).strip()
+            if str(result.error or "").strip() and not str(
+                output_payload.get("error") or ""
+            ).strip():
+                output_payload["error"] = str(result.error or "").strip()
+            await worker_task_store.upsert_task(
+                task_id=task.task_id,
+                worker_id=task.worker_id,
+                source=task.source,
+                instruction=task.instruction,
+                status=str(final_status or "").strip().lower() or "failed",
+                metadata=dict(task.metadata or {}),
+                retry_count=int(task.retry_count or 0),
+                started_at=str(task.started_at or ""),
+                ended_at=now_iso(),
+                error=str(result.error or ""),
+                result_summary=str(result.summary or ""),
+                result=str(output_payload.get("text") or ""),
+                output=output_payload,
+                created_at=str(task.created_at or ""),
+            )
+        except Exception as exc:
+            logger.debug(
+                "Worker task store mirror(finished) failed task_id=%s err=%s",
+                task.task_id,
+                exc,
+            )
 
     async def _run_task(self, task: TaskEnvelope) -> None:
         program_id = str(task.metadata.get("program_id") or self.default_program_id)
@@ -219,6 +283,11 @@ class WorkerKernelDaemon:
                         task.task_id,
                         reason,
                     )
+                    await self._mirror_task_finished(
+                        task=task,
+                        result=result,
+                        final_status="cancelled",
+                    )
                     await self.queue.finish_task(task_id=task.task_id, result=result)
                     return
 
@@ -291,6 +360,14 @@ class WorkerKernelDaemon:
             bool(result.ok),
             str((result.payload or {}).get("_result_writer") or ""),
             str(result.summary or "")[:160],
+        )
+        final_status = "cancelled" if bool((result.payload or {}).get("cancelled")) else (
+            "done" if bool(result.ok) else "failed"
+        )
+        await self._mirror_task_finished(
+            task=task,
+            result=result,
+            final_status=final_status,
         )
         await self.queue.finish_task(task_id=task.task_id, result=result)
 

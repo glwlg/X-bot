@@ -2,8 +2,6 @@
 
 import logging
 import os
-import json
-import re
 from typing import Any, Dict, List, Optional
 
 import yaml
@@ -102,34 +100,11 @@ class SkillLoader:
         if not isinstance(triggers, list):
             triggers = []
 
-        allowed_tools_raw = frontmatter.get("allowed-tools")
-        if allowed_tools_raw is None:
-            allowed_tools_raw = frontmatter.get("allowed_tools")
-        if isinstance(allowed_tools_raw, str):
-            allowed_tools = [allowed_tools_raw]
-        elif isinstance(allowed_tools_raw, list):
-            allowed_tools = [
-                str(item).strip() for item in allowed_tools_raw if str(item).strip()
-            ]
-        else:
-            allowed_tools = []
-
-        input_schema = frontmatter.get("input_schema")
-        if not input_schema:
-            input_schema = self._legacy_params_to_schema(
-                frontmatter.get("params") or {}
-            )
-        input_schema = self._ensure_object_schema(input_schema)
-        inferred_schema = self._infer_schema_from_markdown(markdown_content)
-        input_schema = self._merge_schemas(input_schema, inferred_schema)
-
-        permissions = frontmatter.get("permissions")
-        if not isinstance(permissions, dict):
-            permissions = {
-                "filesystem": "workspace",
-                "shell": False,
-                "network": "limited",
-            }
+        # We no longer parse input_schema and allowed_tools dynamically.
+        # Skills are now just markdown documents for LLM reading.
+        # But we still return a minimal representation for the UI or other basic needs.
+        input_schema = frontmatter.get("input_schema") or {"type": "object", "properties": {}}
+        allowed_tools = []
 
         manager_only_raw: Any = frontmatter.get("manager_only")
         if manager_only_raw is None:
@@ -144,35 +119,17 @@ class SkillLoader:
             manager_only_text = str(manager_only_raw or "").strip().lower()
             manager_only = manager_only_text in {"1", "true", "yes", "on"}
 
-        entrypoint_present = "entrypoint" in frontmatter
-        raw_entrypoint = frontmatter.get("entrypoint")
-        if entrypoint_present and isinstance(raw_entrypoint, str):
-            entrypoint = raw_entrypoint.strip()
-        elif entrypoint_present and raw_entrypoint is None:
-            entrypoint = ""
-        else:
-            entrypoint = ""
-
-        if not entrypoint and not entrypoint_present and not allowed_tools:
-            entrypoint = "scripts/execute.py"
         api_version = str(frontmatter.get("api_version") or "v3")
-
-        missing = sorted(
-            [field for field in self.REQUIRED_V3_FIELDS if field not in frontmatter]
-        )
-        if missing:
-            if allowed_tools and not entrypoint:
-                logger.info(
-                    "Skill %s loaded as standard skill format (missing v3 fields: %s)",
-                    name,
-                    missing,
-                )
-            else:
-                logger.warning(
-                    "Skill %s missing v3 fields %s; using compatibility defaults",
-                    name,
-                    missing,
-                )
+        allowed_roles_raw = frontmatter.get("allowed_roles") or []
+        if isinstance(allowed_roles_raw, str):
+            allowed_roles_raw = [allowed_roles_raw]
+        if not isinstance(allowed_roles_raw, list):
+            allowed_roles_raw = []
+        allowed_roles = []
+        for item in allowed_roles_raw:
+            role = str(item or "").strip().lower()
+            if role and role not in allowed_roles:
+                allowed_roles.append(role)
 
         scripts = []
         scripts_dir = os.path.join(skill_dir, "scripts")
@@ -192,13 +149,11 @@ class SkillLoader:
             "triggers": triggers,
             "allowed_tools": allowed_tools,
             "input_schema": input_schema,
-            "permissions": permissions,
             "manager_only": manager_only,
-            "entrypoint": entrypoint,
+            "allowed_roles": allowed_roles,
             "cron_instruction": frontmatter.get("cron_instruction"),
-            # Keep legacy fields for compatibility.
-            "params": frontmatter.get("params", {}),
             "license": frontmatter.get("license", ""),
+            "entrypoint": str(frontmatter.get("entrypoint") or "").strip(),
             "skill_md_path": skill_md_path,
             "skill_md_content": markdown_content,
             "skill_dir": skill_dir,
@@ -206,322 +161,7 @@ class SkillLoader:
             "source": source,
         }
 
-    def _legacy_params_to_schema(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        if not params:
-            return {"type": "object", "properties": {}}
-
-        properties: Dict[str, Any] = {}
-        required: List[str] = []
-        for key, value in params.items():
-            schema_type = "string"
-            description = ""
-
-            if isinstance(value, dict):
-                schema_type = value.get("type", "string")
-                description = value.get("description", "")
-                if value.get("required"):
-                    required.append(key)
-            elif isinstance(value, str):
-                description = value
-
-            properties[key] = {
-                "type": schema_type,
-                "description": description,
-            }
-
-        schema: Dict[str, Any] = {"type": "object", "properties": properties}
-        if required:
-            schema["required"] = required
-        return schema
-
-    def _ensure_object_schema(self, schema: Any) -> Dict[str, Any]:
-        normalized: Dict[str, Any]
-        if isinstance(schema, dict):
-            normalized = dict(schema)
-        else:
-            normalized = {}
-
-        if "type" not in normalized:
-            normalized["type"] = "object"
-        properties = normalized.get("properties")
-        raw_props = dict(properties) if isinstance(properties, dict) else {}
-        normalized_props: Dict[str, Any] = {}
-        for key, value in raw_props.items():
-            key_text = str(key or "").strip()
-            if not key_text:
-                continue
-            normalized_props[key_text] = self._normalize_property_schema(value)
-        normalized["properties"] = normalized_props
-        required = normalized.get("required")
-        normalized["required"] = list(required) if isinstance(required, list) else []
-        return normalized
-
-    def _merge_schemas(
-        self,
-        base_schema: Dict[str, Any],
-        inferred_schema: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        merged = self._ensure_object_schema(base_schema)
-        inferred = self._ensure_object_schema(inferred_schema)
-
-        base_props = merged.get("properties") or {}
-        inferred_props = inferred.get("properties") or {}
-        for key, value in inferred_props.items():
-            if key not in base_props:
-                base_props[key] = value
-                continue
-            current = base_props.get(key)
-            if isinstance(current, dict) and isinstance(value, dict):
-                for prop_key, prop_value in value.items():
-                    if prop_key not in current:
-                        current[prop_key] = prop_value
-
-        required_items: List[str] = []
-        for key in list(merged.get("required") or []) + list(
-            inferred.get("required") or []
-        ):
-            token = str(key or "").strip()
-            if token and token not in required_items:
-                required_items.append(token)
-
-        normalized_props: Dict[str, Any] = {}
-        for key, value in base_props.items():
-            key_text = str(key or "").strip()
-            if not key_text:
-                continue
-            normalized_props[key_text] = self._normalize_property_schema(value)
-        merged["properties"] = normalized_props
-        merged["required"] = required_items
-        return merged
-
-    def _infer_schema_from_markdown(self, markdown_content: str) -> Dict[str, Any]:
-        properties: Dict[str, Dict[str, Any]] = {}
-        required: List[str] = []
-
-        for row in self._extract_parameter_rows(markdown_content):
-            name = self._normalize_parameter_name(row.get("name", ""))
-            if not name:
-                continue
-            prop: Dict[str, Any] = {
-                "type": self._normalize_schema_type(row.get("type", "string")),
-            }
-            description = str(row.get("description") or "").strip()
-            if description:
-                prop["description"] = description
-                enum_values = self._infer_enum_values(description)
-                if enum_values:
-                    prop["enum"] = enum_values
-            properties[name] = self._normalize_property_schema(prop)
-
-            required_flag = str(row.get("required") or "").strip().lower()
-            if (
-                required_flag
-                in {
-                    "yes",
-                    "y",
-                    "true",
-                    "required",
-                    "必填",
-                    "是",
-                }
-                and name not in required
-            ):
-                required.append(name)
-
-        for example in self._extract_example_objects(markdown_content):
-            for key, value in example.items():
-                name = self._normalize_parameter_name(str(key))
-                if not name:
-                    continue
-                if name not in properties:
-                    properties[name] = self._infer_property_schema_from_value(value)
-
-        schema: Dict[str, Any] = {"type": "object", "properties": properties}
-        if required:
-            schema["required"] = required
-        return schema
-
-    def _extract_parameter_rows(self, markdown_content: str) -> List[Dict[str, str]]:
-        rows: List[Dict[str, str]] = []
-        headers: List[str] = []
-        in_table = False
-
-        for line in str(markdown_content or "").splitlines():
-            raw = line.strip()
-            if not raw.startswith("|"):
-                in_table = False
-                headers = []
-                continue
-
-            cols = [col.strip() for col in raw.strip("|").split("|")]
-            if not cols:
-                continue
-            lowered = [col.lower() for col in cols]
-            if any("参数" in col or "parameter" in col for col in lowered):
-                headers = cols
-                in_table = True
-                continue
-            if not in_table:
-                continue
-            if all(set(col) <= {"-", ":", " "} for col in cols):
-                continue
-
-            name_idx = self._find_header_index(
-                headers, ["参数", "name", "field", "param"]
-            )
-            type_idx = self._find_header_index(headers, ["类型", "type"])
-            req_idx = self._find_header_index(headers, ["必填", "required"])
-            desc_idx = self._find_header_index(headers, ["说明", "description", "desc"])
-            if name_idx < 0 or type_idx < 0 or req_idx < 0 or desc_idx < 0:
-                continue
-            max_idx = max(name_idx, type_idx, req_idx, desc_idx)
-            if len(cols) <= max_idx:
-                continue
-            rows.append(
-                {
-                    "name": cols[name_idx],
-                    "type": cols[type_idx],
-                    "required": cols[req_idx],
-                    "description": cols[desc_idx],
-                }
-            )
-        return rows
-
-    def _find_header_index(self, headers: List[str], hints: List[str]) -> int:
-        for idx, item in enumerate(headers):
-            lowered = str(item or "").strip().lower()
-            if any(hint in lowered for hint in hints):
-                return idx
-        return -1
-
-    def _normalize_parameter_name(self, raw_name: str) -> str:
-        text = str(raw_name or "").strip()
-        if not text:
-            return ""
-        if "`" in text:
-            matches = re.findall(r"`([^`]+)`", text)
-            if matches:
-                text = matches[0]
-        text = text.strip().strip('"').strip("'")
-        if not re.match(r"^[A-Za-z_][A-Za-z0-9_\-]*$", text):
-            return ""
-        return text
-
-    def _normalize_schema_type(self, raw_type: str) -> str:
-        lowered = str(raw_type or "").strip().lower()
-        mapping = {
-            "string": "string",
-            "str": "string",
-            "text": "string",
-            "number": "number",
-            "float": "number",
-            "integer": "integer",
-            "int": "integer",
-            "bool": "boolean",
-            "boolean": "boolean",
-            "object": "object",
-            "dict": "object",
-            "array": "array",
-            "list": "array",
-        }
-        return mapping.get(lowered, "string")
-
-    def _infer_enum_values(self, description: str) -> List[str]:
-        text = str(description or "").strip()
-        if not text:
-            return []
-        values = re.findall(r"`([^`]+)`", text)
-        cleaned: List[str] = []
-        for item in values:
-            token = str(item or "").strip()
-            if not token or token in cleaned:
-                continue
-            cleaned.append(token)
-        if len(cleaned) >= 2:
-            return cleaned[:12]
-        return []
-
-    def _extract_example_objects(self, markdown_content: str) -> List[Dict[str, Any]]:
-        blocks = re.findall(
-            r"```json\s*(\{[\s\S]*?\})\s*```",
-            str(markdown_content or ""),
-            flags=re.IGNORECASE,
-        )
-        output: List[Dict[str, Any]] = []
-        for block in blocks:
-            try:
-                loaded = json.loads(block)
-            except Exception:
-                continue
-            if isinstance(loaded, dict):
-                output.append(loaded)
-        return output
-
-    def _infer_type_from_value(self, value: Any) -> str:
-        if isinstance(value, bool):
-            return "boolean"
-        if isinstance(value, int):
-            return "integer"
-        if isinstance(value, float):
-            return "number"
-        if isinstance(value, list):
-            return "array"
-        if isinstance(value, dict):
-            return "object"
-        return "string"
-
-    def _infer_property_schema_from_value(self, value: Any) -> Dict[str, Any]:
-        inferred_type = self._infer_type_from_value(value)
-        if inferred_type == "array":
-            item_type = "string"
-            if isinstance(value, list):
-                for item in value:
-                    if item is None:
-                        continue
-                    item_type = self._infer_type_from_value(item)
-                    break
-            return self._normalize_property_schema(
-                {
-                    "type": "array",
-                    "items": {"type": item_type},
-                }
-            )
-        return self._normalize_property_schema({"type": inferred_type})
-
-    def _normalize_property_schema(self, schema: Any) -> Dict[str, Any]:
-        if isinstance(schema, dict):
-            normalized = dict(schema)
-        else:
-            normalized = {}
-
-        schema_type = self._normalize_schema_type(
-            str(normalized.get("type") or "string")
-        )
-        normalized["type"] = schema_type
-
-        if schema_type == "array":
-            items = normalized.get("items")
-            if isinstance(items, dict):
-                normalized["items"] = self._normalize_property_schema(items)
-            else:
-                normalized["items"] = {"type": "string"}
-            return normalized
-
-        if schema_type == "object":
-            nested = normalized.get("properties")
-            if isinstance(nested, dict):
-                nested_props: Dict[str, Any] = {}
-                for key, value in nested.items():
-                    key_text = str(key or "").strip()
-                    if not key_text:
-                        continue
-                    nested_props[key_text] = self._normalize_property_schema(value)
-                normalized["properties"] = nested_props
-            elif "additionalProperties" not in normalized:
-                normalized["additionalProperties"] = True
-            return normalized
-
-        return normalized
+    # 移除旧的 schema 提取相关方法 (525行)
 
     def get_skill_index(self) -> Dict[str, Dict[str, Any]]:
         if not self._skill_index:
@@ -538,6 +178,7 @@ class SkillLoader:
                     "triggers": info.get("triggers", []),
                     "allowed_tools": info.get("allowed_tools", []),
                     "manager_only": bool(info.get("manager_only")),
+                    "allowed_roles": list(info.get("allowed_roles") or []),
                     "input_schema": info.get("input_schema", {}),
                 }
             )
@@ -585,6 +226,14 @@ class SkillLoader:
 
     def get_skill(self, skill_name: str) -> Optional[Dict[str, Any]]:
         return self.get_skill_index().get(skill_name)
+
+    def get_skill_md_content(self, skill_name: str) -> str:
+        """Read the full raw markdown content for a loaded skill directory without parsing"""
+        skill_info = self.get_skill(skill_name)
+        if not skill_info:
+            return ""
+        
+        return skill_info.get("skill_md_content", "")
 
     def reload_skills(self):
         self._loaded_modules.clear()

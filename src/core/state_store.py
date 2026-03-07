@@ -586,6 +586,34 @@ async def get_user_subscriptions(user_id: int | str) -> list[dict[str, Any]]:
     return _to_runtime_rows(user_id, rows)
 
 
+async def update_subscription(
+    sub_id: int,
+    user_id: int | str,
+    title: str | None = None,
+    feed_url: str | None = None,
+) -> bool:
+    rows = await _read_user_subscriptions(user_id)
+    runtime_rows = _to_runtime_rows(user_id, rows)
+    target = next(
+        (item for item in runtime_rows if int(item.get("id") or 0) == int(sub_id)),
+        None,
+    )
+    if not target:
+        return False
+    idx = int(sub_id) - 1
+    if idx < 0 or idx >= len(rows):
+        return False
+    if title is not None:
+        rows[idx]["title"] = str(title).strip()
+    if feed_url is not None:
+        new_url = str(feed_url).strip()
+        if not new_url:
+            raise ValueError("feed_url cannot be empty")
+        rows[idx]["feed_url"] = new_url
+    await _write_user_subscriptions(user_id, rows)
+    return True
+
+
 async def get_all_subscriptions() -> list[dict[str, Any]]:
     merged: list[dict[str, Any]] = []
     for uid in all_user_ids():
@@ -835,6 +863,33 @@ async def delete_task(task_id: int, user_id: int | str | None = None):
         if len(kept) != len(rows):
             await _write_user_scheduled_tasks(uid, kept)
             return
+
+
+async def update_scheduled_task(
+    task_id: int,
+    user_id: int | str | None = None,
+    crontab: str | None = None,
+    instruction: str | None = None,
+) -> bool:
+    tid = int(task_id)
+    target_users = [str(user_id)] if user_id is not None else all_user_ids()
+    for uid in target_users:
+        rows = await _read_user_scheduled_tasks(uid)
+        changed = False
+        for item in rows:
+            if int(item.get("id") or 0) != tid:
+                continue
+            if crontab is not None:
+                item["crontab"] = str(crontab).strip()
+            if instruction is not None:
+                item["instruction"] = str(instruction).strip()
+            item["updated_at"] = now_iso()
+            changed = True
+            break
+        if changed:
+            await _write_user_scheduled_tasks(uid, rows)
+            return True
+    return False
 
 
 def _watchlist_path(user_id: int | str):

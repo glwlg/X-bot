@@ -1,0 +1,913 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - link "首页" [ref=e4] [cursor=pointer]:
+      - /url: http://www.weather.com.cn/
+    - link "预报" [ref=e5] [cursor=pointer]:
+      - /url: http://www.weather.com.cn/forecast/
+    - link "预警" [ref=e6] [cursor=pointer]:
+      - /url: http://www.weather.com.cn/alarm/
+    - link "雷达" [ref=e7] [cursor=pointer]:
+      - /url: http://www.weather.com.cn/radar/index2021.shtml
+    - link "云图" [ref=e8] [cursor=pointer]:
+      - /url: http://www.weather.com.cn/satellite/
+    - link "天气地图" [ref=e9] [cursor=pointer]:
+      - /url: http://www.weather.com.cn/radar/
+    - link "专业产品" [ref=e10] [cursor=pointer]:
+      - /url: http://products.weather.com.cn/yb.html?page=YB&type=YB_TQQS_3D
+    - link "资讯" [ref=e11] [cursor=pointer]:
+      - /url: http://news.weather.com.cn/
+    - link "视频" [ref=e12] [cursor=pointer]:
+      - /url: http://www.weather.com.cn/video/
+    - link "节气" [ref=e13] [cursor=pointer]:
+      - /url: http://www.weather.com.cn/life/
+    - link "我的天空" [ref=e14] [cursor=pointer]:
+      - /url: http://www.weather.com.cn/weatherMap/indexSky.html?defaultCaseType=mySky
+    - generic [ref=e15] [cursor=pointer]: 更多
+  - generic [ref=e17]:
+    - generic [ref=e18]:
+      - link [ref=e19] [cursor=pointer]:
+        - /url: http://www.weather.com.cn/
+      - link "预报" [ref=e21] [cursor=pointer]:
+        - /url: http://www.weather.com.cn/forecast/
+    - generic [ref=e23]:
+      - textbox [ref=e24]: 输入城市、乡镇、街道、景点名称 查天气
+      - img [ref=e26]
+  - iframe [ref=e31]:
+    
+  - generic [ref=e32]:
+    - generic [ref=e33]:
+      - generic [ref=e34]:
+        - generic [ref=e35]:
+          - generic [ref=e36]:
+            - link "全国" [ref=e37] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/forecast/
+            - generic [ref=e38]: ">"
+            - generic [ref=e39]: 江苏
+            - generic [ref=e40]: ">"
+            - link "苏州" [ref=e41] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/weather/101190401.shtml
+            - generic [ref=e42]: ">"
+            - generic [ref=e43]: 城区
+          - generic [ref=e44]: 05:30更新 | 数据来源 中央气象台
+        - list [ref=e45]:
+          - listitem [ref=e46] [cursor=pointer]:
+            - link "今天" [ref=e47]:
+              - /url: /weather1d/101190401.shtml
+          - listitem [ref=e48] [cursor=pointer]:
+            - link "7天" [ref=e49]:
+              - /url: /weather/101190401.shtml
+          - listitem [ref=e50] [cursor=pointer]:
+            - link "8-15天" [ref=e51]:
+              - /url: /weather15d/101190401.shtml
+          - listitem [ref=e52] [cursor=pointer]:
+            - link "40天" [ref=e53]:
+              - /url: /weather40d/101190401.shtml
+          - listitem [ref=e55] [cursor=pointer]:
+            - link "雷达图" [ref=e56]:
+              - /url: http://products.weather.com.cn/product/radar1/index/procode/JC_RADAR_AZ9513_JB_V3.shtml
+        - generic [ref=e57]:
+          - list [ref=e58]:
+            - listitem [ref=e59] [cursor=pointer]:
+              - heading "7日（今天）" [level=1] [ref=e60]
+              - paragraph [ref=e63]: 多云转阴
+              - paragraph [ref=e64]:
+                - generic [ref=e65]: "11"
+                - text: /
+                - generic [ref=e66]: 3℃
+              - paragraph [ref=e67]:
+                - emphasis [ref=e68]:
+                  - generic "东北风" [ref=e69]
+                  - generic "东南风" [ref=e70]
+                - generic [ref=e71]: <3级
+            - listitem [ref=e73] [cursor=pointer]:
+              - heading "8日（明天）" [level=1] [ref=e74]
+              - paragraph [ref=e77]: 多云
+              - paragraph [ref=e78]:
+                - generic [ref=e79]: "13"
+                - text: /
+                - generic [ref=e80]: 4℃
+              - paragraph [ref=e81]:
+                - emphasis [ref=e82]:
+                  - generic "东南风" [ref=e83]
+                  - generic "东北风" [ref=e84]
+                - generic [ref=e85]: <3级
+            - listitem [ref=e86] [cursor=pointer]:
+              - heading "9日（后天）" [level=1] [ref=e87]
+              - paragraph [ref=e90]: 阴转晴
+              - paragraph [ref=e91]:
+                - generic [ref=e92]: "13"
+                - text: /
+                - generic [ref=e93]: 3℃
+              - paragraph [ref=e94]:
+                - emphasis [ref=e95]:
+                  - generic "东北风" [ref=e96]
+                  - generic "东风" [ref=e97]
+                - generic [ref=e98]: <3级
+            - listitem [ref=e99] [cursor=pointer]:
+              - heading "10日（周二）" [level=1] [ref=e100]
+              - paragraph [ref=e103]: 晴
+              - paragraph [ref=e104]:
+                - generic [ref=e105]: "10"
+                - text: /
+                - generic [ref=e106]: 3℃
+              - paragraph [ref=e107]:
+                - emphasis [ref=e108]:
+                  - generic "东风" [ref=e109]
+                  - generic "东风" [ref=e110]
+                - generic [ref=e111]: <3级
+            - listitem [ref=e112] [cursor=pointer]:
+              - heading "11日（周三）" [level=1] [ref=e113]
+              - paragraph [ref=e116]: 晴
+              - paragraph [ref=e117]:
+                - generic [ref=e118]: "13"
+                - text: /
+                - generic [ref=e119]: 4℃
+              - paragraph [ref=e120]:
+                - emphasis [ref=e121]:
+                  - generic "东北风" [ref=e122]
+                  - generic "东北风" [ref=e123]
+                - generic [ref=e124]: <3级
+            - listitem [ref=e125] [cursor=pointer]:
+              - heading "12日（周四）" [level=1] [ref=e126]
+              - paragraph [ref=e129]: 晴转多云
+              - paragraph [ref=e130]:
+                - generic [ref=e131]: "13"
+                - text: /
+                - generic [ref=e132]: 3℃
+              - paragraph [ref=e133]:
+                - emphasis [ref=e134]:
+                  - generic "东北风" [ref=e135]
+                  - generic "东风" [ref=e136]
+                - generic [ref=e137]: <3级
+            - listitem [ref=e138] [cursor=pointer]:
+              - heading "13日（周五）" [level=1] [ref=e139]
+              - paragraph [ref=e142]: 晴
+              - paragraph [ref=e143]:
+                - generic [ref=e144]: "15"
+                - text: /
+                - generic [ref=e145]: 4℃
+              - paragraph [ref=e146]:
+                - emphasis [ref=e147]:
+                  - generic "东南风" [ref=e148]
+                  - generic "东南风" [ref=e149]
+                - generic [ref=e150]: <3级
+          - generic [ref=e151]:
+            - emphasis [ref=e152] [cursor=pointer]: 分时段预报
+            - emphasis [ref=e153] [cursor=pointer]: 生活指数
+            - generic [ref=e155]: 蓝天预报
+          - generic [ref=e158]:
+            - generic:
+              - emphasis [ref=e159]: 11时
+              - emphasis [ref=e160]: 14时
+              - emphasis [ref=e161]: 17时
+              - emphasis [ref=e162]: 20时
+              - emphasis [ref=e163]: 23时
+              - emphasis [ref=e164]: 02时
+              - emphasis [ref=e165]: 05时
+              - emphasis [ref=e166]: 08时
+            - generic:
+              - generic "晴" [ref=e168] [cursor=pointer]
+              - generic "晴" [ref=e170] [cursor=pointer]
+              - generic "多云" [ref=e172] [cursor=pointer]
+              - generic "多云" [ref=e174] [cursor=pointer]
+              - generic "阴" [ref=e176] [cursor=pointer]
+              - generic "阴" [ref=e178] [cursor=pointer]
+              - generic "阴" [ref=e180] [cursor=pointer]
+              - generic "晴" [ref=e182] [cursor=pointer]
+            - img [ref=e184]
+            - generic:
+              - emphasis [ref=e194]: 8℃
+              - emphasis [ref=e195]: 10℃
+              - emphasis [ref=e196]: 9℃
+              - emphasis [ref=e197]: 6℃
+              - emphasis [ref=e198]: 5℃
+              - emphasis [ref=e199]: 4℃
+              - emphasis [ref=e200]: 4℃
+              - emphasis [ref=e201]: 5℃
+            - generic:
+              - emphasis [ref=e202]: 东北风
+              - emphasis [ref=e203]: 东北风
+              - emphasis [ref=e204]: 东北风
+              - emphasis [ref=e205]: 东北风
+              - emphasis [ref=e206]: 东南风
+              - emphasis [ref=e207]: 东南风
+              - emphasis [ref=e208]: 东南风
+              - emphasis [ref=e209]: 东南风
+            - generic:
+              - emphasis [ref=e210]: <3级
+              - emphasis [ref=e211]: <3级
+              - emphasis [ref=e212]: <3级
+              - emphasis [ref=e213]: <3级
+              - emphasis [ref=e214]: <3级
+              - emphasis [ref=e215]: <3级
+              - emphasis [ref=e216]: <3级
+              - emphasis [ref=e217]: <3级
+      - iframe [ref=e220]:
+        - generic [ref=f1e2]:
+          - link "300*90" [ref=f1e4] [cursor=pointer]:
+            - /url: http://click.bes.baidu.com/adx.php?c=cz1iNzQ4NWE0ZDM1ZGZlNzMwAHQ9MTc3Mjg0MjI0NwBzZT0xAGJ1PTk5OQB0dT11Njg1MzA5OQBhZD0zNjYxNTIwAHNpdGU9aHR0cHM6Ly93d3cud2VhdGhlci5jb20uY24vd2VhdGhlci8xMDExOTA0MDEuc2h0bWwAdj0xAGk9MDFkNzliM2E&k=dz02ODAAaD0yMDAAY3NpZD04NTg5OTM0NTk4ODAAdG09MAB0ZD02ODUzMDk5AHdpPTk5OQBmbj00MDAzMDE5MV9jcHIAZmFuPQB1aWQ9MABjaD0Ab3M9MABicj0wAGlwPQBzc3A9MQBhcHBfaWQ9AGFwcF9zaWQ9AHNka192ZXJzaW9uPQB0dHA9MQBjb21wbGU9MQBzdHlwZT0wAGNobWQ9OQBzY2htZD05AHhpcD0AZHRwPTEAY21hdGNoPTIwMABmaXJzdF9yZWdpb249MTkAc2Vjb25kX3JlZ2lvbj02MgBiYnQ9MABhYnQ9MABudHRwPTEAYWRjbGFzcz0xMw&url=https%3A%2F%2Fcreate%2Ebaidu%2Ecom%2Fm%2Fcreate%2F2022%2F%23aerospace%2Dtitle
+            - img [ref=f1e5]
+          - generic [ref=f1e7]:
+            - link:
+              - /url: https://union.baidu.com
+              - img [ref=f1e8] [cursor=pointer]
+            - link:
+              - /url: javascript:;
+              - img [ref=f1e10] [cursor=pointer]
+      - generic [ref=e222]:
+        - generic [ref=e223]:
+          - heading "整点天气实况" [level=2] [ref=e224]
+          - paragraph
+          - paragraph
+          - list [ref=e225]:
+            - listitem [ref=e226] [cursor=pointer]: 温度
+            - listitem [ref=e227] [cursor=pointer]: 相对湿度
+            - listitem [ref=e228] [cursor=pointer]: 降水量
+            - listitem [ref=e229] [cursor=pointer]: 风力风向
+        - paragraph [ref=e231]: "最高气温: 10.3℃ , 最低气温: 3.7℃"
+        - generic [ref=e232]:
+          - generic [ref=e233]:
+            - img [ref=e234]
+            - generic [ref=e287]:
+              - generic [ref=e288]: "07"
+              - generic [ref=e289]: "08"
+              - generic [ref=e290]: "09"
+              - generic [ref=e291]: "10"
+              - generic [ref=e292]: "11"
+              - generic [ref=e293]: "12"
+              - generic [ref=e294]: "13"
+              - generic [ref=e295]: "14"
+              - generic [ref=e296]: "15"
+              - generic [ref=e297]: "16"
+              - generic [ref=e298]: "17"
+              - generic [ref=e299]: "18"
+              - generic [ref=e300]: "19"
+              - generic [ref=e301]: "20"
+              - generic [ref=e302]: "21"
+              - generic [ref=e303]: "22"
+              - generic [ref=e304]: "23"
+              - generic [ref=e305]: "00"
+              - generic [ref=e306]: "01"
+              - generic [ref=e307]: "02"
+              - generic [ref=e308]: "03"
+              - generic [ref=e309]: "04"
+              - generic [ref=e310]: "05"
+              - generic [ref=e311]: "06"
+              - generic [ref=e312]: "07"
+            - generic [ref=e313]:
+              - generic [ref=e314]: "14"
+              - generic [ref=e315]: "12"
+              - generic [ref=e316]: "10"
+              - generic [ref=e317]: "8"
+              - generic [ref=e318]: "6"
+              - generic [ref=e319]: "4"
+              - generic [ref=e320]: "2"
+          - emphasis [ref=e321]: (h)
+          - generic [ref=e322]: ℃
+          - paragraph [ref=e323]: 温度：表示大气冷热程度的物理量，气象上给出的温度是指离地面1.5米高度上百叶箱中的空气温度。
+      - iframe [ref=e326]:
+        
+      - generic [ref=e328]:
+        - generic [ref=e329]:
+          - heading "天气资讯" [level=1] [ref=e330]:
+            - link "天气资讯" [ref=e331] [cursor=pointer]:
+              - /url: http://news.weather.com.cn
+          - link [ref=e332] [cursor=pointer]:
+            - /url: http://news.weather.com.cn
+        - generic [ref=e333]:
+          - term [ref=e334]:
+            - link [ref=e335] [cursor=pointer]:
+              - /url: http://news.weather.com.cn/2026/03/4538737.shtml
+              - img [ref=e336]
+          - definition [ref=e337]:
+            - link "周末北京连续升温 周日将达10℃以上" [ref=e338] [cursor=pointer]:
+              - /url: http://news.weather.com.cn/2026/03/4538737.shtml
+            - generic [ref=e339]: 中国天气网 2026-03-07 07:06
+        - generic [ref=e340]:
+          - term [ref=e341]:
+            - link [ref=e342] [cursor=pointer]:
+              - /url: http://p.weather.com.cn/2026/03/4538662.shtml
+              - img [ref=e343]
+          - definition [ref=e344]:
+            - link "妇女节：天晴繁花映芳华 春风十里不负她" [ref=e345] [cursor=pointer]:
+              - /url: http://p.weather.com.cn/2026/03/4538662.shtml
+            - generic [ref=e346]: 中国天气网 2026-03-07 07:00
+        - generic [ref=e347]:
+          - term [ref=e348]:
+            - link [ref=e349] [cursor=pointer]:
+              - /url: http://news.weather.com.cn/2026/03/4538680.shtml
+              - img [ref=e350]
+          - definition [ref=e351]:
+            - link "明天广西大部晴朗升温夜间阴雨陆续上线 下周初气温下降需添衣" [ref=e352] [cursor=pointer]:
+              - /url: http://news.weather.com.cn/2026/03/4538680.shtml
+            - generic [ref=e353]: 中国天气网 2026-03-06 16:27
+        - generic [ref=e354]:
+          - term [ref=e355]:
+            - link [ref=e356] [cursor=pointer]:
+              - /url: http://news.weather.com.cn/2026/03/4538632.shtml
+              - img [ref=e357]
+          - definition [ref=e358]:
+            - link "周末湖北大范围降雨来袭 部分地区或现大雾天气" [ref=e359] [cursor=pointer]:
+              - /url: http://news.weather.com.cn/2026/03/4538632.shtml
+            - generic [ref=e360]: 中国天气网 2026-03-06 15:37
+        - generic [ref=e361]:
+          - term [ref=e362]:
+            - link [ref=e363] [cursor=pointer]:
+              - /url: http://news.weather.com.cn/2026/03/4538618.shtml
+              - img [ref=e364]
+          - definition [ref=e365]:
+            - link "周末北方晴朗升温南方阴雨增多 西北等地下周最高气温可超20℃" [ref=e366] [cursor=pointer]:
+              - /url: http://news.weather.com.cn/2026/03/4538618.shtml
+            - generic [ref=e367]: 中国天气网 2026-03-07 07:50
+      - generic [ref=e369]:
+        - heading "周边地区 | 周边景点 2026-03-07 07:30更新" [level=1] [ref=e370]:
+          - generic [ref=e371] [cursor=pointer]: 周边地区
+          - emphasis [ref=e372]: "|"
+          - generic [ref=e373] [cursor=pointer]: 周边景点
+          - generic [ref=e374]: 2026-03-07 07:30更新
+        - list [ref=e375]:
+          - listitem [ref=e376]:
+            - link "常州 / 9/4°C" [ref=e377] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/weather1d/101191101.shtml#around2
+              - generic [ref=e378]: 常州
+              - paragraph [ref=e379]:
+                - emphasis [ref=e381]: /
+              - generic [ref=e383]: 9/4°C
+          - listitem [ref=e384]:
+            - link "镇江 / 9/4°C" [ref=e385] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/weather1d/101190301.shtml#around2
+              - generic [ref=e386]: 镇江
+              - paragraph [ref=e387]:
+                - emphasis [ref=e389]: /
+              - generic [ref=e391]: 9/4°C
+          - listitem [ref=e392]:
+            - link "南京 / 10/3°C" [ref=e393] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/weather1d/101190101.shtml#around2
+              - generic [ref=e394]: 南京
+              - paragraph [ref=e395]:
+                - emphasis [ref=e397]: /
+              - generic [ref=e399]: 10/3°C
+          - listitem [ref=e400]:
+            - link "无锡 / 11/3°C" [ref=e401] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/weather1d/101190201.shtml#around2
+              - generic [ref=e402]: 无锡
+              - paragraph [ref=e403]:
+                - emphasis [ref=e405]: /
+              - generic [ref=e407]: 11/3°C
+          - listitem [ref=e408]:
+            - link "昆山 / 11/4°C" [ref=e409] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/weather1d/101190404.shtml#around2
+              - generic [ref=e410]: 昆山
+              - paragraph [ref=e411]:
+                - emphasis [ref=e413]: /
+              - generic [ref=e415]: 11/4°C
+          - listitem [ref=e416]:
+            - link "嘉善 / 11/3°C" [ref=e417] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/weather1d/101210302.shtml#around2
+              - generic [ref=e418]: 嘉善
+              - paragraph [ref=e419]:
+                - emphasis [ref=e421]: /
+              - generic [ref=e423]: 11/3°C
+          - listitem [ref=e424]:
+            - link "宣城 / 12/4°C" [ref=e425] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/weather1d/101221401.shtml#around2
+              - generic [ref=e426]: 宣城
+              - paragraph [ref=e427]:
+                - emphasis [ref=e429]: /
+              - generic [ref=e431]: 12/4°C
+          - listitem [ref=e432]:
+            - link "南通 / 8/2°C" [ref=e433] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/weather1d/101190501.shtml#around2
+              - generic [ref=e434]: 南通
+              - paragraph [ref=e435]:
+                - emphasis [ref=e437]: /
+              - generic [ref=e439]: 8/2°C
+          - listitem [ref=e440]:
+            - link "常熟 / 11/4°C" [ref=e441] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/weather1d/101190402.shtml#around2
+              - generic [ref=e442]: 常熟
+              - paragraph [ref=e443]:
+                - emphasis [ref=e445]: /
+              - generic [ref=e447]: 11/4°C
+          - listitem [ref=e448]:
+            - link "扬州 / 9/2°C" [ref=e449] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/weather1d/101190601.shtml#around2
+              - generic [ref=e450]: 扬州
+              - paragraph [ref=e451]:
+                - emphasis [ref=e453]: /
+              - generic [ref=e455]: 9/2°C
+          - listitem [ref=e456]:
+            - link "太仓 / 11/3°C" [ref=e457] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/weather1d/101190408.shtml#around2
+              - generic [ref=e458]: 太仓
+              - paragraph [ref=e459]:
+                - emphasis [ref=e461]: /
+              - generic [ref=e463]: 11/3°C
+          - listitem [ref=e464]:
+            - link "吴江 / 11/4°C" [ref=e465] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/weather1d/101190407.shtml#around2
+              - generic [ref=e466]: 吴江
+              - paragraph [ref=e467]:
+                - emphasis [ref=e469]: /
+              - generic [ref=e471]: 11/4°C
+      - generic [ref=e472]:
+        - generic [ref=e473]:
+          - heading "高清图集" [level=1] [ref=e474]:
+            - link "高清图集" [ref=e475] [cursor=pointer]:
+              - /url: http://p.weather.com.cn/
+          - link [ref=e476] [cursor=pointer]:
+            - /url: http://p.weather.com.cn/
+        - generic [ref=e477]:
+          - link "北京迎降雪天气 今晨部分道路出现积雪结冰" [ref=e478] [cursor=pointer]:
+            - /url: http://p.weather.com.cn/2026/03/4536094.shtml
+            - img [ref=e479]
+            - generic [ref=e480]: 北京迎降雪天气 今晨部分道路出现积雪结冰
+          - link "北归白天鹅落脚沙河水库 绘就生态美景" [ref=e482] [cursor=pointer]:
+            - /url: http://p.weather.com.cn/2026/03/4536026.shtml
+            - img [ref=e483]
+            - generic [ref=e484]: 北归白天鹅落脚沙河水库 绘就生态美景
+          - link "实拍雪后北京 银装素裹在故宫具象化了" [ref=e486] [cursor=pointer]:
+            - /url: http://p.weather.com.cn/2026/03/4536867.shtml
+            - img [ref=e487]
+            - generic [ref=e488]: 实拍雪后北京 银装素裹在故宫具象化了
+          - link "罕见！红月亮邂逅元宵节 一组图带你直击月全食过程" [ref=e490] [cursor=pointer]:
+            - /url: http://p.weather.com.cn/2026/03/4534720.shtml
+            - img [ref=e491]
+            - generic [ref=e492]: 罕见！红月亮邂逅元宵节 一组图带你直击月全食过程
+          - link "妇女节：天晴繁花映芳华 春风十里不负她" [ref=e494] [cursor=pointer]:
+            - /url: http://p.weather.com.cn/2026/03/4538662.shtml
+            - img [ref=e495]
+            - generic [ref=e496]: 妇女节：天晴繁花映芳华 春风十里不负她
+      - generic [ref=e498]:
+        - generic [ref=e499]:
+          - heading "重大天气事件" [level=1] [ref=e500]:
+            - link "重大天气事件" [ref=e501] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/index/jqzdtqsj/index.shtml
+          - link [ref=e502] [cursor=pointer]:
+            - /url: http://www.weather.com.cn/index/jqzdtqsj/index.shtml
+        - list [ref=e503]:
+          - listitem [ref=e504] [cursor=pointer]:
+            - link "3月7日 周末北方晴朗升温南方阴雨增多 西北等地下周最高气温可超20℃ 周末北方晴朗升温南方阴雨增多 西北等地下周最高气温可超20℃ 周末两天（3月7日至8日），北方大部将放晴，阳光加持下逐步开始回暖，10日前后，西北地区东部、黄淮等地最高气温可达20℃左右。" [ref=e505]:
+              - /url: http://www.weather.com.cn/index/2026/03/4538771.shtml
+              - paragraph [ref=e506]: 3月7日
+              - generic [ref=e507]:
+                - img "周末北方晴朗升温南方阴雨增多 西北等地下周最高气温可超20℃" [ref=e508]
+                - generic [ref=e509]:
+                  - heading "周末北方晴朗升温南方阴雨增多 西北等地下周最高气温可超20℃" [level=2] [ref=e510]
+                  - paragraph [ref=e511]: 周末两天（3月7日至8日），北方大部将放晴，阳光加持下逐步开始回暖，10日前后，西北地区东部、黄淮等地最高气温可达20℃左右。
+          - listitem [ref=e512] [cursor=pointer]:
+            - link "3月6日 北方雪后放晴周末开启回暖模式 西南地区阴雨发展增多 北方雪后放晴周末开启回暖模式 西南地区阴雨发展增多 今天（3月6日），北方降水范围缩减，但山西、陕西、河南等地仍有雨雪天气，同时，西南地区阴雨发展增多。周末，北方大部地区将陆续转晴，将开启回暖。" [ref=e513]:
+              - /url: http://www.weather.com.cn/index/2026/03/4537482.shtml
+              - paragraph [ref=e514]: 3月6日
+              - generic [ref=e515]:
+                - img "北方雪后放晴周末开启回暖模式 西南地区阴雨发展增多" [ref=e516]
+                - generic [ref=e517]:
+                  - heading "北方雪后放晴周末开启回暖模式 西南地区阴雨发展增多" [level=2] [ref=e518]
+                  - paragraph [ref=e519]: 今天（3月6日），北方降水范围缩减，但山西、陕西、河南等地仍有雨雪天气，同时，西南地区阴雨发展增多。周末，北方大部地区将陆续转晴，将开启回暖。
+          - listitem [ref=e520] [cursor=pointer]:
+            - link "3月4日 华北一带降雪来袭湿冷感明显 西南等地阴雨连连 华北一带降雪来袭湿冷感明显 西南等地阴雨连连 今明两天（3月4日至5日），华北一带将迎来一次降雪过程，西南地区东部、江南东部等地阴雨连连。受冷空气和雨雪天气影响，华北、黄淮多地湿冷感明显。" [ref=e521]:
+              - /url: http://www.weather.com.cn/index/2026/03/4534768.shtml
+              - paragraph [ref=e522]: 3月4日
+              - generic [ref=e523]:
+                - img "华北一带降雪来袭湿冷感明显 西南等地阴雨连连" [ref=e524]
+                - generic [ref=e525]:
+                  - heading "华北一带降雪来袭湿冷感明显 西南等地阴雨连连" [level=2] [ref=e526]
+                  - paragraph [ref=e527]: 今明两天（3月4日至5日），华北一带将迎来一次降雪过程，西南地区东部、江南东部等地阴雨连连。受冷空气和雨雪天气影响，华北、黄淮多地湿冷感明显。
+          - listitem [ref=e528] [cursor=pointer]:
+            - link "3月3日 中东部雨雪缩减西南阴雨持续 两股弱冷空气接连来袭 中东部雨雪缩减西南阴雨持续 两股弱冷空气接连来袭 今天（3月3日）是元宵节，我国中东部雨雪有所减少减弱。同时，受两股弱冷空气影响，中东部多地未来几天气温将出现小幅波动。" [ref=e529]:
+              - /url: http://www.weather.com.cn/index/2026/03/4533457.shtml
+              - paragraph [ref=e530]: 3月3日
+              - generic [ref=e531]:
+                - img "中东部雨雪缩减西南阴雨持续 两股弱冷空气接连来袭" [ref=e532]
+                - generic [ref=e533]:
+                  - heading "中东部雨雪缩减西南阴雨持续 两股弱冷空气接连来袭" [level=2] [ref=e534]
+                  - paragraph [ref=e535]: 今天（3月3日）是元宵节，我国中东部雨雪有所减少减弱。同时，受两股弱冷空气影响，中东部多地未来几天气温将出现小幅波动。
+          - listitem [ref=e536] [cursor=pointer]:
+            - link "3月1日 江南华南降雨频繁局地有暴雨 北方多地气温将持续偏低 江南华南降雨频繁局地有暴雨 北方多地气温将持续偏低 今明天（3月1日至2日），我国雨雪范围较大，北方多地将现较强降雪，江南、华南降雨频繁，公众出行请留意交通安全。" [ref=e537]:
+              - /url: http://www.weather.com.cn/index/2026/03/4530826.shtml
+              - paragraph [ref=e538]: 3月1日
+              - generic [ref=e539]:
+                - img "江南华南降雨频繁局地有暴雨 北方多地气温将持续偏低" [ref=e540]
+                - generic [ref=e541]:
+                  - heading "江南华南降雨频繁局地有暴雨 北方多地气温将持续偏低" [level=2] [ref=e542]
+                  - paragraph [ref=e543]: 今明天（3月1日至2日），我国雨雪范围较大，北方多地将现较强降雪，江南、华南降雨频繁，公众出行请留意交通安全。
+          - listitem [ref=e544] [cursor=pointer]:
+            - link "2月28日 我国新一轮大范围雨雪发展 南方多地天气湿冷 我国新一轮大范围雨雪发展 南方多地天气湿冷 今起（2月28日）三天，我国新一轮大范围雨雪天气发展，南方多地有大到暴雨，西北地区东部、华北中西部等地有降雪。" [ref=e545]:
+              - /url: http://www.weather.com.cn/index/2026/02/4529448.shtml
+              - paragraph [ref=e546]: 2月28日
+              - generic [ref=e547]:
+                - img "我国新一轮大范围雨雪发展 南方多地天气湿冷" [ref=e548]
+                - generic [ref=e549]:
+                  - heading "我国新一轮大范围雨雪发展 南方多地天气湿冷" [level=2] [ref=e550]
+                  - paragraph [ref=e551]: 今起（2月28日）三天，我国新一轮大范围雨雪天气发展，南方多地有大到暴雨，西北地区东部、华北中西部等地有降雪。
+          - listitem [ref=e552] [cursor=pointer]:
+            - link "2月27日 江南华南阴雨频繁 北方气温多波动起伏 江南华南阴雨频繁 北方气温多波动起伏 今天（2月27日），南方降雨范围缩减，降雨重心南移至华南，部分地区有暴雨。明后天，我国新一轮大范围降水过程将接踵而至。" [ref=e553]:
+              - /url: http://www.weather.com.cn/index/2026/02/4528122.shtml
+              - paragraph [ref=e554]: 2月27日
+              - generic [ref=e555]:
+                - img "江南华南阴雨频繁 北方气温多波动起伏" [ref=e556]
+                - generic [ref=e557]:
+                  - heading "江南华南阴雨频繁 北方气温多波动起伏" [level=2] [ref=e558]
+                  - paragraph [ref=e559]: 今天（2月27日），南方降雨范围缩减，降雨重心南移至华南，部分地区有暴雨。明后天，我国新一轮大范围降水过程将接踵而至。
+          - listitem [ref=e560] [cursor=pointer]:
+            - link "2月26日 中东部两轮降水过程无缝衔接 华北东北气温将持续偏低 中东部两轮降水过程无缝衔接 华北东北气温将持续偏低 今明两天（2月26日至27日），中东部降水将持续发展，其中今天是降水的主要时段，广西、江西、福建等地局地雨势较强。" [ref=e561]:
+              - /url: http://www.weather.com.cn/index/2026/02/4526852.shtml
+              - paragraph [ref=e562]: 2月26日
+              - generic [ref=e563]:
+                - img "中东部两轮降水过程无缝衔接 华北东北气温将持续偏低" [ref=e564]
+                - generic [ref=e565]:
+                  - heading "中东部两轮降水过程无缝衔接 华北东北气温将持续偏低" [level=2] [ref=e566]
+                  - paragraph [ref=e567]: 今明两天（2月26日至27日），中东部降水将持续发展，其中今天是降水的主要时段，广西、江西、福建等地局地雨势较强。
+          - listitem [ref=e568] [cursor=pointer]:
+            - link "2月25日 未来三天中东部再迎大范围雨雪天气 北方多地气温起伏较大 未来三天中东部再迎大范围雨雪天气 北方多地气温起伏较大 今天（2月25日）起至27日，中东部地区又将迎来新一轮大范围雨雪天气，南方阴雨频繁，北方多地或现降雪。" [ref=e569]:
+              - /url: http://www.weather.com.cn/index/2026/02/4525485.shtml
+              - paragraph [ref=e570]: 2月25日
+              - generic [ref=e571]:
+                - img "未来三天中东部再迎大范围雨雪天气 北方多地气温起伏较大" [ref=e572]
+                - generic [ref=e573]:
+                  - heading "未来三天中东部再迎大范围雨雪天气 北方多地气温起伏较大" [level=2] [ref=e574]
+                  - paragraph [ref=e575]: 今天（2月25日）起至27日，中东部地区又将迎来新一轮大范围雨雪天气，南方阴雨频繁，北方多地或现降雪。
+          - listitem [ref=e576] [cursor=pointer]:
+            - link "2月24日 北方月底前气温多波动 南方将维持多雨模式 北方月底前气温多波动 南方将维持多雨模式 今天（2月24日），南方雨势将减弱，同时多地气温继续下降，明天起南方又将进入多雨模式。" [ref=e577]:
+              - /url: http://www.weather.com.cn/index/2026/02/4524248.shtml
+              - paragraph [ref=e578]: 2月24日
+              - generic [ref=e579]:
+                - img "北方月底前气温多波动 南方将维持多雨模式" [ref=e580]
+                - generic [ref=e581]:
+                  - heading "北方月底前气温多波动 南方将维持多雨模式" [level=2] [ref=e582]
+                  - paragraph [ref=e583]: 今天（2月24日），南方雨势将减弱，同时多地气温继续下降，明天起南方又将进入多雨模式。
+          - listitem [ref=e584] [cursor=pointer]:
+            - link "2月23日 东北寒意回归黄淮迎显著降温 南方降雨发展湿凉感上线 东北寒意回归黄淮迎显著降温 南方降雨发展湿凉感上线 今天，强降温区域将转移至黄淮一带，河南等地迎显著降温，降温前后冷暖差异极大。同时，南方降雨将继续发展，并且多地陆续降温。" [ref=e585]:
+              - /url: http://www.weather.com.cn/index/2026/02/4523105.shtml
+              - paragraph [ref=e586]: 2月23日
+              - generic [ref=e587]:
+                - img "东北寒意回归黄淮迎显著降温 南方降雨发展湿凉感上线" [ref=e588]
+                - generic [ref=e589]:
+                  - heading "东北寒意回归黄淮迎显著降温 南方降雨发展湿凉感上线" [level=2] [ref=e590]
+                  - paragraph [ref=e591]: 今天，强降温区域将转移至黄淮一带，河南等地迎显著降温，降温前后冷暖差异极大。同时，南方降雨将继续发展，并且多地陆续降温。
+          - listitem [ref=e592] [cursor=pointer]:
+            - link "2月22日 北方大部迎剧烈降温 南方大范围降雨来袭 北方大部迎剧烈降温 南方大范围降雨来袭 今明两天，北方大部受寒潮影响气温将大幅下降，多地降温前后冷暖反差巨大，同时南方降水增多，江南等地降雨较强，并且将由暖转凉。" [ref=e593]:
+              - /url: http://www.weather.com.cn/index/2026/02/4521869.shtml
+              - paragraph [ref=e594]: 2月22日
+              - generic [ref=e595]:
+                - img "北方大部迎剧烈降温 南方大范围降雨来袭" [ref=e596]
+                - generic [ref=e597]:
+                  - heading "北方大部迎剧烈降温 南方大范围降雨来袭" [level=2] [ref=e598]
+                  - paragraph [ref=e599]: 今明两天，北方大部受寒潮影响气温将大幅下降，多地降温前后冷暖反差巨大，同时南方降水增多，江南等地降雨较强，并且将由暖转凉。
+          - listitem [ref=e600] [cursor=pointer]:
+            - link "2月21日 北方气温骤降伴大风沙尘 南方明起迎大范围降雨 北方气温骤降伴大风沙尘 南方明起迎大范围降雨 今明天（2月21日至22日），我国天气将出现转折，长江以北气温冲高回落，并伴有大风沙尘天气。此外，南方将出现大范围降雨。" [ref=e601]:
+              - /url: http://www.weather.com.cn/index/2026/02/4520729.shtml
+              - paragraph [ref=e602]: 2月21日
+              - generic [ref=e603]:
+                - img "北方气温骤降伴大风沙尘 南方明起迎大范围降雨" [ref=e604]
+                - generic [ref=e605]:
+                  - heading "北方气温骤降伴大风沙尘 南方明起迎大范围降雨" [level=2] [ref=e606]
+                  - paragraph [ref=e607]: 今明天（2月21日至22日），我国天气将出现转折，长江以北气温冲高回落，并伴有大风沙尘天气。此外，南方将出现大范围降雨。
+        - link "查看更多>>" [ref=e608] [cursor=pointer]:
+          - /url: http://www.weather.com.cn/index/jqzdtqsj/index.shtml
+    - generic [ref=e609]:
+      - link [ref=e611] [cursor=pointer]:
+        - /url: https://e.weather.com.cn/zhinengti.shtml
+        - img [ref=e612]
+      - generic [ref=e613]:
+        - generic [ref=e614]:
+          - heading "南通雷达图" [level=1] [ref=e615]:
+            - link "南通雷达图" [ref=e616] [cursor=pointer]:
+              - /url: http://products.weather.com.cn/product/radar1/index/procode/JC_RADAR_AZ9513_JB_V3.shtml
+          - link [ref=e617] [cursor=pointer]:
+            - /url: http://products.weather.com.cn/product/radar1/index/procode/JC_RADAR_AZ9513_JB_V3.shtml
+        - generic [ref=e618]:
+          - link:
+            - /url: http://products.weather.com.cn/product/radar1/index/procode/JC_RADAR_AZ9513_JB_V3.shtml
+            - img
+      - generic [ref=e620]:
+        - link "天气衣橱 >>" [ref=e621] [cursor=pointer]:
+          - /url: https://cy.weather.com.cn?channel=2
+        - link "衣物展示图 天气穿衣助手 | 初春穿什么>>" [ref=e622] [cursor=pointer]:
+          - /url: https://cy.weather.com.cn?channel=2
+          - generic [ref=e623]:
+            - img "衣物展示图" [ref=e624]
+            - generic [ref=e625]: 天气穿衣助手 | 初春穿什么>>
+        - list [ref=e627]:
+          - listitem [ref=e628]:
+            - link "抢淘宝超级红包，全场通用" [ref=e629] [cursor=pointer]:
+              - /url: https://s.click.taobao.com/bQBtupp
+          - listitem [ref=e630]:
+            - link "复古轻熟穿搭，气场直接拉满" [ref=e631] [cursor=pointer]:
+              - /url: https://cy.weather.com.cn/details/100?channel=2
+          - listitem [ref=e632]:
+            - link "复古休闲轻松Get高级感" [ref=e633] [cursor=pointer]:
+              - /url: https://cy.weather.com.cn/details/102?channel=2
+      - iframe [ref=e635]:
+        
+      - generic [ref=e637]:
+        - heading "联播天气预报" [level=1] [ref=e638]:
+          - link "联播天气预报" [ref=e639] [cursor=pointer]:
+            - /url: http://www.weather.com.cn/video/ylist.shtml
+        - link [ref=e640] [cursor=pointer]:
+          - /url: http://www.weather.com.cn/video/ylist.shtml
+      - generic [ref=e644]:
+        - generic [ref=e645]:
+          - heading "高清图集" [level=1] [ref=e646]:
+            - link "高清图集" [ref=e647] [cursor=pointer]:
+              - /url: http://p.weather.com.cn
+          - link [ref=e648] [cursor=pointer]:
+            - /url: http://p.weather.com.cn
+          - generic [ref=e649]:
+            - list [ref=e650]:
+              - listitem [ref=e651]:
+                - link "北京明城墙遗址公园花开正当时" [ref=e652] [cursor=pointer]:
+                  - /url: http://p.weather.com.cn/2026/02/4527125.shtml
+                  - img "北京明城墙遗址公园花开正当时" [ref=e653]
+              - listitem [ref=e654]:
+                - link "广西南宁黄花风铃木惊艳绽放" [ref=e655] [cursor=pointer]:
+                  - /url: http://p.weather.com.cn/2026/02/4529248.shtml
+                  - img "广西南宁黄花风铃木惊艳绽放" [ref=e656]
+              - listitem [ref=e657]:
+                - link "流光溢彩迎元宵 山东威海夜色氛围拉满" [ref=e658] [cursor=pointer]:
+                  - /url: http://p.weather.com.cn/2026/02/4528667.shtml
+                  - img "流光溢彩迎元宵 山东威海夜色氛围拉满" [ref=e659]
+              - listitem [ref=e660]:
+                - link "新疆白沙湖冰水交融 尽显空灵纯净" [ref=e661] [cursor=pointer]:
+                  - /url: http://p.weather.com.cn/2026/02/4526568.shtml
+                  - img "新疆白沙湖冰水交融 尽显空灵纯净" [ref=e662]
+              - listitem [ref=e663]:
+                - link "贵州万峰林油菜花汇成金色海洋" [ref=e664] [cursor=pointer]:
+                  - /url: http://p.weather.com.cn/2026/02/4527080.shtml
+                  - img "贵州万峰林油菜花汇成金色海洋" [ref=e665]
+              - listitem [ref=e666]:
+                - link "浙江金华雨中郁金香更显娇艳" [ref=e667] [cursor=pointer]:
+                  - /url: http://p.weather.com.cn/2026/02/4528580.shtml
+                  - img "浙江金华雨中郁金香更显娇艳" [ref=e668]
+              - listitem [ref=e669]:
+                - link "北京明城墙遗址公园花开正当时" [ref=e670] [cursor=pointer]:
+                  - /url: http://p.weather.com.cn/2026/02/4527125.shtml
+                  - img "北京明城墙遗址公园花开正当时" [ref=e671]
+              - listitem [ref=e672]:
+                - link "广西南宁黄花风铃木惊艳绽放" [ref=e673] [cursor=pointer]:
+                  - /url: http://p.weather.com.cn/2026/02/4529248.shtml
+                  - img "广西南宁黄花风铃木惊艳绽放" [ref=e674]
+              - listitem [ref=e675]:
+                - link "流光溢彩迎元宵 山东威海夜色氛围拉满" [ref=e676] [cursor=pointer]:
+                  - /url: http://p.weather.com.cn/2026/02/4528667.shtml
+                  - img "流光溢彩迎元宵 山东威海夜色氛围拉满" [ref=e677]
+              - listitem [ref=e678]:
+                - link "新疆白沙湖冰水交融 尽显空灵纯净" [ref=e679] [cursor=pointer]:
+                  - /url: http://p.weather.com.cn/2026/02/4526568.shtml
+                  - img "新疆白沙湖冰水交融 尽显空灵纯净" [ref=e680]
+              - listitem [ref=e681]:
+                - link "贵州万峰林油菜花汇成金色海洋" [ref=e682] [cursor=pointer]:
+                  - /url: http://p.weather.com.cn/2026/02/4527080.shtml
+                  - img "贵州万峰林油菜花汇成金色海洋" [ref=e683]
+              - listitem [ref=e684]:
+                - link "浙江金华雨中郁金香更显娇艳" [ref=e685] [cursor=pointer]:
+                  - /url: http://p.weather.com.cn/2026/02/4528580.shtml
+                  - img "浙江金华雨中郁金香更显娇艳" [ref=e686]
+            - list [ref=e687]:
+              - listitem [ref=e688] [cursor=pointer]
+              - listitem [ref=e689] [cursor=pointer]
+              - listitem [ref=e690] [cursor=pointer]
+              - listitem [ref=e691] [cursor=pointer]
+              - listitem [ref=e692] [cursor=pointer]
+              - listitem [ref=e693] [cursor=pointer]
+            - paragraph [ref=e694]: 北京明城墙遗址公园花开正当时
+        - list [ref=e698]:
+          - listitem [ref=e699]:
+            - link "云南罗平：85万亩油菜花盛放" [ref=e700] [cursor=pointer]:
+              - /url: http://p.weather.com.cn/2026/02/4525272.shtml
+          - listitem [ref=e701]:
+            - link "春染紫禁城！故宫墙外玉兰初绽" [ref=e702] [cursor=pointer]:
+              - /url: http://p.weather.com.cn/2026/02/4524607.shtml
+          - listitem [ref=e703]:
+            - link "江西永新天气回暖 油菜花竞相绽放" [ref=e704] [cursor=pointer]:
+              - /url: http://p.weather.com.cn/2026/02/4523880.shtml
+          - listitem [ref=e705]:
+            - link "秋来栾树红 枝头挂满“胭脂果”" [ref=e706] [cursor=pointer]:
+              - /url: http://p.weather.com.cn/2025/09/4343159.shtml
+      - generic [ref=e707]:
+        - generic [ref=e708]:
+          - heading "天气视频" [level=1] [ref=e709]:
+            - link "天气视频" [ref=e710] [cursor=pointer]:
+              - /url: http://video.weather.com.cn/
+          - link [ref=e711] [cursor=pointer]:
+            - /url: http://www.weather.com.cn/video/index.shtml
+        - link "物候日历——惊蛰" [ref=e712] [cursor=pointer]:
+          - /url: https://www.weather.com.cn/video/2026/03/4536672.shtml
+          - img "物候日历——惊蛰" [ref=e713]
+        - paragraph [ref=e715]:
+          - link "节气时光-惊蛰" [ref=e716] [cursor=pointer]:
+            - /url: https://www.weather.com.cn/video/2026/03/4536136.shtml
+        - paragraph [ref=e717]:
+          - link "数说节气谚语-惊蛰" [ref=e718] [cursor=pointer]:
+            - /url: https://www.weather.com.cn/video/2026/03/4536135.shtml
+      - generic [ref=e719]:
+        - generic [ref=e720]:
+          - heading "生活旅游" [level=1] [ref=e721]:
+            - link "生活旅游" [ref=e722] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/life/
+          - link [ref=e723] [cursor=pointer]:
+            - /url: http://www.weather.com.cn/life/
+          - generic [ref=e724]:
+            - list [ref=e725]:
+              - listitem [ref=e726]:
+                - link "惊蛰这样过：吃梨炒豆祭白虎 远离是非和疾病" [ref=e727] [cursor=pointer]:
+                  - /url: http://www.weather.com.cn/life/2026/03/4536045.shtml
+                  - img "惊蛰这样过：吃梨炒豆祭白虎 远离是非和疾病" [ref=e728]
+              - listitem [ref=e729]:
+                - link "惊蛰养生：顺时调养 唤醒元气" [ref=e730] [cursor=pointer]:
+                  - /url: http://www.weather.com.cn/life/2026/03/4536042.shtml
+                  - img "惊蛰养生：顺时调养 唤醒元气" [ref=e731]
+              - listitem [ref=e732]:
+                - link "应对春燥不适 饮食起居需注意这些" [ref=e733] [cursor=pointer]:
+                  - /url: http://www.weather.com.cn/life/2026/03/4536044.shtml
+                  - img "应对春燥不适 饮食起居需注意这些" [ref=e734]
+              - listitem [ref=e735]:
+                - link "雨后峨眉沟壑尽显 金顶显真容" [ref=e736] [cursor=pointer]:
+                  - /url: http://www.weather.com.cn/life/2020/07/3364520.shtml
+                  - img "雨后峨眉沟壑尽显 金顶显真容" [ref=e737]
+              - listitem [ref=e738]:
+                - link "秋意浓 蓝天映衬下的哈尔滨伏尔加庄园" [ref=e739] [cursor=pointer]:
+                  - /url: http://www.weather.com.cn/life/2019/10/3253319.shtml
+                  - img "秋意浓 蓝天映衬下的哈尔滨伏尔加庄园" [ref=e740]
+              - listitem [ref=e741]:
+                - link "大美新疆—帕米尔高原好风光" [ref=e742] [cursor=pointer]:
+                  - /url: http://www.weather.com.cn/life/2019/10/3253318.shtml
+                  - img "大美新疆—帕米尔高原好风光" [ref=e743]
+              - listitem [ref=e744]:
+                - link "惊蛰这样过：吃梨炒豆祭白虎 远离是非和疾病" [ref=e745] [cursor=pointer]:
+                  - /url: http://www.weather.com.cn/life/2026/03/4536045.shtml
+                  - img "惊蛰这样过：吃梨炒豆祭白虎 远离是非和疾病" [ref=e746]
+              - listitem [ref=e747]:
+                - link "惊蛰养生：顺时调养 唤醒元气" [ref=e748] [cursor=pointer]:
+                  - /url: http://www.weather.com.cn/life/2026/03/4536042.shtml
+                  - img "惊蛰养生：顺时调养 唤醒元气" [ref=e749]
+              - listitem [ref=e750]:
+                - link "应对春燥不适 饮食起居需注意这些" [ref=e751] [cursor=pointer]:
+                  - /url: http://www.weather.com.cn/life/2026/03/4536044.shtml
+                  - img "应对春燥不适 饮食起居需注意这些" [ref=e752]
+              - listitem [ref=e753]:
+                - link "雨后峨眉沟壑尽显 金顶显真容" [ref=e754] [cursor=pointer]:
+                  - /url: http://www.weather.com.cn/life/2020/07/3364520.shtml
+                  - img "雨后峨眉沟壑尽显 金顶显真容" [ref=e755]
+              - listitem [ref=e756]:
+                - link "秋意浓 蓝天映衬下的哈尔滨伏尔加庄园" [ref=e757] [cursor=pointer]:
+                  - /url: http://www.weather.com.cn/life/2019/10/3253319.shtml
+                  - img "秋意浓 蓝天映衬下的哈尔滨伏尔加庄园" [ref=e758]
+              - listitem [ref=e759]:
+                - link "大美新疆—帕米尔高原好风光" [ref=e760] [cursor=pointer]:
+                  - /url: http://www.weather.com.cn/life/2019/10/3253318.shtml
+                  - img "大美新疆—帕米尔高原好风光" [ref=e761]
+            - list [ref=e762]:
+              - listitem [ref=e763] [cursor=pointer]
+              - listitem [ref=e764] [cursor=pointer]
+              - listitem [ref=e765] [cursor=pointer]
+              - listitem [ref=e766] [cursor=pointer]
+              - listitem [ref=e767] [cursor=pointer]
+              - listitem [ref=e768] [cursor=pointer]
+            - paragraph [ref=e769]: 惊蛰这样过：吃梨炒豆祭白虎 远离是非和疾病
+        - list [ref=e773]:
+          - listitem [ref=e774]:
+            - link "湖北神农架晨雾缭绕 秋色迷人" [ref=e775] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/life/2019/10/3253317.shtml
+          - listitem [ref=e776]:
+            - link "换个视角看秋景 竟然这么美！" [ref=e777] [cursor=pointer]:
+              - /url: http://www.weather.com.cn/life/2018/11/2957048.shtml
+      - generic [ref=e779]:
+        - heading "景点推荐" [level=3] [ref=e780]
+        - heading "景区 天气 气温 旅游指数" [level=4] [ref=e781]:
+          - generic [ref=e782]: 景区
+          - generic [ref=e783]: 天气
+          - generic [ref=e784]: 气温
+          - generic [ref=e785]: 旅游指数
+        - list [ref=e786]:
+          - listitem [ref=e787]:
+            - link "三亚 多云 28/20℃ 适宜":
+              - /url: http://www.weather.com.cn/weather1d/101310201.shtml
+              - generic [ref=e788] [cursor=pointer]: 三亚
+              - generic [ref=e789] [cursor=pointer]: 多云
+              - generic [ref=e790] [cursor=pointer]: 28/20℃
+              - generic [ref=e791] [cursor=pointer]: 适宜
+          - listitem [ref=e792]:
+            - link "九寨沟 阴 16/8℃ 适宜":
+              - /url: http://www.weather.com.cn/weather1d/101271906.shtml
+              - generic [ref=e793] [cursor=pointer]: 九寨沟
+              - generic [ref=e794] [cursor=pointer]: 阴
+              - generic [ref=e795] [cursor=pointer]: 16/8℃
+              - generic [ref=e796] [cursor=pointer]: 适宜
+          - listitem [ref=e797]:
+            - link "大理 阴 21/7℃ 适宜":
+              - /url: http://www.weather.com.cn/weather1d/101290201.shtml
+              - generic [ref=e798] [cursor=pointer]: 大理
+              - generic [ref=e799] [cursor=pointer]: 阴
+              - generic [ref=e800] [cursor=pointer]: 21/7℃
+              - generic [ref=e801] [cursor=pointer]: 适宜
+          - listitem [ref=e802]:
+            - link "张家界 小雨 12/8℃ 适宜":
+              - /url: http://www.weather.com.cn/weather1d/101251101.shtml
+              - generic [ref=e803] [cursor=pointer]: 张家界
+              - generic [ref=e804] [cursor=pointer]: 小雨
+              - generic [ref=e805] [cursor=pointer]: 12/8℃
+              - generic [ref=e806] [cursor=pointer]: 适宜
+          - listitem [ref=e807]:
+            - link "桂林 多云 21/14℃ 适宜":
+              - /url: http://www.weather.com.cn/weather1d/101300501.shtml
+              - generic [ref=e808] [cursor=pointer]: 桂林
+              - generic [ref=e809] [cursor=pointer]: 多云
+              - generic [ref=e810] [cursor=pointer]: 21/14℃
+              - generic [ref=e811] [cursor=pointer]: 适宜
+          - listitem [ref=e812]:
+            - link "青岛 晴转多云 5/0℃ 一般":
+              - /url: http://www.weather.com.cn/weather1d/101120201.shtml
+              - generic [ref=e813] [cursor=pointer]: 青岛
+              - generic [ref=e814] [cursor=pointer]: 晴转多云
+              - generic [ref=e815] [cursor=pointer]: 5/0℃
+              - generic [ref=e816] [cursor=pointer]: 一般
+      - generic [ref=e817]:
+        - generic [ref=e818]:
+          - heading "气象产品" [level=1] [ref=e819]:
+            - link "气象产品" [ref=e820] [cursor=pointer]:
+              - /url: http://products.weather.com.cn/
+          - link [ref=e821] [cursor=pointer]:
+            - /url: http://products.weather.com.cn/
+        - generic [ref=e822]:
+          - link "全国降水量预报" [ref=e823] [cursor=pointer]:
+            - /url: http://products.weather.com.cn/sk.html?page=YB&type=YB_JSL_024
+          - link "强对流天气公报" [ref=e824] [cursor=pointer]:
+            - /url: http://products.weather.com.cn/yb.html?page=YB&type=YB_QDLWD_XML
+          - link "全国地质灾害预报" [ref=e825] [cursor=pointer]:
+            - /url: http://products.weather.com.cn/yb.html?page=YB&type=YB_DZZH_24
+      - generic [ref=e826]:
+        - heading "气象服务" [level=1] [ref=e828]
+        - generic [ref=e829]:
+          - heading "天气预报电话查询" [level=1] [ref=e830]
+          - paragraph [ref=e831]: 拨打12121或96121进行天气预报查询
+          - heading "手机查询" [level=1] [ref=e832]:
+            - link "手机查询" [ref=e833] [cursor=pointer]:
+              - /url: http://e.weather.com.cn/
+          - paragraph [ref=e834]: 随时随地通过手机登录中国天气WAP版查看各地天气资讯
+  - generic [ref=e835]:
+    - link [ref=e836] [cursor=pointer]:
+      - /url: http://www.weather.com.cn/weathern/101190401.shtml
+    - link [ref=e838] [cursor=pointer]:
+      - /url: http://www.weather.com.cn/index/feedback_201409.shtml#forecast#old
+    - link "回到顶部" [ref=e840] [cursor=pointer]:
+      - /url: javascript:void(0)
+  - generic [ref=e842]:
+    - generic [ref=e843]:
+      - generic [ref=e844]:
+        - generic [ref=e845]:
+          - term [ref=e846]:
+            - heading "网站服务" [level=3] [ref=e847]
+          - definition [ref=e848]:
+            - paragraph [ref=e849]:
+              - link "关于我们" [ref=e850] [cursor=pointer]:
+                - /url: https://www.weather.com.cn/wzfw/about.shtml
+              - link "联系我们" [ref=e851] [cursor=pointer]:
+                - /url: https://www.weather.com.cn/wzfw/contact.shtml
+              - link "用户反馈" [ref=e852] [cursor=pointer]:
+                - /url: https://www.weather.com.cn/wzfw/feedback.shtml
+            - paragraph [ref=e853]:
+              - link "版权声明" [ref=e854] [cursor=pointer]:
+                - /url: https://www.weather.com.cn/wzfw/banquan.shtml
+              - link "网站律师" [ref=e855] [cursor=pointer]:
+                - /url: https://www.weather.com.cn/wzfw/lawyer.shtml
+        - generic [ref=e856]:
+          - term [ref=e857]:
+            - heading "营销中心" [level=3] [ref=e858]
+          - definition [ref=e859]:
+            - paragraph [ref=e860]:
+              - link "商务合作" [ref=e861] [cursor=pointer]:
+                - /url: http://marketing.weather.com.cn/wzhz/index.shtml
+              - link "广告服务" [ref=e862] [cursor=pointer]:
+                - /url: http://ad.weather.com.cn/index.shtml
+              - link "媒资合作" [ref=e863] [cursor=pointer]:
+                - /url: http://marketing.weather.com.cn/wzhz/meizi.shtml
+      - generic [ref=e864]:
+        - heading "相关链接" [level=3] [ref=e865]
+        - paragraph [ref=e866]:
+          - link "中国气象局" [ref=e867] [cursor=pointer]:
+            - /url: http://www.cma.gov.cn/
+          - link "中国气象服务协会" [ref=e868] [cursor=pointer]:
+            - /url: http://www.chinamsa.org
+          - link "中国天气频道" [ref=e869] [cursor=pointer]:
+            - /url: http://www.weathertv.cn/
+      - generic [ref=e870]:
+        - paragraph [ref=e871]:
+          - generic [ref=e872]:
+            - text: 客服邮箱：
+            - link "service@weather.com.cn" [ref=e873] [cursor=pointer]:
+              - /url: mailto:service@weather.com.cn
+          - generic [ref=e874]: 客服电话：010-68409444
+          - generic [ref=e875]:
+            - link "京ICP证010385-2号" [ref=e876] [cursor=pointer]:
+              - /url: https://beian.miit.gov.cn/
+            - link "京公网安备11041400134号" [ref=e877] [cursor=pointer]:
+              - /url: http://www.beian.gov.cn/portal/registerSystemInfo
+        - link:
+          - /url: http://www.bcpcn.com/product/pjia/da/BCP65914858F778322.html
+          - img [ref=e878] [cursor=pointer]
+    - generic [ref=e879]:
+      - text: 中国天气网版权所有，未经书面授权禁止使用 Copyright©
+      - link "中国气象局公共气象服务中心" [ref=e880] [cursor=pointer]:
+        - /url: http://www.pmsc.cn/
+      - text: All Rights Reserved (2008-2026)

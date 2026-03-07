@@ -2,22 +2,42 @@
 RSS Subscription and Monitoring Skill Script
 """
 
-import re
-import logging
-import urllib.parse
-import feedparser
-import asyncio
-import httpx
+from __future__ import annotations
 
+import argparse
+import asyncio
+import logging
+import re
+import sys
+import urllib.parse
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SRC_ROOT = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+import feedparser
+import httpx
+from core.platform.models import UnifiedContext
+from core.skill_cli import (
+    add_common_arguments,
+    merge_params,
+    prepare_default_env,
+    run_execute_cli,
+)
+
+prepare_default_env(REPO_ROOT)
 
 from core.state_store import (
-    get_user_subscriptions,
     add_subscription,
     delete_subscription,
     delete_subscription_by_id,
+    get_user_subscriptions,
 )
 from stats import increment_stat
-from core.platform.models import UnifiedContext
 
 logger = logging.getLogger(__name__)
 
@@ -454,3 +474,56 @@ async def handle_unsubscribe_callback(ctx: UnifiedContext) -> None:
         return "✅ 订阅已取消。"
     else:
         return "❌ 取消失败，订阅可能已不存在。"
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="RSS subscribe skill CLI bridge.",
+    )
+    add_common_arguments(parser)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("list", help="List subscriptions")
+
+    add_parser = subparsers.add_parser("add", help="Add an RSS feed subscription")
+    add_parser.add_argument("target", help="RSS URL or keyword")
+
+    monitor_parser = subparsers.add_parser(
+        "monitor",
+        help="Monitor one or more keywords",
+    )
+    monitor_parser.add_argument("keyword", help="Keyword or comma-separated keywords")
+
+    remove_parser = subparsers.add_parser("remove", help="Remove a subscription")
+    remove_parser.add_argument("target", help="RSS URL or keyword")
+
+    subparsers.add_parser("refresh", help="Refresh subscriptions now")
+    return parser
+
+
+def _params_from_args(args: argparse.Namespace) -> dict:
+    command = str(args.command or "").strip().lower()
+    if command == "list":
+        return merge_params(args, {"action": "list"})
+    if command == "add":
+        target = str(args.target or "").strip()
+        return merge_params(args, {"action": "add", "url": target})
+    if command == "monitor":
+        keyword = str(args.keyword or "").strip()
+        return merge_params(args, {"action": "monitor", "keyword": keyword})
+    if command == "remove":
+        target = str(args.target or "").strip()
+        return merge_params(args, {"action": "remove", "url": target})
+    if command == "refresh":
+        return merge_params(args, {"action": "refresh"})
+    raise SystemExit(f"unsupported command: {command}")
+
+
+async def _run() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+    return await run_execute_cli(execute, args=args, params=_params_from_args(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_run()))

@@ -1,11 +1,65 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
 import logging
-import httpx
 import re
+import sys
 import urllib.parse
 from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SRC_ROOT = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+import httpx
 from core.platform.models import UnifiedContext
+from core.skill_cli import (
+    add_common_arguments,
+    merge_params,
+    prepare_default_env,
+    run_execute_cli,
+)
+
+prepare_default_env(REPO_ROOT)
 
 logger = logging.getLogger(__name__)
+
+WEATHER_CODE_MAP = {
+    0: "晴",
+    1: "基本晴",
+    2: "局部多云",
+    3: "阴",
+    45: "雾",
+    48: "冻雾",
+    51: "小毛毛雨",
+    53: "毛毛雨",
+    55: "强毛毛雨",
+    56: "冻毛毛雨",
+    57: "强冻毛毛雨",
+    61: "小雨",
+    63: "中雨",
+    65: "大雨",
+    66: "冻雨",
+    67: "强冻雨",
+    71: "小雪",
+    73: "中雪",
+    75: "大雪",
+    77: "雪粒",
+    80: "阵雨",
+    81: "强阵雨",
+    82: "暴雨",
+    85: "阵雪",
+    86: "强阵雪",
+    95: "雷暴",
+    96: "雷暴伴冰雹",
+    99: "强雷暴伴冰雹",
+}
 
 
 async def _fetch_aqi(lat: float, lon: float) -> str:
@@ -37,6 +91,135 @@ async def _fetch_aqi(lat: float, lon: float) -> str:
     return ""
 
 
+def _weather_code_text(code: Any) -> str:
+    try:
+        numeric = int(code)
+    except Exception:
+        return "未知"
+    return WEATHER_CODE_MAP.get(numeric, f"天气代码 {numeric}")
+
+
+async def _fetch_weather_open_meteo(location: str) -> dict:
+    target = str(location or "").strip()
+    if not target:
+        return {"text": "❌ 未提供地点，无法回退到备用天气源。", "ui": {}}
+
+    geocode_url = "https://geocoding-api.open-meteo.com/v1/search"
+    
+    # 尝试多个搜索关键词，提高命中率
+    search_terms = [target]
+    # 如果包含"区"，尝试去掉"区"再搜一次（如"滨湖区" -> "滨湖"，"无锡市滨湖区" -> "无锡市滨湖"）
+    if "区" in target:
+        search_terms.append(target.replace("区", ""))
+    # 如果包含"市"，尝试只保留市名（如"无锡市滨湖区" -> "无锡市"）
+    if "市" in target:
+        city_part = target.split("市")[0] + "市"
+        if city_part not in search_terms:
+            search_terms.append(city_part)
+    # 最后尝试只搜第一个词（如"无锡市滨湖区" -> "无锡市"）
+    first_word = target.split()[0] if " " in target else target.split("市")[0] + "市" if "市" in target else target
+    if first_word not in search_terms:
+        search_terms.append(first_word)
+    
+    # 去重
+    search_terms = list(dict.fromkeys(search_terms))
+    
+    place = None
+    lat = lon = admin1 = country = None
+    display_name = target
+    
+    async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+        for term in search_terms:
+            geo_resp = await client.get(
+                geocode_url,
+                params={
+                    "name": term,
+                    "count": 1,
+                    "language": "zh",
+                    "format": "json",
+                },
+            )
+            if geo_resp.status_code == 200:
+                geo_data = geo_resp.json() if geo_resp is not None else {}
+                results = geo_data.get("results") if isinstance(geo_data, dict) else []
+                if isinstance(results, list) and results:
+                    place = dict(results[0] or {})
+                    lat = float(place.get("latitude"))
+                    lon = float(place.get("longitude"))
+                    display_name = str(place.get("name") or term).strip()
+                    admin1 = str(place.get("admin1") or "").strip()
+                    country = str(place.get("country") or "").strip()
+                    logger.info(f"[daily_query] Open-Meteo geocoding success with term: '{term}' -> {display_name}")
+                    break
+                else:
+                    logger.debug(f"[daily_query] Open-Meteo geocoding failed for term: '{term}'")
+        
+        if not place:
+            return {
+                "text": f"❌ 备用天气源未找到地点：{target} (尝试了: {', '.join(search_terms)})",
+                "ui": {},
+            }
+
+        weather_resp = await client.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={
+                "latitude": lat,
+                "longitude": lon,
+                "timezone": "auto",
+                "forecast_days": 3,
+                "current": "temperature_2m,weather_code,wind_speed_10m",
+                "daily": (
+                    "weather_code,temperature_2m_max,temperature_2m_min,"
+                    "precipitation_probability_max,wind_speed_10m_max"
+                ),
+            },
+        )
+        weather_resp.raise_for_status()
+        weather_data = weather_resp.json() if weather_resp is not None else {}
+
+    current = weather_data.get("current") if isinstance(weather_data, dict) else {}
+    daily = weather_data.get("daily") if isinstance(weather_data, dict) else {}
+    dates = list(daily.get("time") or [])
+    max_temps = list(daily.get("temperature_2m_max") or [])
+    min_temps = list(daily.get("temperature_2m_min") or [])
+    weather_codes = list(daily.get("weather_code") or [])
+    rain_probs = list(daily.get("precipitation_probability_max") or [])
+    max_winds = list(daily.get("wind_speed_10m_max") or [])
+
+    place_parts = [item for item in [country, admin1, display_name] if item]
+    title = " ".join(place_parts) if place_parts else display_name
+
+    lines = [f"✅ {title} 的天气预报如下（备用天气源 Open-Meteo）：", ""]
+    if isinstance(current, dict) and current:
+        current_temp = current.get("temperature_2m")
+        current_code = current.get("weather_code")
+        current_wind = current.get("wind_speed_10m")
+        lines.append(
+            "当前："
+            f"{current_temp}°C，{_weather_code_text(current_code)}，"
+            f"风速 {current_wind} km/h"
+        )
+        lines.append("")
+
+    labels = ["今天", "明天", "后天"]
+    for idx, date_value in enumerate(dates[:3]):
+        label = labels[idx] if idx < len(labels) else f"第 {idx + 1} 天"
+        lines.append(
+            f"{label}（{date_value}）："
+            f"{_weather_code_text(weather_codes[idx] if idx < len(weather_codes) else '')}，"
+            f"{min_temps[idx] if idx < len(min_temps) else '?'} ~ "
+            f"{max_temps[idx] if idx < len(max_temps) else '?'}°C，"
+            f"降水概率 {rain_probs[idx] if idx < len(rain_probs) else '?'}%，"
+            f"最大风速 {max_winds[idx] if idx < len(max_winds) else '?'} km/h"
+        )
+
+    aqi_info = await _fetch_aqi(lat, lon)
+    if aqi_info:
+        lines.extend(["", f"空气质量：{aqi_info}"])
+
+    return {"text": "\n".join(lines).strip(), "ui": {}}
+
+
 async def _fetch_weather(location: str) -> dict:
     target = location.strip() if location else ""
     # URL 编码地址，防止“无锡 滨湖区”这种带空格的地点引发 httpx 异常
@@ -44,7 +227,7 @@ async def _fetch_weather(location: str) -> dict:
     # "lang=zh" for Chinese localization, "T" to strip ANSI terminal colors.
     url = f"https://wttr.in/{encoded_target}?lang=zh&T"
     try:
-        async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
             resp = await client.get(url, headers={"User-Agent": "curl/7.68.0"})
             if resp.status_code == 200 and resp.text.strip():
                 text = resp.text
@@ -68,12 +251,27 @@ async def _fetch_weather(location: str) -> dict:
                     msg = f"✅ {title_target_name} 的天气预报如下：\n\n```text\n{text}\n```\n"
 
                 return {"text": msg, "ui": {}}
+            logger.warning(
+                "[daily_query] wttr.in returned status=%s for location=%r; fallback to Open-Meteo",
+                resp.status_code,
+                target,
+            )
+            if target:
+                return await _fetch_weather_open_meteo(target)
             return {
                 "text": f"❌ 天气获取失败，HTTP 状态码: {resp.status_code}",
                 "ui": {},
             }
     except Exception as e:
         logger.error(f"[daily_query] weather fetch failed: {repr(e)}")
+        if target:
+            try:
+                return await _fetch_weather_open_meteo(target)
+            except Exception as fallback_exc:
+                logger.error(
+                    "[daily_query] open-meteo fallback failed: %r",
+                    fallback_exc,
+                )
         return {"text": "❌ 获取天气时发生网络或解析错误，请稍后重试。", "ui": {}}
 
 
@@ -165,3 +363,55 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None):
         return
 
     yield {"text": f"❌ 不支持的日常查询分类: {query_type}", "ui": {}}
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Daily query skill CLI bridge.",
+    )
+    add_common_arguments(parser)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    weather_parser = subparsers.add_parser("weather", help="Query weather")
+    weather_parser.add_argument("location", nargs="?", default="", help="Location")
+
+    crypto_parser = subparsers.add_parser("crypto", help="Query crypto price")
+    crypto_parser.add_argument("symbol", nargs="?", default="BTC", help="Symbol")
+
+    currency_parser = subparsers.add_parser("currency", help="Query FX rates")
+    currency_parser.add_argument("symbol", nargs="?", default="USD", help="Base currency")
+
+    subparsers.add_parser("time", help="Show server time")
+    return parser
+
+
+def _params_from_args(args: argparse.Namespace) -> dict:
+    command = str(args.command or "").strip().lower()
+    if command == "weather":
+        return merge_params(
+            args,
+            {"query_type": "weather", "location": str(args.location or "").strip()},
+        )
+    if command == "crypto":
+        return merge_params(
+            args,
+            {"query_type": "crypto", "symbol": str(args.symbol or "BTC").strip()},
+        )
+    if command == "currency":
+        return merge_params(
+            args,
+            {"query_type": "currency", "symbol": str(args.symbol or "USD").strip()},
+        )
+    if command == "time":
+        return merge_params(args, {"query_type": "time"})
+    raise SystemExit(f"unsupported command: {command}")
+
+
+async def _run() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+    return await run_execute_cli(execute, args=args, params=_params_from_args(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_run()))

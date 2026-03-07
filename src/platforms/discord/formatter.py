@@ -1,4 +1,3 @@
-import re
 
 
 def markdown_to_discord_compat(text: str) -> str:
