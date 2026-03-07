@@ -2304,8 +2304,8 @@ name = "uvicorn"
 version = "0.30.6"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
-    { name = "click", marker = "sys_platform != 'emscripten'" },
-    { name = "h11", marker = "sys_platform != 'emscripten'" },
+    { name = "click" },
+    { name = "h11" },
 ]
 sdist = { url = "https://files.pythonhosted.org/packages/5a/01/5e637e7aa9dd031be5376b9fb749ec20b86f5a5b6a49b87fabd374d5fa9f/uvicorn-0.30.6.tar.gz", hash = "sha256:4b15decdda1e72be08209e860a1e10e92439ad5b97cf44cc945fcbee66fc5788", size = 42825, upload-time = "2024-08-13T09:27:35.098Z" }
 wheels = [
@@ -2542,13 +2542,6 @@ worker-runtime = [
     { name = "yt-dlp" },
 ]
 
-[package.dev-dependencies]
-dev = [
-    { name = "black" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
 [package.metadata]
 
 [package.metadata.requires-dev]
@@ -2585,7 +2578,6 @@ dev = [
 ]
 manager = [
     { name = "aiofiles", specifier = ">=23.0.0" },
-    { name = "aiohttp", specifier = ">=3.11.0" },
     { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "ddgs", specifier = ">=9.10.0" },
     { name = "dingtalk-stream", specifier = ">=0.24.3" },
