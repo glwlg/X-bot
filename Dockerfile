@@ -1,4 +1,3 @@
-# Build Frontend
 FROM node:22-alpine AS frontend-builder
 WORKDIR /app
 COPY src/platforms/web ./src/platforms/web
@@ -7,28 +6,46 @@ RUN node -e "let pkg=require('./package.json'); delete pkg.overrides; require('f
 RUN npm install
 RUN npm run build
 
-# Use an official Python runtime as a parent image
-FROM python:3.14-slim
 
-# Set environment variables
+FROM python:3.14-slim AS python-base
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/root/.local/bin:$PATH" \
-    # UV Mirror for China
-    UV_PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple \
-    # Playwright/Patchright Browsers Path (for caching)
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    PLAYWRIGHT_CLI_BROWSER=chrome \
-    PLAYWRIGHT_MCP_CONFIG=/app/playwright-cli.json
+    UV_PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple
 
-# Replace Debian sources with Tsinghua Mirror (for China speedup)
 RUN sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ca-certificates
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
-# Install system dependencies
-# ffmpeg: for audio/video processing
-# nodejs, npm: for executing MCP Servers/Skills
-# docker-ce-cli: for Docker-in-Docker operations
-# Added --mount=type=cache to speed up apt installs
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+
+FROM python-base AS shared-runtime-python
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --group shared-runtime
+
+FROM shared-runtime-python AS bot-runtime-python
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --group bot-runtime
+
+FROM bot-runtime-python AS manager-python
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --group manager-runtime
+
+FROM bot-runtime-python AS worker-python
+
+FROM shared-runtime-python AS api-python
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --group api
+
+
+FROM manager-python AS manager-runtime
+
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
@@ -36,13 +53,10 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     git \
     nodejs \
     npm \
-    curl \
-    ca-certificates \
     gnupg \
     procps \
     net-tools \
     iproute2 \
-    # Install Docker CLI setup
     && install -m 0755 -d /etc/apt/keyrings \
     && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
@@ -51,37 +65,67 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     docker-ce-cli \
     docker-compose-plugin
 
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-
 RUN npm install -g \
-    @playwright/cli@latest \
     @openai/codex@latest \
     @google/gemini-cli@latest \
     && if ! command -v gemini-cli >/dev/null 2>&1; then \
     printf '#!/usr/bin/env sh\nexec gemini "$@"\n' > /usr/local/bin/gemini-cli; \
     chmod +x /usr/local/bin/gemini-cli; \
-    fi \
-    && npx -y playwright install chrome
+    fi
 
-# Set the working directory in the container
-WORKDIR /app
+COPY src/ .
+
+CMD ["python", "main.py"]
+
+
+FROM manager-runtime AS manager-runtime-full
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --group optional-skill-runtime
+
+
+FROM worker-python AS worker-runtime
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    PLAYWRIGHT_CLI_BROWSER=chrome \
+    PLAYWRIGHT_MCP_CONFIG=/app/playwright-cli.json
+
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    git \
+    nodejs \
+    npm \
+    gnupg \
+    procps \
+    net-tools \
+    iproute2 \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
+    && chmod a+r /etc/apt/keyrings/docker.asc \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    docker-ce-cli \
+    docker-compose-plugin
+
+RUN npm install -g @playwright/cli@latest \
+    && npx -y playwright install chrome
 
 RUN printf '{\n  "browser": {\n    "launchOptions": {\n      "args": ["--no-sandbox", "--disable-setuid-sandbox"],\n      "channel": "chrome",\n      "chromiumSandbox": false\n    }\n  }\n}\n' > /app/playwright-cli.json
 
-# Copy dependency files
-COPY pyproject.toml .
-
-# Install Python dependencies using uv with cache mount
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system -r pyproject.toml
-
-# Copy the rest of the application's code
 COPY src/ .
 
-# Copy built frontend from builder stage
-# Note: COPY src/ . maps src/api/ → /app/api/, so static files must go to /app/api/static/dist
+CMD ["python", "-m", "worker_main"]
+
+
+FROM worker-runtime AS worker-runtime-full
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --system --group optional-skill-runtime
+
+
+FROM api-python AS api-runtime
+
+COPY src/ .
 COPY --from=frontend-builder /app/src/api/static/dist /app/api/static/dist
 
-# Command to run the application
-CMD ["python", "main.py"]
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8764"]

@@ -16,8 +16,6 @@ if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
 from core.platform.models import UnifiedContext
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ConversationHandler, filters
 
 from core.config import WAITING_FOR_VIDEO_URL
 from core.config import is_user_allowed
@@ -33,6 +31,16 @@ else:
 CONVERSATION_END = -1
 
 logger = logging.getLogger(__name__)
+
+
+def _inline_keyboard_markup(rows: list[list[tuple[str, str]]]) -> Any:
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    keyboard = [
+        [InlineKeyboardButton(text, callback_data=callback) for text, callback in row]
+        for row in rows
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 # --- Helper Logic ---
 
@@ -104,18 +112,17 @@ async def start_download_video(ctx: UnifiedContext) -> int:
     logger.info("Entering download video mode")
 
     # 提供下载格式选择
-    keyboard = [
+    reply_markup = _inline_keyboard_markup(
         [
-            InlineKeyboardButton(
-                "📹 视频（最佳质量）", callback_data="dl_format_video"
-            ),
-            InlineKeyboardButton("🎵 仅音频 (MP3)", callback_data="dl_format_audio"),
-        ],
-        [
-            InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main_cancel"),
-        ],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+            [
+                ("📹 视频（最佳质量）", "dl_format_video"),
+                ("🎵 仅音频 (MP3)", "dl_format_audio"),
+            ],
+            [
+                ("« 返回主菜单", "back_to_main_cancel"),
+            ],
+        ]
+    )
 
     try:
         await ctx.edit_message(
@@ -148,10 +155,9 @@ async def handle_download_format(ctx: UnifiedContext) -> int:
         ctx.user_data["download_format"] = "audio"
         format_text = "🎵 仅音频 (MP3)"
 
-    keyboard = [
-        [InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main_cancel")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = _inline_keyboard_markup(
+        [[("« 返回主菜单", "back_to_main_cancel")]]
+    )
 
     try:
         await ctx.edit_message(
@@ -246,18 +252,17 @@ async def process_video_download(
         # 暂存路径到 user_data以供后续操作
         ctx.user_data["large_file_path"] = file_path
 
-        keyboard = [
+        reply_markup = _inline_keyboard_markup(
             [
-                InlineKeyboardButton(
-                    "📝 生成内容摘要 (AI)", callback_data="large_file_summary"
-                ),
-                InlineKeyboardButton("🎵 仅发送音频", callback_data="large_file_audio"),
-            ],
-            [
-                InlineKeyboardButton("🗑️ 删除文件", callback_data="large_file_delete"),
-            ],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+                [
+                    ("📝 生成内容摘要 (AI)", "large_file_summary"),
+                    ("🎵 仅发送音频", "large_file_audio"),
+                ],
+                [
+                    ("🗑️ 删除文件", "large_file_delete"),
+                ],
+            ]
+        )
 
         msg_id = getattr(
             processing_message, "message_id", getattr(processing_message, "id", None)
@@ -597,6 +602,8 @@ def register_handlers(adapter_manager: Any):
 
     # 1. Telegram
     try:
+        from telegram.ext import ConversationHandler, filters
+
         tg_adapter = adapter_manager.get_adapter("telegram")
         logger.info(
             f"🔌 [DownloadVideo] Registering Telegram handlers to adapter: {tg_adapter}"

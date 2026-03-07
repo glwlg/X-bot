@@ -8,9 +8,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Optional, Any
-from telegram import Message
-from telegram.error import BadRequest
+from typing import Any, Optional, TYPE_CHECKING
 
 from core.config import (
     DOWNLOAD_DIR,
@@ -22,6 +20,11 @@ from core.config import (
 from utils import create_progress_bar
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from telegram import Message as TelegramMessage
+else:
+    TelegramMessage = Any
 
 
 def get_download_dir() -> str:
@@ -57,7 +60,12 @@ class DownloadResult:
     is_too_large: bool = False
 
 
-async def download_video(url: str, user_id: int, progress_message: Message, audio_only: bool = False) -> DownloadResult:
+async def download_video(
+    url: str,
+    user_id: int,
+    progress_message: TelegramMessage,
+    audio_only: bool = False,
+) -> DownloadResult:
     """
     从给定 URL 下载视频或音频，提供进度更新，检查文件大小
     
@@ -171,7 +179,7 @@ async def download_video(url: str, user_id: int, progress_message: Message, audi
     return await _handle_downloaded_file(expected_path, user_id, progress_message)
 
 
-async def _update_download_progress(proc, progress_message: Message) -> None:
+async def _update_download_progress(proc, progress_message: TelegramMessage) -> None:
     """更新下载进度"""
     last_update_time = 0
     current_progress_text = ""
@@ -191,17 +199,16 @@ async def _update_download_progress(proc, progress_message: Message) -> None:
                         await _safe_edit_message(progress_message, new_text)
                         current_progress_text = new_text
                         last_update_time = now
-                except BadRequest as e:
-                    if "Message is not modified" not in str(e):
-                        logger.warning(f"Failed to edit progress message: {e}")
                 except Exception as e:
+                    if "Message is not modified" in str(e):
+                        continue
                     logger.error(
                         f"An unexpected error occurred while editing message: {e}"
                     )
 
 
 async def _handle_downloaded_file(
-    file_path: str, user_id: int, progress_message: Message
+    file_path: str, user_id: int, progress_message: TelegramMessage
 ) -> DownloadResult:
     """处理下载完成的文件，检查大小并决定是否可发送"""
     try:

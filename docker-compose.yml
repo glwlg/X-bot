@@ -1,7 +1,11 @@
 name: x-bot
 services:
   x-bot:
-    build: .
+    image: x-bot-manager
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: manager-runtime
     container_name: x-bot
     env_file:
       - .env
@@ -25,7 +29,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock # MCP: 允许启动 MCP 服务容器
 
   x-bot-worker:
-    build: .
+    image: x-bot-worker
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: worker-runtime
     container_name: x-bot-worker
     env_file:
       - .env
@@ -40,7 +48,11 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
 
   x-bot-api:
-    build: .
+    image: x-bot-api
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: api-runtime
     container_name: x-bot-api
     env_file:
       - .env

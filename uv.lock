@@ -2390,119 +2390,303 @@ wheels = [
 name = "x-bot"
 version = "0.2.1"
 source = { editable = "." }
-dependencies = [
-    { name = "aiofiles" },
-    { name = "aiohttp" },
+
+[package.dev-dependencies]
+api = [
     { name = "aiosqlite" },
-    { name = "beautifulsoup4" },
+    { name = "fastapi" },
+    { name = "fastapi-users", extra = ["oauth", "sqlalchemy"] },
+    { name = "httpx" },
+    { name = "passlib", extra = ["bcrypt"] },
+    { name = "pydantic-settings" },
+    { name = "python-multipart" },
+    { name = "pyyaml" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "toml" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+bot-runtime = [
+    { name = "aiosqlite" },
+    { name = "ddgs" },
+    { name = "exa-py" },
+    { name = "feedparser" },
+    { name = "httpx" },
+    { name = "openai" },
+    { name = "pyotp" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "yt-dlp" },
+]
+dev = [
+    { name = "black" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+manager = [
+    { name = "aiofiles" },
+    { name = "aiosqlite" },
     { name = "ddgs" },
     { name = "dingtalk-stream" },
     { name = "discord-py" },
     { name = "exa-py" },
-    { name = "fastapi" },
-    { name = "fastapi-users", extra = ["oauth", "sqlalchemy"] },
     { name = "feedparser" },
-    { name = "googlenewsdecoder" },
     { name = "httpx" },
-    { name = "matplotlib" },
-    { name = "mcp", version = "1.12.4", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'emscripten'" },
-    { name = "mcp", version = "1.25.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'emscripten'" },
     { name = "mistune" },
-    { name = "numpy" },
     { name = "openai" },
-    { name = "openpyxl" },
-    { name = "pandas" },
-    { name = "passlib", extra = ["bcrypt"] },
-    { name = "pdfplumber" },
-    { name = "pydantic-settings" },
     { name = "pymupdf" },
     { name = "pyotp" },
-    { name = "pypdf" },
     { name = "python-dateutil" },
     { name = "python-docx" },
     { name = "python-dotenv" },
-    { name = "python-multipart" },
     { name = "python-telegram-bot", extra = ["job-queue"] },
     { name = "pyyaml" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "yt-dlp" },
+]
+manager-runtime = [
+    { name = "aiofiles" },
+    { name = "aiosqlite" },
+    { name = "ddgs" },
+    { name = "dingtalk-stream" },
+    { name = "discord-py" },
+    { name = "exa-py" },
+    { name = "feedparser" },
+    { name = "httpx" },
+    { name = "mistune" },
+    { name = "openai" },
+    { name = "pymupdf" },
+    { name = "pyotp" },
+    { name = "python-dateutil" },
+    { name = "python-docx" },
+    { name = "python-dotenv" },
+    { name = "python-telegram-bot", extra = ["job-queue"] },
+    { name = "pyyaml" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "yt-dlp" },
+]
+optional-skill-runtime = [
+    { name = "aiohttp" },
+    { name = "beautifulsoup4" },
+    { name = "googlenewsdecoder" },
+    { name = "matplotlib" },
+    { name = "mcp", version = "1.12.4", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'emscripten'" },
+    { name = "mcp", version = "1.25.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'emscripten'" },
+    { name = "numpy" },
+    { name = "openpyxl" },
+    { name = "pandas" },
+    { name = "pdfplumber" },
+    { name = "pypdf" },
     { name = "reportlab" },
     { name = "restrictedpython" },
     { name = "scikit-learn" },
     { name = "seaborn" },
-    { name = "sqlalchemy", extra = ["asyncio"] },
-    { name = "toml" },
-    { name = "uvicorn", extra = ["standard"] },
     { name = "yfinance" },
+]
+shared-runtime = [
+    { name = "aiosqlite" },
+    { name = "httpx" },
+    { name = "pyyaml" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+]
+skill-analysis-optional = [
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "openpyxl" },
+    { name = "pandas" },
+    { name = "scikit-learn" },
+    { name = "seaborn" },
+    { name = "yfinance" },
+]
+skill-document-optional = [
+    { name = "pdfplumber" },
+    { name = "pypdf" },
+    { name = "reportlab" },
+]
+skill-integration-optional = [
+    { name = "mcp", version = "1.12.4", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'emscripten'" },
+    { name = "mcp", version = "1.25.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'emscripten'" },
+]
+skill-sandbox-optional = [
+    { name = "restrictedpython" },
+]
+skill-web-optional = [
+    { name = "aiohttp" },
+    { name = "beautifulsoup4" },
+    { name = "googlenewsdecoder" },
+]
+worker = [
+    { name = "aiosqlite" },
+    { name = "ddgs" },
+    { name = "exa-py" },
+    { name = "feedparser" },
+    { name = "httpx" },
+    { name = "openai" },
+    { name = "pyotp" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
+    { name = "yt-dlp" },
+]
+worker-runtime = [
+    { name = "aiosqlite" },
+    { name = "ddgs" },
+    { name = "exa-py" },
+    { name = "feedparser" },
+    { name = "httpx" },
+    { name = "openai" },
+    { name = "pyotp" },
+    { name = "python-dotenv" },
+    { name = "pyyaml" },
+    { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "yt-dlp" },
 ]
 
-[package.optional-dependencies]
-dev = [
-    { name = "black" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "black" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-]
-
 [package.metadata]
-requires-dist = [
-    { name = "aiofiles", specifier = ">=23.0.0" },
-    { name = "aiohttp", specifier = ">=3.11.0" },
+
+[package.metadata.requires-dev]
+api = [
     { name = "aiosqlite", specifier = ">=0.20.0" },
-    { name = "beautifulsoup4", specifier = ">=4.12.0" },
-    { name = "black", marker = "extra == 'dev'", specifier = ">=24.0.0" },
+    { name = "fastapi", specifier = ">=0.109.0" },
+    { name = "fastapi-users", extras = ["oauth", "sqlalchemy"], specifier = ">=15.0.3" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "passlib", extras = ["bcrypt"], specifier = ">=1.7.4" },
+    { name = "pydantic-settings", specifier = ">=2.0.0,<3.0.0" },
+    { name = "python-multipart", specifier = ">=0.0.20,<0.1.0" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0,<2.1.0" },
+    { name = "toml", specifier = ">=0.10.2" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0,<0.31.0" },
+]
+bot-runtime = [
+    { name = "aiosqlite", specifier = ">=0.20.0" },
+    { name = "ddgs", specifier = ">=9.10.0" },
+    { name = "exa-py", specifier = ">=2.4.0" },
+    { name = "feedparser", specifier = ">=6.0.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "openai", specifier = ">=2.0.0" },
+    { name = "pyotp", specifier = ">=2.9.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0,<2.1.0" },
+    { name = "yt-dlp", specifier = ">=2024.0.0" },
+]
+dev = [
+    { name = "black", specifier = ">=24.0.0" },
+    { name = "pytest", specifier = ">=8.0.0" },
+    { name = "pytest-asyncio", specifier = ">=0.23.0" },
+]
+manager = [
+    { name = "aiofiles", specifier = ">=23.0.0" },
+    { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "ddgs", specifier = ">=9.10.0" },
     { name = "dingtalk-stream", specifier = ">=0.24.3" },
     { name = "discord-py", specifier = ">=2.6.4" },
     { name = "exa-py", specifier = ">=2.4.0" },
-    { name = "fastapi", specifier = ">=0.109.0" },
-    { name = "fastapi-users", extras = ["oauth", "sqlalchemy"], specifier = ">=15.0.3" },
     { name = "feedparser", specifier = ">=6.0.0" },
-    { name = "googlenewsdecoder", specifier = ">=0.1.5" },
     { name = "httpx", specifier = ">=0.27.0" },
-    { name = "matplotlib", specifier = ">=3.8.0" },
-    { name = "mcp", specifier = ">=1.0.0" },
     { name = "mistune", specifier = ">=3.0.0" },
-    { name = "numpy", specifier = ">=1.24.0" },
     { name = "openai", specifier = ">=2.0.0" },
-    { name = "openpyxl", specifier = ">=3.1.0" },
-    { name = "pandas", specifier = ">=2.0.0" },
-    { name = "passlib", extras = ["bcrypt"], specifier = ">=1.7.4" },
-    { name = "pdfplumber", specifier = ">=0.10.0" },
-    { name = "pydantic-settings", specifier = ">=2.0.0,<3.0.0" },
     { name = "pymupdf", specifier = ">=1.24.0" },
     { name = "pyotp", specifier = ">=2.9.0" },
-    { name = "pypdf", specifier = ">=4.0.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "python-dateutil", specifier = ">=2.8.0" },
     { name = "python-docx", specifier = ">=1.1.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
-    { name = "python-multipart", specifier = ">=0.0.20,<0.1.0" },
     { name = "python-telegram-bot", extras = ["job-queue"], specifier = ">=22.6" },
     { name = "pyyaml", specifier = ">=6.0.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0,<2.1.0" },
+    { name = "yt-dlp", specifier = ">=2024.0.0" },
+]
+manager-runtime = [
+    { name = "aiofiles", specifier = ">=23.0.0" },
+    { name = "aiosqlite", specifier = ">=0.20.0" },
+    { name = "ddgs", specifier = ">=9.10.0" },
+    { name = "dingtalk-stream", specifier = ">=0.24.3" },
+    { name = "discord-py", specifier = ">=2.6.4" },
+    { name = "exa-py", specifier = ">=2.4.0" },
+    { name = "feedparser", specifier = ">=6.0.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "mistune", specifier = ">=3.0.0" },
+    { name = "openai", specifier = ">=2.0.0" },
+    { name = "pymupdf", specifier = ">=1.24.0" },
+    { name = "pyotp", specifier = ">=2.9.0" },
+    { name = "python-dateutil", specifier = ">=2.8.0" },
+    { name = "python-docx", specifier = ">=1.1.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "python-telegram-bot", extras = ["job-queue"], specifier = ">=22.6" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0,<2.1.0" },
+    { name = "yt-dlp", specifier = ">=2024.0.0" },
+]
+optional-skill-runtime = [
+    { name = "aiohttp", specifier = ">=3.11.0" },
+    { name = "beautifulsoup4", specifier = ">=4.12.0" },
+    { name = "googlenewsdecoder", specifier = ">=0.1.5" },
+    { name = "matplotlib", specifier = ">=3.8.0" },
+    { name = "mcp", specifier = ">=1.0.0" },
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "openpyxl", specifier = ">=3.1.0" },
+    { name = "pandas", specifier = ">=2.0.0" },
+    { name = "pdfplumber", specifier = ">=0.10.0" },
+    { name = "pypdf", specifier = ">=4.0.0" },
     { name = "reportlab", specifier = ">=4.0.0" },
     { name = "restrictedpython", specifier = ">=7.0" },
     { name = "scikit-learn", specifier = ">=1.4.0" },
     { name = "seaborn", specifier = ">=0.13.0" },
-    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0,<2.1.0" },
-    { name = "toml", specifier = ">=0.10.2" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0,<0.31.0" },
     { name = "yfinance", specifier = ">=0.2.36" },
+]
+shared-runtime = [
+    { name = "aiosqlite", specifier = ">=0.20.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0,<2.1.0" },
+]
+skill-analysis-optional = [
+    { name = "matplotlib", specifier = ">=3.8.0" },
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "openpyxl", specifier = ">=3.1.0" },
+    { name = "pandas", specifier = ">=2.0.0" },
+    { name = "scikit-learn", specifier = ">=1.4.0" },
+    { name = "seaborn", specifier = ">=0.13.0" },
+    { name = "yfinance", specifier = ">=0.2.36" },
+]
+skill-document-optional = [
+    { name = "pdfplumber", specifier = ">=0.10.0" },
+    { name = "pypdf", specifier = ">=4.0.0" },
+    { name = "reportlab", specifier = ">=4.0.0" },
+]
+skill-integration-optional = [{ name = "mcp", specifier = ">=1.0.0" }]
+skill-sandbox-optional = [{ name = "restrictedpython", specifier = ">=7.0" }]
+skill-web-optional = [
+    { name = "aiohttp", specifier = ">=3.11.0" },
+    { name = "beautifulsoup4", specifier = ">=4.12.0" },
+    { name = "googlenewsdecoder", specifier = ">=0.1.5" },
+]
+worker = [
+    { name = "aiosqlite", specifier = ">=0.20.0" },
+    { name = "ddgs", specifier = ">=9.10.0" },
+    { name = "exa-py", specifier = ">=2.4.0" },
+    { name = "feedparser", specifier = ">=6.0.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "openai", specifier = ">=2.0.0" },
+    { name = "pyotp", specifier = ">=2.9.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0,<2.1.0" },
     { name = "yt-dlp", specifier = ">=2024.0.0" },
 ]
-provides-extras = ["dev"]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "black", specifier = ">=25.12.0" },
-    { name = "pytest", specifier = ">=9.0.2" },
-    { name = "pytest-asyncio", specifier = ">=1.3.0" },
+worker-runtime = [
+    { name = "aiosqlite", specifier = ">=0.20.0" },
+    { name = "ddgs", specifier = ">=9.10.0" },
+    { name = "exa-py", specifier = ">=2.4.0" },
+    { name = "feedparser", specifier = ">=6.0.0" },
+    { name = "httpx", specifier = ">=0.27.0" },
+    { name = "openai", specifier = ">=2.0.0" },
+    { name = "pyotp", specifier = ">=2.9.0" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
+    { name = "pyyaml", specifier = ">=6.0.0" },
+    { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0,<2.1.0" },
+    { name = "yt-dlp", specifier = ">=2024.0.0" },
 ]
 
 [[package]]

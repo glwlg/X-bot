@@ -30,7 +30,6 @@ prepare_default_env(REPO_ROOT)
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from api.auth.models import User as _AuthUser  # noqa: F401
 from api.core.database import get_session_maker
 from api.models.accounting import Account, Book, Category, Record
 from api.models.binding import PlatformUserBinding
