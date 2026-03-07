@@ -10,7 +10,6 @@ from core.config import (
     X_DEPLOYMENT_STAGING_PATH,
     AUTO_RECOVERY_MAX_ATTEMPTS,
 )
-from core.extension_executor import ExtensionExecutor
 from core.extension_router import ExtensionCandidate, ExtensionRouter
 from core.heartbeat_store import heartbeat_store
 from core.orchestrator_context import OrchestratorRuntimeContext
@@ -99,7 +98,6 @@ class AgentOrchestrator:
         self.runtime = PrimitiveRuntime()
         self.tool_broker = ToolBroker(self.runtime)
         self.extension_router = ExtensionRouter()
-        self.extension_executor = ExtensionExecutor()
         self.auto_evolve_enabled = (
             os.getenv("AUTO_EVOLVE_ON_BLOCK", "false").lower() == "true"
         )
@@ -187,7 +185,7 @@ class AgentOrchestrator:
             platform_name=platform_name,
             runtime_tool_allowed=self._runtime_tool_allowed,
         )
-        tools = await tooling_assembler.assemble(extension_candidates)
+        tools = await tooling_assembler.assemble()
 
         def on_worker_dispatched(worker_id: str, worker_name: str) -> None:
             dispatched_worker_id = str(worker_id or "").strip()
@@ -214,7 +212,6 @@ class AgentOrchestrator:
             append_session_event=append_session_event,
             on_worker_dispatched=on_worker_dispatched,
         )
-        tool_dispatcher.set_extension_candidates(extension_candidates)
         tool_dispatcher.set_available_tool_names(tooling_assembler.tool_names(tools))
 
         async def tool_executor(name: str, args: Dict[str, Any]) -> Dict[str, Any]:
@@ -290,6 +287,9 @@ class AgentOrchestrator:
         worker_progress_hook = user_data.get("worker_progress_callback")
         if not callable(worker_progress_hook):
             worker_progress_hook = None
+        manager_progress_hook = user_data.get("manager_progress_callback")
+        if not callable(manager_progress_hook):
+            manager_progress_hook = None
         progress_steps_raw = user_data.get("worker_progress_steps")
         progress_steps: list[dict[str, Any]] = (
             [item for item in progress_steps_raw if isinstance(item, dict)]
@@ -383,8 +383,22 @@ class AgentOrchestrator:
             except Exception as exc:
                 logger.debug("worker progress hook error: %s", exc)
 
+        async def emit_manager_progress(event: str, payload: Dict[str, Any]) -> None:
+            if not manager_runtime or manager_progress_hook is None:
+                return
+            try:
+                snapshot = dict(payload or {})
+                snapshot["event"] = str(event or "").strip().lower()
+                snapshot.setdefault("task_id", str(task_id))
+                maybe_coro = manager_progress_hook(snapshot)
+                if inspect.isawaitable(maybe_coro):
+                    await cast(Any, maybe_coro)
+            except Exception as exc:
+                logger.debug("manager progress hook error: %s", exc)
+
         async def on_agent_event(event: str, payload: Dict[str, Any]):
             directive = await event_handler.handle(event, payload)
+            await emit_manager_progress(event, payload)
             await emit_worker_progress(event, payload)
             return directive
 
@@ -449,8 +463,7 @@ class AgentOrchestrator:
                 extension_candidates = self._rank_extension_candidates(
                     extension_candidates
                 )
-                tools = await tooling_assembler.assemble(extension_candidates)
-                tool_dispatcher.set_extension_candidates(extension_candidates)
+                tools = await tooling_assembler.assemble()
                 tool_dispatcher.set_available_tool_names(
                     tooling_assembler.tool_names(tools)
                 )
@@ -556,6 +569,7 @@ class AgentOrchestrator:
         mode = "worker" if agent_kind == "worker" else "manager"
         return prompt_composer.compose_base(
             runtime_user_id=runtime_user_id,
+            platform="worker_kernel" if agent_kind == "worker" else "",
             tools=tools or [],
             runtime_policy_ctx=runtime_policy_ctx or {},
             mode=mode,
@@ -696,36 +710,9 @@ class AgentOrchestrator:
         user_request: str,
         todo_session: Any | None = None,
     ) -> tuple[bool, str]:
-        if not user_request.strip():
-            return False, ""
-
-        result = await self.extension_executor.execute(
-            skill_name="skill_manager",
-            args={"action": "create", "requirement": user_request},
-            ctx=ctx,
-            runtime=self.runtime,
-        )
-        if result.ok:
-            if todo_session:
-                todo_session.heartbeat("auto_evolution:ok")
-                todo_session.mark_step(
-                    "act",
-                    "in_progress",
-                    "Automatic skill evolution succeeded; rerunning task.",
-                )
-            return True, self._sanitize_skill_text(
-                result.text or "🛠️ 自动技能进化完成。"
-            )
-
-        message = result.message or result.error_code or "unknown_error"
-        if todo_session:
-            todo_session.heartbeat(f"auto_evolution:failed:{message}")
-            todo_session.mark_step(
-                "act",
-                "blocked",
-                f"Automatic skill evolution failed: {message}",
-            )
-        return False, f"⚠️ 自动技能进化失败：{message}"
+        # Temporarily disabled as extension executor is removed
+        # Can be re-implemented natively with prompts/SOPs in the future
+        return False, "Evolution temporarily disabled."
 
     def _has_evolution_confirmation(self, text: str) -> bool:
         lowered = (text or "").lower()

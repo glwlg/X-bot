@@ -450,7 +450,17 @@ class DispatchQueue:
                     if str(row.get("task_id") or "") != safe_task_id:
                         continue
                     meta = dict(row.get("metadata") or {})
-                    meta["progress"] = progress
+                    progress_obj = dict(progress or {})
+                    seq = max(0, int(meta.get("_progress_seq") or 0)) + 1
+                    progress_obj["seq"] = seq
+                    meta["_progress_seq"] = seq
+                    meta["progress"] = progress_obj
+                    event_rows = meta.get("progress_events")
+                    event_list = list(event_rows) if isinstance(event_rows, list) else []
+                    event_list.append(progress_obj)
+                    if len(event_list) > 100:
+                        event_list = event_list[-100:]
+                    meta["progress_events"] = event_list
                     row["metadata"] = meta
                     row["updated_at"] = now_iso()
                     updated = True
@@ -458,6 +468,49 @@ class DispatchQueue:
                 if updated:
                     self.tasks._write_all_unlocked(rows)
                 return updated
+
+    async def ack_progress_events(
+        self,
+        task_id: str,
+        *,
+        upto_seq: int,
+        last_event: str = "",
+    ) -> bool:
+        safe_task_id = str(task_id or "").strip()
+        safe_upto_seq = max(0, int(upto_seq or 0))
+        safe_last_event = str(last_event or "").strip().lower()
+        if not safe_task_id or safe_upto_seq <= 0:
+            return False
+
+        def _mutate(rows: List[Dict[str, Any]]) -> Tuple[bool, bool]:
+            for idx, row in enumerate(rows):
+                task = TaskEnvelope.from_dict(row)
+                if task.task_id != safe_task_id:
+                    continue
+
+                metadata = dict(task.metadata or {})
+                raw_events = metadata.get("progress_events")
+                event_list = list(raw_events) if isinstance(raw_events, list) else []
+                kept_events = []
+                for item in event_list:
+                    if not isinstance(item, dict):
+                        continue
+                    seq = max(0, int(item.get("seq") or 0))
+                    if seq > safe_upto_seq:
+                        kept_events.append(item)
+                metadata["progress_events"] = kept_events
+                metadata["_progress_relay"] = {
+                    "last_seq": safe_upto_seq,
+                    "last_event": safe_last_event,
+                    "updated_at": now_iso(),
+                }
+                task.metadata = metadata
+                task.updated_at = now_iso()
+                rows[idx] = task.to_dict()
+                return True, True
+            return False, False
+
+        return bool(await self._mutate_tasks_atomically(mutate=_mutate))
 
     async def list_tasks(
         self,

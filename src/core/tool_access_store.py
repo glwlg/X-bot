@@ -10,6 +10,8 @@ MEMORY_TOOL_NAMES: set[str] = set()
 
 TOKEN_ALIASES = {
     "fs": "group:fs",
+    "primitive": "group:primitives",
+    "primitives": "group:primitives",
     "runtime": "group:execution",
     "exec": "group:execution",
     "execution": "group:execution",
@@ -44,6 +46,8 @@ SKILL_FUNCTION_GROUPS = {
     "stock_watch": {"group:finance"},
     "account_manager": {"group:account", "group:security"},
     "skill_manager": {"group:skill-admin"},
+    "worker_management": {"group:management"},
+    "software_delivery": {"group:management"},
     "download_video": {"group:media"},
     "news_article_writer": {"group:content", "group:research"},
     "xlsx": {"group:data"},
@@ -56,6 +60,9 @@ class ToolAccessStore:
     CORE_MANAGER_DEFAULT_ALLOW = [
         "group:management",
         "group:automation",
+        "group:coding",
+        "group:primitives",
+        "group:skill-admin",
     ]
     WORKER_DEFAULT_DENY = [
         "group:coding",
@@ -149,6 +156,10 @@ class ToolAccessStore:
                         "group:management",
                     },
                     {
+                        "group:management",
+                        "group:automation",
+                    },
+                    {
                         "group:primitives",
                         "group:management",
                         "group:automation",
@@ -231,6 +242,7 @@ class ToolAccessStore:
         return {
             "group:all": "所有工具/技能/MCP",
             "group:fs": "文件系统工具：read/write/edit",
+            "group:primitives": "基础原语：read/write/edit/bash/load_skill",
             "group:execution": "执行类能力：bash/exec/process 与 Worker 执行后端",
             "group:coding": "编码类能力：coding_backend(codex/gemini-cli)",
             "group:feeds": "信息订阅类：rss/news feed",
@@ -261,7 +273,7 @@ class ToolAccessStore:
                 groups.add("group:execution")
             return sorted(groups)
 
-        if name in {"read", "write", "edit"}:
+        if name in {"read", "write", "edit", "load_skill"}:
             groups.add("group:fs")
             groups.add("group:primitives")
         if name in {"coding_backend", "coding-backend"}:

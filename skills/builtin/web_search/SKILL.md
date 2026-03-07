@@ -1,7 +1,7 @@
 ---
 api_version: v3
 name: web_search
-description: "**聚合网络搜索**。"
+description: 聚合网络搜索。支持单查询、多查询、来源过滤和结果报告输出。
 triggers:
 - search
 - 搜索
@@ -18,115 +18,27 @@ input_schema:
       description: 单条搜索关键词（与 queries 二选一）
     queries:
       type: array
-      description: 并行搜索关键词列表（由于高级引擎极强，通常只需 1-2 个词语，最多不超过 2 个）
       items:
         type: string
-    intent_profile:
-      type: string
-      description: 意图配置档（weather/news/tech/general），可覆盖自动识别
-    num_results:
-      type: integer
-      description: 每条 query 返回的结果数（1-10，默认 5）
-      minimum: 1
-      maximum: 10
-      default: 5
-    categories:
-      type: string
-      description: SearXNG 分类，例如 general、news、it、science
-      default: general
-    time_range:
-      type: string
-      description: 时间范围 day/week/month/year
-    language:
-      type: string
-      description: 搜索语言，例如 zh-CN、en-US
-      default: zh-CN
-    engines:
-      type: array
-      description: 指定搜索引擎列表（如 ["google", "bing"]）
-      items:
-        type: string
-    site_allowlist:
-      type: array
-      description: 结果来源域名白名单（用于提权或严格过滤）
-      items:
-        type: string
-    site_blocklist:
-      type: array
-      description: 结果来源域名黑名单（过滤噪声站点）
-      items:
-        type: string
-    strict_sources:
-      type: boolean
-      description: 启用严格来源过滤（仅保留白名单域名，若命中为空则自动回退）
 permissions:
   filesystem: workspace
-  shell: false
+  shell: true
   network: limited
 entrypoint: scripts/execute.py
 ---
 
-# Web Search (网络搜索)
+# Web Search
 
-你是一个网络搜索专家。
+通过 `bash` 调用聚合搜索脚本。默认会输出摘要，并把完整报告保存为 `search_report.md`；如需改目录，加 `--output-dir`。
 
-## 核心能力
+## Commands
 
-1.  **聚合搜索**: 能够同时检索多个搜索引擎的结果。
-2.  **多角度搜索**: 支持并行搜索多个关键词 (`queries`)，并生成聚合报告。
+- 单查询：`python scripts/execute.py "Linux 常用命令"`
+- 多查询：`python scripts/execute.py "Python 优缺点" "Golang 优缺点" --num-results 5`
+- 新闻或时效查询：`python scripts/execute.py "SpaceX" --categories news --time-range month`
+- 严格来源过滤：`python scripts/execute.py "OpenAI API" --site-allowlist openai.com,platform.openai.com --strict-sources true`
 
-## 执行指令 (SOP)
+## Rules
 
-### 参数说明
-
-| 参数名 | 类型 | 必填 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `query` | string | 条件 | 单一搜索关键词 (与 `queries` 二选一) |
-| `queries` | list | 条件 | **推荐**。并行搜索关键词列表 (例如 `["Python 教程"]`，由于高级引擎极强，一般 1-2 个最精准词汇即可，不要超过 2 个) |
-| `intent_profile` | string | 否 | 意图配置档: `weather` / `news` / `tech` / `general` |
-| `num_results` | int | 否 | 返回结果数量 (默认 5) |
-| `categories` | string | 否 | 分类: `general` (默认), `news`, `it`, `science`, `images` |
-| `time_range` | string | 否 | 时间范围: `day`, `week`, `month`, `year` |
-| `language` | string | 否 | 语言: `zh-CN` (默认), `en-US` |
-| `engines` | list[string] | 否 | 指定引擎（例如 `google,bing`） |
-| `site_allowlist` | list[string] | 否 | 域名白名单（提升或限制来源） |
-| `site_blocklist` | list[string] | 否 | 域名黑名单（过滤噪声站点） |
-| `strict_sources` | bool | 否 | 严格来源模式，优先只保留白名单来源 |
-
-### 降噪策略（内置）
-
-- 对天气类查询自动做来源提权（如中国天气网、IQAir、国家级气象域名）。
-- 支持 `site_allowlist/site_blocklist` 做域名级过滤，减少百科/内容农场噪声。
-- 对结果做去重与重排，再返回摘要与 HTML 聚合报告。
-
-### 多意图配置档
-
-- `weather`: 天气/体感/AQI/紫外线等查询，默认偏实时与权威气象源。
-- `news`: 新闻/头条/快讯查询，默认使用新闻分类与新闻源配置。
-- `tech`: 技术问答/报错排查/API 文档查询，默认偏文档与开发者站点。
-- `general`: 通用搜索。
-
-优先级：`显式参数` > `intent_profile` > `自动意图识别` > `general`。
-
-### 意图映射示例
-
-**1. 简单搜索**
-- 用户输入: "搜索 Linux 常用命令"
-- 提取参数:
-  ```json
-  { "query": "Linux 常用命令" }
-  ```
-
-**2. 多角度搜索 (推荐)**
-- 用户输入: "帮我对比一下 Python 和 Golang 的优缺点"
-- 提取参数:
-  ```json
-  { "queries": ["Python 优缺点", "Golang 优缺点", "Python vs Golang 性能对比"] }
-  ```
-
-**3. 搜索特定类型 (新闻)**
-- 用户输入: "搜索最近关于 SpaceX 的新闻"
-- 提取参数:
-  ```json
-  { "query": "SpaceX", "categories": "news", "time_range": "month" }
-  ```
+- 付费高级搜索后端存在时，查询词通常控制在 1-2 个。
+- 需要精确来源时，用 `--site-allowlist` / `--site-blocklist`，不要在自然语言里模糊描述。

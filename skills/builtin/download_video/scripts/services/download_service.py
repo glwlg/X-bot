@@ -7,6 +7,7 @@ import time
 import asyncio
 import logging
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional, Any
 from telegram import Message
 from telegram.error import BadRequest
@@ -21,6 +22,17 @@ from core.config import (
 from utils import create_progress_bar
 
 logger = logging.getLogger(__name__)
+
+
+def get_download_dir() -> str:
+    raw_dir = Path(DOWNLOAD_DIR)
+    if raw_dir.is_absolute():
+        target = raw_dir
+    else:
+        repo_root = Path(__file__).resolve().parents[5]
+        target = (repo_root / raw_dir).resolve()
+    target.mkdir(parents=True, exist_ok=True)
+    return str(target)
 
 async def _safe_edit_message(message: Any, text: str):
     """Platform-agnostic message editing"""
@@ -60,6 +72,7 @@ async def download_video(url: str, user_id: int, progress_message: Message, audi
     """
     mode_str = "audio" if audio_only else "video"
     logger.info(f"[{user_id}] Attempting to download {mode_str} from URL: {url}")
+    download_dir = get_download_dir()
 
     # 使用 URL 哈希作为文件名，避免重复下载
     import hashlib
@@ -69,15 +82,15 @@ async def download_video(url: str, user_id: int, progress_message: Message, audi
         filename_base = f"audio_{url_hash}"
         # mp3 是我们指定的格式
         expected_filename = f"{filename_base}.mp3"
-        output_template = os.path.join(DOWNLOAD_DIR, f"{filename_base}.%(ext)s")
+        output_template = os.path.join(download_dir, f"{filename_base}.%(ext)s")
     else:
         filename_base = f"video_{url_hash}"
         # mp4 是我们 merge 的格式
         expected_filename = f"{filename_base}.mp4"
-        output_template = os.path.join(DOWNLOAD_DIR, f"{filename_base}.%(ext)s")
-    
+        output_template = os.path.join(download_dir, f"{filename_base}.%(ext)s")
+
     # 检查文件是否已存在
-    expected_path = os.path.join(DOWNLOAD_DIR, expected_filename)
+    expected_path = os.path.join(download_dir, expected_filename)
     if os.path.exists(expected_path):
         logger.info(f"[{user_id}] File already exists: {expected_path}")
         return await _handle_downloaded_file(expected_path, user_id, progress_message)

@@ -8,10 +8,15 @@ from platforms.telegram.adapter import TelegramAdapter
 class _FakeBot:
     def __init__(self):
         self.calls = []
+        self.draft_calls = []
 
     async def send_message(self, **kwargs):
         self.calls.append(dict(kwargs))
         return SimpleNamespace(id="tg-1")
+
+    async def send_message_draft(self, **kwargs):
+        self.draft_calls.append(dict(kwargs))
+        return True
 
 
 @pytest.mark.asyncio
@@ -58,3 +63,47 @@ async def test_telegram_adapter_send_message_retries_timeout(monkeypatch):
 
     assert result.id == "tg-ok"
     assert flaky_bot.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_telegram_adapter_send_message_draft_renders_markdown_link():
+    fake_bot = _FakeBot()
+    app = SimpleNamespace(bot=fake_bot)
+    adapter = TelegramAdapter(app)
+
+    result = await adapter.send_message_draft(
+        chat_id="100",
+        draft_id=42,
+        text="- [查看详情](https://example.com/rss/item)",
+    )
+
+    assert result is True
+    assert fake_bot.draft_calls
+    payload = fake_bot.draft_calls[-1]
+    assert payload["chat_id"] == 100
+    assert payload["draft_id"] == 42
+    assert payload["parse_mode"] == "HTML"
+    assert '<a href="https://example.com/rss/item">查看详情</a>' in payload["text"]
+
+
+@pytest.mark.asyncio
+async def test_telegram_adapter_send_message_draft_falls_back_when_api_missing():
+    class _LegacyBot:
+        def __init__(self):
+            self.calls = []
+
+        async def send_message(self, **kwargs):
+            self.calls.append(dict(kwargs))
+            return SimpleNamespace(id="tg-fallback")
+
+    app = SimpleNamespace(bot=_LegacyBot())
+    adapter = TelegramAdapter(app)
+    result = await adapter.send_message_draft(
+        chat_id=100,
+        draft_id=7,
+        text="处理中",
+    )
+
+    assert result.id == "tg-fallback"
+    assert app.bot.calls
+    assert app.bot.calls[-1]["chat_id"] == 100

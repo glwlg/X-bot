@@ -410,3 +410,89 @@ async def test_immediate_session_does_not_write_task_entries_to_heartbeat_md(
     assert "# Heartbeat checklist" in heartbeat_text
     assert "tasks:" not in heartbeat_text
     assert "## Events" not in heartbeat_text
+
+
+@pytest.mark.asyncio
+async def test_manager_progress_callback_receives_tool_events(monkeypatch, tmp_path):
+    orchestrator = AgentOrchestrator()
+    user_id = "u_manager_progress"
+
+    runtime_root = (tmp_path / "runtime_tasks").resolve()
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(heartbeat_store, "root", runtime_root)
+    heartbeat_store._locks.clear()
+
+    async def fake_stream(
+        message_history,
+        tools=None,
+        tool_executor=None,
+        system_instruction=None,
+        event_callback=None,
+    ):
+        del message_history, tools, tool_executor, system_instruction
+        if event_callback:
+            await event_callback("turn_start", {"turn": 1})
+            await event_callback(
+                "tool_call_started",
+                {
+                    "turn": 1,
+                    "name": "bash",
+                    "args": {"command": "docker stop uptime-kuma"},
+                },
+            )
+            await event_callback(
+                "tool_call_finished",
+                {
+                    "turn": 1,
+                    "name": "bash",
+                    "ok": True,
+                    "summary": "Command executed with code 0",
+                },
+            )
+            await event_callback(
+                "final_response",
+                {
+                    "turn": 1,
+                    "text_preview": "已停止 uptime-kuma。",
+                },
+            )
+        yield "已停止 uptime-kuma。"
+
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
+    monkeypatch.setattr(
+        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
+    )
+
+    ctx = DummyContext(user_id=user_id)
+    manager_events: list[dict[str, str]] = []
+
+    async def _progress_callback(snapshot):
+        manager_events.append(dict(snapshot or {}))
+
+    ctx.user_data["manager_progress_callback"] = _progress_callback
+    message_history = [{"role": "user", "parts": [{"text": "停止 uptime-kuma"}]}]
+
+    chunks = [
+        chunk async for chunk in orchestrator.handle_message(ctx, message_history)
+    ]
+
+    assert chunks == ["已停止 uptime-kuma。"]
+    assert any(
+        event.get("event") == "tool_call_started"
+        and event.get("name") == "bash"
+        and dict(event.get("args") or {}).get("command") == "docker stop uptime-kuma"
+        and str(event.get("task_id") or "").strip()
+        for event in manager_events
+    )
+    assert any(
+        event.get("event") == "tool_call_finished"
+        and event.get("summary") == "Command executed with code 0"
+        for event in manager_events
+    )
+    assert any(
+        event.get("event") == "final_response"
+        and event.get("text_preview") == "已停止 uptime-kuma。"
+        for event in manager_events
+    )

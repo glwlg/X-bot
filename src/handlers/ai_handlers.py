@@ -2,8 +2,10 @@ import time
 import asyncio
 import logging
 import base64
+import contextlib
 import os
 import re
+import zlib
 from datetime import datetime
 from typing import Any
 from core.platform.models import UnifiedContext, MessageType
@@ -127,6 +129,165 @@ def _compact_text(text: str, limit: int = 220) -> str:
     if len(raw) <= limit:
         return raw
     return raw[:limit].rstrip() + "..."
+
+
+def _humanize_manager_tool_name(tool_name: str) -> str:
+    raw = str(tool_name or "").strip().lower()
+    if not raw:
+        return "工具"
+    if raw.startswith("ext_"):
+        raw = raw[4:]
+    aliases = {
+        "bash": "Shell",
+        "read": "读取文件",
+        "write": "写入文件",
+        "edit": "编辑文件",
+        "load_skill": "加载技能",
+        "dispatch_worker": "派发助手",
+        "worker_status": "查询状态",
+        "list_workers": "列出助手",
+        "software_delivery": "交付流程",
+        "web_search": "搜索",
+        "web_extractor": "网页提取",
+    }
+    return aliases.get(raw, raw.replace("_", " "))
+
+
+def _summarize_manager_tool_args(
+    tool_name: str, tool_args: dict[str, Any] | None
+) -> tuple[str, str]:
+    args = dict(tool_args or {})
+    raw = str(tool_name or "").strip().lower()
+
+    if raw == "bash":
+        command = _compact_text(str(args.get("command") or ""), limit=180)
+        return "命令", command
+
+    if raw in {"read", "write", "edit"}:
+        for key in ("path", "file_path", "target_file", "target_path"):
+            path_text = _compact_text(str(args.get(key) or ""), limit=180)
+            if path_text:
+                return "路径", path_text
+
+    if raw == "load_skill":
+        for key in ("skill_name", "name", "skill"):
+            skill_name = _compact_text(str(args.get(key) or ""), limit=120)
+            if skill_name:
+                return "技能", skill_name
+
+    if raw == "dispatch_worker":
+        worker_name = _compact_text(str(args.get("worker_id") or ""), limit=80)
+        instruction = _compact_text(str(args.get("instruction") or ""), limit=160)
+        if worker_name and instruction:
+            return "任务", f"{worker_name}: {instruction}"
+        if instruction:
+            return "任务", instruction
+        if worker_name:
+            return "助手", worker_name
+
+    if raw == "worker_status":
+        task_id = _compact_text(str(args.get("task_id") or ""), limit=120)
+        worker_name = _compact_text(str(args.get("worker_id") or ""), limit=80)
+        if task_id:
+            return "任务", task_id
+        if worker_name:
+            return "助手", worker_name
+
+    if raw == "software_delivery":
+        action = _compact_text(str(args.get("action") or ""), limit=80)
+        task_id = _compact_text(str(args.get("task_id") or ""), limit=120)
+        if action and task_id:
+            return "操作", f"{action}: {task_id}"
+        if action:
+            return "操作", action
+
+    preferred_keys = (
+        "query",
+        "url",
+        "instruction",
+        "task_id",
+        "worker_id",
+        "name",
+    )
+    for key in preferred_keys:
+        value = _compact_text(str(args.get(key) or ""), limit=180)
+        if value:
+            return "参数", f"{key}={value}"
+
+    for key, value in args.items():
+        rendered = _compact_text(str(value or ""), limit=180)
+        if rendered:
+            return "参数", f"{key}={rendered}"
+
+    return "", ""
+
+
+def _build_manager_progress_text(snapshot: dict[str, Any]) -> str:
+    payload = dict(snapshot or {})
+    event = str(payload.get("event") or "").strip().lower()
+    turn = max(0, int(payload.get("turn") or 0))
+    task_id = str(payload.get("task_id") or "").strip()
+    recent_steps = [
+        dict(item)
+        for item in list(payload.get("recent_steps") or [])
+        if isinstance(item, dict)
+    ]
+    latest_step = recent_steps[-1] if recent_steps else {}
+    tool_name = _humanize_manager_tool_name(
+        str(latest_step.get("name") or payload.get("name") or "").strip()
+    )
+    detail_label = str(latest_step.get("detail_label") or "").strip()
+    detail_value = _compact_text(str(latest_step.get("detail") or ""), limit=200)
+    summary = _compact_text(
+        str(latest_step.get("summary") or payload.get("summary") or ""), limit=180
+    )
+    failures = [
+        _compact_text(str(item or ""), limit=80)
+        for item in list(payload.get("failures") or [])
+        if str(item or "").strip()
+    ]
+    final_preview = _compact_text(str(payload.get("final_preview") or ""), limit=160)
+
+    lines = ["⏳ Manager 正在处理请求"]
+    if task_id:
+        lines.append(f"任务ID：`{task_id}`")
+    if turn > 0:
+        lines.append(f"回合：{turn}")
+
+    if event == "tool_call_started":
+        lines.append(f"动作：开始执行 `{tool_name}`")
+    elif event == "tool_call_finished":
+        status = str(latest_step.get("status") or "").strip().lower()
+        if status == "failed" or payload.get("ok") is False:
+            lines.append(f"动作：`{tool_name}` 执行失败")
+        else:
+            lines.append(f"动作：`{tool_name}` 执行完成")
+    elif event == "retry_after_failure":
+        lines.append("动作：工具失败后自动重试")
+    elif event == "loop_guard":
+        lines.append("动作：检测到重复调用，已触发循环保护")
+    elif event == "max_turn_limit":
+        lines.append("动作：工具回合达到上限，准备收敛结果")
+    elif event == "semantic_loop_guard":
+        lines.append("动作：检测到语义重复调用，已停止继续搜索")
+    elif event == "tool_budget_guard":
+        lines.append("动作：单工具调用达到预算上限")
+    elif event == "final_response":
+        lines.append("动作：正在整理最终回复")
+    else:
+        lines.append("动作：处理中")
+
+    if detail_label and detail_value:
+        lines.append(f"{detail_label}：`{detail_value}`")
+
+    if summary:
+        lines.append(f"结果：{summary}")
+    elif failures:
+        lines.append("最近失败：" + "；".join(failures[:2]))
+    elif final_preview:
+        lines.append(f"摘要：{final_preview}")
+
+    return "\n".join(lines).strip()
 
 
 def _normalize_phrase_pool(items: list[str], *, limit: int = 24) -> list[str]:
@@ -587,6 +748,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         try:
             system_instruction = prompt_composer.compose_base(
                 runtime_user_id=str(user_id),
+                platform=str(getattr(ctx.message, "platform", "") or ""),
                 tools=[],
                 runtime_policy_ctx={
                     "agent_kind": "core-manager",
@@ -687,7 +849,35 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
     await ctx.send_chat_action(action="typing")
 
     # 共享状态
-    state = {"last_update_time": time.time(), "final_text": "", "running": True}
+    state = {
+        "last_update_time": time.time(),
+        "final_text": "",
+        "running": True,
+        "manager_progress_text": "",
+        "manager_progress_task_id": "",
+        "manager_progress_draft_id": 0,
+        "manager_progress_last_sent_at": 0.0,
+        "manager_progress_last_rendered": "",
+        "manager_progress_final_preview": "",
+    }
+    manager_progress_steps: list[dict[str, Any]] = []
+    manager_progress_event_names = {
+        "tool_call_started",
+        "tool_call_finished",
+        "retry_after_failure",
+        "loop_guard",
+        "max_turn_limit",
+        "semantic_loop_guard",
+        "tool_budget_guard",
+        "final_response",
+    }
+    manager_progress_thread_id = None
+    raw_message_data = getattr(ctx.message, "raw_data", {}) or {}
+    if isinstance(raw_message_data, dict):
+        thread_candidate = raw_message_data.get("message_thread_id")
+        if thread_candidate not in (None, ""):
+            with contextlib.suppress(Exception):
+                manager_progress_thread_id = int(thread_candidate)
 
     async def loading_animation():
         """
@@ -702,6 +892,15 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             now = time.time()
             # 如果超过 5 秒没有更新文本（说明卡在 Tool 或者生成慢）
             if now - state["last_update_time"] > 5:
+                manager_progress_text = str(state.get("manager_progress_text") or "").strip()
+                if manager_progress_text and not state["final_text"]:
+                    try:
+                        await _push_manager_progress_update(force=False)
+                    except Exception as e:
+                        logger.debug(f"Manager progress update failed: {e}")
+                    state["last_update_time"] = time.time()
+                    continue
+
                 phrase = random.choice(loading_phrases)
 
                 # 如果已经有一部分文本了，附在后面；如果是空的，直接显示
@@ -738,6 +937,128 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
     stream_last_sent_ts = 0.0
     stream_locked = False
     thinking_deleted = False
+
+    async def _push_manager_progress_update(*, force: bool) -> None:
+        progress_text = str(state.get("manager_progress_text") or "").strip()
+        if not progress_text:
+            return
+        if state["final_text"] and not force:
+            return
+
+        now = time.time()
+        if (
+            not force
+            and progress_text == str(state.get("manager_progress_last_rendered") or "")
+            and now - float(state.get("manager_progress_last_sent_at") or 0.0) < 3.0
+        ):
+            return
+
+        adapter = getattr(ctx, "_adapter", None)
+        send_draft = getattr(adapter, "send_message_draft", None)
+        if callable(send_draft) and str(platform_name or "").lower() == "telegram":
+            task_id = str(state.get("manager_progress_task_id") or "").strip()
+            draft_id = int(state.get("manager_progress_draft_id") or 0)
+            if not draft_id:
+                seed = task_id or f"{chat_id}:{user_id}:{getattr(thinking_msg, 'id', '')}"
+                draft_id = max(1, zlib.crc32(seed.encode("utf-8")) & 0x7FFFFFFF)
+                state["manager_progress_draft_id"] = draft_id
+            await send_draft(
+                chat_id=chat_id,
+                draft_id=draft_id,
+                text=progress_text,
+                message_thread_id=manager_progress_thread_id,
+            )
+            state["manager_progress_last_rendered"] = progress_text
+            state["manager_progress_last_sent_at"] = now
+            return
+
+        if can_update and not thinking_deleted:
+            msg_id = getattr(
+                thinking_msg, "message_id", getattr(thinking_msg, "id", None)
+            )
+            await ctx.edit_message(msg_id, progress_text)
+            state["manager_progress_last_rendered"] = progress_text
+            state["manager_progress_last_sent_at"] = now
+
+    async def _manager_progress_callback(snapshot: dict[str, Any]) -> None:
+        payload = dict(snapshot or {})
+        event_name = str(payload.get("event") or "").strip().lower()
+        if not event_name:
+            return
+
+        turn = max(0, int(payload.get("turn") or 0))
+        task_id_text = str(payload.get("task_id") or "").strip()
+        if task_id_text:
+            state["manager_progress_task_id"] = task_id_text
+            if not int(state.get("manager_progress_draft_id") or 0):
+                state["manager_progress_draft_id"] = max(
+                    1, zlib.crc32(task_id_text.encode("utf-8")) & 0x7FFFFFFF
+                )
+
+        if event_name == "turn_start":
+            state["last_update_time"] = time.time()
+            return
+
+        if event_name == "tool_call_started":
+            detail_label, detail_value = _summarize_manager_tool_args(
+                str(payload.get("name") or ""),
+                payload.get("args") if isinstance(payload.get("args"), dict) else {},
+            )
+            manager_progress_steps.append(
+                {
+                    "name": str(payload.get("name") or "").strip(),
+                    "status": "running",
+                    "summary": "",
+                    "detail_label": detail_label,
+                    "detail": detail_value,
+                    "turn": turn,
+                }
+            )
+        elif event_name == "tool_call_finished":
+            tool_name = str(payload.get("name") or "").strip()
+            tool_ok = bool(payload.get("ok"))
+            summary = str(payload.get("summary") or "").strip()
+            updated = False
+            for idx in range(len(manager_progress_steps) - 1, -1, -1):
+                row = manager_progress_steps[idx]
+                if str(row.get("name") or "") != tool_name:
+                    continue
+                if str(row.get("status") or "") != "running":
+                    continue
+                if int(row.get("turn") or 0) not in {0, turn}:
+                    continue
+                row["status"] = "done" if tool_ok else "failed"
+                row["summary"] = summary[:180]
+                row["turn"] = turn
+                updated = True
+                break
+            if not updated and tool_name:
+                manager_progress_steps.append(
+                    {
+                        "name": tool_name,
+                        "status": "done" if tool_ok else "failed",
+                        "summary": summary[:180],
+                        "detail_label": "",
+                        "detail": "",
+                        "turn": turn,
+                    }
+                )
+        elif event_name == "final_response":
+            state["manager_progress_final_preview"] = str(
+                payload.get("text_preview") or ""
+            )[:180]
+
+        manager_progress_steps[:] = manager_progress_steps[-20:]
+        progress_snapshot = dict(payload)
+        progress_snapshot["recent_steps"] = manager_progress_steps[-6:]
+        progress_snapshot["final_preview"] = str(
+            state.get("manager_progress_final_preview") or ""
+        )[:180]
+        state["manager_progress_text"] = _build_manager_progress_text(progress_snapshot)
+        state["last_update_time"] = time.time()
+
+        if event_name in manager_progress_event_names:
+            await _push_manager_progress_update(force=True)
 
     async def _flush_stream_buffer(*, force: bool = False) -> None:
         nonlocal \
@@ -789,6 +1110,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
 
     current_task = asyncio.current_task()
     await task_manager.register_task(user_id, current_task, description="AI 对话")
+    ctx.user_data["manager_progress_callback"] = _manager_progress_callback
 
     try:
         message_history = []
@@ -971,6 +1293,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                 msg_id, f"❌ Agent 运行出错：{e}\n\n请尝试 /new 重置对话。"
             )
     finally:
+        ctx.user_data.pop("manager_progress_callback", None)
         task_manager.unregister_task(user_id)
 
 
@@ -1222,6 +1545,7 @@ async def handle_ai_video(ctx: UnifiedContext) -> None:
             config={
                 "system_instruction": prompt_composer.compose_base(
                     runtime_user_id=str(user_id),
+                    platform=str(getattr(ctx.message, "platform", "") or ""),
                     tools=[],
                     runtime_policy_ctx={
                         "agent_kind": "core-manager",
@@ -1339,6 +1663,7 @@ async def handle_sticker_message(ctx: UnifiedContext) -> None:
             config={
                 "system_instruction": prompt_composer.compose_base(
                     runtime_user_id=str(user_id),
+                    platform=str(getattr(ctx.message, "platform", "") or ""),
                     tools=[],
                     runtime_policy_ctx={
                         "agent_kind": "core-manager",

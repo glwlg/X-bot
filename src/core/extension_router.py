@@ -1,6 +1,6 @@
 import re
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import List
 
 from core.skill_loader import skill_loader
 
@@ -10,8 +10,6 @@ class ExtensionCandidate:
     name: str
     description: str
     tool_name: str
-    input_schema: Dict[str, Any]
-    schema_summary: str
     triggers: List[str] = field(default_factory=list)
     allowed_tools: List[str] = field(default_factory=list)
 
@@ -52,24 +50,14 @@ class ExtensionRouter:
             description = skill.get("description", "")
             triggers = skill.get("triggers", []) or []
             allowed_tools = skill.get("allowed_tools", []) or []
-            input_schema = skill.get("input_schema", {}) or {
-                "type": "object",
-                "properties": {},
-            }
 
             safe = name.replace("-", "_")
-            schema = input_schema
-            props = list((schema.get("properties") or {}).keys())
-            required = list(schema.get("required") or [])
-            schema_summary = f"required={required}, fields={props[:8]}"
 
             results.append(
                 ExtensionCandidate(
                     name=name,
                     description=description,
                     tool_name=f"ext_{safe}",
-                    input_schema=schema,
-                    schema_summary=schema_summary,
                     triggers=triggers,
                     allowed_tools=allowed_tools,
                 )

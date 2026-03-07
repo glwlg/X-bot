@@ -10,7 +10,6 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from core.platform.models import UnifiedContext
 
 from core.config import is_user_admin
-from core.extension_executor import ExtensionExecutor
 from core.primitive_runtime import PrimitiveRuntime
 from core.skill_loader import skill_loader
 from handlers.base_handlers import check_permission_unified, CONVERSATION_END
@@ -60,78 +59,11 @@ async def handle_teach_input(ctx: UnifiedContext) -> int:
 
 async def process_teach(ctx: UnifiedContext, requirement: str) -> int:
     """处理新能力学习"""
-    msg = await ctx.reply("🤔 正在理解您的需求并生成技能...")
-
-    executor = ExtensionExecutor()
-    runtime = PrimitiveRuntime()
-    result = await executor.execute(
-        "skill_manager",
-        {"action": "create", "requirement": requirement},
-        ctx=ctx,
-        runtime=runtime,
+    msg = await ctx.reply(
+        "💡 **提示**\n\n"
+        "技能系统已升级。请直接通过聊天页面描述您的需求（例如：“请用这个规则创建一个新的技能……”），AI Agent 会自动为您编写对应 SOP 并保存。\n\n"
+        "当前的 `/teach` 快捷指令暂不支持旧版直接触发扩展的功能。"
     )
-
-    if not result.ok:
-        await ctx.edit_message(
-            getattr(msg, "message_id", getattr(msg, "id", None)),
-            f"❌ 生成失败:{result.message or result.error_code or '未知错误'}",
-        )
-        return CONVERSATION_END
-
-    payload = dict(result.data or {}) if isinstance(result.data, dict) else {}
-    skill_name = str(payload.get("created_skill_name") or "").strip()
-    skill_md = str(payload.get("skill_md") or "")
-    has_scripts = bool(payload.get("has_scripts"))
-
-    if not skill_name:
-        text = str(result.text or "")
-        matched = re.search(r"技能\s*`([a-zA-Z0-9_\-]+)`", text)
-        if matched:
-            skill_name = str(matched.group(1) or "").strip()
-
-    if skill_name and not skill_md:
-        skill_info = skill_loader.get_skill(skill_name) or {}
-        skill_md_path = str(skill_info.get("skill_md_path") or "").strip()
-        if skill_md_path and os.path.exists(skill_md_path):
-            try:
-                with open(skill_md_path, "r", encoding="utf-8") as f:
-                    skill_md = f.read()
-            except Exception:
-                skill_md = ""
-        if not has_scripts:
-            has_scripts = bool(skill_info.get("scripts"))
-
-    if not skill_name:
-        skill_name = "unknown"
-
-    skill_loader.reload_skills()
-
-    # 显示 SKILL.md 预览
-    preview_lines = skill_md.split("\n")[:15]
-    preview = "\n".join(preview_lines)
-    if len(skill_md.split("\n")) > 15:
-        preview += "\n..."
-
-    scripts_info = "\n📦 **包含代码**: 是" if has_scripts else "\n📦 **包含代码**: 否"
-
-    keyboard = [
-        [
-            InlineKeyboardButton(
-                "📝 查看完整内容", callback_data=f"skill_view_{skill_name}"
-            )
-        ],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await ctx.edit_message(
-        getattr(msg, "message_id", getattr(msg, "id", None)),
-        f"✅ **新技能已激活**\n\n"
-        f"**名称**: `{skill_name}`{scripts_info}\n\n"
-        f"```markdown\n{preview}\n```\n\n"
-        f"您现在可以直接使用这个技能了。",
-        reply_markup=reply_markup,
-    )
-
     return CONVERSATION_END
 
 

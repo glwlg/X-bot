@@ -100,8 +100,26 @@ def test_regular_user_runtime_uses_core_manager_policy(tmp_path):
         tool_name="read",
         kind="tool",
     )
-    assert allowed_primitive is False
-    assert primitive_detail["reason"] in {"not_in_allow_list", "matched_deny_list"}
+    assert allowed_primitive is True
+    assert "group:primitives" in primitive_detail["groups"]
+
+    allowed_manager_skill, manager_skill_detail = store.is_tool_allowed(
+        runtime_user_id="u-plain-user",
+        platform="telegram",
+        tool_name="ext_worker_management",
+        kind="tool",
+    )
+    assert allowed_manager_skill is True
+    assert "group:management" in manager_skill_detail["groups"]
+
+    denied_finance_skill, finance_skill_detail = store.is_tool_allowed(
+        runtime_user_id="u-plain-user",
+        platform="telegram",
+        tool_name="ext_stock_watch",
+        kind="tool",
+    )
+    assert denied_finance_skill is False
+    assert finance_skill_detail["reason"] in {"not_in_allow_list", "matched_deny_list"}
 
 
 def test_worker_kernel_still_uses_worker_policy(tmp_path):

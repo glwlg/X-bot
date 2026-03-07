@@ -1,17 +1,38 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
 import logging
 import os
 import re
 import shutil
-import httpx
+import sys
 from datetime import datetime
-from typing import Tuple, Dict, Any
+from pathlib import Path
+from typing import Any, Dict, Tuple
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SRC_ROOT = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+import httpx
 from core.platform.models import UnifiedContext
+from core.skill_cli import (
+    add_common_arguments,
+    merge_params,
+    prepare_default_env,
+    run_execute_cli,
+)
+
+prepare_default_env(REPO_ROOT)
+
 from core.skill_loader import skill_loader
 from manager.dev.service import manager_dev_service
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.abspath(os.path.join(current_dir, "..", "..", "..", ".."))
+project_root = str(REPO_ROOT)
 
 logger = logging.getLogger(__name__)
 
@@ -774,3 +795,90 @@ def _delete_skill(skill_name: str) -> Tuple[bool, str]:
 
     except Exception as e:
         return False, f"删除异常: {e}"
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Skill manager CLI bridge.",
+    )
+    add_common_arguments(parser)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("list", help="List installed skills")
+
+    search_parser = subparsers.add_parser("search", help="Search local skills")
+    search_parser.add_argument("query", help="Search query")
+
+    install_parser = subparsers.add_parser("install", help="Install a skill")
+    install_parser.add_argument("target", help="Skill URL or GitHub owner/repo")
+
+    delete_parser = subparsers.add_parser("delete", help="Delete a learned skill")
+    delete_parser.add_argument("skill_name", help="Skill name")
+
+    create_parser = subparsers.add_parser("create", help="Create a new skill")
+    create_parser.add_argument("requirement", help="Skill requirement")
+    create_parser.add_argument("--skill-name", default="", help="Preferred skill name")
+    create_parser.add_argument("--backend", default="", help="codex or gemini-cli")
+
+    modify_parser = subparsers.add_parser("modify", help="Modify an existing skill")
+    modify_parser.add_argument("skill_name", help="Skill name")
+    modify_parser.add_argument("instruction", help="Modification instruction")
+    modify_parser.add_argument("--backend", default="", help="codex or gemini-cli")
+    return parser
+
+
+def _params_from_args(args: argparse.Namespace) -> dict:
+    command = str(args.command or "").strip().lower()
+    if command == "list":
+        return merge_params(args, {"action": "list"})
+    if command == "search":
+        return merge_params(
+            args,
+            {"action": "search", "query": str(args.query or "").strip()},
+        )
+    if command == "install":
+        target = str(args.target or "").strip()
+        return merge_params(
+            args,
+            {
+                "action": "install",
+                "url": target,
+                "skill_name": target,
+                "repo_name": target,
+            },
+        )
+    if command == "delete":
+        return merge_params(
+            args,
+            {"action": "delete", "skill_name": str(args.skill_name or "").strip()},
+        )
+    if command == "create":
+        explicit: dict[str, Any] = {
+            "action": "create",
+            "requirement": str(args.requirement or "").strip(),
+            "instruction": str(args.requirement or "").strip(),
+            "skill_name": str(args.skill_name or "").strip(),
+        }
+        if str(args.backend or "").strip():
+            explicit["backend"] = str(args.backend).strip()
+        return merge_params(args, explicit)
+    if command == "modify":
+        explicit = {
+            "action": "modify",
+            "skill_name": str(args.skill_name or "").strip(),
+            "instruction": str(args.instruction or "").strip(),
+        }
+        if str(args.backend or "").strip():
+            explicit["backend"] = str(args.backend).strip()
+        return merge_params(args, explicit)
+    raise SystemExit(f"unsupported command: {command}")
+
+
+async def _run() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+    return await run_execute_cli(execute, args=args, params=_params_from_args(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_run()))

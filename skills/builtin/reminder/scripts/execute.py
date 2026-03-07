@@ -1,11 +1,34 @@
-import re
+from __future__ import annotations
+
+import argparse
+import asyncio
 import datetime
 import logging
+import re
+import sys
+from pathlib import Path
+from typing import Any, Dict
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SRC_ROOT = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
 from core.platform.models import UnifiedContext
-from core.scheduler import schedule_reminder
+from core.skill_cli import (
+    add_common_arguments,
+    merge_params,
+    prepare_default_env,
+    run_execute_cli,
+)
+
+prepare_default_env(REPO_ROOT)
+
 from core.config import WAITING_FOR_REMIND_INPUT
+from core.scheduler import schedule_reminder
 from stats import increment_stat
-from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
@@ -204,3 +227,30 @@ def register_handlers(adapter_manager: Any):
     # Note: On TG, ConversationHandler takes precedence if added first/correctly.
     # For Discord/DingTalk, we support simple stateless command "/remind 10m content"
     adapter_manager.on_command("remind", remind_command, description="设置定时提醒")
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Reminder skill CLI bridge.",
+    )
+    add_common_arguments(parser)
+    parser.add_argument("time", help="Relative time such as 10m or 1h30m")
+    parser.add_argument("content", help="Reminder content")
+    return parser
+
+
+async def _run() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+    params = merge_params(
+        args,
+        {
+            "time": str(args.time or "").strip(),
+            "content": str(args.content or "").strip(),
+        },
+    )
+    return await run_execute_cli(execute, args=args, params=params)
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_run()))

@@ -1,7 +1,19 @@
+from __future__ import annotations
+
+import argparse
 import os
 import asyncio
 import logging
+import sys
+from pathlib import Path
 from typing import Dict, Any
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SRC_ROOT = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from core.platform.models import UnifiedContext
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
@@ -10,8 +22,12 @@ from telegram.ext import ConversationHandler, filters
 from core.config import WAITING_FOR_VIDEO_URL
 from core.config import is_user_allowed
 from utils import extract_video_url
-from .services.download_service import download_video
 from user_context import add_message
+
+if __package__:
+    from .services.download_service import download_video, get_download_dir
+else:
+    from services.download_service import download_video, get_download_dir
 
 # Constants
 CONVERSATION_END = -1
@@ -646,3 +662,63 @@ def register_handlers(adapter_manager: Any):
         dingtalk_adapter.on_callback_query("^action_.*", handle_video_actions)
     except:
         pass
+
+
+class _ConsoleProgressMessage:
+    def __init__(self):
+        self._last_text = ""
+
+    async def edit_text(self, text: str):
+        self._emit(text)
+
+    async def edit(self, content: str | None = None, **_kwargs):
+        self._emit(content or "")
+
+    def _emit(self, text: str) -> None:
+        payload = str(text or "").strip()
+        if payload and payload != self._last_text:
+            print(payload, file=sys.stderr)
+            self._last_text = payload
+
+
+def _build_cli_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Download video/audio into the project downloads directory.",
+    )
+    parser.add_argument("url", help="Media URL to download")
+    parser.add_argument(
+        "--format",
+        choices=("video", "audio"),
+        default="video",
+        help="Output format. Default: video",
+    )
+    return parser
+
+
+async def _run_cli() -> int:
+    parser = _build_cli_parser()
+    args = parser.parse_args()
+    progress = _ConsoleProgressMessage()
+    result = await download_video(
+        str(args.url or "").strip(),
+        user_id=0,
+        progress_message=progress,
+        audio_only=str(args.format or "video").strip().lower() == "audio",
+    )
+    if not result.success:
+        print(result.error_message or "download failed", file=sys.stderr)
+        return 1
+
+    download_dir = get_download_dir()
+    saved_path = str(result.file_path or "").strip()
+    print(f"download_dir={download_dir}")
+    if saved_path:
+        print(f"saved_path={saved_path}")
+    print(f"is_too_large={str(bool(result.is_too_large)).lower()}")
+    if result.file_size_mb:
+        print(f"file_size_mb={result.file_size_mb:.2f}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_run_cli()))

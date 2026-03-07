@@ -1,18 +1,40 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+import json
 import logging
-from typing import Dict, Any
+import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SRC_ROOT = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from core.platform.models import UnifiedContext
+from core.skill_cli import (
+    add_common_arguments,
+    merge_params,
+    parse_json_object,
+    prepare_default_env,
+    run_execute_cli,
+)
+
+prepare_default_env(REPO_ROOT)
+
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from core.accounting_store import get_active_book_id
-
-# 必须通过 src 引用我们的 DB 和 Models
-from api.core.database import get_session_maker
 from api.auth.models import User as _AuthUser  # noqa: F401
+from api.core.database import get_session_maker
+from api.models.accounting import Account, Book, Category, Record
 from api.models.binding import PlatformUserBinding
-from api.models.accounting import Book, Account, Category, Record
+from core.accounting_store import get_active_book_id
 
 logger = logging.getLogger(__name__)
 VALID_RECORD_TYPES = {"支出", "收入", "转账"}
@@ -306,3 +328,83 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
             f"记账失败：{exc}",
             error_code="unexpected_error",
         )
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Quick accounting skill CLI bridge.",
+    )
+    add_common_arguments(parser)
+    parser.add_argument(
+        "--type",
+        required=True,
+        choices=sorted(VALID_RECORD_TYPES),
+        help="Record type",
+    )
+    parser.add_argument(
+        "--amount",
+        required=True,
+        type=float,
+        help="Transaction amount",
+    )
+    parser.add_argument(
+        "--category",
+        required=True,
+        help="Category name",
+    )
+    parser.add_argument(
+        "--account",
+        required=True,
+        help="Account name",
+    )
+    parser.add_argument("--target-account", default="", help="Target account for transfer")
+    parser.add_argument("--payee", default="", help="Payee or counterparty")
+    parser.add_argument("--remark", default="", help="Optional remark")
+    parser.add_argument("--record-time", default="", help="Record time")
+    parser.add_argument(
+        "--accounting-user-id",
+        default="",
+        help="Force accounting owner id via ctx.user_data",
+    )
+    parser.add_argument(
+        "--accounting-book-id",
+        default="",
+        help="Force accounting book id via ctx.user_data",
+    )
+    return parser
+
+
+def _build_user_data(args: argparse.Namespace) -> str:
+    user_data = parse_json_object(str(args.user_data or "{}"), option_name="--user-data")
+    if str(args.accounting_user_id or "").strip():
+        user_data["accounting_user_id"] = str(args.accounting_user_id).strip()
+    if str(args.accounting_book_id or "").strip():
+        user_data["accounting_book_id"] = str(args.accounting_book_id).strip()
+    return json.dumps(user_data, ensure_ascii=False)
+
+
+def _params_from_args(args: argparse.Namespace) -> dict:
+    return merge_params(
+        args,
+        {
+            "type": str(args.type or "").strip(),
+            "amount": float(args.amount),
+            "category": str(args.category or "").strip(),
+            "account": str(args.account or "").strip(),
+            "target_account": str(args.target_account or "").strip(),
+            "payee": str(args.payee or "").strip(),
+            "remark": str(args.remark or "").strip(),
+            "record_time": str(args.record_time or "").strip(),
+        },
+    )
+
+
+async def _run() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+    args.user_data = _build_user_data(args)
+    return await run_execute_cli(execute, args=args, params=_params_from_args(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_run()))

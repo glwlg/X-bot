@@ -1,39 +1,31 @@
 ---
 api_version: v3
 name: web_extractor
-description: Extracts clean, ad-free Markdown content from any web page URL. Use this skill FIRST whenever the user wants to read an article, summarize a webpage, or extract text from a URL. Do NOT use web_browser unless you specifically need interactive capabilities (like clicking, logging in, or taking visual screenshots).
+description: 提取网页正文的清洗版 Markdown。用户只需要“读取/总结链接内容”时，优先使用本技能。
 input_schema:
   type: object
   properties:
     url:
       type: string
-      description: 目标网页的URL
+      description: 目标网页 URL
   required:
     - url
 permissions:
+  filesystem: workspace
+  shell: true
   network: limited
 entrypoint: scripts/execute.py
 ---
 
-# Web Extractor Skill
+# Web Extractor
 
-This skill uses `r.jina.ai` under the hood to quickly extract the main content of any given URL into clean, readable Markdown. It handles JavaScript-rendered pages and strips out ads, sidebars, and navigation menus automatically.
+这是正文提取 skill。通过 `bash` 调用脚本读取页面内容；如果只是读文章，不要升级到 `web_browser`。
 
-## Usage
+## Command
 
-Provide the `url` parameter. The skill will yield the Markdown content of the page.
+- `python scripts/execute.py <url>`
 
-### Example
+## Rules
 
-Input:
-`{"url": "https://example.com/article"}`
-
-Output:
-A string containing the Markdown representation of the page's main content.
-
-## When to use
-
-- "总结一下这个链接：https://..." -> Use `web_extractor`
-- "帮我提取这篇公众号文章" -> Use `web_extractor`
-- "打开这个网站，点击登录按钮" -> Use `web_browser` (Interaction required)
-- "截取这个网页的图" -> Use `web_browser` (Visual snapshot required)
+- 适用于摘要、正文提取、文章阅读。
+- 只有在需要交互点击、登录、截图时，才换成 `web_browser`。

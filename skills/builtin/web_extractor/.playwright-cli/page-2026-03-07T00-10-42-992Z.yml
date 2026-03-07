@@ -1,0 +1,7 @@
+- generic [ref=e3]:
+  - heading "页面飘走了" [level=2] [ref=e4]
+  - paragraph [ref=e5]:
+    - emphasis [ref=e6]: "5"
+    - text: 秒后，跳转手机
+    - link "中国天气网首页" [ref=e7] [cursor=pointer]:
+      - /url: /

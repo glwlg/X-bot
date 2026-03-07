@@ -10,7 +10,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from core.extension_executor import ExtensionExecutor
 from core.platform.models import Chat, MessageType, UnifiedContext, UnifiedMessage, User
 from core.prompt_composer import prompt_composer
 from core.skill_loader import skill_loader
@@ -20,7 +19,6 @@ from shared.contracts.dispatch import TaskEnvelope, TaskResult
 logger = logging.getLogger(__name__)
 
 _ai_service = AiService()
-_extension_executor = ExtensionExecutor()
 
 
 class _ManagerSilentAdapter:
@@ -201,6 +199,7 @@ async def run_web_accounting_auto_image_task(task: TaskEnvelope) -> TaskResult:
     ctx = _build_ctx(task)
     system_instruction = prompt_composer.compose_base(
         runtime_user_id=str(ctx.user_data.get("runtime_user_id") or ""),
+        platform=str(getattr(ctx.message, "platform", "") or ""),
         tools=[tool_decl],
         runtime_policy_ctx={
             "agent_kind": "core-manager",
@@ -232,28 +231,12 @@ async def run_web_accounting_auto_image_task(task: TaskEnvelope) -> TaskResult:
                 "failure_mode": "recoverable",
             }
         called += 1
-        run_result = await _extension_executor.execute(
-            "quick_accounting",
-            dict(args or {}),
-            ctx,
-            None,
-        )
-        if run_result.ok and isinstance(run_result.data, dict):
-            captured_data = dict(run_result.data)
-            record_id, book_id = _extract_record_and_book_id(
-                captured_data,
-                fallback_book_id=metadata.get("accounting_book_id"),
-            )
-            if record_id > 0 and not success_future.done():
-                success_future.set_result(
-                    {
-                        "record_id": record_id,
-                        "book_id": book_id,
-                    }
-                )
-        elif not run_result.ok:
-            last_error = str(run_result.message or run_result.text or "").strip()
-        return run_result.to_tool_response()
+        return {
+            "ok": False,
+            "error_code": "deprecated_extension_executor",
+            "message": "The extension executor has been removed. Please use LLM SOPs + primitive tools.",
+            "failure_mode": "fatal",
+        }
 
     message_history = [
         {

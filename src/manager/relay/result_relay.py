@@ -5,6 +5,7 @@ import inspect
 import logging
 import os
 import time
+import zlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
@@ -16,6 +17,16 @@ from shared.contracts.dispatch import TaskEnvelope
 from shared.queue.dispatch_queue import dispatch_queue
 
 logger = logging.getLogger(__name__)
+
+PROGRESS_EVENTS_TO_DELIVER = frozenset(
+    {
+        "tool_call_started",
+        "tool_call_finished",
+        "retry_after_failure",
+        "max_turn_limit",
+        "loop_guard",
+    }
+)
 
 
 def _split_chunks(text: str, limit: int = 3500) -> list[str]:
@@ -124,6 +135,80 @@ def _build_delivery_text(
     return final_text, ui, files
 
 
+def _humanize_tool_name(tool_name: str) -> str:
+    raw = str(tool_name or "").strip().lower()
+    if not raw:
+        return ""
+    if raw.startswith("ext_"):
+        raw = raw[4:]
+    alias = {
+        "web_search": "搜索",
+        "web_browser": "网页浏览",
+        "rss_subscribe": "RSS 订阅",
+        "stock_watch": "股票行情",
+        "reminder": "提醒",
+        "deployment_manager": "部署",
+        "web_extractor": "网页提取",
+        "load_skill": "加载技能",
+        "daily_query": "日常查询",
+        "bash": "Shell",
+        "read": "读取文件",
+        "write": "写入文件",
+        "edit": "编辑文件",
+    }
+    if raw in alias:
+        return alias[raw]
+    return raw.replace("_", " ")
+
+
+def _build_progress_text(task: TaskEnvelope, progress: Dict[str, Any]) -> str:
+    progress_obj = dict(progress or {})
+    event = str(progress_obj.get("event") or "").strip().lower()
+    worker_name = str(task.metadata.get("worker_name") or task.worker_id or "执行助手")
+    turn = max(0, int(progress_obj.get("turn") or 0))
+    recent_steps = [
+        dict(item) for item in list(progress_obj.get("recent_steps") or []) if isinstance(item, dict)
+    ]
+    latest_step = recent_steps[-1] if recent_steps else {}
+    tool_name = _humanize_tool_name(
+        str(latest_step.get("name") or progress_obj.get("running_tool") or "").strip()
+    )
+    summary = str(latest_step.get("summary") or "").strip()
+    failed_tools = [
+        _humanize_tool_name(str(item).strip())
+        for item in list(progress_obj.get("failed_tools") or [])
+        if str(item).strip()
+    ]
+
+    lines = [f"⏳ {worker_name} 正在处理任务", f"任务ID：`{task.task_id}`"]
+    if turn > 0:
+        lines.append(f"回合：{turn}")
+
+    if event == "tool_call_started":
+        lines.append(f"动作：开始执行 `{tool_name or '工具'}`")
+    elif event == "tool_call_finished":
+        status = str(latest_step.get("status") or "").strip().lower()
+        if status == "failed":
+            lines.append(f"动作：`{tool_name or '工具'}` 执行失败")
+        else:
+            lines.append(f"动作：`{tool_name or '工具'}` 执行完成")
+    elif event == "retry_after_failure":
+        lines.append("动作：工具失败后自动重试")
+    elif event == "max_turn_limit":
+        lines.append("动作：工具回合达到上限，准备结束当前尝试")
+    elif event == "loop_guard":
+        lines.append("动作：检测到重复调用，已触发循环保护")
+    else:
+        lines.append("动作：执行中")
+
+    if summary:
+        lines.append(f"摘要：{summary[:160]}")
+    elif failed_tools:
+        lines.append("最近失败：" + "，".join(failed_tools[-3:]))
+
+    return "\n".join(lines).strip()
+
+
 class WorkerResultRelay:
     def __init__(self) -> None:
         self.enabled = (
@@ -194,6 +279,8 @@ class WorkerResultRelay:
                 continue
 
     async def process_once(self) -> None:
+        await self._process_running_progress()
+
         rows = await dispatch_queue.list_undelivered(limit=20)
         for task in rows:
             if self._is_dead_letter(task):
@@ -208,6 +295,12 @@ class WorkerResultRelay:
                     reason="missing_delivery_target",
                 )
                 continue
+
+            await self._drain_task_progress(
+                task=task,
+                platform=platform,
+                chat_id=chat_id,
+            )
 
             result_obj = await dispatch_queue.latest_result(task.task_id)
             result_dict = (
@@ -229,6 +322,72 @@ class WorkerResultRelay:
                     task,
                     reason="delivery_failed",
                 )
+
+    async def _process_running_progress(self) -> None:
+        list_running = getattr(dispatch_queue, "list_running", None)
+        ack_progress_events = getattr(dispatch_queue, "ack_progress_events", None)
+        if not callable(list_running) or not callable(ack_progress_events):
+            return
+
+        running_tasks = await list_running(limit=20)
+        for task in running_tasks:
+            platform, chat_id = await self._resolve_delivery_target(task)
+            if not platform or not chat_id:
+                continue
+            await self._drain_task_progress(
+                task=task,
+                platform=platform,
+                chat_id=chat_id,
+            )
+
+    async def _drain_task_progress(
+        self,
+        *,
+        task: TaskEnvelope,
+        platform: str,
+        chat_id: str,
+    ) -> None:
+        ack_progress_events = getattr(dispatch_queue, "ack_progress_events", None)
+        if not callable(ack_progress_events):
+            return
+
+        metadata = dict(task.metadata or {})
+        raw_events = metadata.get("progress_events")
+        progress_events = [
+            dict(item)
+            for item in list(raw_events or [])
+            if isinstance(item, dict)
+        ]
+        if not progress_events:
+            return
+
+        delivered_upto_seq = 0
+        delivered_last_event = ""
+        for item in progress_events:
+            seq = max(0, int(item.get("seq") or 0))
+            delivered_upto_seq = max(delivered_upto_seq, seq)
+            event_name = str(item.get("event") or "").strip().lower()
+            delivered_last_event = event_name or delivered_last_event
+            if event_name not in PROGRESS_EVENTS_TO_DELIVER:
+                continue
+
+            text = _build_progress_text(task, item)
+            sent = await self._deliver_progress(
+                task=task,
+                platform=platform,
+                chat_id=chat_id,
+                text=text,
+            )
+            if not sent:
+                delivered_upto_seq = max(0, seq - 1)
+                break
+
+        if delivered_upto_seq > 0:
+            await ack_progress_events(
+                task.task_id,
+                upto_seq=delivered_upto_seq,
+                last_event=delivered_last_event,
+            )
 
     @staticmethod
     def _relay_meta(task: TaskEnvelope) -> Dict[str, Any]:
@@ -452,6 +611,73 @@ class WorkerResultRelay:
             delivered = True
 
         return delivered
+
+    async def _deliver_progress(
+        self,
+        *,
+        task: TaskEnvelope,
+        platform: str,
+        chat_id: str,
+        text: str,
+    ) -> bool:
+        try:
+            adapter = adapter_manager.get_adapter(platform)
+        except Exception:
+            return False
+
+        payload = str(text or "").strip()
+        if not payload:
+            return True
+
+        send_draft = getattr(adapter, "send_message_draft", None)
+        if platform == "telegram" and callable(send_draft):
+            try:
+                metadata = dict(task.metadata or {})
+                raw_thread_id = metadata.get("message_thread_id")
+                message_thread_id = (
+                    int(raw_thread_id)
+                    if str(raw_thread_id or "").strip()
+                    else None
+                )
+                draft_id = max(
+                    1,
+                    int(zlib.crc32(str(task.task_id or "").encode("utf-8")) & 0x7FFFFFFF),
+                )
+                result_obj = send_draft(
+                    chat_id=chat_id,
+                    draft_id=draft_id,
+                    text=payload,
+                    message_thread_id=message_thread_id,
+                )
+                if inspect.isawaitable(result_obj):
+                    await result_obj
+                return True
+            except Exception as exc:
+                logger.warning(
+                    "Worker relay progress draft failed task=%s platform=%s chat=%s err=%s",
+                    task.task_id,
+                    platform,
+                    chat_id,
+                    exc,
+                )
+
+        send = getattr(adapter, "send_message", None)
+        if not callable(send):
+            return False
+
+        try:
+            result_obj = send(chat_id=chat_id, text=payload)
+            if inspect.isawaitable(result_obj):
+                await result_obj
+            return True
+        except Exception as exc:
+            logger.warning(
+                "Worker relay progress delivery failed platform=%s chat=%s err=%s",
+                platform,
+                chat_id,
+                exc,
+            )
+            return False
 
 
 worker_result_relay = WorkerResultRelay()

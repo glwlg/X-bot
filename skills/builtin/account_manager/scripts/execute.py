@@ -1,10 +1,28 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SRC_ROOT = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
 from core.platform.models import UnifiedContext
-from core.state_store import (
-    add_account,
-    get_account,
-    list_accounts,
-    delete_account,
+from core.skill_cli import (
+    add_common_arguments,
+    merge_params,
+    prepare_default_env,
+    run_execute_cli,
 )
+
+prepare_default_env(REPO_ROOT)
+
+from core.state_store import add_account, delete_account, get_account, list_accounts
 
 try:
     import pyotp
@@ -117,3 +135,64 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> dict:
             return {"text": "❌ 删除失败。"}
 
     return {"text": f"❌ 未知操作: {action}"}
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Account manager skill CLI bridge.",
+    )
+    add_common_arguments(parser)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("list", help="List saved accounts")
+
+    get_parser = subparsers.add_parser("get", help="Show account details")
+    get_parser.add_argument("service", help="Service name")
+
+    add_parser = subparsers.add_parser("add", help="Add or update an account")
+    add_parser.add_argument("service", help="Service name")
+    add_parser.add_argument(
+        "--data",
+        required=True,
+        help="JSON string or key=value pairs separated by spaces",
+    )
+
+    remove_parser = subparsers.add_parser("remove", help="Delete an account")
+    remove_parser.add_argument("service", help="Service name")
+    return parser
+
+
+def _params_from_args(args: argparse.Namespace) -> dict:
+    command = str(args.command or "").strip().lower()
+    if command == "list":
+        return merge_params(args, {"action": "list"})
+    if command == "get":
+        return merge_params(
+            args,
+            {"action": "get", "service": str(args.service or "").strip()},
+        )
+    if command == "add":
+        return merge_params(
+            args,
+            {
+                "action": "add",
+                "service": str(args.service or "").strip(),
+                "data": str(args.data or "").strip(),
+            },
+        )
+    if command == "remove":
+        return merge_params(
+            args,
+            {"action": "remove", "service": str(args.service or "").strip()},
+        )
+    raise SystemExit(f"unsupported command: {command}")
+
+
+async def _run() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+    return await run_execute_cli(execute, args=args, params=_params_from_args(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_run()))
