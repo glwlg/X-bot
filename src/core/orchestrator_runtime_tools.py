@@ -259,24 +259,98 @@ class ToolCallDispatcher:
         if not raw:
             return False
 
-        coding_keywords = (
+        direct_keywords = (
             "software_delivery",
             "software delivery",
-            "github",
-            "issue",
-            "pull request",
-            "pr",
             "代码",
             "编码",
+            "改代码",
             "开发",
             "修复",
             "bug",
+            "调试",
+            "debug",
+            "重构",
             "技能",
             "skill",
             "创建技能",
             "修改技能",
+            "实现功能",
+            "写单测",
+            "测试修复",
         )
-        return any(token in raw for token in coding_keywords)
+        if any(token in raw for token in direct_keywords):
+            return True
+
+        repo_hints = (
+            "github",
+            "仓库",
+            "repo",
+            "issue",
+            "pull request",
+            "pr",
+            "commit",
+        )
+        coding_actions = (
+            "修复",
+            "实现",
+            "开发",
+            "排查",
+            "review",
+            "提交",
+            "发布",
+            "publish",
+            "merge",
+            "合并",
+            "改",
+            "写",
+        )
+        return any(token in raw for token in repo_hints) and any(
+            token in raw for token in coding_actions
+        )
+
+    def _is_loaded_skill_cli_bash_command(self, command: str) -> bool:
+        raw = str(command or "").strip()
+        if not raw:
+            return False
+
+        user_data = getattr(self.ctx, "user_data", None)
+        if not isinstance(user_data, dict):
+            return False
+
+        skill_dir = str(user_data.get("last_loaded_skill_dir") or "").strip()
+        entrypoint = str(
+            user_data.get("last_loaded_skill_entrypoint") or "scripts/execute.py"
+        ).strip()
+        if not skill_dir or not entrypoint:
+            return False
+
+        try:
+            parts = shlex.split(raw)
+        except Exception:
+            parts = []
+        if not parts:
+            return False
+
+        invokes_python = any(
+            str(part or "").strip().startswith("python") for part in parts
+        )
+        if not invokes_python:
+            return False
+
+        normalized_entrypoint = entrypoint.lstrip("./")
+        relative_candidates = {normalized_entrypoint, f"./{normalized_entrypoint}"}
+        absolute_entrypoint = str((Path(skill_dir) / normalized_entrypoint).resolve())
+
+        if absolute_entrypoint in parts:
+            return True
+        if any(str(part or "").strip() in relative_candidates for part in parts):
+            return True
+        if skill_dir in parts and any(
+            str(part or "").strip() in relative_candidates for part in parts
+        ):
+            return True
+        return False
 
     @staticmethod
     def _infer_software_delivery_action(
@@ -431,6 +505,9 @@ class ToolCallDispatcher:
                 and self._is_manager_runtime()
                 and "software_delivery" in self.available_tool_names
                 and self._is_software_delivery_intent(user_request)
+                and not self._is_loaded_skill_cli_bash_command(
+                    str(tool_args.get("command") or "")
+                )
             ):
                 blocked = {
                     "ok": False,
