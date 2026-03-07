@@ -56,11 +56,22 @@ class _FakeQueue:
         )()
 
 
+class _FakeWorkerTaskStore:
+    def __init__(self):
+        self.calls = []
+
+    async def upsert_task(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        return dict(kwargs)
+
+
 @pytest.mark.asyncio
 async def test_manager_dispatch_service_dispatches_async_task(monkeypatch):
     monkeypatch.setattr(service_module, "worker_registry", _FakeRegistry())
     fake_queue = _FakeQueue()
+    fake_store = _FakeWorkerTaskStore()
     monkeypatch.setattr(service_module, "dispatch_queue", fake_queue)
+    monkeypatch.setattr(service_module, "worker_task_store", fake_store)
 
     result = await service_module.manager_dispatch_service.dispatch_worker(
         instruction="请处理这个任务",
@@ -77,3 +88,6 @@ async def test_manager_dispatch_service_dispatches_async_task(monkeypatch):
     assert (
         fake_queue.last_metadata.get("dispatch_component") == "manager_dispatch_service"
     )
+    assert len(fake_store.calls) == 1
+    assert fake_store.calls[0]["task_id"] == "tsk-queued-1"
+    assert fake_store.calls[0]["status"] == "queued"

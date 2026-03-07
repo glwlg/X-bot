@@ -12,6 +12,15 @@ from core.skill_loader import skill_loader
 
 logger = logging.getLogger(__name__)
 
+# Backward-compatible async client injection for tests/legacy callers.
+openai_async_client: Any = None
+
+
+def _resolve_planner_client(model_name: str) -> Any:
+    if openai_async_client is not None:
+        return openai_async_client
+    return get_client_for_model(model_name, is_async=True)
+
 SKILL_ARG_PLANNER_ENABLED = (
     os.getenv("SKILL_ARG_PLANNER_ENABLED", "true").strip().lower() == "true"
 )
@@ -260,7 +269,7 @@ class SkillArgPlanner:
         validation_error: str,
     ) -> Dict[str, Any]:
         model_to_use = get_current_model()
-        client = cast(Any, get_client_for_model(model_to_use, is_async=True))
+        client = cast(Any, _resolve_planner_client(model_to_use))
         if client is None:
             return {}
 

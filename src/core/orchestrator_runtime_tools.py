@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Set
 
-from core.skill_arg_planner import skill_arg_planner
 from core.task_inbox import task_inbox
 from core.tool_registry import tool_registry
+
 from core.tools.dev_tools import dev_tools
 from core.tools.dispatch_tools import dispatch_tools
-from core.tools.extension_tools import extension_tools
-from services.md_converter import adapt_md_file_for_platform
+from core.skill_loader import skill_loader
+
+RUNTIME_ONLY_TOOL_NAMES = frozenset(tool_registry.get_manager_tool_names())
 
 RuntimeToolAllowed = Callable[..., bool]
 RecordToolProfile = Callable[[str, Any, float], None]
@@ -63,11 +66,10 @@ class RuntimeToolAssembler:
                 filtered.append(item)
         return filtered
 
-    async def assemble(self, extension_candidates: list[Any]) -> List[Any]:
+    async def assemble(self) -> List[Any]:
         merged_tools: List[Any] = []
         merged_tools.extend(tool_registry.get_core_tools())
-        merged_tools.extend(tool_registry.get_manager_tools())
-        merged_tools.extend(tool_registry.get_extension_tools(extension_candidates))
+        merged_tools.append(tool_registry.get_load_skill_tool())
         return self._filter_by_policy(merged_tools)
 
 
@@ -88,18 +90,24 @@ class ToolCallDispatcher:
     todo_mark_step: TodoMarkStep
     append_session_event: AppendSessionEvent
     on_worker_dispatched: OnWorkerDispatched | None = None
-    extension_map: Dict[str, Any] = field(default_factory=dict)
     available_tool_names: Set[str] = field(default_factory=set)
 
-    def set_extension_candidates(self, extension_candidates: list[Any]) -> None:
-        self.extension_map = {
-            str(getattr(candidate, "tool_name", "") or ""): candidate
-            for candidate in (extension_candidates or [])
-            if str(getattr(candidate, "tool_name", "") or "").strip()
-        }
+    def _runtime_only_allowed_tool_names(self) -> Set[str]:
+        allowed: Set[str] = set()
+        for name in RUNTIME_ONLY_TOOL_NAMES:
+            if self.runtime_tool_allowed(
+                runtime_user_id=self.runtime_user_id,
+                platform=self.platform_name,
+                tool_name=name,
+                kind="tool",
+            ):
+                allowed.add(name)
+        return allowed
 
     def set_available_tool_names(self, names: Set[str]) -> None:
-        self.available_tool_names = set(names or set())
+        resolved = set(names or set())
+        resolved.update(self._runtime_only_allowed_tool_names())
+        self.available_tool_names = resolved
 
     def _extract_user_request(self) -> str:
         message = getattr(self.ctx, "message", None)
@@ -166,30 +174,183 @@ class ToolCallDispatcher:
         platform = str(self.platform_name or "").strip().lower()
         return not uid.startswith("worker::") and platform != "worker_kernel"
 
+    def _inject_runtime_bash_env(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        command = str(args.get("command") or "").strip()
+        if not command:
+            return args
+
+        export_parts: List[str] = []
+        runtime_user = self._normalize_runtime_user_for_path()
+        msg = getattr(self.ctx, "message", None)
+        msg_user = getattr(msg, "user", None)
+        msg_chat = getattr(msg, "chat", None)
+        user_data = getattr(self.ctx, "user_data", None)
+        user_data_obj = user_data if isinstance(user_data, dict) else {}
+
+        platform = str(self.platform_name or "").strip()
+        chat_id = str(getattr(msg_chat, "id", "") or "").strip()
+        source_user_id = str(getattr(msg_user, "id", "") or "").strip()
+        forced_platform = str(
+            user_data_obj.get("worker_delivery_platform") or ""
+        ).strip()
+        forced_chat_id = str(user_data_obj.get("worker_delivery_chat_id") or "").strip()
+
+        if forced_platform:
+            platform = forced_platform
+        if forced_chat_id:
+            chat_id = forced_chat_id
+        if runtime_user:
+            export_parts.append(
+                f"X_BOT_RUNTIME_USER_ID={shlex.quote(runtime_user)}"
+            )
+        if source_user_id:
+            export_parts.append(
+                f"X_BOT_RUNTIME_SOURCE_USER_ID={shlex.quote(source_user_id)}"
+            )
+        if platform:
+            export_parts.append(
+                f"X_BOT_RUNTIME_PLATFORM={shlex.quote(platform)}"
+            )
+        if chat_id:
+            export_parts.append(
+                f"X_BOT_RUNTIME_CHAT_ID={shlex.quote(chat_id)}"
+            )
+        if not export_parts:
+            return args
+
+        patched = dict(args or {})
+        patched["command"] = f"export {' '.join(export_parts)} && {command}"
+        return patched
+
+    def _apply_loaded_skill_bash_context(self, args: Dict[str, Any]) -> Dict[str, Any]:
+        command = str(args.get("command") or "").strip()
+        if not command:
+            return args
+
+        user_data = getattr(self.ctx, "user_data", None)
+        if not isinstance(user_data, dict):
+            return args
+
+        skill_dir = str(user_data.get("last_loaded_skill_dir") or "").strip()
+        entrypoint = str(
+            user_data.get("last_loaded_skill_entrypoint") or "scripts/execute.py"
+        ).strip()
+        if not skill_dir or not entrypoint:
+            return args
+
+        try:
+            parts = shlex.split(command)
+        except Exception:
+            return args
+        if not parts:
+            return args
+
+        relative_candidates = {entrypoint, f"./{entrypoint}"}
+        if not any(str(part or "").strip() in relative_candidates for part in parts):
+            return args
+
+        patched = dict(args or {})
+        patched["cwd"] = skill_dir
+        return patched
+
     @staticmethod
     def _is_software_delivery_intent(text: str) -> bool:
         raw = str(text or "").strip().lower()
         if not raw:
             return False
 
-        coding_keywords = (
+        direct_keywords = (
             "software_delivery",
             "software delivery",
-            "github",
-            "issue",
-            "pull request",
-            "pr",
             "代码",
             "编码",
+            "改代码",
             "开发",
             "修复",
             "bug",
+            "调试",
+            "debug",
+            "重构",
             "技能",
             "skill",
             "创建技能",
             "修改技能",
+            "实现功能",
+            "写单测",
+            "测试修复",
         )
-        return any(token in raw for token in coding_keywords)
+        if any(token in raw for token in direct_keywords):
+            return True
+
+        repo_hints = (
+            "github",
+            "仓库",
+            "repo",
+            "issue",
+            "pull request",
+            "pr",
+            "commit",
+        )
+        coding_actions = (
+            "修复",
+            "实现",
+            "开发",
+            "排查",
+            "review",
+            "提交",
+            "发布",
+            "publish",
+            "merge",
+            "合并",
+            "改",
+            "写",
+        )
+        return any(token in raw for token in repo_hints) and any(
+            token in raw for token in coding_actions
+        )
+
+    def _is_loaded_skill_cli_bash_command(self, command: str) -> bool:
+        raw = str(command or "").strip()
+        if not raw:
+            return False
+
+        user_data = getattr(self.ctx, "user_data", None)
+        if not isinstance(user_data, dict):
+            return False
+
+        skill_dir = str(user_data.get("last_loaded_skill_dir") or "").strip()
+        entrypoint = str(
+            user_data.get("last_loaded_skill_entrypoint") or "scripts/execute.py"
+        ).strip()
+        if not skill_dir or not entrypoint:
+            return False
+
+        try:
+            parts = shlex.split(raw)
+        except Exception:
+            parts = []
+        if not parts:
+            return False
+
+        invokes_python = any(
+            str(part or "").strip().startswith("python") for part in parts
+        )
+        if not invokes_python:
+            return False
+
+        normalized_entrypoint = entrypoint.lstrip("./")
+        relative_candidates = {normalized_entrypoint, f"./{normalized_entrypoint}"}
+        absolute_entrypoint = str((Path(skill_dir) / normalized_entrypoint).resolve())
+
+        if absolute_entrypoint in parts:
+            return True
+        if any(str(part or "").strip() in relative_candidates for part in parts):
+            return True
+        if skill_dir in parts and any(
+            str(part or "").strip() in relative_candidates for part in parts
+        ):
+            return True
+        return False
 
     @staticmethod
     def _infer_software_delivery_action(
@@ -344,6 +505,9 @@ class ToolCallDispatcher:
                 and self._is_manager_runtime()
                 and "software_delivery" in self.available_tool_names
                 and self._is_software_delivery_intent(user_request)
+                and not self._is_loaded_skill_cli_bash_command(
+                    str(tool_args.get("command") or "")
+                )
             ):
                 blocked = {
                     "ok": False,
@@ -375,6 +539,11 @@ class ToolCallDispatcher:
                 tool_name=tool_name,
                 args=dict(args or {}),
             )
+            if tool_name == "bash":
+                normalized_args = self._apply_loaded_skill_bash_context(
+                    normalized_args
+                )
+                normalized_args = self._inject_runtime_bash_env(normalized_args)
             result = await self.tool_broker.execute_core_tool(
                 name=tool_name,
                 args=normalized_args,
@@ -382,6 +551,72 @@ class ToolCallDispatcher:
                 task_workspace_root=self.task_workspace_root,
             )
             self.todo_mark_step("act", "in_progress", f"Tool `{tool_name}` finished.")
+            self.record_tool_profile(tool_name, result, started)
+            return result
+
+        if tool_name == "load_skill":
+            skill_name = str(args.get("skill_name") or "").strip()
+            if not skill_name:
+                result = {
+                    "ok": False,
+                    "error_code": "missing_arg",
+                    "message": "Missing 'skill_name' argument",
+                    "failure_mode": "recoverable",
+                }
+                self.record_tool_profile(tool_name, result, started)
+                return result
+
+            skill_info = skill_loader.get_skill(skill_name) or {}
+            content = str(skill_info.get("skill_md_content") or "").strip()
+            if not content:
+                result = {
+                    "ok": False,
+                    "error_code": "not_found",
+                    "message": f"Skill '{skill_name}' not found or has no content.",
+                    "failure_mode": "recoverable",
+                }
+                self.record_tool_profile(tool_name, result, started)
+                return result
+
+            skill_dir = str(skill_info.get("skill_dir") or "").strip()
+            entrypoint = str(skill_info.get("entrypoint") or "").strip()
+            absolute_entrypoint = ""
+            if skill_dir and entrypoint:
+                absolute_entrypoint = str((Path(skill_dir) / entrypoint).resolve())
+
+            if isinstance(user_data, dict):
+                user_data["last_loaded_skill_name"] = skill_name
+                user_data["last_loaded_skill_dir"] = skill_dir
+                user_data["last_loaded_skill_entrypoint"] = (
+                    entrypoint or "scripts/execute.py"
+                )
+
+            runtime_note_lines: list[str] = []
+            if skill_dir:
+                runtime_note_lines.append("## Runtime Execution Context")
+                runtime_note_lines.append(f"- Skill directory: `{skill_dir}`")
+            if skill_dir and entrypoint:
+                runtime_note_lines.append(
+                    f"- Preferred bash usage: `cd {skill_dir} && python {entrypoint} ...`"
+                )
+            if absolute_entrypoint:
+                runtime_note_lines.append(
+                    f"- Absolute entrypoint: `python {absolute_entrypoint} ...`"
+                )
+            rendered_content = content
+            if runtime_note_lines:
+                rendered_content = (
+                    f"{content}\n\n" + "\n".join(runtime_note_lines)
+                ).strip()
+
+            result = {
+                "ok": True,
+                "content": rendered_content,
+                "skill_dir": skill_dir,
+                "entrypoint": entrypoint,
+                "absolute_entrypoint": absolute_entrypoint,
+            }
+            self.todo_mark_step("act", "in_progress", f"Tool `load_skill` loaded '{skill_name}'.")
             self.record_tool_profile(tool_name, result, started)
             return result
 
@@ -491,138 +726,24 @@ class ToolCallDispatcher:
             return result
 
         if tool_name == "list_extensions":
-            result = await extension_tools.list_extensions()
+            # Direct loading from skill_loader instead of using extension_tools
+            items = []
+            for row in skill_loader.get_skills_summary():
+                items.append(
+                    {
+                        "name": str(row.get("name") or ""),
+                        "description": str(row.get("description") or ""),
+                        "triggers": list(row.get("triggers") or []),
+                    }
+                )
+            result = {
+                "ok": True,
+                "extensions": items,
+                "summary": f"{len(items)} extension(s) available",
+            }
             self.record_tool_profile(tool_name, result, started)
             return result
 
-        if tool_name == "run_extension":
-            extension_args = args.get("args")
-            extension_args = extension_args if isinstance(extension_args, dict) else {}
-            result = await extension_tools.run_extension(
-                skill_name=str(args.get("skill_name") or ""),
-                args=extension_args,
-                ctx=self.ctx,
-                runtime=self.runtime,
-            )
-            files = result.get("files")
-            if isinstance(files, dict):
-                saved_paths = []
-                for filename, content in files.items():
-                    if isinstance(content, (bytes, bytearray)):
-                        adapted_bytes, adapted_name = adapt_md_file_for_platform(
-                            file_bytes=bytes(content),
-                            filename=str(filename),
-                            platform=self.platform_name,
-                        )
-                        reply_result = await self.ctx.reply_document(
-                            document=adapted_bytes, filename=adapted_name
-                        )
-                        path = getattr(reply_result, "path", "") if reply_result else ""
-                        if path:
-                            saved_paths.append(path)
-                if saved_paths:
-                    result["saved_file_paths"] = saved_paths
-            self.record_tool_profile(tool_name, result, started)
-            return result
-
-        if tool_name in self.extension_map:
-            candidate = self.extension_map[tool_name]
-            if not self.runtime_tool_allowed(
-                runtime_user_id=self.runtime_user_id,
-                platform=self.platform_name,
-                tool_name=tool_name,
-                kind="tool",
-            ):
-                blocked = {
-                    "ok": False,
-                    "error_code": "policy_blocked",
-                    "message": f"Tool policy blocked: {tool_name}",
-                    "failure_mode": "recoverable",
-                }
-                self.record_tool_profile(tool_name, blocked, started)
-                return blocked
-            skill_name = str(getattr(candidate, "name", "") or "")
-            user_request = self._extract_user_request()
-            current_args = dict(args or {})
-            plan = await skill_arg_planner.plan(
-                skill_name=skill_name,
-                current_args=current_args,
-                user_request=user_request,
-            )
-            resolved_args = dict(plan.get("args") or current_args)
-            result = await extension_tools.run_extension(
-                skill_name=skill_name,
-                args=resolved_args,
-                ctx=self.ctx,
-                runtime=self.runtime,
-            )
-            result = self._attach_arg_plan(
-                result=result,
-                plan=plan,
-                resolved_args=resolved_args,
-                attempt=1,
-            )
-
-            if self._should_retry_extension(result):
-                retry_plan = await skill_arg_planner.plan(
-                    skill_name=skill_name,
-                    current_args=resolved_args,
-                    user_request=user_request,
-                    validation_error=str(
-                        result.get("message") or result.get("summary") or ""
-                    ),
-                    force=True,
-                )
-                retry_args = dict(retry_plan.get("args") or resolved_args)
-                if self._is_args_changed(old_args=resolved_args, new_args=retry_args):
-                    retry_result = await extension_tools.run_extension(
-                        skill_name=skill_name,
-                        args=retry_args,
-                        ctx=self.ctx,
-                        runtime=self.runtime,
-                    )
-                    result = self._attach_arg_plan(
-                        result=retry_result,
-                        plan=retry_plan,
-                        resolved_args=retry_args,
-                        attempt=2,
-                    )
-
-            files = result.get("files")
-            if isinstance(files, dict):
-                saved_paths = []
-                for filename, content in files.items():
-                    if isinstance(content, (bytes, bytearray)):
-                        adapted_bytes, adapted_name = adapt_md_file_for_platform(
-                            file_bytes=bytes(content),
-                            filename=str(filename),
-                            platform=self.platform_name,
-                        )
-                        reply_result = await self.ctx.reply_document(
-                            document=adapted_bytes, filename=adapted_name
-                        )
-                        path = getattr(reply_result, "path", "") if reply_result else ""
-                        if path:
-                            saved_paths.append(path)
-                if saved_paths:
-                    result["saved_file_paths"] = saved_paths
-
-            candidate_name = str(getattr(candidate, "name", "") or tool_name)
-            if result.get("ok"):
-                self.todo_mark_step(
-                    "act",
-                    "in_progress",
-                    f"Extension `{candidate_name}` finished.",
-                )
-            else:
-                self.todo_mark_step(
-                    "act",
-                    "blocked",
-                    f"Extension `{candidate_name}` failed: {result.get('message') or result.get('error_code')}",
-                )
-            await self.append_session_event(
-                f"tool_finish:{self.task_id}:{tool_name}:{'ok' if result.get('ok') else 'failed'}"
-            )
             self.record_tool_profile(tool_name, result, started)
             return result
 

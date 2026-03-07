@@ -939,5 +939,6 @@ def start_dynamic_skill_scheduler():
     scheduler.add_job(
         reload_scheduler_jobs,
         "date",
-        run_date=datetime.datetime.now() + datetime.timedelta(seconds=0.1),
+        run_date=datetime.datetime.now() + datetime.timedelta(seconds=5),
+        misfire_grace_time=30,
     )

@@ -5,7 +5,6 @@ from typing import Any, Dict, Iterable, List
 
 from core.prompts import (
     DEFAULT_SYSTEM_PROMPT,
-    MEMORY_MANAGEMENT_GUIDE,
     MANAGER_CORE_PROMPT,
 )
 from core.markdown_memory_store import markdown_memory_store
@@ -63,6 +62,7 @@ class PromptComposer:
         self,
         *,
         runtime_user_id: str,
+        platform: str = "",
         tools: Iterable[Any] | None = None,
         runtime_policy_ctx: Dict[str, Any] | None = None,
         mode: str = "chat",
@@ -86,8 +86,16 @@ class PromptComposer:
             parts.append("\n" + manager_prompt)
         elif str(mode or "").strip().lower() == "media_image":
             parts.append(
-                "\n【当前任务要求】\n这是一次单纯的图片分析请求。你需要保持你的角色贴心语气，根据给出的图片，直接回答用户的问题。\n⚠️ 警告：当前环境下工具箱已被卸载，**严禁**输出任何类似于 <tool_call> 的工具调用XML标签！不要为了检索记忆而强行调用工具。直接给出纯文本回答！"
+                "\n【当前任务要求】\n这是一次图片分析请求。你需要保持你的角色语气，结合图片与用户指令完成任务。\n如果用户明确要求记账/入账，请优先调用 `ext_quick_accounting` 完成真实入账；其他场景优先直接给出分析结论，避免无关工具调用。"
             )
+
+        # 注入 Skill 目录与 load_skill 使用引导
+        skill_catalog = self._build_skill_catalog(
+            runtime_user_id=runtime_user_id,
+            platform=platform,
+        )
+        if skill_catalog:
+            parts.append(skill_catalog)
 
         # 拼接当前日期
         parts.append("\n【当前日期】\n" + datetime.now().strftime("%Y-%m-%d"))
@@ -98,6 +106,64 @@ class PromptComposer:
         )
 
         return "\n\n".join([item for item in parts if str(item).strip()]).strip()
+
+    @staticmethod
+    def _runtime_role(runtime_user_id: str, platform: str) -> str:
+        uid = str(runtime_user_id or "").strip().lower()
+        platform_name = str(platform or "").strip().lower()
+        if uid.startswith("worker::") or platform_name == "worker_kernel":
+            return "worker"
+        return "manager"
+
+    def _build_skill_catalog(
+        self,
+        *,
+        runtime_user_id: str = "",
+        platform: str = "",
+    ) -> str:
+        """构建可用技能目录，引导 LLM 按需加载 SOP。"""
+        try:
+            from core.skill_loader import skill_loader
+            from core.tool_access_store import tool_access_store
+
+            skills = skill_loader.get_skills_summary()
+            if not skills:
+                return ""
+
+            runtime_role = self._runtime_role(runtime_user_id, platform)
+            lines: List[str] = []
+            for item in skills:
+                name = str(item.get("name") or "").strip()
+                desc = _short_desc(str(item.get("description") or ""), limit=60)
+                if not name:
+                    continue
+                allowed_roles = _normalize_text_list(item.get("allowed_roles"))
+                if allowed_roles and runtime_role not in allowed_roles:
+                    continue
+                allowed, _detail = tool_access_store.is_tool_allowed(
+                    runtime_user_id=runtime_user_id,
+                    platform=platform,
+                    tool_name=f"ext_{name.replace('-', '_')}",
+                    kind="tool",
+                )
+                if not allowed:
+                    continue
+                lines.append(f"- `{name}`: {desc}" if desc else f"- `{name}`")
+
+            if not lines:
+                return ""
+
+            catalog = (
+                "【可用技能目录】\n"
+                "以下技能可供使用。当用户请求匹配某个技能时，**必须先调用 "
+                '`load_skill(skill_name="xxx")` 获取完整操作指南（SOP）**，'
+                "然后严格按照 SOP 中的步骤使用原子工具执行。\n"
+                "**禁止在未加载 SOP 的情况下自行猜测执行方式。禁止load不在下面的列表中的技能**\n\n"
+                + "\n".join(lines)
+            )
+            return catalog
+        except Exception:
+            return ""
 
     def _get_worker_pool_info(self) -> str:
         """获取 Worker 池信息，供 Manager 决策派发"""

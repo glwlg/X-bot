@@ -2,21 +2,40 @@
 Stock Watch Skill Script
 """
 
+import argparse
+import asyncio
+import os
 import re
+import sys
+from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SRC_ROOT = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
 
 from core.state_store import (
     remove_watchlist_stock,
     get_user_watchlist,
     add_watchlist_stock,
 )
-from services.stock_service import (
-    fetch_stock_quotes,
-    format_stock_message,
-    search_stock_by_name,
-)
 from core.platform.models import UnifiedContext
 import logging
+
+if __package__:
+    from .services.stock_service import (
+        fetch_stock_quotes,
+        format_stock_message,
+        search_stock_by_name,
+    )
+else:
+    from services.stock_service import (
+        fetch_stock_quotes,
+        format_stock_message,
+        search_stock_by_name,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -368,3 +387,242 @@ async def handle_stock_select_callback(ctx: UnifiedContext) -> None:
         else:
             await ctx.edit_message(ctx.message.id, "❌ 删除失败")
         return
+
+
+def _resolve_cli_user_id(explicit_user_id: str | None) -> str:
+    raw = str(explicit_user_id or os.getenv("X_BOT_RUNTIME_USER_ID") or "").strip()
+    if raw.startswith("worker::"):
+        parts = raw.split("::")
+        if len(parts) >= 3:
+            candidate = str(parts[2] or "").strip()
+            if candidate:
+                return candidate
+    return raw
+
+
+def _resolve_cli_platform(explicit_platform: str | None) -> str:
+    platform = str(
+        explicit_platform or os.getenv("X_BOT_RUNTIME_PLATFORM") or ""
+    ).strip().lower()
+    if not platform or platform == "worker_kernel":
+        return "telegram"
+    return platform
+
+
+def _build_cli_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Manage watchlist and quotes with the built-in stock service.",
+    )
+    parser.add_argument(
+        "--user-id",
+        default="",
+        help="Optional runtime user id. Defaults to X_BOT_RUNTIME_USER_ID.",
+    )
+    parser.add_argument(
+        "--platform",
+        default="",
+        help="Optional platform name. Defaults to X_BOT_RUNTIME_PLATFORM or telegram.",
+    )
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("list", help="List watchlist with latest quotes")
+    subparsers.add_parser("refresh", help="Alias of list")
+
+    quotes_parser = subparsers.add_parser(
+        "quotes",
+        help="Fetch quotes for explicit stock codes or current watchlist",
+    )
+    quotes_parser.add_argument("symbols", nargs="*")
+
+    search_parser = subparsers.add_parser("search", help="Search stock by name/code")
+    search_parser.add_argument("keyword")
+
+    add_parser = subparsers.add_parser("add", help="Add a stock to watchlist")
+    add_parser.add_argument("keyword")
+
+    remove_parser = subparsers.add_parser(
+        "remove",
+        help="Remove a stock from watchlist by code or fuzzy name",
+    )
+    remove_parser.add_argument("keyword")
+
+    return parser
+
+
+async def _cli_print_watchlist(user_id: str, platform: str) -> int:
+    watchlist = await get_user_watchlist(user_id, platform=platform)
+    if not watchlist:
+        print("watchlist is empty")
+        return 0
+
+    quotes = await fetch_stock_quotes(
+        [str(item.get("stock_code") or "").strip() for item in watchlist]
+    )
+    if quotes:
+        print(format_stock_message(quotes))
+    else:
+        for item in watchlist:
+            print(
+                f"{item.get('stock_name', '')}\t{item.get('stock_code', '')}\tplatform={platform}"
+            )
+    return 0
+
+
+async def _cli_print_quotes(args: argparse.Namespace, user_id: str, platform: str) -> int:
+    symbols = [str(item or "").strip() for item in list(args.symbols or []) if str(item or "").strip()]
+    if not symbols:
+        watchlist = await get_user_watchlist(user_id, platform=platform)
+        symbols = [
+            str(item.get("stock_code") or "").strip()
+            for item in watchlist
+            if str(item.get("stock_code") or "").strip()
+        ]
+    if not symbols:
+        print("watchlist is empty")
+        return 0
+
+    quotes = await fetch_stock_quotes(symbols)
+    if not quotes:
+        print("no quotes found")
+        return 1
+    print(format_stock_message(quotes))
+    return 0
+
+
+async def _cli_search(keyword: str) -> int:
+    results = await search_stock_by_name(keyword)
+    if not results:
+        print(f"no stock found for: {keyword}")
+        return 1
+    for item in results:
+        print(
+            f"{item.get('name', '')}\t{item.get('code', '')}\tmarket={item.get('market', '')}"
+        )
+    return 0
+
+
+def _select_single_stock(results: list[dict], keyword: str) -> dict | None:
+    normalized = str(keyword or "").strip().lower()
+    exact = [
+        item
+        for item in results
+        if normalized
+        and normalized
+        in {
+            str(item.get("code") or "").strip().lower(),
+            str(item.get("name") or "").strip().lower(),
+        }
+    ]
+    if len(exact) == 1:
+        return exact[0]
+    if len(results) == 1:
+        return results[0]
+    return None
+
+
+async def _cli_add(keyword: str, user_id: str, platform: str) -> int:
+    results = await search_stock_by_name(keyword)
+    if not results:
+        print(f"no stock found for: {keyword}")
+        return 1
+
+    selected = _select_single_stock(results, keyword)
+    if not selected:
+        print("multiple stocks matched, please refine your query:")
+        for item in results[:8]:
+            print(
+                f"- {item.get('name', '')}\t{item.get('code', '')}\tmarket={item.get('market', '')}"
+            )
+        return 2
+
+    stock_code = str(selected.get("code") or "").strip()
+    stock_name = str(selected.get("name") or stock_code).strip()
+    success = await add_watchlist_stock(
+        user_id,
+        stock_code,
+        stock_name,
+        platform=platform,
+    )
+    if success:
+        print(f"added\t{stock_name}\t{stock_code}\tplatform={platform}")
+        return 0
+    print(f"already_exists\t{stock_name}\t{stock_code}")
+    return 0
+
+
+async def _cli_remove(keyword: str, user_id: str, platform: str) -> int:
+    watchlist = await get_user_watchlist(user_id, platform=platform)
+    normalized = str(keyword or "").strip().lower()
+    if not normalized:
+        print("keyword is required", file=sys.stderr)
+        return 1
+
+    exact = [
+        item
+        for item in watchlist
+        if normalized
+        in {
+            str(item.get("stock_code") or "").strip().lower(),
+            str(item.get("stock_name") or "").strip().lower(),
+        }
+    ]
+    if len(exact) == 1:
+        target = exact[0]
+    else:
+        fuzzy = [
+            item
+            for item in watchlist
+            if normalized in str(item.get("stock_name") or "").strip().lower()
+        ]
+        if len(fuzzy) == 1:
+            target = fuzzy[0]
+        elif len(fuzzy) > 1:
+            print("multiple watchlist entries matched, please refine your query:")
+            for item in fuzzy:
+                print(
+                    f"- {item.get('stock_name', '')}\t{item.get('stock_code', '')}"
+                )
+            return 2
+        else:
+            print(f"watchlist stock not found: {keyword}")
+            return 1
+
+    stock_code = str(target.get("stock_code") or "").strip()
+    stock_name = str(target.get("stock_name") or stock_code).strip()
+    success = await remove_watchlist_stock(user_id, stock_code)
+    if not success:
+        print(f"failed_to_remove\t{stock_name}\t{stock_code}", file=sys.stderr)
+        return 1
+    print(f"removed\t{stock_name}\t{stock_code}")
+    return 0
+
+
+async def _run_cli() -> int:
+    parser = _build_cli_parser()
+    args = parser.parse_args()
+    user_id = _resolve_cli_user_id(args.user_id)
+    if not user_id:
+        print(
+            "missing runtime user id: set X_BOT_RUNTIME_USER_ID or pass --user-id",
+            file=sys.stderr,
+        )
+        return 1
+
+    platform = _resolve_cli_platform(args.platform)
+    command = str(args.command or "").strip().lower()
+    if command in {"list", "refresh"}:
+        return await _cli_print_watchlist(user_id, platform)
+    if command == "quotes":
+        return await _cli_print_quotes(args, user_id, platform)
+    if command == "search":
+        return await _cli_search(str(args.keyword or "").strip())
+    if command == "add":
+        return await _cli_add(str(args.keyword or "").strip(), user_id, platform)
+    if command == "remove":
+        return await _cli_remove(str(args.keyword or "").strip(), user_id, platform)
+    print(f"unsupported command: {command}", file=sys.stderr)
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_run_cli()))

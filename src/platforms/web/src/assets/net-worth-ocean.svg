@@ -1,0 +1,35 @@
+<svg width="1200" height="700" viewBox="0 0 1200 700" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="700" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0B5D8F"/>
+      <stop offset="0.42" stop-color="#0C8EC6"/>
+      <stop offset="1" stop-color="#0A447A"/>
+    </linearGradient>
+    <radialGradient id="shine" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(450 260) rotate(20) scale(620 320)">
+      <stop stop-color="#8BE9FF" stop-opacity="0.52"/>
+      <stop offset="1" stop-color="#8BE9FF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="wake" x1="580" y1="410" x2="840" y2="570" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E6FCFF" stop-opacity="0.88"/>
+      <stop offset="1" stop-color="#E6FCFF" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="blur1" x="0" y="0" width="1200" height="700" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="32"/>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="700" fill="url(#bg)"/>
+  <ellipse cx="440" cy="250" rx="520" ry="250" fill="url(#shine)"/>
+
+  <g opacity="0.45" filter="url(#blur1)">
+    <path d="M-40 180C140 130 290 220 450 180C590 145 730 95 910 150C1000 178 1100 210 1240 170" stroke="#95E8FF" stroke-width="18"/>
+    <path d="M-20 310C130 265 300 340 470 315C620 293 760 250 930 285C1030 305 1120 345 1220 325" stroke="#B4F2FF" stroke-width="12"/>
+    <path d="M0 460C170 425 320 485 500 468C700 448 860 392 1030 415C1100 425 1160 448 1210 438" stroke="#7DE2FF" stroke-width="14"/>
+  </g>
+
+  <path d="M610 390L704 434L660 463L566 419L610 390Z" fill="#F8FBFF"/>
+  <path d="M600 396L658 423L631 441L574 414L600 396Z" fill="#D6E6F3"/>
+  <rect x="624" y="402" width="20" height="16" rx="3" fill="#A8BDD0"/>
+  <path d="M652 425L828 562" stroke="url(#wake)" stroke-width="18" stroke-linecap="round"/>
+  <path d="M634 436L792 602" stroke="url(#wake)" stroke-width="12" stroke-linecap="round"/>
+</svg>

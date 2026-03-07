@@ -1,7 +1,29 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
 import os
+import sys
+from pathlib import Path
+from typing import Any, Dict
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SRC_ROOT = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
 import pandas as pd
-from typing import Dict, Any
 from core.platform.models import UnifiedContext
+from core.skill_cli import (
+    add_common_arguments,
+    merge_params,
+    prepare_default_env,
+    run_execute_cli,
+)
+
+prepare_default_env(REPO_ROOT)
 
 
 async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, Any]:
@@ -50,3 +72,38 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
 
 def register_handlers(adapter_manager):
     pass
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="XLSX skill CLI bridge.",
+    )
+    add_common_arguments(parser)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    analyze_parser = subparsers.add_parser("analyze", help="Analyze an Excel file")
+    analyze_parser.add_argument("file_path", help="Path to the Excel file")
+    return parser
+
+
+def _params_from_args(args: argparse.Namespace) -> dict:
+    command = str(args.command or "").strip().lower()
+    if command == "analyze":
+        return merge_params(
+            args,
+            {
+                "action": "analyze",
+                "file_path": str(args.file_path or "").strip(),
+            },
+        )
+    raise SystemExit(f"unsupported command: {command}")
+
+
+async def _run() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+    return await run_execute_cli(execute, args=args, params=_params_from_args(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_run()))

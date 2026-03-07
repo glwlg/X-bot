@@ -1,7 +1,7 @@
 ---
 api_version: v3
 name: deep_research
-description: "**深度研究**。深度研究,深入研究,深入分析"
+description: 深度研究与长文报告生成。适合需要多源搜索、网页抓取和综合分析的问题。
 triggers:
 - deep research
 - 深度研究
@@ -31,43 +31,25 @@ input_schema:
   - topic
 permissions:
   filesystem: workspace
-  shell: false
+  shell: true
   network: limited
 entrypoint: scripts/execute.py
 ---
 
-# Deep Research (深度研究)
+# Deep Research
 
-你是一个深度信息挖掘专家。
+通过 `bash` 运行 `python scripts/execute.py ...`。脚本会搜索、抓取并生成 Markdown 报告；默认把文件写到当前目录，也可以用 `--output-dir` 指定目录。
 
-## 核心能力
+## Command
 
-1.  **深度研究**: 综合搜索引擎和网页爬虫，回答需要多方求证的复杂问题。
+- `python scripts/execute.py "<topic>" --depth 5 --language zh-CN`
 
-## 执行指令 (SOP)
+## Output
 
-当用户需要进行深入调查或生成报告时，调用此技能。
+- 终端会输出研究过程文本。
+- 最终报告会保存为 `deep_research_report.md`，并打印 `saved_file=...` 路径。
 
-### 参数说明
+## Rules
 
-| 参数名 | 类型 | 必填 | 说明 |
-| :--- | :--- | :--- | :--- |
-| `topic` | string | 是 | 研究主题或问题 |
-| `depth` | int | 否 | 爬取深度（阅读的页面数量），默认为 3 (最大 5) |
-| `language` | string | 否 | 搜索语言，例如 `zh-CN`, `en-US` |
-
-### 意图映射示例
-
-**1. 深度调研**
-- 用户输入: "深入研究 DeepSeek V3 的技术架构"
-- 提取参数:
-  ```json
-  { "topic": "DeepSeek V3 技术架构", "depth": 5 }
-  ```
-
-**2. 行业报告**
-- 用户输入: "帮我做一份关于 2024 AI 行业发展的深度报告"
-- 提取参数:
-  ```json
-  { "topic": "2024 AI 行业发展报告", "depth": 3 }
-  ```
+- 仅在问题需要多来源综合研究时使用。
+- 研究深度默认 5，除非问题很简单或用户明确要求更多/更少来源。

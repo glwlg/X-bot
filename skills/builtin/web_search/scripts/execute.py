@@ -1,15 +1,36 @@
+from __future__ import annotations
+
+import argparse
 import asyncio
+import logging
 import os
+import random
 import re
+import sys
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode, urlparse
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SRC_ROOT = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
 import httpx
 from core.platform.models import UnifiedContext
+from core.skill_cli import (
+    add_common_arguments,
+    merge_params,
+    parse_csv_values,
+    prepare_default_env,
+    run_execute_cli,
+)
 from ddgs import DDGS
 from exa_py import Exa
-import random
-import logging
+
+prepare_default_env(REPO_ROOT)
 
 logger = logging.getLogger(__name__)
 
@@ -922,3 +943,82 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> dict:
         "files": {"search_report.md": report_bytes},
         "ui": {},
     }
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Web search skill CLI bridge.",
+    )
+    add_common_arguments(parser)
+    parser.add_argument(
+        "queries",
+        nargs="+",
+        help="One or more search queries. Use multiple arguments for parallel search.",
+    )
+    parser.add_argument("--intent-profile", default="", help="Intent profile")
+    parser.add_argument("--num-results", type=int, default=5, help="Results per query")
+    parser.add_argument("--categories", default="", help="Search categories")
+    parser.add_argument("--time-range", default="", help="day/week/month/year")
+    parser.add_argument("--language", default="zh-CN", help="Search language")
+    parser.add_argument(
+        "--engines",
+        default="",
+        help="Comma-separated search engines",
+    )
+    parser.add_argument(
+        "--site-allowlist",
+        default="",
+        help="Comma-separated allowed domains",
+    )
+    parser.add_argument(
+        "--site-blocklist",
+        default="",
+        help="Comma-separated blocked domains",
+    )
+    parser.add_argument(
+        "--strict-sources",
+        choices=("true", "false"),
+        default=None,
+        help="Whether to keep only allowed sources",
+    )
+    return parser
+
+
+def _params_from_args(args: argparse.Namespace) -> dict:
+    query_list = [str(item).strip() for item in args.queries if str(item).strip()]
+    explicit: dict[str, Any] = {
+        "num_results": int(args.num_results or 5),
+        "language": str(args.language or "zh-CN").strip() or "zh-CN",
+    }
+    if len(query_list) == 1:
+        explicit["query"] = query_list[0]
+    else:
+        explicit["queries"] = query_list
+    if str(args.intent_profile or "").strip():
+        explicit["intent_profile"] = str(args.intent_profile).strip()
+    if str(args.categories or "").strip():
+        explicit["categories"] = str(args.categories).strip()
+    if str(args.time_range or "").strip():
+        explicit["time_range"] = str(args.time_range).strip()
+    engines = parse_csv_values(str(args.engines or ""))
+    if engines:
+        explicit["engines"] = engines
+    allowlist = parse_csv_values(str(args.site_allowlist or ""))
+    if allowlist:
+        explicit["site_allowlist"] = allowlist
+    blocklist = parse_csv_values(str(args.site_blocklist or ""))
+    if blocklist:
+        explicit["site_blocklist"] = blocklist
+    if args.strict_sources is not None:
+        explicit["strict_sources"] = str(args.strict_sources).strip().lower() == "true"
+    return merge_params(args, explicit)
+
+
+async def _run() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+    return await run_execute_cli(execute, args=args, params=_params_from_args(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_run()))

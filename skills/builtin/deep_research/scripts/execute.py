@@ -1,11 +1,33 @@
+from __future__ import annotations
+
+import argparse
 import asyncio
 import logging
+import sys
+from pathlib import Path
 from urllib.parse import quote
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SRC_ROOT = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
 import httpx
 from core.platform.models import UnifiedContext
-from services.web_summary_service import fetch_webpage_content
+from core.skill_cli import (
+    add_common_arguments,
+    merge_params,
+    prepare_default_env,
+    run_execute_cli,
+)
+
+prepare_default_env(REPO_ROOT)
+
 from core.config import GEMINI_MODEL, openai_async_client
 from services.openai_adapter import generate_text
+from services.web_summary_service import fetch_webpage_content
 
 logger = logging.getLogger(__name__)
 
@@ -158,3 +180,44 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None):
         logger.error(f"Synthesis failed: {e}")
         yield {"text": f"❌ 报告生成阶段失败: {e}", "ui": {}}
         return
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Deep research skill CLI bridge.",
+    )
+    add_common_arguments(parser)
+    parser.add_argument("topic", help="Research topic")
+    parser.add_argument(
+        "--depth",
+        type=int,
+        default=5,
+        help="Research depth/page count, default 5",
+    )
+    parser.add_argument(
+        "--language",
+        default="zh-CN",
+        help="Search language, default zh-CN",
+    )
+    return parser
+
+
+def _params_from_args(args: argparse.Namespace) -> dict:
+    return merge_params(
+        args,
+        {
+            "topic": str(args.topic or "").strip(),
+            "depth": int(args.depth or 5),
+            "language": str(args.language or "zh-CN").strip() or "zh-CN",
+        },
+    )
+
+
+async def _run() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+    return await run_execute_cli(execute, args=args, params=_params_from_args(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_run()))

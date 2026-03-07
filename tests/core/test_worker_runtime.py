@@ -7,6 +7,7 @@ import pytest
 from shared.queue.dispatch_queue import DispatchQueue
 from worker.kernel.daemon import WorkerKernelDaemon
 from worker.kernel.program_loader import ProgramLoader
+import worker.kernel.daemon as daemon_module
 
 
 def _write_program(
@@ -30,6 +31,15 @@ def _write_program(
         encoding="utf-8",
     )
     (version_dir / "program.py").write_text(code, encoding="utf-8")
+
+
+class _FakeWorkerTaskStore:
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    async def upsert_task(self, **kwargs):
+        self.calls.append(dict(kwargs))
+        return dict(kwargs)
 
 
 @pytest.mark.asyncio
@@ -78,6 +88,8 @@ async def test_worker_kernel_executes_task_and_writes_result(tmp_path, monkeypat
     )
 
     queue = DispatchQueue()
+    fake_store = _FakeWorkerTaskStore()
+    monkeypatch.setattr(daemon_module, "worker_task_store", fake_store)
     submitted = await queue.submit_task(
         worker_id="worker-main",
         instruction="run test",
@@ -107,6 +119,8 @@ async def test_worker_kernel_executes_task_and_writes_result(tmp_path, monkeypat
     assert result.payload.get("_execution_path") == "worker.kernel.daemon"
     assert result.payload.get("_program_id") == "default-worker"
     assert result.payload.get("_program_version") == "v1"
+    assert any(call.get("status") == "running" for call in fake_store.calls)
+    assert any(call.get("status") == "done" for call in fake_store.calls)
 
 
 @pytest.mark.asyncio
@@ -186,6 +200,8 @@ async def test_worker_kernel_stops_running_task_after_queue_cancel(tmp_path, mon
     )
 
     queue = DispatchQueue()
+    fake_store = _FakeWorkerTaskStore()
+    monkeypatch.setattr(daemon_module, "worker_task_store", fake_store)
     submitted = await queue.submit_task(
         worker_id="worker-main",
         instruction="long run",
@@ -220,6 +236,7 @@ async def test_worker_kernel_stops_running_task_after_queue_cancel(tmp_path, mon
     assert result.ok is False
     assert result.payload.get("cancelled") is True
     assert result.payload.get("cancel_reason") == "cancelled_by_stop_command"
+    assert any(call.get("status") == "cancelled" for call in fake_store.calls)
 
 
 def test_program_loader_refreshes_legacy_bootstrap_artifact(tmp_path, monkeypatch):

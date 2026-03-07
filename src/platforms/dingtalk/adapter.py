@@ -10,7 +10,7 @@ import re
 from typing import Any, Optional, Callable, Dict, List, Tuple, Union
 
 from core.platform.adapter import BotAdapter
-from core.platform.models import UnifiedContext, UnifiedMessage
+from core.platform.models import UnifiedContext
 from core.platform.exceptions import (
     MediaDownloadUnavailableError,
     MessageSendError,
@@ -359,7 +359,6 @@ class DingTalkAdapter(BotAdapter):
         except Exception as e:
             logger.error(f"DingTalk _reply_action_card error: {e}", exc_info=True)
             # Fallback
-            from .formatter import markdown_to_dingtalk_compat
 
             await self._reply_markdown(handler, incoming_message, text)
 

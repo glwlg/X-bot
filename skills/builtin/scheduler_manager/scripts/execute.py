@@ -1,9 +1,28 @@
+from __future__ import annotations
+
+import argparse
+import asyncio
+import sys
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SRC_ROOT = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
 from core.platform.models import UnifiedContext
-from core.state_store import (
-    add_scheduled_task,
-    get_all_active_tasks,
-    delete_task,
+from core.skill_cli import (
+    add_common_arguments,
+    merge_params,
+    prepare_default_env,
+    run_execute_cli,
 )
+
+prepare_default_env(REPO_ROOT)
+
+from core.state_store import add_scheduled_task, delete_task, get_all_active_tasks
 import logging
 
 logger = logging.getLogger(__name__)
@@ -232,3 +251,63 @@ async def handle_task_delete_callback(ctx: UnifiedContext):
         return f"✅ 任务 {task_id} 已删除。"
     except Exception as e:
         return f"❌ 删除失败: {e}"
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Scheduler manager skill CLI bridge.",
+    )
+    add_common_arguments(parser)
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    add_parser = subparsers.add_parser("add", help="Create a scheduled task")
+    add_parser.add_argument("--crontab", required=True, help="Cron expression")
+    add_parser.add_argument(
+        "--instruction",
+        required=True,
+        help="Instruction to run on schedule",
+    )
+    add_parser.add_argument(
+        "--push",
+        choices=("true", "false"),
+        default="true",
+        help="Whether to push task results",
+    )
+
+    subparsers.add_parser("list", help="List active tasks")
+
+    delete_parser = subparsers.add_parser("delete", help="Delete a task")
+    delete_parser.add_argument("task_id", help="Task id to delete")
+    return parser
+
+
+def _params_from_args(args: argparse.Namespace) -> dict:
+    command = str(args.command or "").strip().lower()
+    if command == "add":
+        return merge_params(
+            args,
+            {
+                "action": "add",
+                "crontab": str(args.crontab or "").strip(),
+                "instruction": str(args.instruction or "").strip(),
+                "push": str(args.push or "true").strip().lower(),
+            },
+        )
+    if command == "list":
+        return merge_params(args, {"action": "list"})
+    if command == "delete":
+        return merge_params(
+            args,
+            {"action": "delete", "task_id": str(args.task_id or "").strip()},
+        )
+    raise SystemExit(f"unsupported command: {command}")
+
+
+async def _run() -> int:
+    parser = _build_parser()
+    args = parser.parse_args()
+    return await run_execute_cli(execute, args=args, params=_params_from_args(args))
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_run()))

@@ -8,8 +8,6 @@ import asyncio
 import signal
 from telegram.ext import (
     Application,
-    Application,
-    ContextTypes,
     ConversationHandler,
     PicklePersistence,
     filters,
@@ -28,18 +26,16 @@ from core.config import (
     CORE_CHAT_WORKER_BACKEND,
     HEARTBEAT_ENABLED,
     HEARTBEAT_MODE,
-    WEB_DASHBOARD_ENABLED,
 )
 from core.heartbeat_worker import heartbeat_worker
 from core.waiting_phrase_store import waiting_phrase_store
+from manager.dispatch.manager_executor import manager_dispatch_executor
 from manager.relay.result_relay import worker_result_relay
 from handlers import (
     start,
     handle_new_command,
     help_command,
     button_callback,
-    button_callback,
-    back_to_main_and_cancel,
     cancel,
     handle_ai_chat,
     handle_ai_photo,
@@ -53,6 +49,7 @@ from handlers import (
     stop_command,
     heartbeat_command,
     worker_command,
+    accounting_command,
 )
 from handlers.skill_handlers import (
     teach_command,
@@ -70,7 +67,6 @@ from core.platform.registry import adapter_manager
 from core.platform.models import MessageType
 from platforms.telegram.adapter import TelegramAdapter
 from platforms.discord.adapter import DiscordAdapter
-from platforms.web.server import web_dashboard_server
 
 # 日志配置
 logging.basicConfig(
@@ -135,23 +131,7 @@ async def init_services() -> None:
         logger.error(f"❌ Error in init_services: {e}", exc_info=True)
 
 
-async def setup_telegram_commands(application: Application) -> None:
-    """Register Telegram Commands"""
-    await application.bot.set_my_commands(
-        [
-            ("start", "主菜单"),
-            ("new", "开启新对话"),
-            ("teach", "教我新能力"),
-            ("skills", "查看 Skills"),
-            ("feature", "提交需求"),
-            ("chatlog", "检索对话"),
-            ("translate", "沉浸式翻译"),
-            ("heartbeat", "心跳管理"),
-            ("worker", "管理 Worker 执行层"),
-            ("help", "使用帮助"),
-            ("cancel", "取消当前操作"),
-        ]
-    )
+
 
 
 async def log_update(update: Update, context):
@@ -204,8 +184,6 @@ async def main():
     await init_services()
     waiting_phrase_store.schedule_startup_refresh()
     await heartbeat_worker.start()
-    if WEB_DASHBOARD_ENABLED:
-        await web_dashboard_server.start()
 
     # if tg_app:
     #     await setup_telegram_commands(tg_app)
@@ -248,6 +226,7 @@ async def main():
     adapter_manager.on_command(
         "worker", worker_command, description="管理 Worker 执行层"
     )
+    adapter_manager.on_command("acc", accounting_command, description="快捷记账助手")
 
     # ----------------------------------------------
     # 3.1 DYNAMIC SKILL HANDLER REGISTRATION
@@ -391,6 +370,7 @@ async def main():
     try:
         await adapter_manager.start_all()
         await worker_result_relay.start()
+        await manager_dispatch_executor.start()
 
         # Keep alive
         logger.info("All adapters started. Press Ctrl+C to stop.")
@@ -400,8 +380,8 @@ async def main():
         logger.error(f"Fatal error: {e}", exc_info=True)
     finally:
         logger.info("Shutting down...")
+        await manager_dispatch_executor.stop()
         await heartbeat_worker.stop()
-        await web_dashboard_server.stop()
         await worker_result_relay.stop()
         await adapter_manager.stop_all()
 

@@ -195,6 +195,40 @@ def test_stream_cut_index_falls_back_to_limit_without_boundary():
     assert cut == 10
 
 
+def test_summarize_manager_tool_args_for_bash_command():
+    label, value = ai_handlers._summarize_manager_tool_args(
+        "bash",
+        {"command": "docker stop uptime-kuma"},
+    )
+
+    assert label == "命令"
+    assert value == "docker stop uptime-kuma"
+
+
+def test_build_manager_progress_text_includes_command_and_result():
+    text = ai_handlers._build_manager_progress_text(
+        {
+            "event": "tool_call_finished",
+            "task_id": "mgr-1",
+            "turn": 3,
+            "recent_steps": [
+                {
+                    "name": "bash",
+                    "status": "done",
+                    "summary": "Command executed with code 0",
+                    "detail_label": "命令",
+                    "detail": "docker stop uptime-kuma",
+                }
+            ],
+        }
+    )
+
+    assert "任务ID：`mgr-1`" in text
+    assert "动作：`Shell` 执行完成" in text
+    assert "命令：`docker stop uptime-kuma`" in text
+    assert "结果：Command executed with code 0" in text
+
+
 def test_build_runtime_phrase_pools_reads_generated_phrase_store(monkeypatch):
     monkeypatch.setattr(
         ai_handlers.waiting_phrase_store,

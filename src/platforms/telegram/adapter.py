@@ -10,11 +10,10 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    filters,
 )
 from core.platform.adapter import BotAdapter
 from core.platform.models import UnifiedContext
-from core.platform.exceptions import MessageSendError, MessageEditNotSupported
+from core.platform.exceptions import MessageSendError
 from .mapper import map_update_to_message
 from .formatter import markdown_to_telegram_html
 
@@ -109,6 +108,16 @@ class TelegramAdapter(BotAdapter):
             return "text" in value
         return False
 
+    @staticmethod
+    def _coerce_chat_id(chat_id: int | str) -> int | str:
+        text = str(chat_id or "").strip()
+        if not text:
+            return chat_id
+        try:
+            return int(text)
+        except Exception:
+            return chat_id
+
     async def _auto_reply_if_needed(
         self, unified_ctx: UnifiedContext, result: Any
     ) -> None:
@@ -145,9 +154,19 @@ class TelegramAdapter(BotAdapter):
         await self.application.updater.start_polling()
 
     async def stop(self) -> None:
-        await self.application.updater.stop()
-        await self.application.stop()
-        await self.application.shutdown()
+        try:
+            if getattr(self.application, "updater", None):
+                await self.application.updater.stop()
+        except RuntimeError:
+            pass
+        except Exception as e:
+            logger.warning(f"Error stopping Telegram updater: {e}")
+
+        try:
+            await self.application.stop()
+            await self.application.shutdown()
+        except Exception as e:
+            logger.warning(f"Error shutting down Telegram app: {e}")
 
     async def reply_text(
         self, context: UnifiedContext, text: str, ui: Optional[Dict] = None, **kwargs
@@ -202,6 +221,37 @@ class TelegramAdapter(BotAdapter):
         except Exception as e:
             logger.error(f"Telegram send_message failed: {e}")
             raise MessageSendError(str(e))
+
+    async def send_message_draft(
+        self,
+        chat_id: int | str,
+        draft_id: int,
+        text: str,
+        message_thread_id: Optional[int] = None,
+        **kwargs,
+    ) -> Any:
+        try:
+            sender = getattr(self.bot, "send_message_draft", None)
+            if not callable(sender):
+                return await self.send_message(chat_id=chat_id, text=text, **kwargs)
+
+            html_text = markdown_to_telegram_html(text)
+            payload = {
+                "chat_id": self._coerce_chat_id(chat_id),
+                "draft_id": max(1, int(draft_id or 0)),
+                "text": html_text,
+                "parse_mode": "HTML",
+            }
+            if message_thread_id is not None:
+                payload["message_thread_id"] = int(message_thread_id)
+
+            return await self._send_with_retry(
+                lambda: sender(**payload),
+                label="send_message_draft",
+            )
+        except Exception as e:
+            logger.warning("Telegram send_message_draft failed, fallback to send_message: %s", e)
+            return await self.send_message(chat_id=chat_id, text=text, **kwargs)
 
     async def send_document(
         self,

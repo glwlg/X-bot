@@ -1,22 +1,46 @@
+from __future__ import annotations
+
+import argparse
 import os
 import asyncio
 import logging
+import sys
+from pathlib import Path
 from typing import Dict, Any
 
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SRC_ROOT = REPO_ROOT / "src"
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
 from core.platform.models import UnifiedContext
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ConversationHandler, filters
 
 from core.config import WAITING_FOR_VIDEO_URL
 from core.config import is_user_allowed
 from utils import extract_video_url
-from services.download_service import download_video
 from user_context import add_message
+
+if __package__:
+    from .services.download_service import download_video, get_download_dir
+else:
+    from services.download_service import download_video, get_download_dir
 
 # Constants
 CONVERSATION_END = -1
 
 logger = logging.getLogger(__name__)
+
+
+def _inline_keyboard_markup(rows: list[list[tuple[str, str]]]) -> Any:
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+    keyboard = [
+        [InlineKeyboardButton(text, callback_data=callback) for text, callback in row]
+        for row in rows
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 # --- Helper Logic ---
 
@@ -88,18 +112,17 @@ async def start_download_video(ctx: UnifiedContext) -> int:
     logger.info("Entering download video mode")
 
     # 提供下载格式选择
-    keyboard = [
+    reply_markup = _inline_keyboard_markup(
         [
-            InlineKeyboardButton(
-                "📹 视频（最佳质量）", callback_data="dl_format_video"
-            ),
-            InlineKeyboardButton("🎵 仅音频 (MP3)", callback_data="dl_format_audio"),
-        ],
-        [
-            InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main_cancel"),
-        ],
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+            [
+                ("📹 视频（最佳质量）", "dl_format_video"),
+                ("🎵 仅音频 (MP3)", "dl_format_audio"),
+            ],
+            [
+                ("« 返回主菜单", "back_to_main_cancel"),
+            ],
+        ]
+    )
 
     try:
         await ctx.edit_message(
@@ -132,10 +155,9 @@ async def handle_download_format(ctx: UnifiedContext) -> int:
         ctx.user_data["download_format"] = "audio"
         format_text = "🎵 仅音频 (MP3)"
 
-    keyboard = [
-        [InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main_cancel")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = _inline_keyboard_markup(
+        [[("« 返回主菜单", "back_to_main_cancel")]]
+    )
 
     try:
         await ctx.edit_message(
@@ -230,18 +252,17 @@ async def process_video_download(
         # 暂存路径到 user_data以供后续操作
         ctx.user_data["large_file_path"] = file_path
 
-        keyboard = [
+        reply_markup = _inline_keyboard_markup(
             [
-                InlineKeyboardButton(
-                    "📝 生成内容摘要 (AI)", callback_data="large_file_summary"
-                ),
-                InlineKeyboardButton("🎵 仅发送音频", callback_data="large_file_audio"),
-            ],
-            [
-                InlineKeyboardButton("🗑️ 删除文件", callback_data="large_file_delete"),
-            ],
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+                [
+                    ("📝 生成内容摘要 (AI)", "large_file_summary"),
+                    ("🎵 仅发送音频", "large_file_audio"),
+                ],
+                [
+                    ("🗑️ 删除文件", "large_file_delete"),
+                ],
+            ]
+        )
 
         msg_id = getattr(
             processing_message, "message_id", getattr(processing_message, "id", None)
@@ -581,6 +602,8 @@ def register_handlers(adapter_manager: Any):
 
     # 1. Telegram
     try:
+        from telegram.ext import ConversationHandler, filters
+
         tg_adapter = adapter_manager.get_adapter("telegram")
         logger.info(
             f"🔌 [DownloadVideo] Registering Telegram handlers to adapter: {tg_adapter}"
@@ -646,3 +669,63 @@ def register_handlers(adapter_manager: Any):
         dingtalk_adapter.on_callback_query("^action_.*", handle_video_actions)
     except:
         pass
+
+
+class _ConsoleProgressMessage:
+    def __init__(self):
+        self._last_text = ""
+
+    async def edit_text(self, text: str):
+        self._emit(text)
+
+    async def edit(self, content: str | None = None, **_kwargs):
+        self._emit(content or "")
+
+    def _emit(self, text: str) -> None:
+        payload = str(text or "").strip()
+        if payload and payload != self._last_text:
+            print(payload, file=sys.stderr)
+            self._last_text = payload
+
+
+def _build_cli_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Download video/audio into the project downloads directory.",
+    )
+    parser.add_argument("url", help="Media URL to download")
+    parser.add_argument(
+        "--format",
+        choices=("video", "audio"),
+        default="video",
+        help="Output format. Default: video",
+    )
+    return parser
+
+
+async def _run_cli() -> int:
+    parser = _build_cli_parser()
+    args = parser.parse_args()
+    progress = _ConsoleProgressMessage()
+    result = await download_video(
+        str(args.url or "").strip(),
+        user_id=0,
+        progress_message=progress,
+        audio_only=str(args.format or "video").strip().lower() == "audio",
+    )
+    if not result.success:
+        print(result.error_message or "download failed", file=sys.stderr)
+        return 1
+
+    download_dir = get_download_dir()
+    saved_path = str(result.file_path or "").strip()
+    print(f"download_dir={download_dir}")
+    if saved_path:
+        print(f"saved_path={saved_path}")
+    print(f"is_too_large={str(bool(result.is_too_large)).lower()}")
+    if result.file_size_mb:
+        print(f"file_size_mb={result.file_size_mb:.2f}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(asyncio.run(_run_cli()))

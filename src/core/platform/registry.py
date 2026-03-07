@@ -1,8 +1,6 @@
-from typing import Dict, Type, Callable, Any
+from typing import Dict, Callable, Any
 from .adapter import BotAdapter
 import logging
-import asyncio
-import signal
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +32,10 @@ class AdapterManager:
         """Start all registered adapters"""
         for name, adapter in self._adapters.items():
             logger.info(f"Starting adapter: {name}")
-            await adapter.start()
+            try:
+                await adapter.start()
+            except Exception as e:
+                logger.error(f"Failed to start adapter {name}: {e}", exc_info=True)
 
     async def stop_all(self):
         """Stop all registered adapters"""

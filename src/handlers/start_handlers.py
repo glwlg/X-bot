@@ -176,24 +176,7 @@ async def help_command(ctx: UnifiedContext) -> None:
     )
 
 
-async def back_to_main_and_cancel(ctx: UnifiedContext) -> int:
-    """返回主菜单并取消当前操作（用于在对话状态中）"""
-    await ctx.answer_callback()
 
-    logger.info("Back to main menu and cancel current operation")
-
-    reply_markup = InlineKeyboardMarkup(get_main_menu_keyboard())
-
-    try:
-        await ctx.edit_message(
-            ctx.message.id,
-            WELCOME_MESSAGE,
-            reply_markup=reply_markup,
-        )
-    except Exception as e:
-        logger.error(f"Error in back_to_main_and_cancel: {e}")
-
-    return CONVERSATION_END
 
 
 async def button_callback(ctx: UnifiedContext) -> int:
