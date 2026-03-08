@@ -68,6 +68,7 @@ class ToolAccessStore:
         "group:coding",
         "group:management",
         "group:automation",
+        "group:skill-admin",
     ]
 
     def __init__(self):
@@ -206,7 +207,14 @@ class ToolAccessStore:
                 worker_deny = list(
                     (worker_default.get("tools") or {}).get("deny") or []
                 )
-                if worker_allow == ["group:all"] and worker_deny == ["group:coding"]:
+                legacy_worker_deny_sets = [
+                    {"group:coding"},
+                    {"group:coding", "group:management", "group:automation"},
+                ]
+                if worker_allow == ["group:all"] and any(
+                    set(worker_deny) == item and len(worker_deny) == len(item)
+                    for item in legacy_worker_deny_sets
+                ):
                     worker_default["tools"]["deny"] = list(self.WORKER_DEFAULT_DENY)
                 merged["worker_default"] = worker_default
 
@@ -221,9 +229,10 @@ class ToolAccessStore:
                         deny_entries = list(
                             (normalized.get("tools") or {}).get("deny") or []
                         )
-                        if allow_entries == ["group:all"] and deny_entries == [
-                            "group:coding"
-                        ]:
+                        if allow_entries == ["group:all"] and any(
+                            set(deny_entries) == item and len(deny_entries) == len(item)
+                            for item in legacy_worker_deny_sets
+                        ):
                             normalized["tools"]["deny"] = list(self.WORKER_DEFAULT_DENY)
                         normalized_workers[str(wid)] = normalized
                     merged["workers"] = normalized_workers

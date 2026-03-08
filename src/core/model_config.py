@@ -94,9 +94,22 @@ class ModelsConfig:
         """获取路由模型"""
         return self.model.get("routing", "")
 
+    def get_vision_model(self) -> str:
+        """获取多模态视觉理解模型。
+
+        优先使用 `model.vision`。为兼容旧配置，缺失时回退到 `model.image`。
+        """
+        return self.model.get("vision", "") or self.model.get("image", "")
+
+    def get_image_generation_model(self) -> str:
+        """获取图片生成模型。"""
+        return self.model.get("image_generation", "") or self.model.get(
+            "image_gen", ""
+        )
+
     def get_image_model(self) -> str:
-        """获取画图模型"""
-        return self.model.get("image", "")
+        """兼容旧接口：返回视觉理解模型。"""
+        return self.get_vision_model()
 
     def get_voice_model(self) -> str:
         """获取语音模型"""
@@ -225,6 +238,13 @@ _model_manager: Optional[ModelManager] = None
 _primary_model: str = ""
 
 
+def _ensure_models_loaded() -> Optional[ModelsConfig]:
+    global _models_config
+    if _models_config is None:
+        load_models_config()
+    return _models_config
+
+
 def load_models_config(config_path: Optional[str] = None) -> ModelsConfig:
     """加载模型配置并自动初始化ModelManager"""
     global _models_config, _model_manager, _primary_model
@@ -335,6 +355,7 @@ def get_primary_model() -> str:
 # 便捷函数 - 兼容现有代码
 def get_current_model() -> str:
     """获取当前使用的模型（用于AiService）"""
+    _ensure_models_loaded()
     if _model_manager:
         return _model_manager.get_current_model()
     return _primary_model
@@ -342,6 +363,7 @@ def get_current_model() -> str:
 
 def get_model_for_input(input_type: str = "text") -> str:
     """获取支持指定输入类型的模型"""
+    _ensure_models_loaded()
     if _model_manager:
         model = _model_manager.get_next_available_model(input_type)
         if model:
@@ -358,6 +380,7 @@ def get_model_id_for_api(model_key: Optional[str] = None) -> str:
         model_key = 'bailian/qwen3.5-plus'
         returns = 'qwen3.5-plus'
     """
+    _ensure_models_loaded()
     if _model_manager:
         return _model_manager.get_model_id(model_key)
 
@@ -370,6 +393,7 @@ def get_model_id_for_api(model_key: Optional[str] = None) -> str:
 
 def get_api_key_for_model(model_key: Optional[str] = None) -> str:
     """获取模型对应的API Key"""
+    _ensure_models_loaded()
     if _model_manager:
         provider_config = _model_manager.get_provider_config(model_key)
         if provider_config:
@@ -379,6 +403,7 @@ def get_api_key_for_model(model_key: Optional[str] = None) -> str:
 
 def get_base_url_for_model(model_key: Optional[str] = None) -> Optional[str]:
     """获取模型对应的baseUrl"""
+    _ensure_models_loaded()
     if _model_manager:
         provider_config = _model_manager.get_provider_config(model_key)
         if provider_config:
@@ -388,6 +413,7 @@ def get_base_url_for_model(model_key: Optional[str] = None) -> Optional[str]:
 
 def get_routing_model() -> str:
     """获取路由模型"""
+    _ensure_models_loaded()
     if _models_config:
         return _models_config.get_routing_model()
     return _primary_model
@@ -395,13 +421,28 @@ def get_routing_model() -> str:
 
 def get_voice_model() -> str:
     """获取语音模型"""
+    _ensure_models_loaded()
     if _models_config:
         return _models_config.get_voice_model()
     return _primary_model
 
 
-def get_image_model() -> str:
-    """获取图像模型"""
+def get_vision_model() -> str:
+    """获取多模态视觉理解模型。"""
+    _ensure_models_loaded()
     if _models_config:
-        return _models_config.get_image_model()
+        return _models_config.get_vision_model()
     return _primary_model
+
+
+def get_image_generation_model() -> str:
+    """获取图片生成模型。"""
+    _ensure_models_loaded()
+    if _models_config:
+        return _models_config.get_image_generation_model()
+    return ""
+
+
+def get_image_model() -> str:
+    """兼容旧接口：返回视觉理解模型。"""
+    return get_vision_model()

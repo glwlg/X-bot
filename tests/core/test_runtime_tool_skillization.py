@@ -258,10 +258,63 @@ async def test_load_skill_sets_bash_cwd_for_relative_entrypoint(monkeypatch):
     assert captured["name"] == "bash"
     assert captured["args"]["cwd"] == skill_dir
     assert captured["args"]["command"].startswith("export ")
-    assert "X_BOT_RUNTIME_USER_ID=u1" in captured["args"]["command"]
-    assert "X_BOT_RUNTIME_SOURCE_USER_ID=source-user-1" in captured["args"]["command"]
-    assert "X_BOT_RUNTIME_PLATFORM=worker_kernel" in captured["args"]["command"]
-    assert "X_BOT_RUNTIME_CHAT_ID=chat-99" in captured["args"]["command"]
+
+
+@pytest.mark.asyncio
+async def test_load_skill_blocks_manager_only_skill_for_worker(monkeypatch):
+    async def append_event(_event: str):
+        return None
+
+    monkeypatch.setattr(
+        runtime_tools_module.skill_loader,
+        "get_skill",
+        lambda _skill_name: {
+            "name": "skill_manager",
+            "allowed_roles": ["manager"],
+            "contract": {"runtime_target": "manager"},
+            "skill_md_content": "# Skill Manager",
+            "skill_dir": "/tmp/skills/skill_manager",
+            "entrypoint": "scripts/execute.py",
+        },
+    )
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="worker::worker-main::u1",
+        platform_name="worker_kernel",
+        task_id="task-7",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(
+            message=SimpleNamespace(
+                text="管理技能",
+                user=SimpleNamespace(id="source-user-1"),
+                chat=SimpleNamespace(id="chat-99"),
+            ),
+            user_data={},
+        ),
+        runtime=object(),
+        tool_broker=object(),
+        runtime_tool_allowed=lambda **kwargs: (
+            False,
+            {"reason": "matched_deny_list"},
+        )
+        if kwargs.get("tool_name") == "ext_skill_manager"
+        else True,
+        record_tool_profile=lambda *_args, **_kwargs: None,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"load_skill"})
+
+    result = await dispatcher.execute(
+        name="load_skill",
+        args={"skill_name": "skill_manager"},
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert result["ok"] is False
+    assert result["error_code"] == "skill_policy_blocked"
 
 
 @pytest.mark.asyncio

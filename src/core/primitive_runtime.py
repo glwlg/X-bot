@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
+from core.file_artifacts import extract_saved_file_rows, strip_saved_file_markers
+
 
 DEFAULT_BASH_TIMEOUT_SEC = 60
 MAX_BASH_OUTPUT = 32_000
@@ -76,6 +78,51 @@ class PrimitiveRuntime:
 
     def _policy_block(self, message: str) -> Dict[str, Any]:
         return self._err("policy_blocked", message)
+
+    @staticmethod
+    def _summarize_command_failure_output(output: str, *, limit: int = 240) -> str:
+        text = str(output or "").strip()
+        if not text:
+            return ""
+        lines: list[str] = []
+        for raw in text.splitlines():
+            line = str(raw or "").strip()
+            if not line or line == "[stderr]":
+                continue
+            lines.append(line)
+        summary = " | ".join(lines[:3]).strip()
+        if len(summary) > limit:
+            summary = summary[: limit - 3].rstrip() + "..."
+        return summary
+
+    @staticmethod
+    def _classify_command_failure_mode(output: str) -> str:
+        lowered = str(output or "").lower()
+        fatal_markers = (
+            "请在 config/models.json 中设置",
+            "未配置生图模型",
+            "当前没有可用的图像模型",
+            "no available image model",
+            "no client available",
+            "不支持生图接口",
+            "不支持 images.generate",
+            "does not support image generation",
+            "does not support images.generate",
+            "404 page not found",
+            "api key",
+            "access token",
+            "credential",
+            "凭据",
+            "未初始化",
+            "not initialized",
+            "not configured",
+            "missing token",
+            "missing api key",
+            "请先配置",
+        )
+        if any(marker in lowered for marker in fatal_markers):
+            return "fatal"
+        return "recoverable"
 
     def _resolve_path(self, path: str) -> str:
         if not path:
@@ -337,7 +384,9 @@ class PrimitiveRuntime:
 
         out_text = (stdout or b"").decode("utf-8", errors="replace")
         err_text = (stderr or b"").decode("utf-8", errors="replace")
-        combined = out_text
+        saved_files = extract_saved_file_rows(out_text)
+        cleaned_out_text = strip_saved_file_markers(out_text)
+        combined = cleaned_out_text
         if err_text:
             combined = (
                 f"{combined}\n[stderr]\n{err_text}"
@@ -354,11 +403,33 @@ class PrimitiveRuntime:
             "exit_code": process.returncode,
             "output": combined,
         }
+        if saved_files:
+            data["files"] = list(saved_files)
         if process.returncode != 0:
+            failure_summary = self._summarize_command_failure_output(combined)
+            failure_mode = self._classify_command_failure_mode(combined)
+            message = f"Command exited with code {process.returncode}"
+            if failure_summary:
+                message = f"{message}: {failure_summary}"
             return {
                 "ok": False,
                 "error_code": "command_failed",
-                "message": f"Command exited with code {process.returncode}",
+                "message": message,
+                "text": failure_summary or message,
                 "data": data,
+                "failure_mode": failure_mode,
+                "terminal": failure_mode == "fatal" and bool(failure_summary),
             }
-        return self._ok(data, f"Command exited with code {process.returncode}")
+        result = self._ok(data, f"Command exited with code {process.returncode}")
+        payload: Dict[str, Any] = {}
+        if cleaned_out_text.strip():
+            payload["text"] = cleaned_out_text.strip()
+            result["text"] = cleaned_out_text.strip()
+        if saved_files:
+            payload["files"] = list(saved_files)
+            result["files"] = list(saved_files)
+            result["terminal"] = True
+            result["task_outcome"] = "done"
+        if payload:
+            result["payload"] = payload
+        return result

@@ -2,6 +2,11 @@
 api_version: v3
 name: skill_manager
 description: 核心技能中心。负责列出、搜索、安装、创建、修改和删除技能。
+allowed_roles:
+- manager
+policy_groups:
+- skill-admin
+platform_handlers: false
 triggers:
 - 搜索技能
 - 修改技能

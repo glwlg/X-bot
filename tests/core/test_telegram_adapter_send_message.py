@@ -10,6 +10,9 @@ class _FakeBot:
     def __init__(self):
         self.calls = []
         self.draft_calls = []
+        self.photo_calls = []
+        self.video_calls = []
+        self.audio_calls = []
 
     async def send_message(self, **kwargs):
         self.calls.append(dict(kwargs))
@@ -18,6 +21,18 @@ class _FakeBot:
     async def send_message_draft(self, **kwargs):
         self.draft_calls.append(dict(kwargs))
         return True
+
+    async def send_photo(self, **kwargs):
+        self.photo_calls.append(dict(kwargs))
+        return SimpleNamespace(id="tg-photo")
+
+    async def send_video(self, **kwargs):
+        self.video_calls.append(dict(kwargs))
+        return SimpleNamespace(id="tg-video")
+
+    async def send_audio(self, **kwargs):
+        self.audio_calls.append(dict(kwargs))
+        return SimpleNamespace(id="tg-audio")
 
 
 @pytest.mark.asyncio
@@ -127,3 +142,19 @@ async def test_telegram_adapter_send_message_draft_can_raise_without_message_fal
             text="处理中",
             fallback_to_message=False,
         )
+
+
+@pytest.mark.asyncio
+async def test_telegram_adapter_send_photo_uses_bot_photo_api():
+    fake_bot = _FakeBot()
+    app = SimpleNamespace(bot=fake_bot)
+    adapter = TelegramAdapter(app)
+
+    result = await adapter.send_photo(chat_id="100", photo="/tmp/demo.png", caption="完成")
+
+    assert result.id == "tg-photo"
+    assert fake_bot.photo_calls
+    payload = fake_bot.photo_calls[-1]
+    assert payload["chat_id"] == 100
+    assert payload["photo"] == "/tmp/demo.png"
+    assert payload["parse_mode"] == "HTML"

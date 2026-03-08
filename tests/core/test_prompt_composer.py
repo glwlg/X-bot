@@ -103,6 +103,11 @@ def test_prompt_composer_hides_manager_only_roles_from_worker(monkeypatch):
                 "description": "worker 调度",
                 "allowed_roles": ["manager"],
             },
+            {
+                "name": "skill_manager",
+                "description": "技能治理",
+                "allowed_roles": ["manager"],
+            },
         ],
     )
     monkeypatch.setattr(
@@ -117,6 +122,7 @@ def test_prompt_composer_hides_manager_only_roles_from_worker(monkeypatch):
 
     assert "stock_watch" in text
     assert "worker_management" not in text
+    assert "skill_manager" not in text
 
 
 def test_prompt_composer_builds_manager_tool_guidance_from_skill_metadata(

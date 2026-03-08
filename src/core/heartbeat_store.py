@@ -2,13 +2,14 @@ import asyncio
 import json
 import os
 import re
+import shutil
 from datetime import datetime, time, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import yaml
 
-from core.config import DATA_DIR
+from core.config import ADMIN_USER_IDS, DATA_DIR
 
 try:
     from zoneinfo import ZoneInfo
@@ -96,6 +97,8 @@ class HeartbeatStore:
     def __init__(self):
         self.root = (Path(DATA_DIR) / "runtime_tasks").resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        self.shared_dir_name = "user"
+        self.legacy_import_marker = ".legacy-import-complete"
         self.lock_timeout_sec = max(
             1, int(os.getenv("HEARTBEAT_LOCK_TIMEOUT_SEC", "20"))
         )
@@ -123,14 +126,57 @@ class HeartbeatStore:
     def backup_legacy_path(self, user_id: str) -> Path:
         return self._user_dir(user_id) / "HEARTBEAT.v1.bak.md"
 
-    def _user_dir(self, user_id: str) -> Path:
-        safe = str(user_id).strip() or "unknown"
-        path = (self.root / safe).resolve()
+    def _legacy_user_dirs(self, user_id: str | None = None) -> List[Path]:
+        candidates: List[Path] = []
+        seen: set[str] = set()
+
+        def add(name: str | None) -> None:
+            raw = str(name or "").strip()
+            if not raw or raw == self.shared_dir_name or raw in seen:
+                return
+            path = (self.root / raw).resolve()
+            if not path.exists() or not path.is_dir():
+                return
+            seen.add(raw)
+            candidates.append(path)
+
+        add(user_id)
+        for admin_id in sorted(ADMIN_USER_IDS):
+            add(str(admin_id))
+        return candidates
+
+    @staticmethod
+    def _merge_missing_tree(src: Path, dst: Path) -> None:
+        if not src.exists() or not src.is_dir():
+            return
+        for child in src.rglob("*"):
+            if not child.is_file():
+                continue
+            relative = child.relative_to(src)
+            target = (dst / relative).resolve()
+            if target.exists():
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(child, target)
+
+    def _ensure_shared_dir(self, user_id: str | None = None) -> Path:
+        path = (self.root / self.shared_dir_name).resolve()
         path.mkdir(parents=True, exist_ok=True)
+        marker = (path / self.legacy_import_marker).resolve()
+        if marker.exists():
+            return path
+
+        for legacy_dir in self._legacy_user_dirs(user_id):
+            self._merge_missing_tree(legacy_dir, path)
+
+        marker.write_text("ok\n", encoding="utf-8")
         return path
 
+    def _user_dir(self, user_id: str) -> Path:
+        return self._ensure_shared_dir(user_id)
+
     def _user_lock(self, user_id: str) -> asyncio.Lock:
-        key = str(user_id)
+        key = self.shared_dir_name
         lock = self._locks.get(key)
         if lock is None:
             lock = asyncio.Lock()
@@ -138,9 +184,10 @@ class HeartbeatStore:
         return lock
 
     def _default_spec(self, user_id: str) -> Dict[str, Any]:
+        canonical_user_id = self.shared_dir_name
         return {
             "version": 2,
-            "user_id": str(user_id),
+            "user_id": canonical_user_id,
             "every": self.default_every,
             "target": self.default_target,
             "active_hours": {
@@ -152,9 +199,10 @@ class HeartbeatStore:
         }
 
     def _default_status(self, user_id: str) -> Dict[str, Any]:
+        canonical_user_id = self.shared_dir_name
         return {
             "version": 2,
-            "user_id": str(user_id),
+            "user_id": canonical_user_id,
             "locked_by": "",
             "lock_expires_at": "",
             "last_update": _now_iso(),
@@ -247,7 +295,10 @@ class HeartbeatStore:
         ][-20:]
 
         merged["version"] = 2
-        merged["user_id"] = str(user_id)
+        merged["user_id"] = (
+            _truncate((data or {}).get("user_id", default["user_id"]), 128)
+            or default["user_id"]
+        )
         merged["locked_by"] = _truncate(merged.get("locked_by", ""), 200)
         merged["lock_expires_at"] = _truncate(merged.get("lock_expires_at", ""), 64)
         merged["last_update"] = (
@@ -273,7 +324,10 @@ class HeartbeatStore:
         )
 
         merged["version"] = 2
-        merged["user_id"] = str(user_id)
+        merged["user_id"] = (
+            _truncate((data or {}).get("user_id", default["user_id"]), 128)
+            or default["user_id"]
+        )
         merged["every"] = _normalize_every(str(merged.get("every", self.default_every)))
         merged["target"] = (
             _truncate(merged.get("target", self.default_target), 40)
@@ -452,13 +506,10 @@ class HeartbeatStore:
             }
 
     async def list_users(self) -> List[str]:
-        users: List[str] = []
-        for child in sorted(self.root.iterdir()):
-            if not child.is_dir():
-                continue
-            if (child / "HEARTBEAT.md").exists() or (child / "STATUS.json").exists():
-                users.append(child.name)
-        return users
+        shared_dir = self._ensure_shared_dir()
+        if (shared_dir / "HEARTBEAT.md").exists() or (shared_dir / "STATUS.json").exists():
+            return [self.shared_dir_name]
+        return []
 
     async def compact_user(self, user_id: str) -> None:
         async with self._user_lock(user_id):
@@ -605,29 +656,28 @@ class HeartbeatStore:
 
     async def normalize_runtime_tree(self) -> int:
         """
-        CLEAN-001:
-        Remove pathological nesting like worker::a::worker::a::123 by
-        canonicalizing user keys to the right-most segment after `::`.
+        Collapse legacy per-user runtime directories into the shared single-user root.
         """
         if not self.root.exists():
             return 0
+        target = self._ensure_shared_dir()
+        allowed_ids = {
+            str(admin_id).strip()
+            for admin_id in ADMIN_USER_IDS
+            if str(admin_id).strip()
+        }
         moved = 0
         for child in sorted(self.root.iterdir()):
-            if not child.is_dir():
+            if not child.is_dir() or child.name == self.shared_dir_name:
                 continue
             name = child.name.strip()
-            if "::" not in name:
+            if "::" in name:
+                canonical = name.split("::")[-1].strip()
+                if not canonical or canonical not in allowed_ids:
+                    continue
+            elif name not in allowed_ids:
                 continue
-            canonical = name.split("::")[-1].strip()
-            if not canonical or canonical == name:
-                continue
-            target = (self.root / canonical).resolve()
-            target.mkdir(parents=True, exist_ok=True)
-            for filename in ("HEARTBEAT.md", "STATUS.json", "HEARTBEAT.v1.bak.md"):
-                src = (child / filename).resolve()
-                dst = (target / filename).resolve()
-                if src.exists() and not dst.exists():
-                    dst.write_bytes(src.read_bytes())
+            self._merge_missing_tree(child, target)
             try:
                 if not any(child.iterdir()):
                     child.rmdir()

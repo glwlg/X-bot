@@ -8,6 +8,7 @@ from typing import Any, List
 
 from core.audit_store import audit_store
 from core.config import DATA_DIR
+from core.state_paths import user_path
 
 
 def _now_iso() -> str:
@@ -35,11 +36,11 @@ class MarkdownMemoryStore:
     MIGRATION_MARK = "<!-- migrated-from-memory-json -->"
 
     def __init__(self):
-        self.users_root = (Path(DATA_DIR) / "users").resolve()
+        self.users_root = user_path("private")
         self.users_root.mkdir(parents=True, exist_ok=True)
 
     def _user_root(self, user_id: str) -> Path:
-        return (self.users_root / _safe_key(user_id)).resolve()
+        return user_path(user_id).resolve()
 
     def _system_root(self) -> Path:
         root = (Path(DATA_DIR) / "system").resolve()

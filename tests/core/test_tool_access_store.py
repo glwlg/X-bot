@@ -213,6 +213,18 @@ def test_worker_default_policy_denies_management_tools(tmp_path):
     assert denied_dev is False
     assert denied_dev_detail["reason"] in {"matched_deny_list", "not_in_allow_list"}
 
+    denied_skill_admin, denied_skill_admin_detail = store.is_tool_allowed(
+        runtime_user_id="worker::worker-main::u-1",
+        platform="worker_kernel",
+        tool_name="ext_skill_manager",
+        kind="tool",
+    )
+    assert denied_skill_admin is False
+    assert denied_skill_admin_detail["reason"] in {
+        "matched_deny_list",
+        "not_in_allow_list",
+    }
+
 
 def test_worker_kernel_memory_is_hard_disabled(tmp_path):
     store = ToolAccessStore()

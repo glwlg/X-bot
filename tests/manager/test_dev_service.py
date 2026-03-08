@@ -606,13 +606,37 @@ async def test_software_delivery_skill_template_uses_external_source_workspace(
         "---\nname: union-search-skill\ndescription: external skill\n---\n",
         encoding="utf-8",
     )
-    (source_root / "scripts" / "union_search.py").write_text(
-        "print('ok')\n",
+    (source_root / "union_search_cli.py").write_text(
+        (
+            "import argparse\n"
+            "parser = argparse.ArgumentParser()\n"
+            "sub = parser.add_subparsers(dest='command')\n"
+            "sub.add_parser('doctor')\n"
+            "sub.add_parser('list')\n"
+            "parser.parse_args()\n"
+        ),
         encoding="utf-8",
     )
 
     async def fake_run_coding_backend(**kwargs):
         raise AssertionError(f"run_coding_backend should not be called: {kwargs}")
+
+    async def fake_run_shell(command, *, cwd, timeout_sec=1200):
+        _ = (cwd, timeout_sec)
+        safe_command = str(command or "").strip()
+        if safe_command == "python union_search_cli.py --help":
+            return {
+                "ok": True,
+                "summary": "ok",
+                "stdout": "usage: union_search_cli.py ... {doctor,list}",
+                "stderr": "",
+            }
+        return {
+            "ok": False,
+            "summary": f"unexpected command: {safe_command}",
+            "stdout": "",
+            "stderr": f"unexpected command: {safe_command}",
+        }
 
     class _SourceWorkspace(_FakeWorkspace):
         async def prepare_workspace(self, **kwargs):
@@ -628,9 +652,13 @@ async def test_software_delivery_skill_template_uses_external_source_workspace(
             return await super().prepare_workspace(**kwargs)
 
     monkeypatch.setattr(service_module, "run_coding_backend", fake_run_coding_backend)
+    monkeypatch.setattr(service_module, "run_shell", fake_run_shell)
+    monkeypatch.setattr("manager.dev.skill_contracts.run_shell", fake_run_shell)
 
     service = ManagerDevService()
+    service.tasks = _FakeTaskStore()
     service.workspace = _SourceWorkspace()
+    service._task_log_path = lambda task_id: str(tmp_path / f"{task_id}.log")
     target_dir = tmp_path / "imported-skill"
 
     result = await service.software_delivery(
@@ -654,7 +682,109 @@ async def test_software_delivery_skill_template_uses_external_source_workspace(
     assert implementation_result.get("source_root") == str(source_root)
     target_dir = Path(str(task.get("template", {}).get("cwd") or ""))
     assert (target_dir / "SKILL.md").exists()
-    assert (target_dir / "scripts" / "union_search.py").exists()
+    assert (target_dir / "union_search_cli.py").exists()
+    assert (target_dir / "references" / "upstream_SKILL.md").exists()
+    integration = dict(task.get("integration") or {})
+    assert integration.get("invoke_command") == "python union_search_cli.py"
+    rendered = (target_dir / "SKILL.md").read_text(encoding="utf-8")
+    assert "python union_search_cli.py --help" in rendered
+    assert "integration_origin: external_skill_import" in rendered
+
+
+@pytest.mark.asyncio
+async def test_software_delivery_skill_template_auto_repairs_imported_skill_when_no_entrypoint(
+    monkeypatch, tmp_path
+):
+    source_root = tmp_path / "source-skill"
+    source_root.mkdir(parents=True, exist_ok=True)
+    (source_root / "README.md").write_text(
+        "# Demo Skill\n\nNeeds a compatibility shim.\n",
+        encoding="utf-8",
+    )
+
+    async def fake_run_coding_backend(**kwargs):
+        cwd = Path(str(kwargs.get("cwd") or "")).resolve()
+        scripts_dir = cwd / "scripts"
+        scripts_dir.mkdir(parents=True, exist_ok=True)
+        (scripts_dir / "execute.py").write_text(
+            (
+                "import argparse\n"
+                "parser = argparse.ArgumentParser(description='shim')\n"
+                "parser.parse_args()\n"
+            ),
+            encoding="utf-8",
+        )
+        return {
+            "ok": True,
+            "backend": "codex",
+            "summary": "added compatibility shim",
+        }
+
+    async def fake_run_shell(command, *, cwd, timeout_sec=1200):
+        _ = timeout_sec
+        safe_command = str(command or "").strip()
+        target = Path(str(cwd or "")).resolve()
+        if safe_command == "python scripts/execute.py --help":
+            execute_path = target / "scripts" / "execute.py"
+            if execute_path.exists():
+                return {
+                    "ok": True,
+                    "summary": "ok",
+                    "stdout": "usage: execute.py",
+                    "stderr": "",
+                }
+        return {
+            "ok": False,
+            "summary": f"command failed: {safe_command}",
+            "stdout": "",
+            "stderr": f"command failed: {safe_command}",
+        }
+
+    class _SourceWorkspace(_FakeWorkspace):
+        async def prepare_workspace(self, **kwargs):
+            if str(kwargs.get("repo_url") or "").strip():
+                return {
+                    "ok": True,
+                    "path": str(source_root),
+                    "origin_url": str(kwargs.get("repo_url") or ""),
+                    "owner": "runningZ1",
+                    "repo": "demo-skill",
+                    "default_branch": "main",
+                }
+            return await super().prepare_workspace(**kwargs)
+
+    monkeypatch.setattr(service_module, "run_coding_backend", fake_run_coding_backend)
+    monkeypatch.setattr(service_module, "run_shell", fake_run_shell)
+    monkeypatch.setattr("manager.dev.skill_contracts.run_shell", fake_run_shell)
+
+    service = ManagerDevService()
+    service.tasks = _FakeTaskStore()
+    service.workspace = _SourceWorkspace()
+    service._task_log_path = lambda task_id: str(tmp_path / f"{task_id}.log")
+    target_dir = tmp_path / "imported-skill"
+
+    result = await service.software_delivery(
+        action="skill_create",
+        skill_name="demo-skill",
+        instruction="把这个技能集成给阿黑用",
+        cwd=str(target_dir),
+        repo_url="https://github.com/runningZ1/demo-skill",
+        backend="codex",
+    )
+
+    assert result["ok"] is True
+    await _wait_background(service)
+    status = await service.software_delivery(action="status", task_id=result["task_id"])
+    task = dict(status["data"]["task"] or {})
+    integration = dict(task.get("integration") or {})
+
+    assert status["status"] == "done"
+    assert integration.get("repaired") is True
+    assert integration.get("invoke_command") == "python scripts/execute.py"
+    assert (target_dir / "scripts" / "execute.py").exists()
+    assert "python scripts/execute.py --help" in (
+        target_dir / "SKILL.md"
+    ).read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

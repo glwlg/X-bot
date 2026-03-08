@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import shlex
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Set
@@ -12,11 +13,19 @@ from core.skill_loader import skill_loader
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
-RuntimeToolAllowed = Callable[..., bool]
+RuntimeToolAllowed = Callable[..., Any]
 RecordToolProfile = Callable[[str, Any, float], None]
 TodoMarkStep = Callable[[str, str, str], Any]
 AppendSessionEvent = Callable[[str], Awaitable[None]]
 OnWorkerDispatched = Callable[[str, str], None]
+
+
+def _policy_result_allowed(result: Any) -> bool:
+    if isinstance(result, tuple):
+        if not result:
+            return False
+        return bool(result[0])
+    return bool(result)
 
 
 class RuntimeToolAssembler:
@@ -55,11 +64,13 @@ class RuntimeToolAssembler:
             if not name or name in seen:
                 continue
             seen.add(name)
-            if self.runtime_tool_allowed(
-                runtime_user_id=self.runtime_user_id,
-                platform=self.platform_name,
-                tool_name=name,
-                kind="tool",
+            if _policy_result_allowed(
+                self.runtime_tool_allowed(
+                    runtime_user_id=self.runtime_user_id,
+                    platform=self.platform_name,
+                    tool_name=name,
+                    kind="tool",
+                )
             ):
                 filtered.append(item)
         return filtered
@@ -102,14 +113,26 @@ class ToolCallDispatcher:
     def _runtime_only_allowed_tool_names(self) -> Set[str]:
         allowed: Set[str] = set()
         for name in tool_registry.get_manager_tool_names():
-            if self.runtime_tool_allowed(
-                runtime_user_id=self.runtime_user_id,
-                platform=self.platform_name,
-                tool_name=name,
-                kind="tool",
+            if _policy_result_allowed(
+                self.runtime_tool_allowed(
+                    runtime_user_id=self.runtime_user_id,
+                    platform=self.platform_name,
+                    tool_name=name,
+                    kind="tool",
+                )
             ):
                 allowed.add(name)
         return allowed
+
+    def _policy_allows(self, tool_name: str, *, kind: str = "tool") -> bool:
+        return _policy_result_allowed(
+            self.runtime_tool_allowed(
+                runtime_user_id=self.runtime_user_id,
+                platform=self.platform_name,
+                tool_name=tool_name,
+                kind=kind,
+            )
+        )
 
     def set_available_tool_names(self, names: Set[str]) -> None:
         resolved = set(names or set())
@@ -146,28 +169,27 @@ class ToolCallDispatcher:
     ) -> Dict[str, Any]:
         if tool_name not in {"read", "write", "edit"}:
             return args
-        if not self._is_manager_runtime():
-            return args
-
-        user_id = self._normalize_runtime_user_for_path()
-        if not user_id or user_id == "user1":
-            return args
 
         path = str(args.get("path") or "").strip()
         if not path:
             return args
 
+        normalized = path
         replacements = (
-            ("data/users/user1/", f"data/users/{user_id}/"),
-            ("./data/users/user1/", f"./data/users/{user_id}/"),
-            ("/app/data/users/user1/", f"/app/data/users/{user_id}/"),
+            ("data/users/", "data/user/"),
+            ("./data/users/", "./data/user/"),
+            ("/app/data/users/", "/app/data/user/"),
         )
 
-        normalized = path
-        for source, target in replacements:
-            if normalized.startswith(source):
-                normalized = target + normalized[len(source) :]
-                break
+        for prefix, target_prefix in replacements:
+            if not normalized.startswith(prefix):
+                continue
+            remainder = normalized[len(prefix) :]
+            if "/" not in remainder:
+                continue
+            _, tail = remainder.split("/", 1)
+            normalized = f"{target_prefix}{tail}"
+            break
 
         if normalized == path:
             return args
@@ -258,6 +280,27 @@ class ToolCallDispatcher:
         patched = dict(args or {})
         patched["command"] = f"export {' '.join(export_parts)} && {command}"
         return patched
+
+    @staticmethod
+    def _normalize_legacy_user_bash_command(command: str) -> str:
+        raw = str(command or "")
+        if not raw:
+            return raw
+
+        patterns = (
+            (r"/app/data/users/[^/\s'\"`]+/", "/app/data/user/"),
+            (r"\./data/users/[^/\s'\"`]+/", "./data/user/"),
+            (r"data/users/[^/\s'\"`]+/", "data/user/"),
+        )
+
+        normalized = raw
+        for pattern, replacement in patterns:
+            normalized = re.sub(pattern, replacement, normalized)
+
+        normalized = normalized.replace("/app/data/users/", "/app/data/user/")
+        normalized = normalized.replace("./data/users/", "./data/user/")
+        normalized = normalized.replace("data/users/", "data/user/")
+        return normalized
 
     def _apply_loaded_skill_bash_context(self, args: Dict[str, Any]) -> Dict[str, Any]:
         command = str(args.get("command") or "").strip()
@@ -622,12 +665,7 @@ class ToolCallDispatcher:
                 self.record_tool_profile(tool_name, blocked, started)
                 return blocked
 
-            if not self.runtime_tool_allowed(
-                runtime_user_id=self.runtime_user_id,
-                platform=self.platform_name,
-                tool_name=tool_name,
-                kind="tool",
-            ):
+            if not self._policy_allows(tool_name, kind="tool"):
                 blocked = {
                     "ok": False,
                     "error_code": "policy_blocked",
@@ -641,6 +679,10 @@ class ToolCallDispatcher:
                 args=dict(args or {}),
             )
             if tool_name == "bash":
+                normalized_args = dict(normalized_args)
+                normalized_args["command"] = self._normalize_legacy_user_bash_command(
+                    str(normalized_args.get("command") or "")
+                )
                 normalized_args = self._apply_loaded_skill_bash_context(
                     normalized_args
                 )
@@ -668,6 +710,62 @@ class ToolCallDispatcher:
                 return result
 
             skill_info = skill_loader.get_skill(skill_name) or {}
+            resolved_skill_name = str(skill_info.get("name") or skill_name).strip()
+            canonical_tool_name = (
+                f"ext_{resolved_skill_name.replace('-', '_')}"
+                if resolved_skill_name
+                else ""
+            )
+            allowed_roles = [
+                str(item or "").strip().lower()
+                for item in list(skill_info.get("allowed_roles") or [])
+                if str(item or "").strip()
+            ]
+            contract = dict(skill_info.get("contract") or {})
+            runtime_target = str(contract.get("runtime_target") or "").strip().lower()
+
+            if canonical_tool_name and not self._policy_allows(
+                canonical_tool_name,
+                kind="tool",
+            ):
+                result = {
+                    "ok": False,
+                    "error_code": "skill_policy_blocked",
+                    "message": (
+                        f"Skill '{resolved_skill_name or skill_name}' is not allowed "
+                        f"in {self._runtime_role()} runtime."
+                    ),
+                    "failure_mode": "recoverable",
+                }
+                self.record_tool_profile(tool_name, result, started)
+                return result
+
+            if allowed_roles and self._runtime_role() not in allowed_roles:
+                result = {
+                    "ok": False,
+                    "error_code": "skill_role_blocked",
+                    "message": (
+                        f"Skill '{resolved_skill_name or skill_name}' is not available "
+                        f"in {self._runtime_role()} runtime."
+                    ),
+                    "failure_mode": "recoverable",
+                }
+                self.record_tool_profile(tool_name, result, started)
+                return result
+
+            if self._runtime_role() == "worker" and runtime_target == "manager":
+                result = {
+                    "ok": False,
+                    "error_code": "skill_role_blocked",
+                    "message": (
+                        f"Skill '{resolved_skill_name or skill_name}' is manager-only "
+                        "and cannot be loaded in worker runtime."
+                    ),
+                    "failure_mode": "recoverable",
+                }
+                self.record_tool_profile(tool_name, result, started)
+                return result
+
             content = str(skill_info.get("skill_md_content") or "").strip()
             if not content:
                 result = {
@@ -693,7 +791,6 @@ class ToolCallDispatcher:
                 )
 
             runtime_note_lines: list[str] = []
-            contract = dict(skill_info.get("contract") or {})
             if skill_dir:
                 runtime_note_lines.append("## Runtime Execution Context")
                 runtime_note_lines.append(f"- Skill directory: `{skill_dir}`")

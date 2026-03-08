@@ -15,9 +15,7 @@ async def check_permission_unified(context: UnifiedContext) -> bool:
     if context.callback_user_id:
         user_id = context.callback_user_id
     if not await is_user_allowed(user_id):
-        await context.reply(
-            f"⛔ 抱歉，您没有使用此 Bot 的权限。\n您的 ID 是: `{user_id}`"
-        )
+        logger.info("Ignoring unauthorized message from user_id=%s", user_id)
         return False
     return True
 

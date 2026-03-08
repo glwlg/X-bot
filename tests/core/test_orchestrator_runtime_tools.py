@@ -522,6 +522,7 @@ async def test_manager_allows_write_to_runtime_data_path():
 
     assert result["ok"] is True
     assert captured["name"] == "write"
+    assert captured["args"]["path"] == "data/user/profile.json"
 
 
 @pytest.mark.asyncio
@@ -563,11 +564,11 @@ async def test_manager_rewrites_legacy_user1_path_for_read_tool(monkeypatch):
     )
 
     assert result["ok"] is True
-    assert captured["args"]["path"] == "data/users/257675041/MEMORY.md"
+    assert captured["args"]["path"] == "data/user/MEMORY.md"
 
 
 @pytest.mark.asyncio
-async def test_worker_keeps_legacy_user1_path_unchanged(monkeypatch):
+async def test_worker_rewrites_legacy_user1_path_to_single_user_root(monkeypatch):
     async def append_event(_event: str):
         return None
 
@@ -605,4 +606,52 @@ async def test_worker_keeps_legacy_user1_path_unchanged(monkeypatch):
     )
 
     assert result["ok"] is True
-    assert captured["args"]["path"] == "data/users/user1/MEMORY.md"
+    assert captured["args"]["path"] == "data/user/MEMORY.md"
+
+
+@pytest.mark.asyncio
+async def test_bash_rewrites_legacy_user_path_to_single_user_root(monkeypatch):
+    async def append_event(_event: str):
+        return None
+
+    captured = {}
+
+    class _FakeToolBroker:
+        async def execute_core_tool(self, **kwargs):
+            captured.update(dict(kwargs or {}))
+            return {"ok": True}
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="257675041",
+        platform_name="telegram",
+        task_id="task-12",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(
+            message=SimpleNamespace(
+                text="检查记忆目录",
+                user=SimpleNamespace(id="257675041"),
+                chat=SimpleNamespace(id="257675041"),
+            ),
+            user_data={},
+        ),
+        runtime=object(),
+        tool_broker=_FakeToolBroker(),
+        runtime_tool_allowed=lambda **_kwargs: True,
+        record_tool_profile=lambda *_args, **_kwargs: None,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"bash"})
+
+    result = await dispatcher.execute(
+        name="bash",
+        args={"command": "ls -la /app/data/users/257675041/ && cat data/users/user1/MEMORY.md"},
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert result["ok"] is True
+    assert "/app/data/user/" in captured["args"]["command"]
+    assert "data/user/MEMORY.md" in captured["args"]["command"]
+    assert "data/users/" not in captured["args"]["command"]

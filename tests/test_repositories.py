@@ -22,6 +22,14 @@ class TestRepositoryBase:
         assert repo_root().exists()
         assert users_root().exists()
 
+    def test_user_path_uses_single_private_root(self, mock_db):
+        from core.state_paths import user_path
+
+        target = user_path("42", "settings.md")
+
+        assert target.parts[-2:] == ("user", "settings.md")
+        assert "42" not in target.as_posix()
+
     @pytest.mark.asyncio
     async def test_next_id_counter(self, mock_db):
         """测试 ID 计数器递增"""

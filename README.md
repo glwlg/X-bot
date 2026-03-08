@@ -134,17 +134,25 @@ cp config/models.example.json config/models.json
 1. 选择默认模型
    - `model.primary`
    - `model.routing`
-   - `model.image`
+   - `model.vision`
+   - `model.image_generation`
    - `model.voice`
 2. 定义模型池
    - `models.primary`
    - `models.routing`
-   - `models.image`
+   - `models.vision`
+   - `models.image_generation`
 3. 定义 provider 连接信息
    - `providers.<provider>.baseUrl`
    - `providers.<provider>.apiKey`
    - `providers.<provider>.api`
    - `providers.<provider>.models[]`
+
+其中：
+
+- `vision` 是看图/看视频/看表情包用的多模态理解模型
+- `image_generation` 是文生图模型
+- 旧字段 `image` 现在只作为 `vision` 的兼容别名，新的配置不要再用它表达生图模型
 
 如果你要切换模型或接入新的 provider，应该改这里，而不是改 `.env`。
 

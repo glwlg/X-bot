@@ -4,6 +4,7 @@ import asyncio
 import inspect
 import logging
 import os
+import shlex
 import shutil
 import zlib
 from datetime import datetime
@@ -424,9 +425,10 @@ class ManagerDevService:
         *,
         staging_path: Path,
         existing_target: Path,
-    ) -> None:
+    ) -> List[str]:
+        applied: List[str] = []
         if not existing_target.exists() or not existing_target.is_dir():
-            return
+            return applied
         relative_paths = (
             "SKILL.md",
             "scripts/execute.py",
@@ -439,6 +441,8 @@ class ManagerDevService:
             target = staging_path / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source, target)
+            applied.append(relative)
+        return applied
 
     @staticmethod
     def _ensure_imported_skill_markdown(
@@ -487,6 +491,453 @@ class ManagerDevService:
         ).strip() + "\n"
         skill_md.write_text(content, encoding="utf-8")
 
+    @staticmethod
+    def _read_skill_readme_summary(skill_root: Path, repo_url: str) -> str:
+        readme = skill_root / "README.md"
+        if readme.exists():
+            try:
+                for row in readme.read_text(encoding="utf-8").splitlines():
+                    line = str(row or "").strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    return line[:240]
+            except Exception:
+                pass
+        return f"Imported external skill from {repo_url or 'GitHub repository'}."
+
+    @staticmethod
+    def _preserve_upstream_skill_markdown(skill_root: Path) -> None:
+        skill_md = skill_root / "SKILL.md"
+        if not skill_md.exists() or not skill_md.is_file():
+            return
+        try:
+            current = skill_md.read_text(encoding="utf-8")
+        except Exception:
+            return
+        if "integration_origin: external_skill_import" in current:
+            return
+        backup = skill_root / "references" / "upstream_SKILL.md"
+        if backup.exists():
+            return
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(skill_md, backup)
+
+    @staticmethod
+    def _shell_quote_path(path: str) -> str:
+        return shlex.quote(str(path or "").replace("\\", "/"))
+
+    @classmethod
+    def _candidate_import_entrypoints(
+        cls,
+        *,
+        skill_root: Path,
+        skill_name: str,
+    ) -> List[Dict[str, str]]:
+        safe_skill = sanitize_skill_name(skill_name)
+        candidates: List[Dict[str, str]] = []
+        seen: set[str] = set()
+
+        def add_python(relative: str, *, kind: str) -> None:
+            rel = str(relative or "").replace("\\", "/").strip().lstrip("./")
+            if not rel:
+                return
+            target = skill_root / rel
+            if not target.exists() or not target.is_file():
+                return
+            invoke = f"python {cls._shell_quote_path(rel)}"
+            if invoke in seen:
+                return
+            seen.add(invoke)
+            candidates.append(
+                {
+                    "invoke": invoke,
+                    "probe": f"{invoke} --help",
+                    "probe_alt": f"{invoke} -h",
+                    "relative_path": rel,
+                    "kind": kind,
+                }
+            )
+
+        def add_shell(relative: str, *, kind: str) -> None:
+            rel = str(relative or "").replace("\\", "/").strip().lstrip("./")
+            if not rel:
+                return
+            target = skill_root / rel
+            if not target.exists() or not target.is_file():
+                return
+            invoke = f"bash {cls._shell_quote_path(rel)}"
+            if invoke in seen:
+                return
+            seen.add(invoke)
+            candidates.append(
+                {
+                    "invoke": invoke,
+                    "probe": f"{invoke} --help",
+                    "probe_alt": invoke,
+                    "relative_path": rel,
+                    "kind": kind,
+                }
+            )
+
+        add_python("scripts/execute.py", kind="existing_wrapper")
+        for relative in (
+            "union_search_cli.py",
+            "cli.py",
+            f"{safe_skill}.py" if safe_skill else "",
+            "main.py",
+            "run.py",
+            "app.py",
+            "skill.py",
+            "scripts/cli.py",
+            "scripts/main.py",
+            "scripts/run.py",
+            f"scripts/{safe_skill}.py" if safe_skill else "",
+        ):
+            if relative:
+                add_python(relative, kind="native_direct")
+
+        top_level_py = sorted(
+            [
+                path.name
+                for path in skill_root.glob("*.py")
+                if path.is_file()
+                and path.name
+                not in {
+                    "setup.py",
+                    "conftest.py",
+                    "__init__.py",
+                }
+            ]
+        )
+        if len(top_level_py) == 1:
+            add_python(top_level_py[0], kind="native_direct")
+
+        shell_candidates = (
+            "run.sh",
+            "cli.sh",
+            "main.sh",
+            "scripts/run.sh",
+            "scripts/cli.sh",
+        )
+        for relative in shell_candidates:
+            add_shell(relative, kind="native_shell")
+
+        return candidates
+
+    async def _probe_imported_skill_entrypoint(
+        self,
+        *,
+        skill_dir: str,
+        skill_name: str,
+    ) -> Dict[str, Any]:
+        skill_root = Path(str(skill_dir or "").strip()).resolve()
+        attempts: List[Dict[str, Any]] = []
+        for candidate in self._candidate_import_entrypoints(
+            skill_root=skill_root,
+            skill_name=skill_name,
+        ):
+            probe_commands = [
+                str(candidate.get("probe") or "").strip(),
+                str(candidate.get("probe_alt") or "").strip(),
+            ]
+            for probe_command in probe_commands:
+                if not probe_command:
+                    continue
+                result = await run_shell(
+                    probe_command,
+                    cwd=str(skill_root),
+                    timeout_sec=120,
+                )
+                attempts.append(
+                    {
+                        "invoke": str(candidate.get("invoke") or "").strip(),
+                        "probe": probe_command,
+                        "ok": bool(result.get("ok")),
+                        "summary": str(result.get("summary") or "").strip(),
+                        "stdout": str(result.get("stdout") or ""),
+                        "stderr": str(result.get("stderr") or ""),
+                        "kind": str(candidate.get("kind") or "").strip(),
+                    }
+                )
+                if result.get("ok"):
+                    help_text = (
+                        str(result.get("stdout") or "").strip()
+                        or str(result.get("stderr") or "").strip()
+                        or str(result.get("summary") or "").strip()
+                    )
+                    lowered = help_text.lower()
+                    return {
+                        "ok": True,
+                        "invoke": str(candidate.get("invoke") or "").strip(),
+                        "probe": probe_command,
+                        "kind": str(candidate.get("kind") or "").strip(),
+                        "help_text": help_text,
+                        "supports_doctor": "doctor" in lowered,
+                        "supports_list": " list" in lowered
+                        or "\nlist" in lowered
+                        or "{search,platform,image,download,list" in lowered,
+                        "attempts": attempts,
+                    }
+        return {
+            "ok": False,
+            "attempts": attempts,
+            "summary": "no verified skill entrypoint detected",
+        }
+
+    @staticmethod
+    def _render_external_skill_markdown(
+        *,
+        skill_name: str,
+        description: str,
+        repo_url: str,
+        invoke_command: str,
+        probe_command: str,
+        integration_mode: str,
+        supports_doctor: bool,
+        supports_list: bool,
+    ) -> str:
+        safe_skill = sanitize_skill_name(skill_name)
+        summary = str(description or "").strip() or (
+            f"Imported external skill from {repo_url or 'GitHub repository'}."
+        )
+        lines = [
+            "---",
+            f"name: {safe_skill}",
+            f"description: {summary}",
+            "integration_origin: external_skill_import",
+            "runtime_target: worker",
+            "change_level: learned",
+            "allow_manager_modify: true",
+            "allow_auto_publish: true",
+            "rollout_target: worker",
+            "preflight_commands:",
+            f"  - {probe_command}",
+            "---",
+            "",
+            f"# {safe_skill}",
+            "",
+            "这是一个从外部仓库导入到 X-Bot 的技能。",
+            "",
+            "## 当前集成方式",
+            "",
+            f"- 调用模式：`{integration_mode}`",
+            f"- 已验证入口：`{invoke_command}`",
+            f"- 预检命令：`{probe_command}`",
+        ]
+        if repo_url:
+            lines.append(f"- 来源仓库：`{repo_url}`")
+        lines.extend(
+            [
+                "",
+                "## 强制规则",
+                "",
+                f"- 进入技能根目录后，优先使用 `{'`' + invoke_command + '`'}`。",
+                f"- 先运行 `{'`' + probe_command + '`'}` 确认可用。",
+                "- 如果 README、任务正文或其他上下文里还出现了更底层的脚本示例，以这里声明的入口命令为准。",
+                "- 优先保留上游原生命令；只有原生命令不可直接用于 X-Bot 时，才增加最薄的兼容层。",
+                "",
+                "## 推荐步骤",
+                "",
+                f"1. 运行 `{'`' + probe_command + '`'}` 查看帮助与参数。",
+            ]
+        )
+        next_step = 2
+        if supports_doctor:
+            lines.append(
+                f"{next_step}. 如果需要环境检查，先运行 `{'`' + invoke_command + ' doctor' + '`'}`。"
+            )
+            next_step += 1
+        if supports_list:
+            lines.append(
+                f"{next_step}. 如果需要查看可用平台或能力，先运行 `{'`' + invoke_command + ' list' + '`'}`。"
+            )
+            next_step += 1
+        lines.extend(
+            [
+                f"{next_step}. 按用户目标直接调用入口命令并整理结果。",
+                "",
+                "## 说明",
+                "",
+                "- 如需环境变量，优先查看 `.env.example`、`README.md` 和 `references/`。",
+                "- 如果当前入口再次失败，Manager 应优先尝试自动修复这个 skill，而不是让 Worker 长时间试错底层脚本。",
+                "",
+            ]
+        )
+        return "\n".join(lines)
+
+    def _write_external_skill_markdown(
+        self,
+        *,
+        skill_dir: str,
+        skill_name: str,
+        repo_url: str,
+        invoke_command: str,
+        probe_command: str,
+        integration_mode: str,
+        supports_doctor: bool,
+        supports_list: bool,
+    ) -> None:
+        skill_root = Path(str(skill_dir or "").strip()).resolve()
+        self._preserve_upstream_skill_markdown(skill_root)
+        skill_md = skill_root / "SKILL.md"
+        content = self._render_external_skill_markdown(
+            skill_name=skill_name,
+            description=self._read_skill_readme_summary(skill_root, repo_url),
+            repo_url=repo_url,
+            invoke_command=invoke_command,
+            probe_command=probe_command,
+            integration_mode=integration_mode,
+            supports_doctor=supports_doctor,
+            supports_list=supports_list,
+        )
+        skill_md.write_text(content.rstrip() + "\n", encoding="utf-8")
+
+    def _build_external_skill_repair_instruction(
+        self,
+        *,
+        skill_name: str,
+        skill_dir: str,
+        repo_url: str,
+        source_repo_path: str,
+        probe_summary: Dict[str, Any],
+    ) -> str:
+        lines = [
+            f"请修复已导入的外部技能 `{sanitize_skill_name(skill_name)}`，让它能被 X-Bot worker 直接调用。",
+            "目标不是重写整个技能，而是尽量保留上游实现，优先使用原生 CLI/脚本入口；只有在确实缺少稳定入口时，才补一个最薄的兼容层。",
+            f"目标技能目录：{str(skill_dir or '').strip()}",
+        ]
+        if str(repo_url or "").strip():
+            lines.append(f"来源仓库：{str(repo_url or '').strip()}")
+        if str(source_repo_path or "").strip():
+            lines.append(f"参考源码目录：{str(source_repo_path or '').strip()}")
+        lines.extend(
+            [
+                "",
+                "硬性要求：",
+                "- Worker 通过 `load_skill` 读取 `SKILL.md` 后，必须能按 SOP 直接执行。",
+                "- 如果存在原生可运行 CLI，就直接复用它，不要无意义改造。",
+                "- 如果不存在稳定入口，再增加最薄的兼容入口，例如 `scripts/execute.py`。",
+                "- `SKILL.md` 必须改成 X-Bot 可执行 SOP，并带上可通过的 `preflight_commands`。",
+                "- 集成完成后，至少有一个帮助/预检命令可以成功执行。",
+            ]
+        )
+        attempts = list(probe_summary.get("attempts") or [])
+        if attempts:
+            lines.append("")
+            lines.append("已尝试但失败的入口探测：")
+            for item in attempts[-6:]:
+                if not isinstance(item, dict):
+                    continue
+                probe = str(item.get("probe") or "").strip()
+                summary = str(item.get("summary") or "").strip()
+                if not probe:
+                    continue
+                lines.append(f"- `{probe}` -> {summary or 'failed'}")
+        return "\n".join(lines).strip()
+
+    async def _prepare_external_skill_runtime(
+        self,
+        *,
+        task_id: str,
+        skill_name: str,
+        skill_dir: str,
+        repo_url: str,
+        source_repo_path: str,
+        backend: str,
+        source: str,
+        timeout_sec: int,
+        log_path: str,
+    ) -> Dict[str, Any]:
+        probe = await self._probe_imported_skill_entrypoint(
+            skill_dir=skill_dir,
+            skill_name=skill_name,
+        )
+        if probe.get("ok"):
+            self._write_external_skill_markdown(
+                skill_dir=skill_dir,
+                skill_name=skill_name,
+                repo_url=repo_url,
+                invoke_command=str(probe.get("invoke") or "").strip(),
+                probe_command=str(probe.get("probe") or "").strip(),
+                integration_mode=str(probe.get("kind") or "native_direct").strip()
+                or "native_direct",
+                supports_doctor=bool(probe.get("supports_doctor")),
+                supports_list=bool(probe.get("supports_list")),
+            )
+            return {
+                "ok": True,
+                "mode": str(probe.get("kind") or "native_direct").strip()
+                or "native_direct",
+                "invoke_command": str(probe.get("invoke") or "").strip(),
+                "probe_command": str(probe.get("probe") or "").strip(),
+                "attempts": list(probe.get("attempts") or []),
+                "repaired": False,
+            }
+
+        repair_instruction = self._build_external_skill_repair_instruction(
+            skill_name=skill_name,
+            skill_dir=skill_dir,
+            repo_url=repo_url,
+            source_repo_path=source_repo_path,
+            probe_summary=probe,
+        )
+        repair_result = await self._run_coding_backend_with_progress(
+            task_id=task_id,
+            stage="skill_import_repair",
+            instruction=repair_instruction,
+            backend=str(backend or "").strip(),
+            cwd=str(skill_dir or "").strip(),
+            timeout_sec=max(120, int(timeout_sec or 1800)),
+            source=str(source or "external_skill_auto_repair").strip()
+            or "external_skill_auto_repair",
+            log_path=log_path,
+        )
+        if not repair_result.get("ok"):
+            return {
+                "ok": False,
+                "summary": str(
+                    repair_result.get("summary")
+                    or repair_result.get("message")
+                    or "external skill auto repair failed"
+                ).strip(),
+                "repair": repair_result,
+                "attempts": list(probe.get("attempts") or []),
+            }
+
+        repaired_probe = await self._probe_imported_skill_entrypoint(
+            skill_dir=skill_dir,
+            skill_name=skill_name,
+        )
+        if not repaired_probe.get("ok"):
+            return {
+                "ok": False,
+                "summary": "external skill imported, but no callable entrypoint was verified after auto repair",
+                "repair": repair_result,
+                "attempts": list(repaired_probe.get("attempts") or probe.get("attempts") or []),
+            }
+
+        self._write_external_skill_markdown(
+            skill_dir=skill_dir,
+            skill_name=skill_name,
+            repo_url=repo_url,
+            invoke_command=str(repaired_probe.get("invoke") or "").strip(),
+            probe_command=str(repaired_probe.get("probe") or "").strip(),
+            integration_mode=str(repaired_probe.get("kind") or "auto_repaired").strip()
+            or "auto_repaired",
+            supports_doctor=bool(repaired_probe.get("supports_doctor")),
+            supports_list=bool(repaired_probe.get("supports_list")),
+        )
+        return {
+            "ok": True,
+            "mode": str(repaired_probe.get("kind") or "auto_repaired").strip()
+            or "auto_repaired",
+            "invoke_command": str(repaired_probe.get("invoke") or "").strip(),
+            "probe_command": str(repaired_probe.get("probe") or "").strip(),
+            "attempts": list(repaired_probe.get("attempts") or probe.get("attempts") or []),
+            "repaired": True,
+            "repair": repair_result,
+        }
+
     def _import_external_skill_from_workspace(
         self,
         *,
@@ -525,7 +976,7 @@ class ManagerDevService:
                 skill_name=skill_name,
                 repo_url=repo_url,
             )
-            self._overlay_local_import_overrides(
+            applied_overrides = self._overlay_local_import_overrides(
                 staging_path=staging_path,
                 existing_target=target_path,
             )
@@ -566,6 +1017,7 @@ class ManagerDevService:
             "source_root": str(source_root),
             "target_dir": str(target_path),
             "file_count": file_count,
+            "applied_overrides": applied_overrides,
         }
 
     async def _mark_failed(
@@ -1948,6 +2400,49 @@ class ManagerDevService:
                 ),
             )
             await self.tasks.save(record)
+
+            runtime_ready = await self._prepare_external_skill_runtime(
+                task_id=str(record.get("task_id") or "").strip(),
+                skill_name=skill_name,
+                skill_dir=safe_cwd,
+                repo_url=safe_source_repo_url,
+                source_repo_path=source_repo_path_text,
+                backend=safe_backend,
+                source=safe_source,
+                timeout_sec=max(60, int(timeout_sec or 1800)),
+                log_path=log_path,
+            )
+            record = (
+                await self._load_task(str(record.get("task_id") or "").strip()) or record
+            )
+            record["integration"] = dict(runtime_ready or {})
+            if not runtime_ready.get("ok"):
+                record["status"] = "failed"
+                record["error"] = str(
+                    runtime_ready.get("summary")
+                    or "imported external skill is not callable by worker"
+                ).strip()
+                self._append_event(
+                    record,
+                    name="skill_template_runtime_prepare_failed",
+                    detail=record["error"],
+                )
+                await self.tasks.save(record)
+                return
+
+            self._append_event(
+                record,
+                name="skill_template_runtime_ready",
+                detail=(
+                    "worker-callable entry verified: "
+                    f"{str(runtime_ready.get('probe_command') or runtime_ready.get('invoke_command') or '').strip()}"
+                ).strip(),
+                data={
+                    "mode": str(runtime_ready.get("mode") or "").strip(),
+                    "repaired": bool(runtime_ready.get("repaired")),
+                },
+            )
+            await self.tasks.save(record)
         else:
             run_result = await self._run_coding_backend_with_progress(
                 task_id=str(record.get("task_id") or "").strip(),
@@ -1986,6 +2481,15 @@ class ManagerDevService:
 
         implementation = dict(record.get("implementation") or {})
         implementation_result = dict(implementation.get("result") or {})
+
+        refreshed_contract = self._resolve_skill_contract(
+            action="skill_modify",
+            skill_name=skill_name,
+            cwd=safe_cwd,
+        )
+        if isinstance(refreshed_contract, dict) and refreshed_contract:
+            contract = refreshed_contract
+            record["skill_contract"] = contract
 
         preflight = await self._run_skill_contract_preflight(
             contract=contract,

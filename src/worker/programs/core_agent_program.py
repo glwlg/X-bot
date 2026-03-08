@@ -153,9 +153,23 @@ async def run_core_agent(task: TaskEnvelope, context: Dict[str, Any]) -> TaskRes
     from shared.queue.dispatch_queue import dispatch_queue
 
     ctx = _build_context(task)
+    latest_terminal_payload: Dict[str, Any] = {}
+    latest_terminal_text = ""
+    latest_terminal_summary = ""
 
     async def _progress_callback(snapshot: Dict[str, Any]) -> None:
+        nonlocal latest_terminal_payload, latest_terminal_text, latest_terminal_summary
         await dispatch_queue.update_progress(task.task_id, snapshot)
+        event_name = str(snapshot.get("event") or "").strip().lower()
+        if event_name != "tool_call_finished":
+            return
+        if not bool(snapshot.get("ok")) or not bool(snapshot.get("terminal")):
+            return
+        terminal_payload = snapshot.get("terminal_payload")
+        if isinstance(terminal_payload, dict) and terminal_payload:
+            latest_terminal_payload = dict(terminal_payload)
+        latest_terminal_text = str(snapshot.get("terminal_text") or "").strip()
+        latest_terminal_summary = str(snapshot.get("summary") or "").strip()
 
     set_runtime_callback(ctx, "worker_progress_callback", _progress_callback)
     history = [{"role": "user", "parts": [{"text": str(task.instruction or "")}]}]
@@ -166,17 +180,27 @@ async def run_core_agent(task: TaskEnvelope, context: Dict[str, Any]) -> TaskRes
         stream = _coerce_stream(raw_stream)
         chunks = await asyncio.wait_for(_collect_chunks(stream), timeout=timeout_sec)
         final_text = "\n".join(chunks).strip()
+        payload: Dict[str, Any] = dict(latest_terminal_payload or {})
+        payload_text = str(payload.get("text") or "").strip()
+        if not final_text:
+            final_text = payload_text or latest_terminal_text
         if not final_text:
             final_text = "worker core-agent finished with no text output"
+        if not payload_text:
+            payload["text"] = final_text
         ui_payload = _extract_pending_ui(ctx.user_data.get("pending_ui"))
-        payload: Dict[str, Any] = {"text": final_text}
-        if ui_payload:
+        if ui_payload and not isinstance(payload.get("ui"), dict):
             payload["ui"] = ui_payload
+        summary_text = (
+            str(payload.get("text") or "").strip()
+            or latest_terminal_summary
+            or final_text
+        )
         return TaskResult(
             task_id=task.task_id,
             worker_id=str(context.get("worker_id") or task.worker_id),
             ok=True,
-            summary=final_text[:200],
+            summary=summary_text[:200],
             payload=payload,
         )
     except asyncio.TimeoutError:

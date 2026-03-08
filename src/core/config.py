@@ -108,29 +108,12 @@ if ADMIN_USER_IDS_STR.strip():
 
 async def is_user_allowed(user_id: int | str) -> bool:
     """
-    检查用户是否有权限使用 Bot
-    权限逻辑：管理员 OR 在白名单存储中
+    检查用户是否有权限使用 Bot。
+
+    当前运行模式为私人 Bot：仅允许 `ADMIN_USER_IDS` 中配置的用户。
     """
     uid_str = str(user_id).strip()
-
-    # 1. 如果是管理员，直接允许
-    if uid_str in ADMIN_USER_IDS:
-        return True
-
-    # 检查白名单存储
-    from core.state_store import check_user_allowed_in_db
-
-    try:
-        if await check_user_allowed_in_db(uid_str):
-            return True
-    except Exception:
-        pass
-
-    # 如果管理员列表为空，开放模式
-    if not ADMIN_USER_IDS:
-        return True
-
-    return False
+    return bool(uid_str) and uid_str in ADMIN_USER_IDS
 
 
 def is_user_admin(user_id: int | str) -> bool:
@@ -215,22 +198,6 @@ def _as_float(value: str, default: float) -> float:
     except Exception:
         return default
 
-
-WEB_DASHBOARD_ENABLED = os.getenv("WEB_DASHBOARD_ENABLED", "false").lower() == "true"
-WEB_DASHBOARD_HOST = os.getenv("WEB_DASHBOARD_HOST", "127.0.0.1").strip() or "127.0.0.1"
-WEB_DASHBOARD_PORT = max(1, _as_int(os.getenv("WEB_DASHBOARD_PORT", "8765"), 8765))
-WEB_DASHBOARD_POLL_SEC = max(
-    0.5,
-    _as_float(os.getenv("WEB_DASHBOARD_POLL_SEC", "2.0"), 2.0),
-)
-WEB_DASHBOARD_EVENT_BUFFER = max(
-    200,
-    _as_int(os.getenv("WEB_DASHBOARD_EVENT_BUFFER", "1200"), 1200),
-)
-WEB_DASHBOARD_ALLOW_WRITE = (
-    os.getenv("WEB_DASHBOARD_ALLOW_WRITE", "true").lower() == "true"
-)
-WEB_DASHBOARD_TOKEN = os.getenv("WEB_DASHBOARD_TOKEN", "").strip()
 
 # Auto recovery budget for terminal/recoverable failures in orchestrator loop
 AUTO_RECOVERY_MAX_ATTEMPTS = int(os.getenv("AUTO_RECOVERY_MAX_ATTEMPTS", "3"))

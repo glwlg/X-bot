@@ -4,12 +4,14 @@ import asyncio
 import inspect
 import logging
 import os
+import re
 import time
 import zlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict
 
+from core.file_artifacts import extract_saved_file_rows, normalize_file_rows
 from core.heartbeat_store import heartbeat_store
 from core.platform.registry import adapter_manager
 from services.md_converter import adapt_md_file_for_platform
@@ -26,6 +28,56 @@ PROGRESS_EVENTS_TO_DELIVER = frozenset(
         "max_turn_limit",
         "loop_guard",
     }
+)
+
+_RAW_MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\((?:https?://|/)[^)]+\)")
+_DELIVERY_PATH_LINE_RE = re.compile(
+    r"(?im)^\s*(?:保存路径|文件路径|图片路径|输出路径|附件路径|图片已保存至|saved to|output file|file path)\s*[:：=].*$"
+)
+_SECTION_HEADER_CANDIDATE_RE = re.compile(r"^[#>*\-\s`]*([^\n]{1,32}?)[#>*\-\s`]*[:：]?\s*$")
+_INTERNAL_SECTION_TITLES = {
+    "工具选择策略",
+    "执行日志",
+    "过程记录",
+    "处理过程",
+    "任务信息",
+    "运行日志",
+    "思考过程",
+}
+_FINAL_SECTION_TITLES = {
+    "最终结果",
+    "报告结果",
+    "执行结果",
+    "结果",
+    "结论",
+    "答案",
+}
+_USER_READY_MARKERS = (
+    "适合",
+    "建议",
+    "今天",
+    "明天",
+    "成功",
+    "失败",
+    "已生成",
+    "已完成",
+)
+
+_VERBOSE_PROGRESS_MARKERS = (
+    "## ",
+    "```",
+    "http://",
+    "https://",
+    "【搜索结果摘要】",
+    "当前：",
+    "今天（",
+    "明天（",
+    "天气情况",
+    "图片已生成",
+    "保存路径",
+    "文件路径",
+    "{'ok': true",
+    "{'ok': True",
 )
 
 
@@ -78,61 +130,199 @@ def _extract_payload(
     raw_files = payload_obj.get("files")
     if not isinstance(raw_files, list):
         raw_files = result.get("files")
-
-    if isinstance(raw_files, list):
-        seen_paths: set[str] = set()
-        seen_names: set[tuple[str, str]] = set()
-        for item in raw_files:
-            if not isinstance(item, dict):
-                continue
-            path_text = str(item.get("path") or "").strip()
-            if not path_text:
-                continue
-            path_obj = Path(path_text).expanduser().resolve()
-            if not path_obj.exists() or not path_obj.is_file():
-                continue
-            kind = str(item.get("kind") or "document").strip().lower() or "document"
-            if kind not in {"photo", "video", "audio", "document"}:
-                kind = "document"
-            filename = (
-                str(item.get("filename") or path_obj.name).strip() or path_obj.name
-            )
-            caption = str(item.get("caption") or "").strip()[:500]
-            path_key = str(path_obj)
-            name_key = (kind, filename)
-            if path_key in seen_paths or name_key in seen_names:
-                continue
-            seen_paths.add(path_key)
-            seen_names.add(name_key)
-            file_rows.append(
-                {
-                    "kind": kind,
-                    "path": path_key,
-                    "filename": filename,
-                    "caption": caption,
-                }
-            )
+    file_rows = normalize_file_rows(raw_files)
+    if not file_rows and text:
+        file_rows = extract_saved_file_rows(text)
 
     return text, ui, file_rows
 
 
-def _build_delivery_text(
+def _collapse_blank_lines(text: str) -> str:
+    lines = [line.rstrip() for line in str(text or "").splitlines()]
+    cleaned: list[str] = []
+    blank_streak = 0
+    for line in lines:
+        if not line.strip():
+            blank_streak += 1
+            if blank_streak > 1:
+                continue
+        else:
+            blank_streak = 0
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()
+
+
+def _normalize_section_title(line: str) -> str:
+    raw = str(line or "").strip()
+    if not raw or len(raw) > 40:
+        return ""
+    match = _SECTION_HEADER_CANDIDATE_RE.match(raw)
+    title = str(match.group(1) if match else raw).strip().strip(":：")
+    title = re.sub(r"^[^\w\u4e00-\u9fff]+", "", title)
+    title = re.sub(r"[^\w\u4e00-\u9fff]+$", "", title)
+    return title.strip().lower()
+
+
+def _find_section_ranges(lines: list[str]) -> list[tuple[int, int, str]]:
+    headers: list[tuple[int, str]] = []
+    for idx, line in enumerate(lines):
+        title = _normalize_section_title(line)
+        if title:
+            headers.append((idx, title))
+
+    ranges: list[tuple[int, int, str]] = []
+    for pos, (start_idx, title) in enumerate(headers):
+        end_idx = len(lines)
+        if pos + 1 < len(headers):
+            end_idx = headers[pos + 1][0]
+        ranges.append((start_idx, end_idx, title))
+    return ranges
+
+
+def _extract_named_section(text: str, *, titles: set[str]) -> str:
+    lines = str(text or "").splitlines()
+    if not lines:
+        return ""
+    lowered_titles = {item.lower() for item in titles}
+    for start, end, title in _find_section_ranges(lines):
+        if title in lowered_titles:
+            body_lines = [item.rstrip() for item in lines[start + 1 : end]]
+            body = "\n".join(body_lines).strip()
+            if body:
+                return _collapse_blank_lines(body)
+    return ""
+
+
+def _strip_file_path_lines(text: str, files: list[dict[str, str]]) -> str:
+    raw = _DELIVERY_PATH_LINE_RE.sub("", str(text or ""))
+    file_markers = {
+        str(item.get("path") or "").strip()
+        for item in list(files or [])
+        if str(item.get("path") or "").strip()
+    }
+    if not file_markers:
+        return _collapse_blank_lines(raw)
+
+    kept: list[str] = []
+    for line in raw.splitlines():
+        normalized = line.strip().strip("`")
+        if normalized in file_markers:
+            continue
+        kept.append(line)
+    return _collapse_blank_lines("\n".join(kept))
+
+
+def _strip_internal_sections(text: str) -> str:
+    lines = str(text or "").splitlines()
+    if not lines:
+        return ""
+
+    lowered_internal = {item.lower() for item in _INTERNAL_SECTION_TITLES}
+    ranges = _find_section_ranges(lines)
+    if not ranges:
+        return _collapse_blank_lines(text)
+
+    masked = [False] * len(lines)
+    for start, end, title in ranges:
+        if title in lowered_internal:
+            for idx in range(start, end):
+                masked[idx] = True
+
+    kept = [line for idx, line in enumerate(lines) if not masked[idx]]
+    return _collapse_blank_lines("\n".join(kept))
+
+
+def _looks_like_raw_worker_output(text: str, files: list[dict[str, str]]) -> bool:
+    raw = str(text or "").strip()
+    if not raw:
+        return False
+    lowered = raw.lower()
+    if any(
+        marker in raw
+        for marker in ("【搜索结果摘要】", "工具选择策略", "执行日志", "过程记录", "任务编号")
+    ):
+        return True
+    if len(_RAW_MARKDOWN_LINK_RE.findall(raw)) >= 2:
+        return True
+    if raw.count("\n- [") >= 2:
+        return True
+    if any(str(item.get("filename") or "").lower().startswith("search_report") for item in files):
+        return True
+    if len(raw) >= 1000 and not any(marker in raw for marker in _USER_READY_MARKERS):
+        return True
+    if "traceback" in lowered:
+        return True
+    return False
+
+
+def _fallback_delivery_body(
     task: TaskEnvelope,
     result: Dict[str, Any],
-) -> tuple[str, dict[str, Any], list[dict[str, str]]]:
-    ok = bool(result.get("ok"))
-    worker_name = str(task.metadata.get("worker_name") or task.worker_id or "执行助手")
-    text, ui, files = _extract_payload(result)
-
-    if ok:
-        body = text or str(result.get("summary") or "任务执行完成。")
-        final_text = f"✅ {worker_name} 已完成任务\n\n{body}".strip()
+    *,
+    text: str,
+    files: list[dict[str, str]],
+) -> str:
+    cleaned = _strip_file_path_lines(text, files)
+    final_section = _extract_named_section(cleaned, titles=_FINAL_SECTION_TITLES)
+    if final_section:
+        cleaned = final_section
     else:
-        error = str(result.get("error") or task.error or "未知错误").strip()
-        summary = str(result.get("summary") or "").strip()
-        detail = summary or text or error
-        final_text = f"❌ {worker_name} 任务执行失败\n\n{detail}".strip()
-    return final_text, ui, files
+        cleaned = _strip_internal_sections(cleaned)
+
+    cleaned = _collapse_blank_lines(cleaned)
+    if cleaned and not _looks_like_raw_worker_output(cleaned, files):
+        return cleaned
+
+    summary = str(result.get("summary") or "").strip()
+    if summary and summary != text:
+        summary = _collapse_blank_lines(_strip_file_path_lines(summary, files))
+        if summary and not _looks_like_raw_worker_output(summary, files):
+            return summary
+
+    goal = str(
+        (task.metadata or {}).get("task_goal")
+        or (task.metadata or {}).get("original_user_request")
+        or task.instruction
+        or ""
+    ).strip()
+    if any(str(item.get("kind") or "").strip().lower() == "document" for item in files):
+        if goal:
+            return f"已完成关于“{goal[:80]}”的处理，详细报告已附上。"
+        return "任务已完成，详细报告已附上。"
+    if cleaned:
+        return cleaned[:600]
+    if goal:
+        return f"已完成关于“{goal[:80]}”的处理。"
+    return "任务执行完成。"
+
+
+def _format_progress_summary(tool_name: str, summary: str, *, ok: bool) -> str:
+    raw = str(summary or "").strip()
+    if not raw:
+        return ""
+
+    normalized_tool = str(tool_name or "").strip().lower()
+    if normalized_tool.startswith("ext_"):
+        normalized_tool = normalized_tool[4:]
+
+    if normalized_tool == "load_skill":
+        return "技能已加载，正在继续执行。"
+
+    if not ok:
+        first_line = raw.splitlines()[0].strip()
+        return first_line[:160]
+
+    if (
+        "\n" in raw
+        or len(raw) > 120
+        or any(marker in raw for marker in _VERBOSE_PROGRESS_MARKERS)
+        or _RAW_MARKDOWN_LINK_RE.search(raw) is not None
+    ):
+        if normalized_tool == "bash":
+            return "已获得结果，正在整理最终回复。"
+        return "已完成当前步骤，正在继续处理。"
+
+    return raw[:160]
 
 
 def _humanize_tool_name(tool_name: str) -> str:
@@ -173,7 +363,13 @@ def _build_progress_text(task: TaskEnvelope, progress: Dict[str, Any]) -> str:
     tool_name = _humanize_tool_name(
         str(latest_step.get("name") or progress_obj.get("running_tool") or "").strip()
     )
-    summary = str(latest_step.get("summary") or "").strip()
+    raw_summary = str(latest_step.get("summary") or "").strip()
+    latest_status = str(latest_step.get("status") or "").strip().lower()
+    summary = _format_progress_summary(
+        str(latest_step.get("name") or progress_obj.get("running_tool") or "").strip(),
+        raw_summary,
+        ok=latest_status != "failed",
+    )
     failed_tools = [
         _humanize_tool_name(str(item).strip())
         for item in list(progress_obj.get("failed_tools") or [])
@@ -187,8 +383,7 @@ def _build_progress_text(task: TaskEnvelope, progress: Dict[str, Any]) -> str:
     if event == "tool_call_started":
         lines.append(f"动作：开始执行 `{tool_name or '工具'}`")
     elif event == "tool_call_finished":
-        status = str(latest_step.get("status") or "").strip().lower()
-        if status == "failed":
+        if latest_status == "failed":
             lines.append(f"动作：`{tool_name or '工具'}` 执行失败")
         else:
             lines.append(f"动作：`{tool_name or '工具'}` 执行完成")
@@ -207,6 +402,52 @@ def _build_progress_text(task: TaskEnvelope, progress: Dict[str, Any]) -> str:
         lines.append("最近失败：" + "，".join(failed_tools[-3:]))
 
     return "\n".join(lines).strip()
+
+
+_NON_REPAIRABLE_FAILURE_MARKERS = (
+    "missing required env",
+    "environment variable",
+    "api key",
+    "token",
+    "cookie",
+    "credential",
+    "未配置",
+    "环境变量",
+    "权限不足",
+    "rate limit",
+    "dns",
+    "network",
+    "timeout",
+    "登录",
+)
+
+_REPAIRABLE_FAILURE_MARKERS = (
+    "no such file or directory",
+    "can't open file",
+    "cannot open",
+    "modulenotfounderror",
+    "importerror",
+    "traceback",
+    "unrecognized arguments",
+    "syntaxerror",
+    "attributeerror",
+    "nameerror",
+    "typeerror",
+    "keyerror",
+    "entrypoint",
+    "not callable",
+    "参数错误",
+    "导入失败",
+)
+
+_FALLBACK_MARKERS = (
+    "fallback",
+    "回退",
+    "替代方案",
+    "workaround",
+    "通过 web_extractor",
+    "采用了以下替代方案",
+)
 
 
 class WorkerResultRelay:
@@ -235,6 +476,300 @@ class WorkerResultRelay:
         )
         self._stop_event = asyncio.Event()
         self._loop_task: asyncio.Task | None = None
+
+    async def _summarize_delivery_body(
+        self,
+        *,
+        task: TaskEnvelope,
+        result: Dict[str, Any],
+        text: str,
+        files: list[dict[str, str]],
+    ) -> str:
+        fallback = _fallback_delivery_body(task, result, text=text, files=files)
+        if fallback and not _looks_like_raw_worker_output(fallback, files) and len(fallback) <= 320:
+            return fallback
+        if not _looks_like_raw_worker_output(text, files):
+            return fallback
+
+        try:
+            from core.config import get_client_for_model
+            from core.model_config import get_model_for_input, get_routing_model
+            from services.openai_adapter import generate_text
+        except Exception:
+            return fallback
+
+        model_name = str(get_routing_model() or get_model_for_input("text") or "").strip()
+        if not model_name:
+            return fallback
+        client = get_client_for_model(model_name, is_async=True)
+        if client is None:
+            return fallback
+
+        goal = str(
+            (task.metadata or {}).get("task_goal")
+            or (task.metadata or {}).get("original_user_request")
+            or task.instruction
+            or ""
+        ).strip()
+        report_names = [
+            str(item.get("filename") or Path(str(item.get("path") or "")).name).strip()
+            for item in list(files or [])
+            if str(item.get("filename") or item.get("path") or "").strip()
+        ]
+        cleaned_text = _strip_internal_sections(_strip_file_path_lines(text, files))
+        if not cleaned_text:
+            cleaned_text = str(text or "").strip()
+        prompt = "\n\n".join(
+            [
+                f"原始用户任务：{goal or '未提供'}",
+                "Worker 原始结果：",
+                cleaned_text[:4000],
+                "附带文件：" + ("，".join(report_names[:4]) if report_names else "无"),
+            ]
+        ).strip()
+        system_instruction = (
+            "你是 X-Bot 的 Core Manager。"
+            "请把 Worker 的原始执行结果整理成给最终用户看的简洁中文回复。"
+            "要求："
+            "1. 只基于给定材料，不要编造；"
+            "2. 不要输出工具选择、执行日志、回合、文件系统路径；"
+            "3. 若是搜索/网页摘录，优先给出直接结论和 2-5 条关键信息；"
+            "4. 若有附件会另外发送，只在必要时简短提示“详细报告见附件”；"
+            "5. 输出纯文本，控制在 200 字以内。"
+        )
+        try:
+            rendered = (
+                await generate_text(
+                    async_client=client,
+                    model=model_name,
+                    contents=prompt,
+                    config={
+                        "system_instruction": system_instruction,
+                        "temperature": 0.2,
+                        "max_output_tokens": 240,
+                    },
+                )
+            ).strip()
+        except Exception:
+            logger.debug(
+                "Worker delivery summary synthesis failed task=%s",
+                task.task_id,
+                exc_info=True,
+            )
+            return fallback
+
+        if not rendered:
+            return fallback
+        return _collapse_blank_lines(rendered)
+
+    async def _build_delivery_text(
+        self,
+        task: TaskEnvelope,
+        result: Dict[str, Any],
+    ) -> tuple[str, dict[str, Any], list[dict[str, str]]]:
+        ok = bool(result.get("ok"))
+        worker_name = str(task.metadata.get("worker_name") or task.worker_id or "执行助手")
+        text, ui, files = _extract_payload(result)
+
+        if ok:
+            body = await self._summarize_delivery_body(
+                task=task,
+                result=result,
+                text=text or str(result.get("summary") or ""),
+                files=files,
+            )
+            body = body or str(result.get("summary") or "任务执行完成。")
+            final_text = f"✅ {worker_name} 已完成任务\n\n{body}".strip()
+        else:
+            error = str(result.get("error") or task.error or "未知错误").strip()
+            summary = str(result.get("summary") or "").strip()
+            detail = _fallback_delivery_body(
+                task,
+                result,
+                text=summary or text or error,
+                files=files,
+            )
+            final_text = f"❌ {worker_name} 任务执行失败\n\n{detail or error}".strip()
+        return final_text, ui, files
+
+    @staticmethod
+    def _parse_iso_ts(value: str) -> float:
+        text = str(value or "").strip()
+        if not text:
+            return 0.0
+        try:
+            return datetime.fromisoformat(text).timestamp()
+        except Exception:
+            return 0.0
+
+    @staticmethod
+    def _extract_skill_from_instruction(task: TaskEnvelope) -> Dict[str, Any]:
+        raw_text = " ".join(
+            [
+                str(task.instruction or ""),
+                str((task.metadata or {}).get("task_goal") or ""),
+            ]
+        ).lower()
+        if not raw_text:
+            return {}
+
+        path_match = re.search(r"/skills/learned/([a-z0-9_\-]+)", raw_text)
+        path_hint = str(path_match.group(1) or "").strip() if path_match else ""
+
+        try:
+            from core.skill_loader import skill_loader
+
+            for info in skill_loader.get_skills_summary():
+                skill_name = str(info.get("name") or "").strip()
+                if not skill_name:
+                    continue
+                skill_obj = skill_loader.get_skill(skill_name) or {}
+                if str(skill_obj.get("source") or "").strip() != "learned":
+                    continue
+                aliases = {
+                    skill_name.lower(),
+                    skill_name.lower().replace("_", "-"),
+                    skill_name.lower().replace("-", "_"),
+                    str(Path(str(skill_obj.get("skill_dir") or "")).name).strip().lower(),
+                }
+                aliases = {token for token in aliases if token}
+                if path_hint and path_hint in aliases:
+                    return skill_obj
+                if any(alias and alias in raw_text for alias in aliases):
+                    return skill_obj
+        except Exception:
+            return {}
+        return {}
+
+    @staticmethod
+    def _result_text_blob(task: TaskEnvelope, result: Dict[str, Any]) -> str:
+        payload = result.get("payload") if isinstance(result, dict) else {}
+        payload_obj = payload if isinstance(payload, dict) else {}
+        progress = dict((task.metadata or {}).get("progress") or {})
+        chunks = [
+            str(result.get("summary") or ""),
+            str(result.get("error") or ""),
+            str(payload_obj.get("text") or ""),
+            str(progress.get("final_preview") or ""),
+        ]
+        return "\n".join([item for item in chunks if str(item).strip()]).lower()
+
+    def _should_auto_repair_skill(
+        self,
+        *,
+        task: TaskEnvelope,
+        result: Dict[str, Any],
+        skill: Dict[str, Any],
+    ) -> bool:
+        if str(skill.get("source") or "").strip() != "learned":
+            return False
+
+        blob = self._result_text_blob(task, result)
+        if not blob:
+            return False
+        if any(marker in blob for marker in _NON_REPAIRABLE_FAILURE_MARKERS):
+            return False
+        if any(marker in blob for marker in _REPAIRABLE_FAILURE_MARKERS):
+            return True
+
+        progress = dict((task.metadata or {}).get("progress") or {})
+        failed_tools = [
+            str(item or "").strip().lower()
+            for item in list(progress.get("failed_tools") or [])
+            if str(item or "").strip()
+        ]
+        if bool(result.get("ok")) and failed_tools and any(
+            marker in blob for marker in _FALLBACK_MARKERS
+        ):
+            return True
+        return False
+
+    @staticmethod
+    async def _recent_auto_repair_exists(skill_name: str) -> bool:
+        safe_skill = str(skill_name or "").strip()
+        if not safe_skill:
+            return False
+        try:
+            from manager.dev.task_store import dev_task_store
+
+            rows = await dev_task_store.list_recent(limit=40)
+        except Exception:
+            return False
+
+        now_ts = time.time()
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            template = dict(row.get("template") or {})
+            if str(template.get("skill_name") or "").strip() != safe_skill:
+                continue
+            if str(template.get("source") or "").strip() != "worker_skill_auto_repair":
+                continue
+            updated_ts = WorkerResultRelay._parse_iso_ts(str(row.get("updated_at") or ""))
+            if updated_ts and now_ts - updated_ts <= 900:
+                return True
+        return False
+
+    async def _maybe_trigger_skill_auto_repair(
+        self,
+        *,
+        task: TaskEnvelope,
+        result: Dict[str, Any],
+        platform: str,
+        chat_id: str,
+    ) -> str:
+        skill = self._extract_skill_from_instruction(task)
+        skill_name = str(skill.get("name") or "").strip()
+        skill_dir = str(skill.get("skill_dir") or "").strip()
+        if not skill_name or not skill_dir:
+            return ""
+        if not self._should_auto_repair_skill(task=task, result=result, skill=skill):
+            return ""
+        if await self._recent_auto_repair_exists(skill_name):
+            return ""
+
+        user_id = str((task.metadata or {}).get("user_id") or "").strip()
+        excerpt = _split_chunks(self._result_text_blob(task, result), limit=500)
+        failure_excerpt = excerpt[0] if excerpt else ""
+        instruction = "\n".join(
+            [
+                f"请修复技能 `{skill_name}`，让 Worker 下次可以直接调用成功。",
+                "保留上游实现，优先修入口、兼容层、SKILL.md 或参数适配，不要重写整个技能。",
+                "",
+                "原始用户任务：",
+                str(task.instruction or "").strip(),
+                "",
+                "最近失败/回退线索：",
+                failure_excerpt or "worker 调用该 skill 时出现运行失败或降级回退。",
+            ]
+        ).strip()
+
+        try:
+            from manager.dev.service import manager_dev_service
+
+            repair = await manager_dev_service.software_delivery(
+                action="skill_modify",
+                skill_name=skill_name,
+                instruction=instruction,
+                cwd=skill_dir,
+                backend=str(os.getenv("CODING_BACKEND_DEFAULT", "codex") or "codex").strip(),
+                source="worker_skill_auto_repair",
+                notify_platform=platform,
+                notify_chat_id=chat_id,
+                notify_user_id=user_id,
+            )
+        except Exception:
+            logger.debug(
+                "Worker relay auto repair dispatch failed task=%s skill=%s",
+                task.task_id,
+                skill_name,
+                exc_info=True,
+            )
+            return ""
+
+        if not bool(repair.get("ok")):
+            return ""
+        return str(repair.get("task_id") or "").strip()
 
     async def start(self) -> None:
         if not self.enabled:
@@ -397,16 +932,6 @@ class WorkerResultRelay:
             return dict(relay)
         return {}
 
-    @staticmethod
-    def _parse_iso_ts(value: str) -> float:
-        text = str(value or "").strip()
-        if not text:
-            return 0.0
-        try:
-            return datetime.fromisoformat(text).timestamp()
-        except Exception:
-            return 0.0
-
     def _is_dead_letter(self, task: TaskEnvelope) -> bool:
         relay = self._relay_meta(task)
         state = str(relay.get("state") or "").strip().lower()
@@ -495,21 +1020,34 @@ class WorkerResultRelay:
             )
             return False
 
-        text, ui, files = _build_delivery_text(task, result)
+        text, ui, files = await self._build_delivery_text(task, result)
         if not text:
             text = "任务执行完成，但无可展示输出。"
 
-        delivered_any = False
-        if files:
-            delivered_any = await self._deliver_files(
-                adapter=adapter,
-                platform=platform,
-                chat_id=chat_id,
-                files=files,
-            )
+        repair_task_id = await self._maybe_trigger_skill_auto_repair(
+            task=task,
+            result=result,
+            platform=platform,
+            chat_id=chat_id,
+        )
+        if repair_task_id:
+            text = (
+                text.rstrip()
+                + "\n\n🛠 已自动发起技能修复任务 "
+                + f"`{repair_task_id}`"
+                + "，Manager 会继续把这个 skill 修到可直接调用。"
+            ).strip()
 
+        delivered_any = False
         chunks = _split_chunks(text)
         if not chunks:
+            if files:
+                return await self._deliver_files(
+                    adapter=adapter,
+                    platform=platform,
+                    chat_id=chat_id,
+                    files=files,
+                )
             return delivered_any
 
         try:
@@ -530,6 +1068,16 @@ class WorkerResultRelay:
                     delivered_any = True
                     continue
                 return False
+            if files:
+                delivered_any = (
+                    await self._deliver_files(
+                        adapter=adapter,
+                        platform=platform,
+                        chat_id=chat_id,
+                        files=files,
+                    )
+                    or delivered_any
+                )
             return delivered_any
         except Exception as exc:
             logger.error(
