@@ -11,6 +11,10 @@ triggers:
 - 监控
 - watch
 - 关注
+policy_groups:
+- research
+- feeds
+platform_handlers: true
 input_schema:
   type: object
   properties:

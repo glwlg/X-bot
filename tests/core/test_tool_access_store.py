@@ -30,6 +30,50 @@ def test_tool_access_groups_and_defaults(tmp_path):
     assert "group:skills" in detail["groups"]
 
 
+def test_tool_access_dynamic_skill_export_inherits_parent_skill_groups(
+    tmp_path,
+    monkeypatch,
+):
+    store = ToolAccessStore()
+    store.path = (tmp_path / "tool_access.json").resolve()
+    store._payload = store._default_payload()
+    store._write_unlocked()
+
+    monkeypatch.setattr(
+        "core.skill_loader.skill_loader.get_tool_export",
+        lambda name: {
+            "name": "queue_status",
+            "skill_name": "worker_management",
+        }
+        if name == "queue_status"
+        else None,
+    )
+
+    groups = store.groups_for_tool("queue_status", kind="tool")
+
+    assert "group:skills" in groups
+    assert "group:execution" in groups
+    assert "group:management" in groups
+
+
+def test_tool_access_ext_skill_prefers_frontmatter_policy_groups(tmp_path, monkeypatch):
+    store = ToolAccessStore()
+    store.path = (tmp_path / "tool_access.json").resolve()
+    store._payload = store._default_payload()
+    store._write_unlocked()
+
+    monkeypatch.setattr(
+        "core.skill_loader.skill_loader.get_skill",
+        lambda name: {"policy_groups": ["group:media"]}
+        if name == "download_video"
+        else {},
+    )
+
+    groups = store.groups_for_tool("ext_download_video", kind="tool")
+
+    assert "group:media" in groups
+
+
 def test_tool_access_worker_policy_denies_coding(tmp_path):
     store = ToolAccessStore()
     store.path = (tmp_path / "tool_access.json").resolve()
@@ -168,6 +212,18 @@ def test_worker_default_policy_denies_management_tools(tmp_path):
     )
     assert denied_dev is False
     assert denied_dev_detail["reason"] in {"matched_deny_list", "not_in_allow_list"}
+
+    denied_skill_admin, denied_skill_admin_detail = store.is_tool_allowed(
+        runtime_user_id="worker::worker-main::u-1",
+        platform="worker_kernel",
+        tool_name="ext_skill_manager",
+        kind="tool",
+    )
+    assert denied_skill_admin is False
+    assert denied_skill_admin_detail["reason"] in {
+        "matched_deny_list",
+        "not_in_allow_list",
+    }
 
 
 def test_worker_kernel_memory_is_hard_disabled(tmp_path):

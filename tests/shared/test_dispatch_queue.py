@@ -120,6 +120,31 @@ async def test_claim_next_is_atomic_under_concurrency(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_claim_next_prefers_higher_priority(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("MANAGER_DISPATCH_ROOT", raising=False)
+    queue = DispatchQueue()
+
+    low = await queue.submit_task(
+        worker_id="worker-main",
+        instruction="low",
+        source="manager_dispatch",
+        priority=10,
+    )
+    high = await queue.submit_task(
+        worker_id="worker-main",
+        instruction="high",
+        source="manager_dispatch",
+        priority=90,
+    )
+
+    claimed = await queue.claim_next(worker_id="worker-main", claimer="worker-a")
+    assert claimed is not None
+    assert claimed.task_id == high.task_id
+    assert claimed.task_id != low.task_id
+
+
+@pytest.mark.asyncio
 async def test_list_undelivered_scans_full_table(monkeypatch, tmp_path):
     monkeypatch.setenv("DATA_DIR", str(tmp_path))
     monkeypatch.delenv("MANAGER_DISPATCH_ROOT", raising=False)
@@ -184,6 +209,36 @@ async def test_claim_next_recovers_stale_running_task(monkeypatch, tmp_path):
     assert task_row.retry_count == 1
     recovery = dict((task_row.metadata or {}).get("_claim_recovery") or {})
     assert recovery.get("state") == "stale_claim_recovered"
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_task_renews_running_lease(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("DISPATCH_RUNNING_STALE_SEC", "60")
+    monkeypatch.delenv("MANAGER_DISPATCH_ROOT", raising=False)
+    queue = DispatchQueue()
+
+    submitted = await queue.submit_task(
+        worker_id="worker-main",
+        instruction="lease-task",
+        source="manager_dispatch",
+    )
+    claimed = await queue.claim_next(worker_id="worker-main", claimer="worker-a")
+    assert claimed is not None
+
+    rows = await queue.tasks.read_all()
+    rows[0]["started_at"] = "2000-01-01T00:00:00+00:00"
+    rows[0]["updated_at"] = "2000-01-01T00:00:00+00:00"
+    await queue.tasks.write_all(rows)
+
+    assert await queue.heartbeat_task(task_id=submitted.task_id, claimer="worker-a") is True
+    follow_up = await queue.claim_next(worker_id="worker-main", claimer="worker-b")
+    assert follow_up is None
+
+    task_row = await queue.get_task(submitted.task_id)
+    assert task_row is not None
+    lease = dict((task_row.metadata or {}).get("_lease") or {})
+    assert lease.get("claimed_by") == "worker-a"
 
 
 @pytest.mark.asyncio
@@ -377,6 +432,48 @@ async def test_delivery_health_reports_retry_dead_letter_and_persist_error(
     recent_dead = list(health.get("recent_dead_letters") or [])
     assert len(recent_dead) == 1
     assert str(recent_dead[0].get("task_id") or "") == task_dead.task_id
+    assert int(health.get("progress_backlog") or 0) == 0
+
+
+@pytest.mark.asyncio
+async def test_worker_metrics_and_delivery_health_include_latency_and_progress(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.delenv("MANAGER_DISPATCH_ROOT", raising=False)
+    queue = DispatchQueue()
+
+    submitted = await queue.submit_task(
+        worker_id="worker-main",
+        instruction="metrics-task",
+        source="manager_dispatch",
+        priority=50,
+    )
+    claimed = await queue.claim_next(worker_id="worker-main", claimer="worker-a")
+    assert claimed is not None
+    await queue.update_progress(
+        submitted.task_id,
+        {"event": "tool_call_started", "name": "bash"},
+    )
+
+    rows = await queue.tasks.read_all()
+    rows[0]["created_at"] = "2026-03-07T10:00:00+08:00"
+    rows[0]["started_at"] = "2026-03-07T10:00:03+08:00"
+    rows[0]["ended_at"] = "2026-03-07T10:00:09+08:00"
+    rows[0]["status"] = "done"
+    await queue.tasks.write_all(rows)
+
+    metrics = await queue.worker_metrics(worker_id="worker-main")
+    health = await queue.delivery_health(worker_id="worker-main", dead_letter_limit=10)
+
+    assert int(metrics.get("queue_depth") or 0) == 0
+    assert int(metrics.get("progress_backlog") or 0) == 1
+    assert float(metrics.get("avg_dispatch_latency_sec") or 0.0) == 3.0
+    assert float(metrics.get("avg_completion_sec") or 0.0) == 6.0
+    assert float(metrics.get("completion_rate") or 0.0) == 1.0
+    assert int(health.get("progress_backlog") or 0) == 1
+    assert float(health.get("avg_dispatch_latency_sec") or 0.0) == 3.0
+    assert float(health.get("avg_completion_sec") or 0.0) == 6.0
 
 
 @pytest.mark.asyncio

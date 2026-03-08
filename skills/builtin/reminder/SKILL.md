@@ -8,6 +8,9 @@ triggers:
 - timer
 - 闹钟
 - alarm
+policy_groups:
+- automation
+platform_handlers: false
 input_schema:
   type: object
   properties: {}

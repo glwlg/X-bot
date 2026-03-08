@@ -9,6 +9,9 @@ triggers:
 - 保存视频
 - 视频下载
 - get video
+policy_groups:
+- media
+platform_handlers: false
 input_schema:
   type: object
   properties: {}

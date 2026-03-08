@@ -457,7 +457,7 @@ async def test_heartbeat_rss_goal_prefers_direct_scheduler_refresh(
 
     refresh_calls = {"value": 0}
 
-    async def _fake_trigger_manual_rss_check(_uid: int):
+    async def _fake_trigger_manual_rss_check(_uid: int, **_kwargs):
         refresh_calls["value"] += 1
         return "📢 RSS 订阅日报 (1 条更新)\n\n- AI 新闻更新"
 
@@ -522,7 +522,7 @@ async def test_heartbeat_multiple_rss_items_only_append_once(monkeypatch, tmp_pa
 
     call_count = {"value": 0}
 
-    async def _fake_trigger_manual_rss_check(_uid: int):
+    async def _fake_trigger_manual_rss_check(_uid: int, **_kwargs):
         call_count["value"] += 1
         return "📢 RSS 订阅日报 (1 条更新)\n\n- AI 新闻更新"
 
@@ -539,3 +539,41 @@ async def test_heartbeat_multiple_rss_items_only_append_once(monkeypatch, tmp_pa
     )
     assert call_count["value"] == 1
     assert result.count("RSS 订阅日报") == 1
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_suppresses_rss_busy_message(monkeypatch, tmp_path):
+    runtime_root = (tmp_path / "runtime_tasks").resolve()
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(heartbeat_store, "root", runtime_root)
+    heartbeat_store._locks.clear()
+
+    user_id = "worker_rss_busy"
+    await heartbeat_store.set_heartbeat_spec(
+        user_id,
+        every="30m",
+        active_start="00:00",
+        active_end="23:59",
+        paused=False,
+    )
+
+    captured: dict[str, object] = {}
+
+    async def _fake_trigger_manual_rss_check(_uid: int, **kwargs):
+        captured["kwargs"] = dict(kwargs)
+        return ""
+
+    monkeypatch.setattr(
+        "core.scheduler.trigger_manual_rss_check",
+        _fake_trigger_manual_rss_check,
+    )
+
+    worker = HeartbeatWorker()
+    result = await worker._run_heartbeat_task_batch(
+        user_id=user_id,
+        checklist=["检查我的 RSS 订阅更新"],
+        owner="test-owner",
+    )
+
+    assert captured["kwargs"] == {"suppress_busy_message": True}
+    assert result == "HEARTBEAT_OK"

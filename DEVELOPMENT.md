@@ -1,253 +1,362 @@
 # X-Bot DEVELOPMENT
 
-更新时间：2026-02-18  
-状态：`ACTIVE`（当前实现与维护约束文档）
+更新时间：2026-03-07
+状态：`ACTIVE`
 
-## 1. 设计目标
+本文描述当前仓库已经落地的架构边界、运行时约束和开发入口。它不是愿景文档，默认以现有代码为准。
 
-X-Bot 采用“双层操作系统”模型：
+## 1. 当前系统形态
 
-- 内核层（Core Manager）负责调度、治理、记忆与系统修复。
-- Worker 执行层（Worker Fleet）负责面向用户的任务执行与交付。
-- Core Manager 默认不执行用户业务任务，只做调度者、管理者、维护者。
-- 当进入“修复/治理模式”时，Core Manager 可以对 worker 与工具链进行修复操作。
+X-Bot 当前是三服务架构：
 
-## 2. 双层架构（当前实现）
+- `x-bot`：Core Manager
+- `x-bot-worker`：默认 Worker Kernel
+- `x-bot-api`：FastAPI + SPA
 
-### 2.1 内核层（Core Manager）
+三者通过 `docker-compose.yml` 启动，已经拆成独立镜像 target 和独立 Python 依赖组。
 
-职责：
+## 2. 职责边界
 
-- 路由：接收用户输入并决定是直接对话、派发任务、还是进入治理流程。
-- 编排：维护任务状态机、重试预算、超时、失败归因与回执。
-- 治理：管理 worker 生命周期、权限、工具白名单与人格配置。
-- 修复：基于 worker 失败上下文进行诊断与修复（仅限治理范围）。
-- 记忆：维护短期上下文与长期记忆（自我记忆 / 用户记忆）。
-- 维护：驱动 heartbeat 周期任务（健康检查、经验压缩、记忆固化）。
+### 2.1 Core Manager
 
-非职责：
+Manager 负责：
 
-- 不直接承担常规用户任务执行。
-- 不把“编码工具执行”当成默认路径。
+- 平台消息入口和命令入口
+- 提示词、SOUL、上下文、工具面组装
+- 按权限注入原语工具与 skill direct tool
+- 普通异步任务派发给 worker
+- software delivery 与本地 rollout
+- manager 自身执行过程和 worker 结果回传
+- heartbeat、记忆、治理和权限控制
 
-### 2.2 Worker 执行层（Worker Fleet）
+Manager 当前可以直接使用这些基础原语：
 
-职责：
+- `read`
+- `write`
+- `edit`
+- `bash`
+- `load_skill`
 
-- 执行任务：接受 Core Manager 派发，完成用户目标并返回结果。
-- 工具使用：按调度策略调用原语与扩展工具。
-- 失败回报：执行失败时回传结构化错误与诊断线索给 Core Manager。
-- 运行隔离：每个 worker 有独立工作区、独立运行态、独立 SOUL。
+另外，声明了 `tool_exports` 且权限允许的 skill tool 会被动态注入。例如当前的：
 
-非职责：
+- `software_delivery`
+- `list_workers`
+- `dispatch_worker`
+- `worker_status`
 
-- 不修改 Core Manager 内核逻辑。
-- 不越权管理其他 worker。
+约束：
 
-## 3. 项目目录结构（保留）
+- 仓库代码路径上的直接修改不应再通过普通 `write/edit` 完成
+- 代码类变更应统一走 `software_delivery`
+- 运行态数据文件仍可用原语直接维护，例如 `data/` 下的用户状态和系统状态
 
-以下为需要长期保留并持续维护的结构说明（目录名可扩展，但职责边界应保持）：
+### 2.2 Worker Kernel
 
-### 3.1 仓库顶层
+Worker 负责：
 
-```text
-.
-├── src/                    # 主代码
-├── skills/                 # 技能（builtin / learned）
-├── data/                   # 运行态与持久化数据
-├── tests/                  # 测试
-├── docs/                   # 设计与说明文档
-├── docker-compose.yml      # 多容器编排
-├── pyproject.toml          # Python 项目配置
-└── DEVELOPMENT.md          # 本开发文档
-```
+- 从共享 dispatch queue claim 任务
+- 维持 lease heartbeat
+- 执行默认 program/runtime
+- 写回结果、错误、摘要和进度
+- 镜像运行时尽量保持精简，不再承载平台 SDK
 
-### 3.2 `src/` 结构
+Worker 不负责：
+
+- 平台消息入口
+- Manager 核心治理逻辑
+- 直接向平台发消息
+
+消息进出统一走 Manager，Worker 只写队列和结果。
+
+### 2.3 API Service
+
+`x-bot-api` 负责：
+
+- `/api/v1/*` 路由
+- auth、binding、accounting 等 Web/API 能力
+- 前端静态资源和 SPA fallback
+
+API 与 Manager/Worker 已拆成独立镜像，不再共享全部运行时依赖。
+
+## 3. 代码结构
 
 ```text
 src/
-├── main.py
-├── agents/
-├── core/
-│   ├── agent_orchestrator.py
-│   ├── worker_runtime.py
-│   ├── worker_store.py
-│   ├── heartbeat_store.py
-│   ├── heartbeat_worker.py
-│   ├── state_store.py
-│   ├── state_io.py
-│   ├── state_paths.py
-│   ├── state_file.py
-│   ├── tool_registry.py
-│   └── config.py
-├── handlers/
-│   ├── ai_handlers.py
-│   ├── worker_handlers.py
-│   ├── heartbeat_handlers.py
-│   ├── voice_handler.py
-│   └── document_handler.py
-├── services/
-├── platforms/
-├── mcp_client/
-└── worker_runtime/
+├── api/          # FastAPI + SPA
+├── core/         # 提示词、工具注入、状态访问、运行时策略
+├── handlers/     # 用户命令与消息入口
+├── manager/      # dispatch、relay、software delivery
+├── platforms/    # Telegram / Discord / DingTalk 适配
+├── services/     # LLM、下载、搜索等外部服务
+├── shared/       # queue contract / jsonl queue / shared models
+└── worker/       # worker kernel + program loader/runtime
 ```
 
-### 3.3 `skills/` 结构
+关键入口：
 
-```text
-skills/
-├── builtin/                # 系统内置技能
-└── learned/                # 学习/安装得到的技能
+- `src/main.py`：Manager 主程序
+- `src/worker_main.py`：Worker 主程序
+- `src/api/main.py`：API 主程序
+- `src/core/agent_orchestrator.py`：LLM function-call 编排
+- `src/core/orchestrator_runtime_tools.py`：工具装配与执行策略
+- `src/manager/dispatch/service.py`：worker 选择与派发
+- `src/manager/relay/result_relay.py`：worker 结果和进度回传
+- `src/manager/dev/service.py`：software delivery 总控
+- `src/worker/kernel/daemon.py`：worker queue loop
+
+## 4. 调度模型
+
+### 4.1 队列协议
+
+共享任务协议位于：
+
+- `src/shared/contracts/dispatch.py`
+- `src/shared/queue/dispatch_queue.py`
+
+持久化路径默认是：
+
+- `data/system/dispatch/tasks.jsonl`
+- `data/system/dispatch/results.jsonl`
+
+任务状态：
+
+- `pending`
+- `running`
+- `done`
+- `failed`
+- `cancelled`
+
+Worker 在 claim 任务后会续租 lease；如果 `running` 任务长期无心跳，会被恢复或标记失败。
+
+### 4.2 Manager 派发
+
+Manager 通过 `src/manager/dispatch/service.py` 做：
+
+- worker 选择
+- priority 计算
+- load/error-rate/queue-depth 感知
+- 默认 worker 创建
+- 任务入队
+
+当前选择逻辑不是 broker 级调度系统，而是基于文件队列和轻量启发式打分。
+
+### 4.3 结果回传
+
+Worker 完成任务后，result relay 会把结果推回原对话。
+
+当前支持两类过程反馈：
+
+- worker 工具过程
+- manager 自身工具过程
+
+Telegram 平台优先使用 `sendMessageDraft` 单草稿刷新，其他平台走普通消息/编辑路径。
+
+## 5. Skill 系统
+
+Skill 是运行时扩展，放在：
+
+- `skills/builtin/`
+- `skills/learned/`
+
+每个 skill 至少包含：
+
+- `SKILL.md`
+- 可选 `scripts/execute.py`
+
+### 5.1 默认调用链
+
+默认不是“所有 skill 都变成 tool”。当前的标准调用链是：
+
+1. 模型调用 `load_skill`
+2. 读取 `SKILL.md`
+3. 按 SOP 用 `bash` 执行 `python scripts/execute.py ...`
+
+### 5.2 Direct Tool 导出
+
+如果 skill frontmatter 声明了 `tool_exports`，该 skill 可以被动态注入为 direct tool。
+
+相关实现：
+
+- `src/core/skill_loader.py`
+- `src/core/tool_registry.py`
+- `src/core/skill_tool_handlers.py`
+
+这意味着 direct tool 不再应写死在 `tool_registry.py`。
+
+### 5.3 Skill Frontmatter
+
+当前有效的 skill 元数据包括但不限于：
+
+- `entrypoint`
+- `input_schema`
+- `contract`
+- `tool_exports`
+- `policy_groups`
+- `platform_handlers`
+- `prompt_hint`
+
+约束：
+
+- direct tool 能力应优先通过 `tool_exports` 声明
+- skill 权限分组应优先在 skill 元数据中声明，而不是继续把分类硬编码到核心
+- 平台 handler 注册是显式 opt-in，只有声明 `platform_handlers: true` 的 skill 才会在启动时注册平台命令或 callback
+
+## 6. 权限模型
+
+工具权限由 `src/core/tool_access_store.py` 管理，持久化文件是：
+
+- `data/kernel/tool_access.json`
+
+当前默认策略：
+
+- Core Manager 默认允许：`management`、`automation`、`coding`、`primitives`、`skill-admin`
+- Worker 默认拒绝：`coding`、`management`、`automation`
+
+设计目标：
+
+- Manager 负责治理与编码
+- Worker 负责执行
+- Skill direct tool 是否暴露，既受 skill 元数据控制，也受 runtime policy 过滤
+
+## 7. Software Delivery
+
+`software_delivery` 现在已经是 skill 驱动的 direct tool，不再建议在核心里单独写一套特殊路径。
+
+实现入口：
+
+- `src/manager/dev/service.py`
+- `src/manager/dev/publisher.py`
+- `src/manager/dev/delivery_policy.py`
+- `src/manager/dev/deployment_targets.py`
+- `config/deployment_targets.yaml`
+
+当前支持的关键参数：
+
+- `target_service`: `manager | worker | api`
+- `rollout`: `none | local`
+- `validate_only`: `true | false`
+
+约束：
+
+- 对仓库代码的正式修改应通过 `software_delivery`
+- local rollout 目前基于 `docker compose build` + `docker compose up -d`
+- rollout target 不再硬编码在发布器里，而是从 `config/deployment_targets.yaml` 读取
+
+## 8. 状态与数据面
+
+X-Bot 仍然是 file-system-first 设计。重要状态包括：
+
+- `data/WORKERS.json`：worker 注册表
+- `data/system/dispatch/`：任务与结果队列
+- `data/system/dev_tasks/`：software delivery 任务与日志
+- `data/users/<user_id>/`：用户状态、对话、记忆、提醒、订阅等
+- `data/runtime_tasks/<user_id>/`：heartbeat 运行态
+
+状态访问应优先通过：
+
+- `src/core/state_paths.py`
+- `src/core/state_io.py`
+- `src/core/state_store.py`
+
+不要在业务代码里随意拼接 `data/...` 路径读写。
+
+## 9. 平台与消息入口
+
+当前平台入口：
+
+- Telegram
+- Discord
+- DingTalk Stream
+
+Manager 启动时会注册通用命令：
+
+- `/start`
+- `/new`
+- `/help`
+- `/chatlog`
+- `/skills`
+- `/reload_skills`
+- `/translate`
+- `/stop`
+- `/heartbeat`
+- `/worker`
+- `/acc`
+
+Telegram 还保留：
+
+- `/feature`
+- `/teach`
+
+但 `/teach` 已不再承担旧版“直接生成扩展代码”的职责，当前仅作过渡提示入口。
+
+## 10. 镜像与依赖拆分
+
+当前镜像 target：
+
+- `manager-runtime`
+- `worker-runtime`
+- `api-runtime`
+
+当前 Python 依赖组：
+
+- `manager`
+- `worker`
+- `api`
+- `optional-skill-runtime`
+
+当前边界要求：
+
+- Worker 镜像不再默认携带 Telegram/Discord/DingTalk SDK
+- API 镜像不应带 manager/worker 不需要的重依赖
+- 如果某类 skill 需要额外大包，优先放进可选 dependency group，而不是默认塞进所有运行时
+
+## 11. 开发约束
+
+### 11.1 应该做的
+
+- 用 skill metadata 驱动 tool 暴露和权限分组
+- 让 Manager 对代码类变更走 `software_delivery`
+- 保持 manager/worker/api 角色边界清晰
+- 用测试保护 orchestrator、dispatch、relay、skill contract
+
+### 11.2 不应该做的
+
+- 不要再把 manager/worker 关键 direct tool 大量硬编码回核心注册表
+- 不要让 Worker 重新承担平台消息职责
+- 不要绕过 `dispatch_queue` 自己发明另一套 manager/worker 任务协议
+- 不要对 `data/` 做散落的 ad-hoc 文件路径读写
+- 不要把“未来想法”写成“当前已实现”放进说明文档
+
+## 12. 常用命令
+
+```bash
+uv sync
+uv run python src/main.py
+uv run python src/worker_main.py
+uv run uvicorn api.main:app --host 0.0.0.0 --port 8764
+uv run pytest
+docker compose up --build -d
+docker compose logs -f x-bot
+docker compose logs -f x-bot-worker
+docker compose logs -f x-bot-api
 ```
 
-### 3.4 `data/` 关键运行态
+## 13. 测试重点
 
-```text
-data/
-├── WORKERS.json            # worker 元数据
-├── WORKER_TASKS.jsonl      # worker 任务事件流水
-├── userland/workers/       # 各 worker 工作区
-├── users/                  # 用户维度状态与文件
-├── runtime_tasks/          # 运行期任务上下文缓存
-└── credentials/workers/    # worker 凭证（如 CLI auth）
-```
+高信号测试位置：
 
-说明：
+- `tests/core/test_prompt_composer.py`
+- `tests/core/test_runtime_tool_skillization.py`
+- `tests/core/test_orchestrator_runtime_tools.py`
+- `tests/core/test_worker_result_relay.py`
+- `tests/core/test_orchestrator_delivery_closure.py`
+- `tests/manager/test_dev_service.py`
+- `tests/manager/test_deployment_targets.py`
+- `tests/shared/test_dispatch_queue.py`
 
-- `/worker tasks` 以 `data/WORKER_TASKS.jsonl`（`WorkerTaskStore`）为主，并与 `dispatch_queue` 合并，状态字段以队列快照为准。
-- `data/userland/workers/<worker_id>/` 为空通常表示该任务未产出文件型副作用（例如 `echo hello`）。
-- 任务事件标准字段：`source` / `status` / `created_at` / `started_at` / `ended_at` / `error` / `retry_count` / `events[]`。
-- `/worker tasks` 查询链路：`handlers/worker_handlers.py -> core.worker_store.WorkerTaskStore.list_recent + shared.queue.dispatch_queue.list_tasks`（合并视图）。
-- heartbeat 运行态查询链路：`handlers/heartbeat_handlers.py -> core.heartbeat_store.get_state -> data/runtime_tasks/<user_id>/{HEARTBEAT.md,STATUS.json}`。
-- 对话检索链路：`/chatlog -> handlers/service_handlers.py -> core.state_store.search_messages -> data/users/<user_id>/chat/<YYYY-MM-DD>/<session_id>.md`。
-- 系统级状态文件：`data/system/repositories/{allowed_users.md,id_counters.md,video_cache.md}`。
-- 状态路径与读写原语：`core.state_paths.py + core.state_io.py`。
-- 业务状态聚合入口：`core.state_store.py`（替代历史 repository 分层）。
-- 业务状态文件统一采用 canonical 协议：`core.state_file.py`（`XBOT_STATE_BEGIN/END + fenced yaml`）。
+在修改这些区域时，至少应回归对应测试：
 
-## 4. 任务调度模型（当前实现）
-
-### 4.1 默认调度原则
-
-- 普通聊天请求默认可自动派发到默认 worker（无需先输入 `/worker`）。
-- `/worker` 命令用于显式控制和运维，不应成为唯一任务入口。
-- Core Manager 负责派发、追踪和治理；Worker 负责执行与回执。
-
-### 4.2 状态机
-
-- `queued -> running -> (done | failed | cancelled)`
-- 每个状态变更必须持久化、可追溯。
-- 任务来源必须标注：`user_chat` / `user_cmd` / `heartbeat` / `system`。
-
-### 4.3 已识别调度缺口
-
-- 普通聊天在“派发-执行-回传”链路上仍有体感延迟。
-- `/worker tasks` 默认视图被 heartbeat 失败记录噪声影响。
-- 部分路径仍对编码工具可用性耦合过深，影响简单任务直达执行。
-- `runtime_tasks` 目录层级出现异常膨胀，需做 key 规范与清理策略。
-
-## 5. 工具调度策略（当前实现）
-
-### 5.1 调用优先级
-
-先原语，后扩展：
-
-1. `read`
-2. `write/edit`
-3. `bash`
-4. `browser/search`
-5. 编码工具（`codex` / `gemini-cli`）
-
-原则：四原语可解时，不升级到编码工具。
-
-### 5.2 失败恢复链
-
-- 第 1 段：同工具自修复重试（参数、输入、环境）。
-- 第 2 段：降级到四原语兜底。
-- 第 3 段：启用备选工具或备选执行路径。
-- 仅在 `fatal` 或恢复预算耗尽时失败交付。
-
-## 6. SOUL.MD 人格系统（当前实现）
-
-每个执行体（包括 Core Manager）都必须持有独立 `SOUL.MD`，其内容注入系统提示词。
-
-### 6.1 角色约束
-
-- Core Manager：具备名字、性格、治理风格与长期自我记忆。
-- Worker：执行型人格，强调任务交付，不持有独立长期人生记忆。
-- SOUL 支持版本化、审计、回滚。
-
-### 6.2 建议路径
-
-- `data/kernel/core-manager/SOUL.MD`
-- `data/userland/workers/<worker_id>/SOUL.MD`
-
-## 7. 记忆系统（当前实现）
-
-Core Manager 采用双层记忆：
-
-### 7.1 短期记忆（Short-Term Context）
-
-- 会话窗口、当前任务、最近决策依据。
-- 与任务生命周期绑定，可快速淘汰。
-
-### 7.2 长期记忆（Long-Term Memory）
-
-- 自我记忆：系统经验、修复模式、策略偏好、历史教训。
-- 用户记忆：用户偏好、长期要求、显式“请记住”事项。
-
-### 7.3 对话留存与压缩
-
-- 与用户的对话必须全量留存。
-- heartbeat 周期性压缩提炼：
-  - 系统经验（写入自我记忆）
-  - 用户偏好（写入用户记忆）
-- 记忆条目必须保留来源引用与时间戳。
-
-## 8. Heartbeat 职责（当前实现）
-
-- 心跳是周期维护机制，不是即时任务队列。
-- 用于健康检查、对话压缩、记忆固化与治理提醒。
-- 无事项时返回 `HEARTBEAT_OK` 并抑制主动打扰。
-- 支持 `every + active_hours + pause/resume`。
-
-## 9. 开发待办（按优先级）
-
-## 10. 验收标准（针对本规划）
-
-- 用户不使用 `/worker` 也能触发默认 worker 执行。
-- Core Manager 不执行普通业务任务，但可执行修复/治理任务。
-- 简单命令（如 `echo hello`）不受 codex/gemini-cli 可用性影响。
-- 每个 agent 可加载独立 `SOUL.MD` 并在提示链路生效。
-- 长期记忆能区分“系统经验”和“用户偏好”。
-- 对话全量留存，heartbeat 可周期提炼经验与偏好。
-
-## 11. 备注
-
-- 本文是开发任务规范，不等同于已上线能力。
-- 实施时请在 PR/提交中关联任务编号（如 `ARCH-001`）。
-
-## 12. 2026-02-18 交接状态（最新）
-
-本节用于交接当前实现状态与遗留问题，供后续接手者快速定位。
-
-### 12.1 本轮架构收敛结果
-
-- 业务状态访问已统一收敛到 `core.state_store.py`（settings/subscriptions/watchlist/reminders/scheduled_tasks/allowed_users/chat/account）。
-- `src/repositories/` 已移除，不再作为业务状态访问入口。
-- 状态文件协议统一为 canonical Markdown payload（`XBOT_STATE_BEGIN/END + fenced yaml`），由 `core.state_file.py` 负责解析/渲染。
-- 状态路径与通用读写能力已统一到 `core.state_paths.py` 与 `core.state_io.py`。
-- 一次性迁移工具 `core.state_migration` 已在迁移完成后下线（脚本已删除）。
-
-### 12.2 关键代码入口（交接索引）
-
-- `src/handlers/ai_handlers.py`：派发、上下文封装、Markdown memory 读写、回执主链路。
-- `src/core/prompt_composer.py`：角色与 SOUL 注入。
-- `src/core/prompts.py`：默认系统提示词与通用约束。
-- `src/core/tool_access_store.py`：工具分组与 worker memory 禁用策略。
-- `src/core/agent_orchestrator.py`：function call 工具注入过滤。
-- `src/core/state_store.py`：业务状态统一访问面（chat/account/subscription/watchlist/reminder/task/settings）。
-- `src/core/state_io.py`：通用状态读写与计数器原语（canonical 协议）。
-- `src/core/state_paths.py`：`data/` 目录路径规范与 user/system path 构造。
-- `src/core/state_file.py`：canonical state payload 解析/渲染协议。
-- `src/core/markdown_memory_store.py`：基于 `MEMORY.md` + `memory/YYYY-MM-DD.md` 的记忆实现。
+- tool surface / prompt / skill metadata
+- dispatch queue / worker daemon
+- result relay
+- software delivery / rollout

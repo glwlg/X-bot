@@ -51,6 +51,33 @@ class DispatchQueue:
         except Exception:
             return None
 
+    @staticmethod
+    def _task_priority(task: TaskEnvelope) -> int:
+        try:
+            return int(getattr(task, "priority", 0) or 0)
+        except Exception:
+            return 0
+
+    def _duration_sec(self, start: str, end: str) -> float | None:
+        start_ts = self._parse_iso_ts(start)
+        end_ts = self._parse_iso_ts(end)
+        if start_ts is None or end_ts is None:
+            return None
+        if start_ts.tzinfo is None and end_ts.tzinfo is not None:
+            start_ts = start_ts.replace(tzinfo=end_ts.tzinfo)
+        if end_ts.tzinfo is None and start_ts.tzinfo is not None:
+            end_ts = end_ts.replace(tzinfo=start_ts.tzinfo)
+        delta = (end_ts - start_ts).total_seconds()
+        if delta < 0:
+            return None
+        return delta
+
+    @staticmethod
+    def _avg(values: List[float]) -> float:
+        if not values:
+            return 0.0
+        return round(sum(values) / len(values), 3)
+
     def _is_stale_running_task(
         self,
         task: TaskEnvelope,
@@ -91,6 +118,7 @@ class DispatchQueue:
         instruction: str,
         source: str,
         backend: str = "",
+        priority: int = 0,
         metadata: Dict[str, Any] | None = None,
     ) -> TaskEnvelope:
         task = TaskEnvelope(
@@ -99,6 +127,7 @@ class DispatchQueue:
             instruction=str(instruction or "").strip(),
             source=str(source or "manager_dispatch").strip() or "manager_dispatch",
             backend=str(backend or "").strip(),
+            priority=int(priority or 0),
             status="pending",
             metadata=dict(metadata or {}),
             created_at=now_iso(),
@@ -166,17 +195,25 @@ class DispatchQueue:
                 rows[idx] = task.to_dict()
                 changed = True
 
-            chosen_idx = -1
-            chosen_task: TaskEnvelope | None = None
+            pending_rows: List[Tuple[int, TaskEnvelope]] = []
             for idx, row in enumerate(rows):
                 task = TaskEnvelope.from_dict(row)
                 if task.worker_id != safe_worker_id:
                     continue
                 if task.status != "pending":
                     continue
-                chosen_idx = idx
-                chosen_task = task
-                break
+                pending_rows.append((idx, task))
+
+            chosen_idx = -1
+            chosen_task: TaskEnvelope | None = None
+            if pending_rows:
+                pending_rows.sort(
+                    key=lambda item: (
+                        -self._task_priority(item[1]),
+                        str(item[1].created_at or ""),
+                    )
+                )
+                chosen_idx, chosen_task = pending_rows[0]
 
             if chosen_idx < 0 or chosen_task is None:
                 return None, changed
@@ -189,6 +226,42 @@ class DispatchQueue:
             return chosen_task, True
 
         return await self._mutate_tasks_atomically(mutate=_mutate)
+
+    async def heartbeat_task(
+        self,
+        *,
+        task_id: str,
+        claimer: str = "",
+        note: str = "",
+    ) -> bool:
+        safe_task_id = str(task_id or "").strip()
+        safe_claimer = str(claimer or "").strip()
+        safe_note = str(note or "").strip()[:200]
+        if not safe_task_id:
+            return False
+
+        def _mutate(rows: List[Dict[str, Any]]) -> Tuple[bool, bool]:
+            for idx, row in enumerate(rows):
+                task = TaskEnvelope.from_dict(row)
+                if task.task_id != safe_task_id:
+                    continue
+                if task.status != "running":
+                    return False, False
+                if safe_claimer and str(task.claimed_by or "").strip() != safe_claimer:
+                    return False, False
+                metadata = dict(task.metadata or {})
+                metadata["_lease"] = {
+                    "claimed_by": str(task.claimed_by or safe_claimer),
+                    "updated_at": now_iso(),
+                    "note": safe_note,
+                }
+                task.metadata = metadata
+                task.updated_at = now_iso()
+                rows[idx] = task.to_dict()
+                return True, True
+            return False, False
+
+        return bool(await self._mutate_tasks_atomically(mutate=_mutate))
 
     async def finish_task(
         self, *, task_id: str, result: TaskResult
@@ -552,6 +625,73 @@ class DispatchQueue:
                 break
         return matched
 
+    async def worker_metrics(
+        self,
+        *,
+        worker_id: str = "",
+        limit: int = 200,
+    ) -> Dict[str, Any]:
+        safe_worker_id = str(worker_id or "").strip()
+        rows = await self.tasks.read_all()
+
+        pending = 0
+        running = 0
+        done = 0
+        failed = 0
+        cancelled = 0
+        progress_backlog = 0
+        dispatch_latencies: List[float] = []
+        completion_durations: List[float] = []
+        recent_rows: List[TaskEnvelope] = []
+
+        for row in rows:
+            task = TaskEnvelope.from_dict(row)
+            if safe_worker_id and task.worker_id != safe_worker_id:
+                continue
+            recent_rows.append(task)
+            if task.status == "pending":
+                pending += 1
+            elif task.status == "running":
+                running += 1
+            elif task.status == "done":
+                done += 1
+            elif task.status == "failed":
+                failed += 1
+            elif task.status == "cancelled":
+                cancelled += 1
+
+            progress_backlog += len(
+                list((task.metadata or {}).get("progress_events") or [])
+            )
+
+            dispatch_latency = self._duration_sec(task.created_at, task.started_at)
+            if dispatch_latency is not None:
+                dispatch_latencies.append(dispatch_latency)
+
+            completion_duration = self._duration_sec(task.started_at, task.ended_at)
+            if completion_duration is not None:
+                completion_durations.append(completion_duration)
+
+        recent_rows.sort(key=lambda item: str(item.updated_at or ""), reverse=True)
+        recent_rows = recent_rows[: max(1, min(500, int(limit or 200)))]
+        completed = done + failed + cancelled
+        completion_rate = round((done / completed), 3) if completed > 0 else 0.0
+
+        return {
+            "worker_id": safe_worker_id,
+            "pending": pending,
+            "running": running,
+            "done": done,
+            "failed": failed,
+            "cancelled": cancelled,
+            "progress_backlog": progress_backlog,
+            "avg_dispatch_latency_sec": self._avg(dispatch_latencies),
+            "avg_completion_sec": self._avg(completion_durations),
+            "completion_rate": completion_rate,
+            "queue_depth": pending + running,
+            "recent_task_ids": [task.task_id for task in recent_rows[:20]],
+        }
+
     async def delivery_health(
         self,
         *,
@@ -567,6 +707,12 @@ class DispatchQueue:
         dead_letter = 0
         result_persist_error = 0
         dead_letter_rows: List[Dict[str, Any]] = []
+        progress_backlog = 0
+        dispatch_latencies: List[float] = []
+        completion_durations: List[float] = []
+        done = 0
+        failed = 0
+        cancelled = 0
 
         for row in rows:
             task = TaskEnvelope.from_dict(row)
@@ -606,6 +752,24 @@ class DispatchQueue:
             if isinstance(persist_error_obj, dict):
                 result_persist_error += 1
 
+            progress_backlog += len(
+                list((task.metadata or {}).get("progress_events") or [])
+            )
+
+            dispatch_latency = self._duration_sec(task.created_at, task.started_at)
+            if dispatch_latency is not None:
+                dispatch_latencies.append(dispatch_latency)
+            completion_duration = self._duration_sec(task.started_at, task.ended_at)
+            if completion_duration is not None:
+                completion_durations.append(completion_duration)
+
+            if task.status == "done":
+                done += 1
+            elif task.status == "failed":
+                failed += 1
+            elif task.status == "cancelled":
+                cancelled += 1
+
         def _sort_key(item: Dict[str, Any]) -> float:
             ts = self._parse_iso_ts(str(item.get("dead_letter_at") or ""))
             if ts is None:
@@ -613,12 +777,17 @@ class DispatchQueue:
             return ts.timestamp() if ts is not None else 0.0
 
         dead_letter_rows.sort(key=_sort_key, reverse=True)
+        completed = done + failed + cancelled
         return {
             "worker_id": safe_worker_id,
             "undelivered": undelivered,
             "retrying": retrying,
             "dead_letter": dead_letter,
             "result_persist_error": result_persist_error,
+            "progress_backlog": progress_backlog,
+            "avg_dispatch_latency_sec": self._avg(dispatch_latencies),
+            "avg_completion_sec": self._avg(completion_durations),
+            "completion_rate": round((done / completed), 3) if completed > 0 else 0.0,
             "recent_dead_letters": dead_letter_rows[:safe_limit],
         }
 

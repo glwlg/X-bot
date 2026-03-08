@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -229,6 +230,29 @@ def test_build_manager_progress_text_includes_command_and_result():
     assert "结果：Command executed with code 0" in text
 
 
+def test_build_manager_progress_text_hides_verbose_tool_output():
+    text = ai_handlers._build_manager_progress_text(
+        {
+            "event": "tool_call_finished",
+            "task_id": "mgr-verbose",
+            "turn": 2,
+            "recent_steps": [
+                {
+                    "name": "load_skill",
+                    "status": "done",
+                    "summary": "{'ok': True, 'content': '# Daily Query\\n\\n这是日常基础查询 skill...'}",
+                    "detail_label": "技能",
+                    "detail": "daily_query",
+                }
+            ],
+        }
+    )
+
+    assert "技能：`daily_query`" in text
+    assert "结果：技能已加载，正在继续执行。" in text
+    assert "Daily Query" not in text
+
+
 def test_build_runtime_phrase_pools_reads_generated_phrase_store(monkeypatch):
     monkeypatch.setattr(
         ai_handlers.waiting_phrase_store,
@@ -258,6 +282,155 @@ def test_build_runtime_phrase_pools_fallbacks_when_generated_phrase_empty(monkey
 
     assert "⚡ 信号已接收，开始解析..." in received
     assert "🤖 调用赛博算力中..." in loading
+
+
+class _DummyOutgoingMessage:
+    def __init__(self, message_id: int):
+        self.message_id = message_id
+        self.id = message_id
+
+    async def delete(self):
+        return True
+
+
+class _DummyChatContext:
+    def __init__(self):
+        self.message = SimpleNamespace(
+            text="帮我画一张猫狗大战",
+            chat=SimpleNamespace(id="c-1", type="private"),
+            user=SimpleNamespace(id="u-1"),
+            platform="telegram",
+            reply_to_message=None,
+            raw_data={},
+            id="msg-1",
+        )
+        self.platform_ctx = SimpleNamespace(user_data={})
+        self.user_data = {}
+        self._adapter = SimpleNamespace(can_update_message=True)
+        self.replies: list[tuple[object, dict]] = []
+        self.edits: list[tuple[object, object, dict]] = []
+        self.photos: list[tuple[object, object, dict]] = []
+        self.documents: list[tuple[object, object, object, dict]] = []
+        self.actions: list[tuple[str, dict]] = []
+
+    async def reply(self, payload, **kwargs):
+        self.replies.append((payload, dict(kwargs)))
+        return _DummyOutgoingMessage(len(self.replies))
+
+    async def edit_message(self, message_id, text, **kwargs):
+        self.edits.append((message_id, text, dict(kwargs)))
+        return True
+
+    async def send_chat_action(self, action, **kwargs):
+        self.actions.append((action, dict(kwargs)))
+        return True
+
+    async def reply_photo(self, photo, caption=None, **kwargs):
+        self.photos.append((photo, caption, dict(kwargs)))
+        return True
+
+    async def reply_document(self, document, filename=None, caption=None, **kwargs):
+        self.documents.append((document, filename, caption, dict(kwargs)))
+        return True
+
+
+@pytest.mark.asyncio
+async def test_handle_ai_chat_silently_ignores_unauthorized_user(monkeypatch):
+    import core.config as config_module
+    import core.heartbeat_store as heartbeat_module
+
+    async def _deny_user(_user_id):
+        return False
+
+    async def _forbidden(*_args, **_kwargs):
+        raise AssertionError("unauthorized request should short-circuit")
+
+    monkeypatch.setattr(config_module, "is_user_allowed", _deny_user)
+    monkeypatch.setattr(
+        heartbeat_module.heartbeat_store,
+        "set_delivery_target",
+        _forbidden,
+    )
+    monkeypatch.setattr(ai_handlers, "add_message", _forbidden)
+
+    ctx = _DummyChatContext()
+
+    await ai_handlers.handle_ai_chat(ctx)
+
+    assert not ctx.replies
+    assert not ctx.edits
+    assert not ctx.photos
+    assert not ctx.documents
+
+
+@pytest.mark.asyncio
+async def test_handle_ai_chat_does_not_attach_plain_path_from_final_text(
+    monkeypatch, tmp_path
+):
+    import core.config as config_module
+    import core.heartbeat_store as heartbeat_module
+    import core.task_manager as task_manager_module
+    from core.agent_orchestrator import agent_orchestrator
+    from handlers import message_utils
+
+    image_path = (tmp_path / "catdog.png").resolve()
+    image_path.write_bytes(b"png")
+
+    async def _allow_user(_user_id):
+        return True
+
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    async def _false(*_args, **_kwargs):
+        return False
+
+    async def _empty_history(*_args, **_kwargs):
+        return []
+
+    async def _fake_process_reply_message(_ctx):
+        return False, "", None, ""
+
+    async def _fake_get_user_settings(_uid):
+        return {}
+
+    async def _identity_process_code_files(_ctx, text):
+        return text
+
+    async def _fake_handle_message(_ctx, _message_history):
+        yield "✅ 图片已成功生成！\n" f"文件路径: `{image_path}`\n" "请查收。"
+
+    monkeypatch.setattr(config_module, "is_user_allowed", _allow_user)
+    monkeypatch.setattr(
+        heartbeat_module.heartbeat_store,
+        "set_delivery_target",
+        _noop,
+    )
+    monkeypatch.setattr(ai_handlers, "add_message", _noop)
+    monkeypatch.setattr(ai_handlers, "increment_stat", _noop)
+    monkeypatch.setattr(ai_handlers, "_try_handle_waiting_confirmation", _false)
+    monkeypatch.setattr(ai_handlers, "_try_handle_memory_commands", _false)
+    monkeypatch.setattr(ai_handlers, "get_user_settings", _fake_get_user_settings)
+    monkeypatch.setattr(ai_handlers, "get_user_context", _empty_history)
+    monkeypatch.setattr(
+        ai_handlers,
+        "_build_runtime_phrase_pools",
+        lambda _uid: (["收到"], ["处理中"]),
+    )
+    monkeypatch.setattr(
+        ai_handlers, "process_and_send_code_files", _identity_process_code_files
+    )
+    monkeypatch.setattr(message_utils, "process_reply_message", _fake_process_reply_message)
+    monkeypatch.setattr(agent_orchestrator, "handle_message", _fake_handle_message)
+    monkeypatch.setattr(task_manager_module.task_manager, "register_task", _noop)
+    monkeypatch.setattr(task_manager_module.task_manager, "is_cancelled", lambda _uid: False)
+    monkeypatch.setattr(task_manager_module.task_manager, "unregister_task", lambda _uid: None)
+
+    ctx = _DummyChatContext()
+
+    await ai_handlers.handle_ai_chat(ctx)
+
+    assert not ctx.photos
 
 
 def test_build_runtime_phrase_pools_fallbacks_on_soul_errors(monkeypatch):

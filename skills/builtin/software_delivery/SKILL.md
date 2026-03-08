@@ -13,6 +13,104 @@ triggers:
 - skill_modify
 allowed_roles:
 - manager
+policy_groups:
+- management
+- coding
+platform_handlers: false
+tool_exports:
+- name: software_delivery
+  description: Manager software delivery pipeline for planning, coding, validation, publish and rollout.
+  handler: manager.software_delivery
+  prompt_hint: 开发、改代码、修复 issue、技能模板修改时，优先直接调用 `software_delivery`，不要先用 bash 试探。
+  policy_groups:
+  - management
+  - coding
+  parameters:
+    type: object
+    properties:
+      action:
+        type: string
+        description: run | read_issue | plan | implement | validate | publish | status | logs | resume | skill_create | skill_modify | skill_template
+      task_id:
+        type: string
+        description: Existing software delivery task id
+      requirement:
+        type: string
+        description: Development requirement or feature description
+      instruction:
+        type: string
+        description: Explicit coding instruction, mainly for template actions
+      issue:
+        type: string
+        description: GitHub issue URL or owner/repo#number
+      repo_path:
+        type: string
+        description: Local repository path
+      repo_url:
+        type: string
+        description: Git repository URL for clone or pull
+      cwd:
+        type: string
+        description: Working directory for template coding actions
+      skill_name:
+        type: string
+        description: Target skill name for template actions
+      source:
+        type: string
+        description: Trace source label for coding execution
+      template_kind:
+        type: string
+        description: When action=skill_template, choose skill_create or skill_modify
+      owner:
+        type: string
+        description: GitHub owner override
+      repo:
+        type: string
+        description: GitHub repo override
+      backend:
+        type: string
+        description: Coding backend override, e.g. codex or gemini-cli
+      branch_name:
+        type: string
+        description: Target branch for implementation
+      base_branch:
+        type: string
+        description: Base branch for publish or PR
+      commit_message:
+        type: string
+        description: Commit message override
+      pr_title:
+        type: string
+        description: Pull request title override
+      pr_body:
+        type: string
+        description: Pull request body override
+      timeout_sec:
+        type: integer
+        description: Timeout for coding execution
+      validation_commands:
+        type: array
+        description: Optional validation command list
+        items:
+          type: string
+      target_service:
+        type: string
+        description: Deployment target service, manager | worker | api
+      rollout:
+        type: string
+        description: Rollout mode, none | local
+      validate_only:
+        type: boolean
+        description: Stop after validation and skip publish or rollout
+      auto_publish:
+        type: boolean
+        description: When action=run or resume, include publish stage
+      auto_push:
+        type: boolean
+        description: Push branch before PR
+      auto_pr:
+        type: boolean
+        description: Create pull request after push
 input_schema:
   type: object
   properties: {}

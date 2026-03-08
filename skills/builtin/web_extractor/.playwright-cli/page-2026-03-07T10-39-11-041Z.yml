@@ -1,0 +1,1762 @@
+- generic [ref=e2]:
+  - region
+  - generic [ref=e3]:
+    - link "Skip to content" [ref=e4] [cursor=pointer]:
+      - /url: "#start-of-content"
+    - banner [ref=e6]:
+      - heading "Navigation Menu" [level=2] [ref=e7]
+      - generic [ref=e8]:
+        - link "Homepage" [ref=e10] [cursor=pointer]:
+          - /url: /
+          - img [ref=e11]
+        - generic [ref=e13]:
+          - navigation "Global" [ref=e16]:
+            - list [ref=e17]:
+              - listitem [ref=e18]:
+                - button "Platform" [ref=e20] [cursor=pointer]:
+                  - text: Platform
+                  - img [ref=e21]
+              - listitem [ref=e23]:
+                - button "Solutions" [ref=e25] [cursor=pointer]:
+                  - text: Solutions
+                  - img [ref=e26]
+              - listitem [ref=e28]:
+                - button "Resources" [ref=e30] [cursor=pointer]:
+                  - text: Resources
+                  - img [ref=e31]
+              - listitem [ref=e33]:
+                - button "Open Source" [ref=e35] [cursor=pointer]:
+                  - text: Open Source
+                  - img [ref=e36]
+              - listitem [ref=e38]:
+                - button "Enterprise" [ref=e40] [cursor=pointer]:
+                  - text: Enterprise
+                  - img [ref=e41]
+              - listitem [ref=e43]:
+                - link "Pricing" [ref=e44] [cursor=pointer]:
+                  - /url: https://github.com/pricing
+                  - generic [ref=e45]: Pricing
+          - generic [ref=e46]:
+            - button "Search or jump to…" [ref=e49] [cursor=pointer]:
+              - img [ref=e51]
+            - link "Sign in" [ref=e54] [cursor=pointer]:
+              - /url: /login?return_to=https%3A%2F%2Fgithub.com%2FrunningZ1%2Funion-search-skill
+            - link "Sign up" [ref=e55] [cursor=pointer]:
+              - /url: /signup?ref_cta=Sign+up&ref_loc=header+logged+out&ref_page=%2F%3Cuser-name%3E%2F%3Crepo-name%3E&source=header-repo&source_repo=runningZ1%2Funion-search-skill
+            - button "Appearance settings" [ref=e58] [cursor=pointer]:
+              - img
+  - main [ref=e62]:
+    - generic [ref=e63]:
+      - generic [ref=e64]:
+        - generic [ref=e66]:
+          - img [ref=e67]
+          - link "runningZ1" [ref=e70] [cursor=pointer]:
+            - /url: /runningZ1
+          - generic [ref=e71]: /
+          - strong [ref=e72]:
+            - link "union-search-skill" [ref=e73] [cursor=pointer]:
+              - /url: /runningZ1/union-search-skill
+          - generic [ref=e74]: Public
+        - generic [ref=e75]:
+          - list:
+            - listitem [ref=e76]:
+              - link "You must be signed in to change notification settings" [ref=e77] [cursor=pointer]:
+                - /url: /login?return_to=%2FrunningZ1%2Funion-search-skill
+                - img [ref=e78]
+                - text: Notifications
+            - listitem [ref=e80]:
+              - link "Fork 25" [ref=e81] [cursor=pointer]:
+                - /url: /login?return_to=%2FrunningZ1%2Funion-search-skill
+                - img [ref=e82]
+                - text: Fork
+                - generic "25" [ref=e84]
+            - listitem [ref=e85]:
+              - link "You must be signed in to star a repository" [ref=e87] [cursor=pointer]:
+                - /url: /login?return_to=%2FrunningZ1%2Funion-search-skill
+                - img [ref=e88]
+                - text: Star
+                - generic "244 users starred this repository" [ref=e90]: "244"
+      - navigation "Repository" [ref=e91]:
+        - list [ref=e92]:
+          - listitem [ref=e93]:
+            - link "Code" [ref=e94] [cursor=pointer]:
+              - /url: /runningZ1/union-search-skill
+              - img [ref=e95]
+              - generic [ref=e97]: Code
+          - listitem [ref=e98]:
+            - link "Issues" [ref=e99] [cursor=pointer]:
+              - /url: /runningZ1/union-search-skill/issues
+              - img [ref=e100]
+              - generic [ref=e103]: Issues
+          - listitem [ref=e104]:
+            - link "Pull requests" [ref=e105] [cursor=pointer]:
+              - /url: /runningZ1/union-search-skill/pulls
+              - img [ref=e106]
+              - generic [ref=e108]: Pull requests
+          - listitem [ref=e109]:
+            - link "Actions" [ref=e110] [cursor=pointer]:
+              - /url: /runningZ1/union-search-skill/actions
+              - img [ref=e111]
+              - generic [ref=e113]: Actions
+          - listitem [ref=e114]:
+            - link "Projects" [ref=e115] [cursor=pointer]:
+              - /url: /runningZ1/union-search-skill/projects
+              - img [ref=e116]
+              - generic [ref=e118]: Projects
+          - listitem [ref=e119]:
+            - link "Security" [ref=e120] [cursor=pointer]:
+              - /url: /runningZ1/union-search-skill/security
+              - img [ref=e121]
+              - generic [ref=e123]: Security
+          - listitem [ref=e124]:
+            - link "Insights" [ref=e125] [cursor=pointer]:
+              - /url: /runningZ1/union-search-skill/pulse
+              - img [ref=e126]
+              - generic [ref=e128]: Insights
+    - generic [ref=e141]:
+      - heading "runningZ1/union-search-skill" [level=1] [ref=e143]
+      - generic [ref=e144]:
+        - generic [ref=e147]:
+          - generic [ref=e148]:
+            - generic [ref=e149]:
+              - button "master branch" [ref=e151] [cursor=pointer]:
+                - generic [ref=e152]:
+                  - generic [ref=e154]:
+                    - img [ref=e156]
+                    - generic [ref=e159]: master
+                  - generic:
+                    - img
+              - generic [ref=e160]:
+                - link "1 Branch" [ref=e161] [cursor=pointer]:
+                  - /url: /runningZ1/union-search-skill/branches
+                  - generic [ref=e162]:
+                    - generic:
+                      - img
+                    - generic [ref=e164]:
+                      - strong [ref=e165]: "1"
+                      - text: Branch
+                - link "0 Tags" [ref=e166] [cursor=pointer]:
+                  - /url: /runningZ1/union-search-skill/tags
+                  - generic [ref=e167]:
+                    - generic:
+                      - img
+                    - generic [ref=e169]:
+                      - strong [ref=e170]: "0"
+                      - text: Tags
+            - generic [ref=e171]:
+              - generic [ref=e175]:
+                - img [ref=e177]
+                - combobox "Go to file" [ref=e179]
+              - button "Code" [ref=e180] [cursor=pointer]:
+                - generic [ref=e181]:
+                  - generic:
+                    - img
+                  - generic [ref=e182]: Code
+                  - generic:
+                    - img
+          - generic [ref=e183]:
+            - generic [ref=e184]:
+              - heading "Folders and files" [level=2] [ref=e185]
+              - table "Folders and files" [ref=e186]:
+                - rowgroup:
+                  - row "Name Last commit message Last commit date":
+                    - columnheader "Name"
+                    - columnheader "Last commit message":
+                      - generic "Last commit message"
+                    - columnheader "Last commit date":
+                      - generic "Last commit date"
+                - rowgroup [ref=e187]:
+                  - 'row "Latest commit runningZ1 commits by runningZ1 feat(download): harden yt-dlp integration with youtube cookie fallback Commit 3ea9a18 · Mar 7, 20262 hours ago History 69 Commits" [ref=e188]':
+                    - 'cell "Latest commit runningZ1 commits by runningZ1 feat(download): harden yt-dlp integration with youtube cookie fallback Commit 3ea9a18 · Mar 7, 20262 hours ago History 69 Commits" [ref=e189]':
+                      - generic [ref=e190]:
+                        - heading "Latest commit" [level=2] [ref=e191]
+                        - generic [ref=e192]:
+                          - generic [ref=e194]:
+                            - link "runningZ1" [ref=e195] [cursor=pointer]:
+                              - /url: /runningZ1
+                              - img "runningZ1" [ref=e196]
+                            - link "commits by runningZ1" [ref=e197] [cursor=pointer]:
+                              - /url: /runningZ1/union-search-skill/commits?author=runningZ1
+                              - text: runningZ1
+                          - 'link "feat(download): harden yt-dlp integration with youtube cookie fallback" [ref=e201] [cursor=pointer]':
+                            - /url: /runningZ1/union-search-skill/commit/3ea9a1875a75bee538ab2f3ea9b3b8b072202eea
+                        - generic [ref=e202]:
+                          - generic [ref=e204]:
+                            - link "Commit 3ea9a18" [ref=e205] [cursor=pointer]:
+                              - /url: /runningZ1/union-search-skill/commit/3ea9a1875a75bee538ab2f3ea9b3b8b072202eea
+                              - text: 3ea9a18
+                            - text: ·
+                            - generic "Mar 7, 2026, 7:45 AM UTC" [ref=e206]: Mar 7, 20262 hours ago
+                          - generic [ref=e207]:
+                            - heading "History" [level=2] [ref=e208]
+                            - link "69 Commits" [ref=e209] [cursor=pointer]:
+                              - /url: /runningZ1/union-search-skill/commits/master/
+                              - generic [ref=e210]:
+                                - generic:
+                                  - img
+                                - generic [ref=e211]: 69 Commits
+                  - 'row "references, (Directory) docs: reorganize documentation into a global references directory Feb 26, 2026last week" [ref=e212]':
+                    - cell "references, (Directory)" [ref=e213]:
+                      - generic [ref=e214]:
+                        - img [ref=e215]
+                        - link "references, (Directory)" [ref=e220] [cursor=pointer]:
+                          - /url: /runningZ1/union-search-skill/tree/master/references
+                          - text: references
+                    - 'cell "docs: reorganize documentation into a global references directory" [ref=e221]':
+                      - 'link "docs: reorganize documentation into a global references directory" [ref=e224] [cursor=pointer]':
+                        - /url: /runningZ1/union-search-skill/commit/9b9e3a9c7fe4d52b7842028339ba2b0a9520d0c0
+                    - cell "Feb 26, 2026last week" [ref=e225]:
+                      - generic [ref=e226]: Feb 26, 2026last week
+                  - 'row "scripts, (Directory) feat(download): harden yt-dlp integration with youtube cookie fallback Mar 7, 20262 hours ago" [ref=e227]':
+                    - cell "scripts, (Directory)" [ref=e228]:
+                      - generic [ref=e229]:
+                        - img [ref=e230]
+                        - link "scripts, (Directory)" [ref=e235] [cursor=pointer]:
+                          - /url: /runningZ1/union-search-skill/tree/master/scripts
+                          - text: scripts
+                    - 'cell "feat(download): harden yt-dlp integration with youtube cookie fallback" [ref=e236]':
+                      - 'link "feat(download): harden yt-dlp integration with youtube cookie fallback" [ref=e239] [cursor=pointer]':
+                        - /url: /runningZ1/union-search-skill/commit/3ea9a1875a75bee538ab2f3ea9b3b8b072202eea
+                    - cell "Mar 7, 20262 hours ago" [ref=e240]:
+                      - generic [ref=e241]: Mar 7, 20262 hours ago
+                  - 'row ".env.example, (File) feat(download): harden yt-dlp integration with youtube cookie fallback Mar 7, 20262 hours ago" [ref=e242]':
+                    - cell ".env.example, (File)" [ref=e243]:
+                      - generic [ref=e244]:
+                        - img [ref=e245]
+                        - link ".env.example, (File)" [ref=e250] [cursor=pointer]:
+                          - /url: /runningZ1/union-search-skill/blob/master/.env.example
+                          - text: .env.example
+                    - 'cell "feat(download): harden yt-dlp integration with youtube cookie fallback" [ref=e251]':
+                      - 'link "feat(download): harden yt-dlp integration with youtube cookie fallback" [ref=e254] [cursor=pointer]':
+                        - /url: /runningZ1/union-search-skill/commit/3ea9a1875a75bee538ab2f3ea9b3b8b072202eea
+                    - cell "Mar 7, 20262 hours ago" [ref=e255]:
+                      - generic [ref=e256]: Mar 7, 20262 hours ago
+                  - 'row ".gitignore, (File) feat: 添加 Defuddle 双引擎支持 Mar 7, 20264 hours ago" [ref=e257]':
+                    - cell ".gitignore, (File)" [ref=e258]:
+                      - generic [ref=e259]:
+                        - img [ref=e260]
+                        - link ".gitignore, (File)" [ref=e265] [cursor=pointer]:
+                          - /url: /runningZ1/union-search-skill/blob/master/.gitignore
+                          - text: .gitignore
+                    - 'cell "feat: 添加 Defuddle 双引擎支持" [ref=e266]':
+                      - 'link "feat: 添加 Defuddle 双引擎支持" [ref=e269] [cursor=pointer]':
+                        - /url: /runningZ1/union-search-skill/commit/23bbf867ff3972f2b2def339c60e20c6ab809bef
+                    - cell "Mar 7, 20264 hours ago" [ref=e270]:
+                      - generic [ref=e271]: Mar 7, 20264 hours ago
+                  - 'row "README.md, (File) feat(download): harden yt-dlp integration with youtube cookie fallback Mar 7, 20262 hours ago" [ref=e272]':
+                    - cell "README.md, (File)" [ref=e273]:
+                      - generic [ref=e274]:
+                        - img [ref=e275]
+                        - link "README.md, (File)" [ref=e280] [cursor=pointer]:
+                          - /url: /runningZ1/union-search-skill/blob/master/README.md
+                          - text: README.md
+                    - 'cell "feat(download): harden yt-dlp integration with youtube cookie fallback" [ref=e281]':
+                      - 'link "feat(download): harden yt-dlp integration with youtube cookie fallback" [ref=e284] [cursor=pointer]':
+                        - /url: /runningZ1/union-search-skill/commit/3ea9a1875a75bee538ab2f3ea9b3b8b072202eea
+                    - cell "Mar 7, 20262 hours ago" [ref=e285]:
+                      - generic [ref=e286]: Mar 7, 20262 hours ago
+                  - 'row "SKILL.md, (File) feat: remove weibo search module and references Feb 20, 20262 weeks ago" [ref=e287]':
+                    - cell "SKILL.md, (File)" [ref=e288]:
+                      - generic [ref=e289]:
+                        - img [ref=e290]
+                        - link "SKILL.md, (File)" [ref=e295] [cursor=pointer]:
+                          - /url: /runningZ1/union-search-skill/blob/master/SKILL.md
+                          - text: SKILL.md
+                    - 'cell "feat: remove weibo search module and references" [ref=e296]':
+                      - 'link "feat: remove weibo search module and references" [ref=e299] [cursor=pointer]':
+                        - /url: /runningZ1/union-search-skill/commit/01ec561a9d3e782a903796b424c8d51f35c146b7
+                    - cell "Feb 20, 20262 weeks ago" [ref=e300]:
+                      - generic [ref=e301]: Feb 20, 20262 weeks ago
+                  - 'row "uniarch.py, (File) feat: 添加统一 CLI 接口，支持 Agent 友好命令行调用 Mar 5, 20262 days ago" [ref=e302]':
+                    - cell "uniarch.py, (File)" [ref=e303]:
+                      - generic [ref=e304]:
+                        - img [ref=e305]
+                        - link "uniarch.py, (File)" [ref=e310] [cursor=pointer]:
+                          - /url: /runningZ1/union-search-skill/blob/master/uniarch.py
+                          - text: uniarch.py
+                    - 'cell "feat: 添加统一 CLI 接口，支持 Agent 友好命令行调用" [ref=e311]':
+                      - 'link "feat: 添加统一 CLI 接口，支持 Agent 友好命令行调用" [ref=e314] [cursor=pointer]':
+                        - /url: /runningZ1/union-search-skill/commit/78aaa69686c53ceb55f7c286bc1ab74b864ee677
+                    - cell "Mar 5, 20262 days ago" [ref=e315]:
+                      - generic [ref=e316]: Mar 5, 20262 days ago
+                  - 'row "union_search_cli.py, (File) feat: 添加统一 CLI 接口，支持 Agent 友好命令行调用 Mar 5, 20262 days ago" [ref=e317]':
+                    - cell "union_search_cli.py, (File)" [ref=e318]:
+                      - generic [ref=e319]:
+                        - img [ref=e320]
+                        - link "union_search_cli.py, (File)" [ref=e325] [cursor=pointer]:
+                          - /url: /runningZ1/union-search-skill/blob/master/union_search_cli.py
+                          - text: union_search_cli.py
+                    - 'cell "feat: 添加统一 CLI 接口，支持 Agent 友好命令行调用" [ref=e326]':
+                      - 'link "feat: 添加统一 CLI 接口，支持 Agent 友好命令行调用" [ref=e329] [cursor=pointer]':
+                        - /url: /runningZ1/union-search-skill/commit/78aaa69686c53ceb55f7c286bc1ab74b864ee677
+                    - cell "Mar 5, 20262 days ago" [ref=e330]:
+                      - generic [ref=e331]: Mar 5, 20262 days ago
+            - generic [ref=e333]:
+              - generic [ref=e334]:
+                - heading "Repository files navigation" [level=2] [ref=e335]
+                - navigation "Repository files" [ref=e336]:
+                  - list [ref=e337]:
+                    - listitem [ref=e338]:
+                      - link "README" [ref=e339] [cursor=pointer]:
+                        - /url: "#"
+                        - img [ref=e341]
+                        - generic [ref=e343]: README
+                - button "Outline" [ref=e344] [cursor=pointer]:
+                  - img [ref=e345]
+              - article [ref=e348]:
+                - generic [ref=e349]:
+                  - heading "Union Search Skill" [level=1] [ref=e350]
+                  - 'link "Permalink: Union Search Skill" [ref=e351] [cursor=pointer]':
+                    - /url: "#union-search-skill"
+                    - img [ref=e352]
+                - blockquote [ref=e354]:
+                  - paragraph [ref=e355]: 🚀 统一的多平台搜索解决方案 — 一次调用，触达全网
+                - paragraph [ref=e356]:
+                  - link "Python 3.9+" [ref=e357] [cursor=pointer]:
+                    - /url: https://www.python.org/downloads/
+                    - img "Python 3.9+" [ref=e358]
+                  - 'link "License: MIT" [ref=e359] [cursor=pointer]':
+                    - /url: https://opensource.org/licenses/MIT
+                    - 'img "License: MIT" [ref=e360]'
+                  - 'link "Code style: black" [ref=e361] [cursor=pointer]':
+                    - /url: https://github.com/psf/black
+                    - 'img "Code style: black" [ref=e362]'
+                  - link "PRs Welcome" [ref=e363] [cursor=pointer]:
+                    - /url: /runningZ1/union-search-skill/blob/master/CONTRIBUTING.md
+                    - img "PRs Welcome" [ref=e364]
+                - separator [ref=e365]
+                - generic [ref=e366]:
+                  - heading "📖 目录" [level=2] [ref=e367]
+                  - 'link "Permalink: 📖 目录" [ref=e368] [cursor=pointer]':
+                    - /url: "#-目录"
+                    - img [ref=e369]
+                - list [ref=e371]:
+                  - listitem [ref=e372]:
+                    - link "快速开始" [ref=e373] [cursor=pointer]:
+                      - /url: "#-%E5%BF%AB%E9%80%9F%E5%BC%80%E5%A7%8B"
+                  - listitem [ref=e374]:
+                    - link "支持的平台" [ref=e375] [cursor=pointer]:
+                      - /url: "#-%E6%94%AF%E6%8C%81%E7%9A%84%E5%B9%B3%E5%8F%B0"
+                  - listitem [ref=e376]:
+                    - link "统一 CLI 命令" [ref=e377] [cursor=pointer]:
+                      - /url: "#-%E7%BB%9F%E4%B8%80-cli-%E5%91%BD%E4%BB%A4"
+                  - listitem [ref=e378]:
+                    - link "使用示例" [ref=e379] [cursor=pointer]:
+                      - /url: "#-%E4%BD%BF%E7%94%A8%E7%A4%BA%E4%BE%8B"
+                  - listitem [ref=e380]:
+                    - link "搜索日志记录" [ref=e381] [cursor=pointer]:
+                      - /url: "#-%E6%90%9C%E7%B4%A2%E6%97%A5%E5%BF%97%E8%AE%B0%E5%BD%95"
+                  - listitem [ref=e382]:
+                    - link "配置指南" [ref=e383] [cursor=pointer]:
+                      - /url: "#-%E9%85%8D%E7%BD%AE%E6%8C%87%E5%8D%97"
+                  - listitem [ref=e384]:
+                    - link "项目结构" [ref=e385] [cursor=pointer]:
+                      - /url: "#-%E9%A1%B9%E7%9B%AE%E7%BB%93%E6%9E%84"
+                  - listitem [ref=e386]:
+                    - link "故障排查" [ref=e387] [cursor=pointer]:
+                      - /url: "#-%E6%95%85%E9%9A%9C%E6%8E%92%E6%9F%A5"
+                  - listitem [ref=e388]:
+                    - link "贡献指南" [ref=e389] [cursor=pointer]:
+                      - /url: "#-%E8%B4%A1%E7%8C%AE%E6%8C%87%E5%8D%97"
+                  - listitem [ref=e390]:
+                    - link "许可证" [ref=e391] [cursor=pointer]:
+                      - /url: "#-%E8%AE%B8%E5%8F%AF%E8%AF%81"
+                - separator [ref=e392]
+                - generic [ref=e393]:
+                  - heading "🎯 特性亮点" [level=2] [ref=e394]
+                  - 'link "Permalink: 🎯 特性亮点" [ref=e395] [cursor=pointer]':
+                    - /url: "#-特性亮点"
+                    - img [ref=e396]
+                - list [ref=e398]:
+                  - listitem [ref=e399]:
+                    - strong [ref=e400]: 🌐 全网覆盖
+                    - text: — 支持 30+ 搜索平台，涵盖开发者社区、社交媒体、通用搜索引擎
+                  - listitem [ref=e401]:
+                    - strong [ref=e402]: ⚡ 统一接口
+                    - text: — 单一 CLI 命令调用所有平台，标准化输出格式
+                  - listitem [ref=e403]:
+                    - strong [ref=e404]: 🔧 灵活配置
+                    - text: — 支持分组搜索、并发控制、结果过滤、多格式输出
+                  - listitem [ref=e405]:
+                    - strong [ref=e406]: 📦 开箱即用
+                    - text: — 最小依赖设计，按需启用高级功能
+                  - listitem [ref=e407]:
+                    - strong [ref=e408]: 🛡️ 生产就绪
+                    - text: — 完整的错误处理、速率限制、健康检查
+                  - listitem [ref=e409]:
+                    - strong [ref=e410]: 🏆 渠道最多
+                    - text: — 与其他开源项目相比，本项目支持最多的搜索渠道和备用方案
+                  - listitem [ref=e411]:
+                    - strong [ref=e412]: 🔄 自动降级
+                    - text: — 多渠道冗余设计，主渠道失败自动切换备用方案
+                - separator [ref=e413]
+                - generic [ref=e414]:
+                  - heading "💡 为什么选择这个项目？" [level=2] [ref=e415]
+                  - 'link "Permalink: 💡 为什么选择这个项目？" [ref=e416] [cursor=pointer]':
+                    - /url: "#-为什么选择这个项目"
+                    - img [ref=e417]
+                - table [ref=e420]:
+                  - rowgroup [ref=e421]:
+                    - row "特性 Union Search 其他开源项目" [ref=e422]:
+                      - columnheader "特性" [ref=e423]
+                      - columnheader "Union Search" [ref=e424]
+                      - columnheader "其他开源项目" [ref=e425]
+                  - rowgroup [ref=e426]:
+                    - row "支持平台数量 30+ 通常 1-5 个" [ref=e427]:
+                      - cell "支持平台数量" [ref=e428]
+                      - cell "30+" [ref=e429]:
+                        - strong [ref=e430]: 30+
+                      - cell "通常 1-5 个" [ref=e431]
+                    - row "备用渠道 ✅ 多平台冗余 ❌ 单一渠道" [ref=e432]:
+                      - cell "备用渠道" [ref=e433]
+                      - cell "✅ 多平台冗余" [ref=e434]:
+                        - strong [ref=e435]: ✅ 多平台冗余
+                      - cell "❌ 单一渠道" [ref=e436]
+                    - row "统一 CLI ✅ 标准化接口 ❌ 各自为政" [ref=e437]:
+                      - cell "统一 CLI" [ref=e438]
+                      - cell "✅ 标准化接口" [ref=e439]:
+                        - strong [ref=e440]: ✅ 标准化接口
+                      - cell "❌ 各自为政" [ref=e441]
+                    - row "图片搜索 ✅ 18 个平台 ❌ 少见" [ref=e442]:
+                      - cell "图片搜索" [ref=e443]
+                      - cell "✅ 18 个平台" [ref=e444]:
+                        - strong [ref=e445]: ✅ 18 个平台
+                      - cell "❌ 少见" [ref=e446]
+                    - row "社交媒体 ✅ 抖音/小红书/B 站 ❌ 主要面向海外" [ref=e447]:
+                      - cell "社交媒体" [ref=e448]
+                      - cell "✅ 抖音/小红书/B 站" [ref=e449]:
+                        - strong [ref=e450]: ✅ 抖音/小红书/B 站
+                      - cell "❌ 主要面向海外" [ref=e451]
+                    - row "全媒介下载 🔄 即将支持 ⚠️ 功能分散" [ref=e452]:
+                      - cell "全媒介下载" [ref=e453]
+                      - cell "🔄 即将支持" [ref=e454]
+                      - cell "⚠️ 功能分散" [ref=e455]:
+                        - generic [ref=e456]: ⚠️
+                        - text: 功能分散
+                - paragraph [ref=e457]:
+                  - strong [ref=e458]: 核心优势
+                  - text: ：
+                - list [ref=e459]:
+                  - listitem [ref=e460]:
+                    - strong [ref=e461]: 渠道最多
+                    - text: ：一个项目解决所有搜索需求，无需在不同项目间切换
+                  - listitem [ref=e462]:
+                    - strong [ref=e463]: 容错性强
+                    - text: ：某个 API 失效时，自动切换到其他可用渠道
+                  - listitem [ref=e464]:
+                    - strong [ref=e465]: 持续扩展
+                    - text: ：不断添加新的搜索渠道和下载功能
+                - separator [ref=e466]
+                - generic [ref=e467]:
+                  - heading "📋 路线图" [level=2] [ref=e468]
+                  - 'link "Permalink: 📋 路线图" [ref=e469] [cursor=pointer]':
+                    - /url: "#-路线图"
+                    - img [ref=e470]
+                - generic [ref=e472]:
+                  - heading "即将上线" [level=3] [ref=e473]
+                  - 'link "Permalink: 即将上线" [ref=e474] [cursor=pointer]':
+                    - /url: "#即将上线"
+                    - img [ref=e475]
+                - paragraph [ref=e477]:
+                  - text: "| 功能 | 描述 | 状态 | |------|------|----------|------| |"
+                  - strong [ref=e478]: 全媒介下载工具
+                  - text: "| 支持抖音视频、小红书图文、B 站视频、YouTube 视频等平台的完整内容下载 | 🔄 开发中 | |"
+                  - strong [ref=e479]: 更多搜索渠道
+                  - text: "| 添加 Wikipedia 镜像、学术搜索（Google Scholar、Semantic Scholar） | 📝 计划中 | |"
+                  - strong [ref=e480]: 渠道自动切换
+                  - text: "| 主渠道失败时无缝切换到备用渠道 | 📝 计划中 | |"
+                  - strong [ref=e481]: 结果缓存
+                  - text: "| 减少重复请求，节省 API 配额 | 📝 计划中 |"
+                - separator [ref=e482]
+                - generic [ref=e483]:
+                  - heading "🚀 快速开始" [level=2] [ref=e484]
+                  - 'link "Permalink: 🚀 快速开始" [ref=e485] [cursor=pointer]':
+                    - /url: "#-快速开始"
+                    - img [ref=e486]
+                - generic [ref=e488]:
+                  - heading "1. 安装依赖" [level=3] [ref=e489]
+                  - 'link "Permalink: 1. 安装依赖" [ref=e490] [cursor=pointer]':
+                    - /url: "#1-安装依赖"
+                    - img [ref=e491]
+                - generic [ref=e493]:
+                  - generic [ref=e494]:
+                    - generic [ref=e495]: "# 基础依赖（所有搜索功能）"
+                    - text: pip install requests python-dotenv lxml
+                    - generic [ref=e496]: "# 图片搜索（可选）"
+                    - text: pip install pyimagedl
+                    - generic [ref=e497]: "# Bilibili 搜索（可选）"
+                    - text: pip install curl_cffi
+                    - generic [ref=e498]: "# Tavily 搜索（可选）"
+                    - text: pip install tavily-python
+                    - generic [ref=e499]: "# RSS 订阅搜索（可选）"
+                    - text: pip install feedparser > ⚠️ **RSS 模块为测试和实验性质**：RSS 源依赖第三方服务（如 Kindle4RSS、wechat2rss 等），可能不是实时有效的，部分源可能返回 0 条内容或解析失败，这是第三方服务的限制，非本工具的问题。
+                  - button "Copy" [ref=e501] [cursor=pointer]:
+                    - img [ref=e502]
+                - generic [ref=e505]:
+                  - heading "2. 配置环境变量" [level=3] [ref=e506]
+                  - 'link "Permalink: 2. 配置环境变量" [ref=e507] [cursor=pointer]':
+                    - /url: "#2-配置环境变量"
+                    - img [ref=e508]
+                - generic [ref=e510]:
+                  - generic [ref=e511]:
+                    - generic [ref=e512]: "# 复制环境变量模板"
+                    - text: cp .env.example .env
+                    - generic [ref=e513]: "# 编辑 .env 文件，填入 API 密钥"
+                  - button "Copy" [ref=e515] [cursor=pointer]:
+                    - img [ref=e516]
+                - generic [ref=e519]:
+                  - heading "3. 运行第一个搜索" [level=3] [ref=e520]
+                  - 'link "Permalink: 3. 运行第一个搜索" [ref=e521] [cursor=pointer]':
+                    - /url: "#3-运行第一个搜索"
+                    - img [ref=e522]
+                - generic [ref=e524]:
+                  - generic [ref=e525]:
+                    - generic [ref=e526]: "# 统一搜索（开发者相关平台）"
+                    - text: python union_search_cli.py search
+                    - generic [ref=e527]: "\"AI Agent\""
+                    - text: "--group dev --limit 3 --pretty"
+                    - generic [ref=e528]: "# 或直接调用单个平台"
+                    - text: python union_search_cli.py google
+                    - generic [ref=e529]: "\"Python tutorial\""
+                    - text: "--limit 5"
+                  - button "Copy" [ref=e531] [cursor=pointer]:
+                    - img [ref=e532]
+                - separator [ref=e535]
+                - generic [ref=e536]:
+                  - heading "🌍 支持的平台" [level=2] [ref=e537]
+                  - 'link "Permalink: 🌍 支持的平台" [ref=e538] [cursor=pointer]':
+                    - /url: "#-支持的平台"
+                    - img [ref=e539]
+                - generic [ref=e541]:
+                  - heading "开发者搜索" [level=3] [ref=e542]
+                  - 'link "Permalink: 开发者搜索" [ref=e543] [cursor=pointer]':
+                    - /url: "#开发者搜索"
+                    - img [ref=e544]
+                - table [ref=e547]:
+                  - rowgroup [ref=e548]:
+                    - row "引擎 类型 速率限制 状态" [ref=e549]:
+                      - columnheader "引擎" [ref=e550]
+                      - columnheader "类型" [ref=e551]
+                      - columnheader "速率限制" [ref=e552]
+                      - columnheader "状态" [ref=e553]
+                  - rowgroup [ref=e554]:
+                    - row "GitHub 仓库/代码/Issues/PRs 搜索 ✅ 稳定" [ref=e555]:
+                      - cell "GitHub" [ref=e556]:
+                        - strong [ref=e557]: GitHub
+                      - cell "仓库/代码/Issues/PRs 搜索" [ref=e558]
+                      - cell "✅ 稳定" [ref=e559]
+                      - cell [ref=e560]
+                    - row "Reddit 帖子/子版块/用户搜索 ✅ 稳定" [ref=e561]:
+                      - cell "Reddit" [ref=e562]:
+                        - strong [ref=e563]: Reddit
+                      - cell "帖子/子版块/用户搜索" [ref=e564]
+                      - cell "✅ 稳定" [ref=e565]
+                      - cell [ref=e566]
+                    - row "Zhihu 知乎问答搜索 ✅ 稳定" [ref=e567]:
+                      - cell "Zhihu" [ref=e568]:
+                        - strong [ref=e569]: Zhihu
+                      - cell "知乎问答搜索" [ref=e570]
+                      - cell "✅ 稳定" [ref=e571]
+                      - cell [ref=e572]
+                - generic [ref=e573]:
+                  - heading "社交媒体与视频" [level=3] [ref=e574]
+                  - 'link "Permalink: 社交媒体与视频" [ref=e575] [cursor=pointer]':
+                    - /url: "#社交媒体与视频"
+                    - img [ref=e576]
+                - table [ref=e579]:
+                  - rowgroup [ref=e580]:
+                    - row "引擎 类型 速率限制 状态" [ref=e581]:
+                      - columnheader "引擎" [ref=e582]
+                      - columnheader "类型" [ref=e583]
+                      - columnheader "速率限制" [ref=e584]
+                      - columnheader "状态" [ref=e585]
+                  - rowgroup [ref=e586]:
+                    - row "Xiaohongshu (小红书) 笔记搜索 ✅ 稳定" [ref=e587]:
+                      - cell "Xiaohongshu (小红书)" [ref=e588]:
+                        - strong [ref=e589]: Xiaohongshu (小红书)
+                      - cell "笔记搜索" [ref=e590]
+                      - cell "✅ 稳定" [ref=e591]
+                      - cell [ref=e592]
+                    - row "Douyin (抖音) 视频搜索 ✅ 稳定" [ref=e593]:
+                      - cell "Douyin (抖音)" [ref=e594]:
+                        - strong [ref=e595]: Douyin (抖音)
+                      - cell "视频搜索" [ref=e596]
+                      - cell "✅ 稳定" [ref=e597]
+                      - cell [ref=e598]
+                    - row "Bilibili 视频/UP 主搜索 ✅ 稳定" [ref=e599]:
+                      - cell "Bilibili" [ref=e600]:
+                        - strong [ref=e601]: Bilibili
+                      - cell "视频/UP 主搜索" [ref=e602]
+                      - cell "✅ 稳定" [ref=e603]
+                      - cell [ref=e604]
+                    - row "Twitter / X 推文搜索 ✅ 稳定" [ref=e605]:
+                      - cell "Twitter / X" [ref=e606]:
+                        - strong [ref=e607]: Twitter / X
+                      - cell "推文搜索" [ref=e608]
+                      - cell "✅ 稳定" [ref=e609]
+                      - cell [ref=e610]
+                    - row "YouTube 视频/评论搜索 ✅ 稳定" [ref=e611]:
+                      - cell "YouTube" [ref=e612]:
+                        - strong [ref=e613]: YouTube
+                      - cell "视频/评论搜索" [ref=e614]
+                      - cell "✅ 稳定" [ref=e615]
+                      - cell [ref=e616]
+                    - row "Weibo (微博) 微博搜索 ⚠️ 需要 Cookie" [ref=e617]:
+                      - cell "Weibo (微博)" [ref=e618]:
+                        - strong [ref=e619]: Weibo (微博)
+                      - cell "微博搜索" [ref=e620]
+                      - cell "⚠️ 需要 Cookie" [ref=e621]:
+                        - generic [ref=e622]: ⚠️
+                        - text: 需要 Cookie
+                      - cell [ref=e623]
+                - generic [ref=e624]:
+                  - heading "通用搜索引擎" [level=3] [ref=e625]
+                  - 'link "Permalink: 通用搜索引擎" [ref=e626] [cursor=pointer]':
+                    - /url: "#通用搜索引擎"
+                    - img [ref=e627]
+                - table [ref=e630]:
+                  - rowgroup [ref=e631]:
+                    - row "平台 API 密钥 状态" [ref=e632]:
+                      - columnheader "平台" [ref=e633]
+                      - columnheader "API 密钥" [ref=e634]
+                      - columnheader "状态" [ref=e635]
+                  - rowgroup [ref=e636]:
+                    - row "Google 需要 ✅ 稳定" [ref=e637]:
+                      - cell "Google" [ref=e638]:
+                        - strong [ref=e639]: Google
+                      - cell "需要" [ref=e640]
+                      - cell "✅ 稳定" [ref=e641]
+                    - row "Bing 需要 ✅ 稳定" [ref=e642]:
+                      - cell "Bing" [ref=e643]:
+                        - strong [ref=e644]: Bing
+                      - cell "需要" [ref=e645]
+                      - cell "✅ 稳定" [ref=e646]
+                    - row "DuckDuckGo 无需 ✅ 稳定" [ref=e647]:
+                      - cell "DuckDuckGo" [ref=e648]:
+                        - strong [ref=e649]: DuckDuckGo
+                      - cell "无需" [ref=e650]
+                      - cell "✅ 稳定" [ref=e651]
+                    - row "Brave 无需 ✅ 稳定" [ref=e652]:
+                      - cell "Brave" [ref=e653]:
+                        - strong [ref=e654]: Brave
+                      - cell "无需" [ref=e655]
+                      - cell "✅ 稳定" [ref=e656]
+                    - row "Yahoo 无需 ✅ 稳定" [ref=e657]:
+                      - cell "Yahoo" [ref=e658]:
+                        - strong [ref=e659]: Yahoo
+                      - cell "无需" [ref=e660]
+                      - cell "✅ 稳定" [ref=e661]
+                    - row "Baidu 需要 ✅ 稳定" [ref=e662]:
+                      - cell "Baidu" [ref=e663]:
+                        - strong [ref=e664]: Baidu
+                      - cell "需要" [ref=e665]
+                      - cell "✅ 稳定" [ref=e666]
+                    - row "Yandex 无需 ✅ 稳定" [ref=e667]:
+                      - cell "Yandex" [ref=e668]:
+                        - strong [ref=e669]: Yandex
+                      - cell "无需" [ref=e670]
+                      - cell "✅ 稳定" [ref=e671]
+                - generic [ref=e672]:
+                  - heading "AI 驱动搜索" [level=3] [ref=e673]
+                  - 'link "Permalink: AI 驱动搜索" [ref=e674] [cursor=pointer]':
+                    - /url: "#ai-驱动搜索"
+                    - img [ref=e675]
+                - paragraph [ref=e677]:
+                  - text: "| 平台 | 特性 | 状态 | |------|------|----------|------| |"
+                  - strong [ref=e678]: Tavily
+                  - text: "| AI 摘要/智能搜索 | ✅ 稳定 | |"
+                  - strong [ref=e679]: Metaso (秘塔)
+                  - text: "| AI 生成答案 | ✅ 稳定 | |"
+                  - strong [ref=e680]: Volcengine (火山)
+                  - text: "| 融合搜索+AI 摘要 |"
+                  - generic [ref=e681]: ⚠️
+                  - text: 偶发解析问题 | |
+                  - strong [ref=e682]: Jina
+                  - text: "| 内容提取 | ✅ 稳定 |"
+                - generic [ref=e683]:
+                  - heading "网页转Markdown" [level=3] [ref=e684]
+                  - 'link "Permalink: 网页转Markdown" [ref=e685] [cursor=pointer]':
+                    - /url: "#网页转markdown"
+                    - img [ref=e686]
+                - table [ref=e689]:
+                  - rowgroup [ref=e690]:
+                    - row "引擎 类型 速率限制 状态" [ref=e691]:
+                      - columnheader "引擎" [ref=e692]
+                      - columnheader "类型" [ref=e693]
+                      - columnheader "速率限制" [ref=e694]
+                      - columnheader "状态" [ref=e695]
+                  - rowgroup [ref=e696]:
+                    - row "Jina Reader URL转Markdown/提取网页内容 ✅ 稳定" [ref=e697]:
+                      - cell "Jina Reader" [ref=e698]:
+                        - strong [ref=e699]: Jina Reader
+                      - cell "URL转Markdown/提取网页内容" [ref=e700]
+                      - cell "✅ 稳定" [ref=e701]
+                      - cell [ref=e702]
+                - blockquote [ref=e703]:
+                  - paragraph [ref=e704]:
+                    - text: 💡
+                    - strong [ref=e705]: Jina Reader
+                    - text: 是免费的HTTP API，无需API Key即可使用（每分钟20次请求），可将任意URL转换为LLM友好的Markdown内容。
+                - generic [ref=e706]:
+                  - heading "图片搜索（18 个平台）" [level=3] [ref=e707]
+                  - 'link "Permalink: 图片搜索（18 个平台）" [ref=e708] [cursor=pointer]':
+                    - /url: "#图片搜索18-个平台"
+                    - img [ref=e709]
+                - list [ref=e711]:
+                  - listitem [ref=e712]:
+                    - strong [ref=e713]: 搜索引擎
+                    - text: ": 百度、Bing、Google、360、搜狗、DuckDuckGo、Yandex、Yahoo"
+                  - listitem [ref=e714]:
+                    - strong [ref=e715]: 图库网站
+                    - text: ": Pixabay、Pexels、Unsplash、Foodiesfeed"
+                  - listitem [ref=e716]:
+                    - strong [ref=e717]: 动漫图片
+                    - text: ": Danbooru、Gelbooru、Safebooru"
+                  - listitem [ref=e718]:
+                    - strong [ref=e719]: 其他
+                    - text: ": 花瓣网、次元小镇、火山引擎"
+                - generic [ref=e720]:
+                  - heading "内容订阅" [level=3] [ref=e721]
+                  - 'link "Permalink: 内容订阅" [ref=e722] [cursor=pointer]':
+                    - /url: "#内容订阅"
+                    - img [ref=e723]
+                - paragraph [ref=e725]:
+                  - text: "| 类型 | 功能 | 状态 | |------|------|----------|------| |"
+                  - strong [ref=e726]: RSS
+                  - text: "| 多源聚合/关键词过滤 | ✅ 稳定 | |"
+                  - strong [ref=e727]: 小宇宙 FM
+                  - text: "| 播客搜索/AI 摘要 | ✅ 稳定 |"
+                - separator [ref=e728]
+                - generic [ref=e729]:
+                  - heading "📊 实测数据" [level=2] [ref=e730]
+                  - 'link "Permalink: 📊 实测数据" [ref=e731] [cursor=pointer]':
+                    - /url: "#-实测数据"
+                    - img [ref=e732]
+                - blockquote [ref=e734]:
+                  - paragraph [ref=e735]:
+                    - text: "基于 2026-03-05 真实搜索测试，关键词:"
+                    - code [ref=e736]: AI agent
+                - generic [ref=e737]:
+                  - heading "搜索引擎组 (search) 实测" [level=3] [ref=e738]
+                  - 'link "Permalink: 搜索引擎组 (search) 实测" [ref=e739] [cursor=pointer]':
+                    - /url: "#搜索引擎组-search-实测"
+                    - img [ref=e740]
+                - table [ref=e743]:
+                  - rowgroup [ref=e744]:
+                    - row "平台 默认结果数 响应时间 状态" [ref=e745]:
+                      - columnheader "平台" [ref=e746]
+                      - columnheader "默认结果数" [ref=e747]
+                      - columnheader "响应时间" [ref=e748]
+                      - columnheader "状态" [ref=e749]
+                  - rowgroup [ref=e750]:
+                    - row "metaso 10 1.00s ✅" [ref=e751]:
+                      - cell "metaso" [ref=e752]
+                      - cell "10" [ref=e753]
+                      - cell "1.00s" [ref=e754]
+                      - cell "✅" [ref=e755]
+                    - row "baidu 10 1.60s ✅" [ref=e756]:
+                      - cell "baidu" [ref=e757]
+                      - cell "10" [ref=e758]
+                      - cell "1.60s" [ref=e759]
+                      - cell "✅" [ref=e760]
+                    - row "yandex 10 2.15s ✅" [ref=e761]:
+                      - cell "yandex" [ref=e762]
+                      - cell "10" [ref=e763]
+                      - cell "2.15s" [ref=e764]
+                      - cell "✅" [ref=e765]
+                    - row "bing 3 2.22s ✅" [ref=e766]:
+                      - cell "bing" [ref=e767]
+                      - cell "3" [ref=e768]
+                      - cell "2.22s" [ref=e769]
+                      - cell "✅" [ref=e770]
+                    - row "wikipedia 10 2.34s ✅" [ref=e771]:
+                      - cell "wikipedia" [ref=e772]
+                      - cell "10" [ref=e773]
+                      - cell "2.34s" [ref=e774]
+                      - cell "✅" [ref=e775]
+                    - row "google 10 2.95s ✅" [ref=e776]:
+                      - cell "google" [ref=e777]
+                      - cell "10" [ref=e778]
+                      - cell "2.95s" [ref=e779]
+                      - cell "✅" [ref=e780]
+                    - row "tavily 5 3.19s ✅" [ref=e781]:
+                      - cell "tavily" [ref=e782]
+                      - cell "5" [ref=e783]
+                      - cell "3.19s" [ref=e784]
+                      - cell "✅" [ref=e785]
+                    - row "brave 10 3.20s ✅" [ref=e786]:
+                      - cell "brave" [ref=e787]
+                      - cell "10" [ref=e788]
+                      - cell "3.20s" [ref=e789]
+                      - cell "✅" [ref=e790]
+                    - row "duckduckgo 6 3.58s ✅" [ref=e791]:
+                      - cell "duckduckgo" [ref=e792]
+                      - cell "6" [ref=e793]
+                      - cell "3.58s" [ref=e794]
+                      - cell "✅" [ref=e795]
+                    - row "jina 10 3.68s ✅" [ref=e796]:
+                      - cell "jina" [ref=e797]
+                      - cell "10" [ref=e798]
+                      - cell "3.68s" [ref=e799]
+                      - cell "✅" [ref=e800]
+                    - row "yahoo 7 2.62s ✅" [ref=e801]:
+                      - cell "yahoo" [ref=e802]
+                      - cell "7" [ref=e803]
+                      - cell "2.62s" [ref=e804]
+                      - cell "✅" [ref=e805]
+                    - row "volcengine 10 6.45s ✅" [ref=e806]:
+                      - cell "volcengine" [ref=e807]
+                      - cell "10" [ref=e808]
+                      - cell "6.45s" [ref=e809]
+                      - cell "✅" [ref=e810]
+                - generic [ref=e811]:
+                  - heading "汇总统计" [level=3] [ref=e812]
+                  - 'link "Permalink: 汇总统计" [ref=e813] [cursor=pointer]':
+                    - /url: "#汇总统计"
+                    - img [ref=e814]
+                - table [ref=e817]:
+                  - rowgroup [ref=e818]:
+                    - row "指标 数值" [ref=e819]:
+                      - columnheader "指标" [ref=e820]
+                      - columnheader "数值" [ref=e821]
+                  - rowgroup [ref=e822]:
+                    - row "搜索平台数 12" [ref=e823]:
+                      - cell "搜索平台数" [ref=e824]:
+                        - strong [ref=e825]: 搜索平台数
+                      - cell "12" [ref=e826]
+                    - row "成功平台 12/12 (100%)" [ref=e827]:
+                      - cell "成功平台" [ref=e828]:
+                        - strong [ref=e829]: 成功平台
+                      - cell "12/12 (100%)" [ref=e830]
+                    - row "总耗时 11.14 秒" [ref=e831]:
+                      - cell "总耗时" [ref=e832]:
+                        - strong [ref=e833]: 总耗时
+                      - cell "11.14 秒" [ref=e834]
+                    - row "总结果数 91 条" [ref=e835]:
+                      - cell "总结果数" [ref=e836]:
+                        - strong [ref=e837]: 总结果数
+                      - cell "91 条" [ref=e838]
+                    - row "平均每平台 7.6 条" [ref=e839]:
+                      - cell "平均每平台" [ref=e840]:
+                        - strong [ref=e841]: 平均每平台
+                      - cell "7.6 条" [ref=e842]
+                    - row "最快响应 metaso (1.00s)" [ref=e843]:
+                      - cell "最快响应" [ref=e844]:
+                        - strong [ref=e845]: 最快响应
+                      - cell "metaso (1.00s)" [ref=e846]
+                - generic [ref=e847]:
+                  - heading "去重后预估" [level=3] [ref=e848]
+                  - 'link "Permalink: 去重后预估" [ref=e849] [cursor=pointer]':
+                    - /url: "#去重后预估"
+                    - img [ref=e850]
+                - list [ref=e852]:
+                  - listitem [ref=e853]: 搜索引擎结果存在一定重叠（约 20-30%）
+                  - listitem [ref=e854]:
+                    - strong [ref=e855]: 去重后预估有效结果
+                    - text: ": 约 65-70 条"
+                  - listitem [ref=e856]:
+                    - strong [ref=e857]: 信息覆盖度
+                    - text: ": 远超单一搜索引擎"
+                - generic [ref=e858]:
+                  - heading "各平台默认返回数量" [level=3] [ref=e859]
+                  - 'link "Permalink: 各平台默认返回数量" [ref=e860] [cursor=pointer]':
+                    - /url: "#各平台默认返回数量"
+                    - img [ref=e861]
+                - table [ref=e864]:
+                  - rowgroup [ref=e865]:
+                    - row "平台 默认值 限制原因" [ref=e866]:
+                      - columnheader "平台" [ref=e867]
+                      - columnheader "默认值" [ref=e868]
+                      - columnheader "限制原因" [ref=e869]
+                  - rowgroup [ref=e870]:
+                    - row "google 10 Custom Search API 限制" [ref=e871]:
+                      - cell "google" [ref=e872]
+                      - cell "10" [ref=e873]
+                      - cell "Custom Search API 限制" [ref=e874]
+                    - row "tavily 5 API 默认设置" [ref=e875]:
+                      - cell "tavily" [ref=e876]
+                      - cell "5" [ref=e877]
+                      - cell "API 默认设置" [ref=e878]
+                    - row "jina 10 API 默认设置" [ref=e879]:
+                      - cell "jina" [ref=e880]
+                      - cell "10" [ref=e881]
+                      - cell "API 默认设置" [ref=e882]
+                    - row "duckduckgo 6 非 API，结果不稳定" [ref=e883]:
+                      - cell "duckduckgo" [ref=e884]
+                      - cell "6" [ref=e885]
+                      - cell "非 API，结果不稳定" [ref=e886]
+                    - row "brave 10 非 API" [ref=e887]:
+                      - cell "brave" [ref=e888]
+                      - cell "10" [ref=e889]
+                      - cell "非 API" [ref=e890]
+                    - row "yahoo 7 非 API" [ref=e891]:
+                      - cell "yahoo" [ref=e892]
+                      - cell "7" [ref=e893]
+                      - cell "非 API" [ref=e894]
+                    - row "yandex 10 SerpAPI" [ref=e895]:
+                      - cell "yandex" [ref=e896]
+                      - cell "10" [ref=e897]
+                      - cell "SerpAPI" [ref=e898]
+                    - row "bing 3 SerpAPI 免费限制" [ref=e899]:
+                      - cell "bing" [ref=e900]
+                      - cell "3" [ref=e901]
+                      - cell "SerpAPI 免费限制" [ref=e902]
+                    - row "wikipedia 10 API 默认设置" [ref=e903]:
+                      - cell "wikipedia" [ref=e904]
+                      - cell "10" [ref=e905]
+                      - cell "API 默认设置" [ref=e906]
+                    - row "metaso 10 API 默认设置" [ref=e907]:
+                      - cell "metaso" [ref=e908]
+                      - cell "10" [ref=e909]
+                      - cell "API 默认设置" [ref=e910]
+                    - row "volcengine 10 API 默认设置" [ref=e911]:
+                      - cell "volcengine" [ref=e912]
+                      - cell "10" [ref=e913]
+                      - cell "API 默认设置" [ref=e914]
+                    - row "baidu 10 API 默认设置" [ref=e915]:
+                      - cell "baidu" [ref=e916]
+                      - cell "10" [ref=e917]
+                      - cell "API 默认设置" [ref=e918]
+                - blockquote [ref=e919]:
+                  - paragraph [ref=e920]:
+                    - text: 💡
+                    - strong [ref=e921]: 提示
+                    - text: ": 使用"
+                    - code [ref=e922]: "--limit"
+                    - text: 参数可自定义每平台返回数量
+                - separator [ref=e923]
+                - generic [ref=e924]:
+                  - heading "🖥️ 统一 CLI 命令" [level=2] [ref=e925]
+                  - 'link "Permalink: 🖥️ 统一 CLI 命令" [ref=e926] [cursor=pointer]':
+                    - /url: "#️-统一-cli-命令"
+                    - img [ref=e927]
+                - generic [ref=e929]:
+                  - heading "命令总览" [level=3] [ref=e930]
+                  - 'link "Permalink: 命令总览" [ref=e931] [cursor=pointer]':
+                    - /url: "#命令总览"
+                    - img [ref=e932]
+                - generic [ref=e934]:
+                  - generic [ref=e935]: python union_search_cli.py --help
+                  - button "Copy" [ref=e937] [cursor=pointer]:
+                    - img [ref=e938]
+                - table [ref=e942]:
+                  - rowgroup [ref=e943]:
+                    - row "命令 描述" [ref=e944]:
+                      - columnheader "命令" [ref=e945]
+                      - columnheader "描述" [ref=e946]
+                  - rowgroup [ref=e947]:
+                    - row "search 多平台聚合搜索" [ref=e948]:
+                      - cell "search" [ref=e949]:
+                        - code [ref=e950]: search
+                      - cell "多平台聚合搜索" [ref=e951]
+                    - row "platform <name> 单平台搜索" [ref=e952]:
+                      - cell "platform <name>" [ref=e953]:
+                        - code [ref=e954]: platform <name>
+                      - cell "单平台搜索" [ref=e955]
+                    - row "image 图片搜索与下载" [ref=e956]:
+                      - cell "image" [ref=e957]:
+                        - code [ref=e958]: image
+                      - cell "图片搜索与下载" [ref=e959]
+                    - row "download 基于 yt-dlp 下载视频/音频" [ref=e960]:
+                      - cell "download" [ref=e961]:
+                        - code [ref=e962]: download
+                      - cell "基于 yt-dlp 下载视频/音频" [ref=e963]
+                    - row "list 列出可用平台/分组" [ref=e964]:
+                      - cell "list" [ref=e965]:
+                        - code [ref=e966]: list
+                      - cell "列出可用平台/分组" [ref=e967]
+                    - row "doctor 健康检查" [ref=e968]:
+                      - cell "doctor" [ref=e969]:
+                        - code [ref=e970]: doctor
+                      - cell "健康检查" [ref=e971]
+                    - row "<platform> 平台直达命令（如 google、bing）" [ref=e972]:
+                      - cell "<platform>" [ref=e973]:
+                        - code [ref=e974]: <platform>
+                      - cell "平台直达命令（如 google、bing）" [ref=e975]:
+                        - text: 平台直达命令（如
+                        - code [ref=e976]: google
+                        - text: 、
+                        - code [ref=e977]: bing
+                        - text: ）
+                - generic [ref=e978]:
+                  - heading "全局选项" [level=3] [ref=e979]
+                  - 'link "Permalink: 全局选项" [ref=e980] [cursor=pointer]':
+                    - /url: "#全局选项"
+                    - img [ref=e981]
+                - paragraph [ref=e983]:
+                  - text: "| 选项 | 简写 | 描述 | |------|------|----------|------| |"
+                  - code [ref=e984]: "--format <type>"
+                  - text: "| - | 输出格式："
+                  - code [ref=e985]: json
+                  - text: /
+                  - code [ref=e986]: markdown
+                  - text: /
+                  - code [ref=e987]: text
+                  - text: "| |"
+                  - code [ref=e988]: "--pretty"
+                  - text: "| - | 美化 JSON 输出 | |"
+                  - code [ref=e989]: "--output <file>"
+                  - text: "|"
+                  - code [ref=e990]: "-o"
+                  - text: "| 输出到文件 | |"
+                  - code [ref=e991]: "--env-file <path>"
+                  - text: "| - | 环境变量文件路径 |"
+                - separator [ref=e992]
+                - generic [ref=e993]:
+                  - heading "🔢 返回数量控制" [level=2] [ref=e994]
+                  - 'link "Permalink: 🔢 返回数量控制" [ref=e995] [cursor=pointer]':
+                    - /url: "#-返回数量控制"
+                    - img [ref=e996]
+                - generic [ref=e998]:
+                  - heading "预设档位" [level=3] [ref=e999]
+                  - 'link "Permalink: 预设档位" [ref=e1000] [cursor=pointer]':
+                    - /url: "#预设档位"
+                    - img [ref=e1001]
+                - paragraph [ref=e1003]:
+                  - text: 使用
+                  - code [ref=e1004]: "--preset"
+                  - text: 参数快速设置返回数量：
+                - table [ref=e1006]:
+                  - rowgroup [ref=e1007]:
+                    - row "预设 数量 适用场景" [ref=e1008]:
+                      - columnheader "预设" [ref=e1009]
+                      - columnheader "数量" [ref=e1010]
+                      - columnheader "适用场景" [ref=e1011]
+                  - rowgroup [ref=e1012]:
+                    - row "small 5 条 快速预览、节省 Token" [ref=e1013]:
+                      - cell "small" [ref=e1014]:
+                        - code [ref=e1015]: small
+                      - cell "5 条" [ref=e1016]
+                      - cell "快速预览、节省 Token" [ref=e1017]
+                    - row "medium 10 条 日常搜索（默认）" [ref=e1018]:
+                      - cell "medium" [ref=e1019]:
+                        - code [ref=e1020]: medium
+                      - cell "10 条" [ref=e1021]
+                      - cell "日常搜索（默认）" [ref=e1022]
+                    - row "large 20 条 深度研究" [ref=e1023]:
+                      - cell "large" [ref=e1024]:
+                        - code [ref=e1025]: large
+                      - cell "20 条" [ref=e1026]
+                      - cell "深度研究" [ref=e1027]
+                    - row "max 全量 数据采集" [ref=e1028]:
+                      - cell "max" [ref=e1029]:
+                        - code [ref=e1030]: max
+                      - cell "全量" [ref=e1031]
+                      - cell "数据采集" [ref=e1032]
+                - generic [ref=e1033]:
+                  - heading "自定义数量" [level=3] [ref=e1034]
+                  - 'link "Permalink: 自定义数量" [ref=e1035] [cursor=pointer]':
+                    - /url: "#自定义数量"
+                    - img [ref=e1036]
+                - table [ref=e1039]:
+                  - rowgroup [ref=e1040]:
+                    - row "参数 描述" [ref=e1041]:
+                      - columnheader "参数" [ref=e1042]
+                      - columnheader "描述" [ref=e1043]
+                  - rowgroup [ref=e1044]:
+                    - row "--limit <N> 自定义返回数量（覆盖 preset）" [ref=e1045]:
+                      - cell "--limit <N>" [ref=e1046]:
+                        - code [ref=e1047]: "--limit <N>"
+                      - cell "自定义返回数量（覆盖 preset）" [ref=e1048]
+                    - row "--limit 0 全量返回（不限制）" [ref=e1049]:
+                      - cell "--limit 0" [ref=e1050]:
+                        - code [ref=e1051]: "--limit 0"
+                      - cell "全量返回（不限制）" [ref=e1052]
+                - generic [ref=e1053]:
+                  - heading "环境变量" [level=3] [ref=e1054]
+                  - 'link "Permalink: 环境变量" [ref=e1055] [cursor=pointer]':
+                    - /url: "#环境变量"
+                    - img [ref=e1056]
+                - generic [ref=e1058]:
+                  - generic [ref=e1059]:
+                    - generic [ref=e1060]: "# .env 文件"
+                    - text: SEARCH_DEFAULT_LIMIT=10
+                    - generic [ref=e1061]: "# 默认返回数量"
+                    - text: SEARCH_LIMIT_PRESET=medium
+                    - generic [ref=e1062]: "# 预设档位"
+                  - button "Copy" [ref=e1064] [cursor=pointer]:
+                    - img [ref=e1065]
+                - separator [ref=e1068]
+                - generic [ref=e1069]:
+                  - heading "📚 使用示例" [level=2] [ref=e1070]
+                  - 'link "Permalink: 📚 使用示例" [ref=e1071] [cursor=pointer]':
+                    - /url: "#-使用示例"
+                    - img [ref=e1072]
+                - generic [ref=e1074]:
+                  - heading "多平台聚合搜索" [level=3] [ref=e1075]
+                  - 'link "Permalink: 多平台聚合搜索" [ref=e1076] [cursor=pointer]':
+                    - /url: "#多平台聚合搜索"
+                    - img [ref=e1077]
+                - generic [ref=e1079]:
+                  - generic [ref=e1080]:
+                    - generic [ref=e1081]: "# 搜索开发者相关内容"
+                    - text: python union_search_cli.py search
+                    - generic [ref=e1082]: "\"machine learning\""
+                    - text: "--group dev --limit 5"
+                    - generic [ref=e1083]: "# 搜索社交媒体内容"
+                    - text: python union_search_cli.py search
+                    - generic [ref=e1084]: "\"AI trends\""
+                    - text: "--group social --limit 3"
+                    - generic [ref=e1085]: "# 指定多个平台"
+                    - text: python union_search_cli.py search
+                    - generic [ref=e1086]: "\"Python\""
+                    - text: "--platforms github google tavily --limit 5"
+                    - generic [ref=e1087]: "# 导出可下载候选（search 结果内含 download_candidates）"
+                    - text: python union_search_cli.py search
+                    - generic [ref=e1088]: "\"AI agent\""
+                    - text: "--platforms youtube bilibili --limit 3 -o ./out/search.json --pretty"
+                    - generic [ref=e1089]: "# 带并发和超时控制"
+                    - text: python union_search_cli.py search
+                    - generic [ref=e1090]: "\"Rust\""
+                    - text: "--max-workers 10 --timeout 120"
+                    - generic [ref=e1091]: "# 使用预设档位（推荐）"
+                    - text: python union_search_cli.py search
+                    - generic [ref=e1092]: "\"AI\""
+                    - text: "--preset small"
+                    - generic [ref=e1093]: "# 快速预览（5 条）"
+                    - text: python union_search_cli.py search
+                    - generic [ref=e1094]: "\"AI\""
+                    - text: "--preset medium"
+                    - generic [ref=e1095]: "# 标准搜索（10 条）"
+                    - text: python union_search_cli.py search
+                    - generic [ref=e1096]: "\"AI\""
+                    - text: "--preset large"
+                    - generic [ref=e1097]: "# 深度研究（20 条）"
+                    - text: python union_search_cli.py search
+                    - generic [ref=e1098]: "\"AI\""
+                    - text: "--preset max"
+                    - generic [ref=e1099]: "# 全量返回"
+                  - button "Copy" [ref=e1101] [cursor=pointer]:
+                    - img [ref=e1102]
+                - generic [ref=e1105]:
+                  - heading "单平台搜索" [level=3] [ref=e1106]
+                  - 'link "Permalink: 单平台搜索" [ref=e1107] [cursor=pointer]':
+                    - /url: "#单平台搜索"
+                    - img [ref=e1108]
+                - generic [ref=e1110]:
+                  - generic [ref=e1111]:
+                    - generic [ref=e1112]: "# GitHub 搜索"
+                    - text: python union_search_cli.py platform github
+                    - generic [ref=e1113]: "\"awesome python\""
+                    - text: "--limit 10"
+                    - generic [ref=e1114]: "# 或使用直达命令"
+                    - text: python union_search_cli.py github
+                    - generic [ref=e1115]: "\"machine learning\""
+                    - text: "--limit 5 python union_search_cli.py bing"
+                    - generic [ref=e1116]: "\"AI news\""
+                    - text: "--limit 10 python union_search_cli.py bsearch"
+                    - generic [ref=e1117]: "\"deep learning\""
+                    - text: "--limit 10"
+                    - generic [ref=e1118]: "# 使用别名"
+                  - button "Copy" [ref=e1120] [cursor=pointer]:
+                    - img [ref=e1121]
+                - generic [ref=e1124]:
+                  - heading "视频/音频下载（yt-dlp）" [level=3] [ref=e1125]
+                  - 'link "Permalink: 视频/音频下载（yt-dlp）" [ref=e1126] [cursor=pointer]':
+                    - /url: "#视频音频下载yt-dlp"
+                    - img [ref=e1127]
+                - generic [ref=e1129]:
+                  - generic [ref=e1130]:
+                    - generic [ref=e1131]: "# 直接下载 URL"
+                    - text: python union_search_cli.py download
+                    - generic [ref=e1132]: "\"https://www.youtube.com/watch?v=dQw4w9WgXcQ\""
+                    - text: "--output-dir ./downloads"
+                    - generic [ref=e1133]: "# 限制分辨率并提取音频"
+                    - text: python union_search_cli.py download
+                    - generic [ref=e1134]: "\"https://www.bilibili.com/video/BV1xx411c7mD\""
+                    - text: "--max-height 1080 python union_search_cli.py download"
+                    - generic [ref=e1135]: "\"https://www.youtube.com/watch?v=dQw4w9WgXcQ\""
+                    - text: "--audio-only --audio-format mp3"
+                    - generic [ref=e1136]: "# 从搜索结果文件筛选后下载"
+                    - text: python union_search_cli.py download --from-file ./out/search.json --platforms youtube bilibili --select 1,2,3 --output-dir ./downloads
+                    - generic [ref=e1137]: "# YouTube 403 推荐：使用 cookies 文件"
+                    - text: python union_search_cli.py download
+                    - generic [ref=e1138]: "\"https://youtu.be/Zh9IscszDQg\""
+                    - text: "--cookies-file C:/path/cookies.txt --restrict-filenames --continue-download --output-dir ./downloads"
+                  - button "Copy" [ref=e1140] [cursor=pointer]:
+                    - img [ref=e1141]
+                - blockquote [ref=e1144]:
+                  - paragraph [ref=e1145]:
+                    - text: 提示：
+                    - code [ref=e1146]: search
+                    - text: 输出中的
+                    - code [ref=e1147]: download_candidates
+                    - text: 字段提供稳定索引，可直接传给
+                    - code [ref=e1148]: download --select
+                    - text: 。 提示：
+                    - code [ref=e1149]: download
+                    - text: 对 YouTube 会优先尝试 cookies（显式
+                    - code [ref=e1150]: "--cookies-file"
+                    - text: 或环境变量
+                    - code [ref=e1151]: YTDLP_COOKIES_FILE
+                    - text: ）。
+                - generic [ref=e1152]:
+                  - heading "图片搜索与下载" [level=3] [ref=e1153]
+                  - 'link "Permalink: 图片搜索与下载" [ref=e1154] [cursor=pointer]':
+                    - /url: "#图片搜索与下载"
+                    - img [ref=e1155]
+                - generic [ref=e1157]:
+                  - generic [ref=e1158]:
+                    - generic [ref=e1159]: "# 搜索并下载图片"
+                    - text: python union_search_cli.py image
+                    - generic [ref=e1160]: "\"cute cats\""
+                    - text: \ --platforms google bing pixabay \ --limit 20 \ --output-dir ./cat_images
+                    - generic [ref=e1161]: "# 自定义下载线程数"
+                    - text: python union_search_cli.py image
+                    - generic [ref=e1162]: "\"landscape\""
+                    - text: "--threads 10 --limit 50"
+                  - button "Copy" [ref=e1164] [cursor=pointer]:
+                    - img [ref=e1165]
+                - generic [ref=e1168]:
+                  - heading "列出能力" [level=3] [ref=e1169]
+                  - 'link "Permalink: 列出能力" [ref=e1170] [cursor=pointer]':
+                    - /url: "#列出能力"
+                    - img [ref=e1171]
+                - generic [ref=e1173]:
+                  - generic [ref=e1174]:
+                    - generic [ref=e1175]: "# 列出所有平台和分组"
+                    - text: python union_search_cli.py list --format markdown
+                    - generic [ref=e1176]: "# 只看图片平台"
+                    - text: python union_search_cli.py list --type images
+                  - button "Copy" [ref=e1178] [cursor=pointer]:
+                    - img [ref=e1179]
+                - generic [ref=e1182]:
+                  - heading "健康检查" [level=3] [ref=e1183]
+                  - 'link "Permalink: 健康检查" [ref=e1184] [cursor=pointer]':
+                    - /url: "#健康检查"
+                    - img [ref=e1185]
+                - generic [ref=e1187]:
+                  - generic [ref=e1188]:
+                    - generic [ref=e1189]: "# 检查环境配置"
+                    - text: python union_search_cli.py doctor --env-file .env
+                    - generic [ref=e1190]: "# 严格模式（警告也返回非零）"
+                    - text: python union_search_cli.py doctor --strict
+                  - button "Copy" [ref=e1192] [cursor=pointer]:
+                    - img [ref=e1193]
+                - generic [ref=e1196]:
+                  - heading "网页转Markdown" [level=3] [ref=e1197]
+                  - 'link "Permalink: 网页转Markdown" [ref=e1198] [cursor=pointer]':
+                    - /url: "#网页转markdown-1"
+                    - img [ref=e1199]
+                - generic [ref=e1201]:
+                  - generic [ref=e1202]:
+                    - generic [ref=e1203]: "# 将URL转换为Markdown（命令行直接调用）"
+                    - text: python scripts/url_to_markdown/url_to_markdown.py
+                    - generic [ref=e1204]: "\"https://example.com\""
+                    - generic [ref=e1205]: "# JSON格式输出"
+                    - text: python scripts/url_to_markdown/url_to_markdown.py
+                    - generic [ref=e1206]: "\"https://example.com\""
+                    - text: "--json"
+                    - generic [ref=e1207]: "# 包含图片摘要"
+                    - text: python scripts/url_to_markdown/url_to_markdown.py
+                    - generic [ref=e1208]: "\"https://example.com\""
+                    - text: "--with-images"
+                    - generic [ref=e1209]: "# 绕过缓存（获取最新内容）"
+                    - text: python scripts/url_to_markdown/url_to_markdown.py
+                    - generic [ref=e1210]: "\"https://example.com\""
+                    - text: "--no-cache"
+                    - generic [ref=e1211]: "# Python API调用"
+                    - text: python -c
+                    - generic [ref=e1212]: "\"from scripts.url_to_markdown import fetch_url_as_markdown; print(fetch_url_as_markdown('https://example.com'))\""
+                  - button "Copy" [ref=e1214] [cursor=pointer]:
+                    - img [ref=e1215]
+                - blockquote [ref=e1218]:
+                  - paragraph [ref=e1219]:
+                    - text: 💡
+                    - strong [ref=e1220]: 速率限制
+                    - text: ": Jina Reader API 免费使用，无需API Key，每分钟最多20次请求。如需更高限额，可注册获取免费API Key（500 RPM）。"
+                - separator [ref=e1221]
+                - generic [ref=e1222]:
+                  - heading "📝 搜索日志记录" [level=2] [ref=e1223]
+                  - 'link "Permalink: 📝 搜索日志记录" [ref=e1224] [cursor=pointer]':
+                    - /url: "#-搜索日志记录"
+                    - img [ref=e1225]
+                - paragraph [ref=e1227]:
+                  - text: 每次搜索请求的日志和结果会自动保存到
+                  - code [ref=e1228]: search_logs/
+                  - text: 目录，文件格式为 JSON，包含完整的请求信息和搜索结果。
+                - generic [ref=e1229]:
+                  - heading "日志文件格式" [level=3] [ref=e1230]
+                  - 'link "Permalink: 日志文件格式" [ref=e1231] [cursor=pointer]':
+                    - /url: "#日志文件格式"
+                    - img [ref=e1232]
+                - generic [ref=e1234]:
+                  - generic [ref=e1235]:
+                    - text: "{ \"version\":"
+                    - generic [ref=e1236]: "\"1.0.0\""
+                    - text: ", \"timestamp\":"
+                    - generic [ref=e1237]: "\"2026-03-05T21:38:28.502062\""
+                    - text: ", \"request\": { \"query\":"
+                    - generic [ref=e1238]: "\"Python教程\""
+                    - text: ", \"platforms\": ["
+                    - generic [ref=e1239]: "\"search\""
+                    - text: "], \"total_results\": 24 }, \"results\": [ { \"title\":"
+                    - generic [ref=e1240]: "\"9. Classes — Python 3.14.3 documentation\""
+                    - text: ", \"link\":"
+                    - generic [ref=e1241]: "\"https://docs.python.org/3/tutorial/classes.html\""
+                    - text: ", \"source\":"
+                    - generic [ref=e1242]: "\"google\""
+                    - text: ", \"snippet\":"
+                    - generic [ref=e1243]: "\"Classes provide a means of bundling data and functionality together...\""
+                    - text: "} // ... 更多结果 ], \"statistics\": { \"total_count\": 24, \"platform_counts\": { \"google\": 2, \"tavily\": 2, \"jina\": 2, // ... } }, \"metadata\": { \"response_time\": 6.5, \"status\":"
+                    - generic [ref=e1244]: "\"success\""
+                    - text: "} }"
+                  - button "Copy" [ref=e1246] [cursor=pointer]:
+                    - img [ref=e1247]
+                - generic [ref=e1250]:
+                  - heading "使用日志模块" [level=3] [ref=e1251]
+                  - 'link "Permalink: 使用日志模块" [ref=e1252] [cursor=pointer]':
+                    - /url: "#使用日志模块"
+                    - img [ref=e1253]
+                - generic [ref=e1255]:
+                  - generic [ref=e1256]: "from scripts.search_logger import SearchLogger # 创建日志记录器 logger = SearchLogger() # 记录搜索结果 logger.log( query=\"Python教程\", platforms=[\"search\"], results=[...], # 搜索结果列表 metadata={\"response_time\": 2.5, \"status\": \"success\"} )"
+                  - button "Copy" [ref=e1258] [cursor=pointer]:
+                    - img [ref=e1259]
+                - generic [ref=e1262]:
+                  - heading "示例响应文件" [level=3] [ref=e1263]
+                  - 'link "Permalink: 示例响应文件" [ref=e1264] [cursor=pointer]':
+                    - /url: "#示例响应文件"
+                    - img [ref=e1265]
+                - paragraph [ref=e1267]: 项目包含一个示例响应文件，展示完整的日志格式：
+                - list [ref=e1268]:
+                  - listitem [ref=e1269]:
+                    - code [ref=e1270]: search_logs/example_python_tutorial_search.json
+                    - text: "- Python教程搜索示例"
+                - blockquote [ref=e1271]:
+                  - paragraph [ref=e1272]:
+                    - strong [ref=e1273]: 注意
+                    - text: ":"
+                    - code [ref=e1274]: search_logs/
+                    - text: 目录已被添加到
+                    - code [ref=e1275]: .gitignore
+                    - text: ，本地日志不会提交到远程仓库。
+                - separator [ref=e1276]
+                - generic [ref=e1277]:
+                  - heading "🔧 配置指南" [level=2] [ref=e1278]
+                  - 'link "Permalink: 🔧 配置指南" [ref=e1279] [cursor=pointer]':
+                    - /url: "#-配置指南"
+                    - img [ref=e1280]
+                - generic [ref=e1282]:
+                  - heading "环境变量参考" [level=3] [ref=e1283]
+                  - 'link "Permalink: 环境变量参考" [ref=e1284] [cursor=pointer]':
+                    - /url: "#环境变量参考"
+                    - img [ref=e1285]
+                - table [ref=e1288]:
+                  - rowgroup [ref=e1289]:
+                    - row "变量名 平台 获取地址 备注" [ref=e1290]:
+                      - columnheader "变量名" [ref=e1291]
+                      - columnheader "平台" [ref=e1292]
+                      - columnheader "获取地址" [ref=e1293]
+                      - columnheader "备注" [ref=e1294]
+                  - rowgroup [ref=e1295]:
+                    - row "GITHUB_TOKEN GitHub GitHub Settings 公共搜索无需权限" [ref=e1296]:
+                      - cell "GITHUB_TOKEN" [ref=e1297]:
+                        - code [ref=e1298]: GITHUB_TOKEN
+                      - cell "GitHub" [ref=e1299]
+                      - cell "GitHub Settings" [ref=e1300]:
+                        - link "GitHub Settings" [ref=e1301] [cursor=pointer]:
+                          - /url: https://github.com/settings/tokens
+                      - cell "公共搜索无需权限" [ref=e1302]
+                    - row "TIKHUB_TOKEN 小红书/抖音/Twitter TikHub 💰 $5 约 5000 次调用" [ref=e1303]:
+                      - cell "TIKHUB_TOKEN" [ref=e1304]:
+                        - code [ref=e1305]: TIKHUB_TOKEN
+                      - cell "小红书/抖音/Twitter" [ref=e1306]
+                      - cell "TikHub" [ref=e1307]:
+                        - link "TikHub" [ref=e1308] [cursor=pointer]:
+                          - /url: https://www.tikhub.io
+                      - cell "💰 $5 约 5000 次调用" [ref=e1309]
+                    - row "SERPAPI_KEY Google/Bing (SerpAPI) SerpAPI ⚠️ 免费 250 次/月，需手机号注册" [ref=e1310]:
+                      - cell "SERPAPI_KEY" [ref=e1311]:
+                        - code [ref=e1312]: SERPAPI_KEY
+                      - cell "Google/Bing (SerpAPI)" [ref=e1313]
+                      - cell "SerpAPI" [ref=e1314]:
+                        - link "SerpAPI" [ref=e1315] [cursor=pointer]:
+                          - /url: https://serpapi.com
+                      - cell "⚠️ 免费 250 次/月，需手机号注册" [ref=e1316]:
+                        - generic [ref=e1317]: ⚠️
+                        - text: 免费 250 次/月，需手机号注册
+                    - row "GOOGLE_API_KEY Google Google Cloud Console 官方 API 替代方案" [ref=e1318]:
+                      - cell "GOOGLE_API_KEY" [ref=e1319]:
+                        - code [ref=e1320]: GOOGLE_API_KEY
+                      - cell "Google" [ref=e1321]
+                      - cell "Google Cloud Console" [ref=e1322]:
+                        - link "Google Cloud Console" [ref=e1323] [cursor=pointer]:
+                          - /url: https://console.cloud.google.com
+                      - cell "官方 API 替代方案" [ref=e1324]
+                    - row "GOOGLE_SEARCH_ENGINE_ID Google Programmable Search Engine 需与 API Key 配合使用" [ref=e1325]:
+                      - cell "GOOGLE_SEARCH_ENGINE_ID" [ref=e1326]:
+                        - code [ref=e1327]: GOOGLE_SEARCH_ENGINE_ID
+                      - cell "Google" [ref=e1328]
+                      - cell "Programmable Search Engine" [ref=e1329]:
+                        - link "Programmable Search Engine" [ref=e1330] [cursor=pointer]:
+                          - /url: https://programmablesearchengine.google.com
+                      - cell "需与 API Key 配合使用" [ref=e1331]
+                    - row "YOUTUBE_API_KEY YouTube Google Cloud Console 10000 单位/天" [ref=e1332]:
+                      - cell "YOUTUBE_API_KEY" [ref=e1333]:
+                        - code [ref=e1334]: YOUTUBE_API_KEY
+                      - cell "YouTube" [ref=e1335]
+                      - cell "Google Cloud Console" [ref=e1336]:
+                        - link "Google Cloud Console" [ref=e1337] [cursor=pointer]:
+                          - /url: https://console.cloud.google.com
+                      - cell "10000 单位/天" [ref=e1338]
+                    - row "TAVILY_API_KEY Tavily Tavily Dashboard 免费 1000 积分/月" [ref=e1339]:
+                      - cell "TAVILY_API_KEY" [ref=e1340]:
+                        - code [ref=e1341]: TAVILY_API_KEY
+                      - cell "Tavily" [ref=e1342]
+                      - cell "Tavily Dashboard" [ref=e1343]:
+                        - link "Tavily Dashboard" [ref=e1344] [cursor=pointer]:
+                          - /url: https://tavily.com
+                      - cell "免费 1000 积分/月" [ref=e1345]
+                    - row "METASO_API_KEY 秘塔搜索 Metaso AI 生成答案" [ref=e1346]:
+                      - cell "METASO_API_KEY" [ref=e1347]:
+                        - code [ref=e1348]: METASO_API_KEY
+                      - cell "秘塔搜索" [ref=e1349]
+                      - cell "Metaso" [ref=e1350]:
+                        - link "Metaso" [ref=e1351] [cursor=pointer]:
+                          - /url: https://metaso.cn
+                      - cell "AI 生成答案" [ref=e1352]
+                    - row "VOLCENGINE_API_KEY 火山引擎 火山引擎控制台 字节官方 API" [ref=e1353]:
+                      - cell "VOLCENGINE_API_KEY" [ref=e1354]:
+                        - code [ref=e1355]: VOLCENGINE_API_KEY
+                      - cell "火山引擎" [ref=e1356]
+                      - cell "火山引擎控制台" [ref=e1357]:
+                        - link "火山引擎控制台" [ref=e1358] [cursor=pointer]:
+                          - /url: https://console.volcengine.com
+                      - cell "字节官方 API" [ref=e1359]
+                    - row "ZHIHU_COOKIE 知乎 浏览器开发者工具 手动获取" [ref=e1360]:
+                      - cell "ZHIHU_COOKIE" [ref=e1361]:
+                        - code [ref=e1362]: ZHIHU_COOKIE
+                      - cell "知乎" [ref=e1363]
+                      - cell "浏览器开发者工具" [ref=e1364]
+                      - cell "手动获取" [ref=e1365]
+                    - row "WEIBO_COOKIE 微博 浏览器开发者工具 手动获取" [ref=e1366]:
+                      - cell "WEIBO_COOKIE" [ref=e1367]:
+                        - code [ref=e1368]: WEIBO_COOKIE
+                      - cell "微博" [ref=e1369]
+                      - cell "浏览器开发者工具" [ref=e1370]
+                      - cell "手动获取" [ref=e1371]
+                - blockquote [ref=e1372]:
+                  - paragraph [ref=e1373]:
+                    - text: 💡
+                    - strong [ref=e1374]: API 成本提示
+                    - text: ：
+                  - list [ref=e1375]:
+                    - listitem [ref=e1376]:
+                      - strong [ref=e1377]: SerpAPI
+                      - text: 免费账户每月仅 250 次请求，注册需要手机号验证。适合测试和低频使用。
+                    - listitem [ref=e1378]:
+                      - strong [ref=e1379]: TikHub
+                      - text: 5 美元充值约可使用 5000 次（取决于具体平台和参数），正常使用足够。
+                    - listitem [ref=e1380]:
+                      - text: 建议优先使用
+                      - strong [ref=e1381]: 无需 API 密钥
+                      - text: 的引擎（DuckDuckGo、Brave、Yahoo 等）作为日常搜索。
+                    - listitem [ref=e1382]: 生产环境建议配置多个渠道，自动降级切换。
+                - generic [ref=e1383]:
+                  - heading "平台分组" [level=3] [ref=e1384]
+                  - 'link "Permalink: 平台分组" [ref=e1385] [cursor=pointer]':
+                    - /url: "#平台分组"
+                    - img [ref=e1386]
+                - generic [ref=e1388]:
+                  - generic [ref=e1389]:
+                    - generic [ref=e1390]: "# 查看可用分组"
+                    - text: python union_search_cli.py list --type groups
+                  - button "Copy" [ref=e1392] [cursor=pointer]:
+                    - img [ref=e1393]
+                - table [ref=e1397]:
+                  - rowgroup [ref=e1398]:
+                    - row "分组 包含平台" [ref=e1399]:
+                      - columnheader "分组" [ref=e1400]
+                      - columnheader "包含平台" [ref=e1401]
+                  - rowgroup [ref=e1402]:
+                    - row "dev GitHub, Reddit, Zhihu" [ref=e1403]:
+                      - cell "dev" [ref=e1404]:
+                        - code [ref=e1405]: dev
+                      - cell "GitHub, Reddit, Zhihu" [ref=e1406]
+                    - row "social 小红书，抖音，Twitter, Weibo" [ref=e1407]:
+                      - cell "social" [ref=e1408]:
+                        - code [ref=e1409]: social
+                      - cell "小红书，抖音，Twitter, Weibo" [ref=e1410]
+                    - row "video Bilibili, YouTube" [ref=e1411]:
+                      - cell "video" [ref=e1412]:
+                        - code [ref=e1413]: video
+                      - cell "Bilibili, YouTube" [ref=e1414]
+                    - row "search Google, Bing, DuckDuckGo, Brave, Yahoo" [ref=e1415]:
+                      - cell "search" [ref=e1416]:
+                        - code [ref=e1417]: search
+                      - cell "Google, Bing, DuckDuckGo, Brave, Yahoo" [ref=e1418]
+                    - row "ai Tavily, Metaso, Volcengine, Jina" [ref=e1419]:
+                      - cell "ai" [ref=e1420]:
+                        - code [ref=e1421]: ai
+                      - cell "Tavily, Metaso, Volcengine, Jina" [ref=e1422]
+                - separator [ref=e1423]
+                - generic [ref=e1424]:
+                  - heading "📁 项目结构" [level=2] [ref=e1425]
+                  - 'link "Permalink: 📁 项目结构" [ref=e1426] [cursor=pointer]':
+                    - /url: "#-项目结构"
+                    - img [ref=e1427]
+                - generic [ref=e1429]:
+                  - code [ref=e1431]: "union-search-skill/ ├── union_search_cli.py # 统一 CLI 入口 ├── scripts/ │ ├── cli/ # CLI 核心模块 │ │ ├── main.py # CLI 主程序 │ │ ├── adapters.py # 平台适配器 │ │ ├── registry.py # 平台注册表 │ │ └── validators.py # 参数验证 │ ├── github/ # GitHub 搜索 │ ├── reddit/ # Reddit 搜索 │ ├── xiaohongshu/ # 小红书搜索 │ ├── douyin/ # 抖音搜索 │ ├── bilibili/ # Bilibili 搜索 │ ├── twitter/ # Twitter 搜索 │ ├── youtube/ # YouTube 搜索 │ ├── google_search/ # Google 搜索 │ ├── bing/ # Bing 搜索 │ ├── baidu/ # 百度搜索 │ ├── duckduckgo/ # DuckDuckGo 搜索 │ ├── brave/ # Brave 搜索 │ ├── yahoo/ # Yahoo 搜索 │ ├── wikipedia/ # Wikipedia 搜索 │ ├── tavily_search/ # Tavily 搜索 │ ├── metaso/ # 秘塔搜索 │ ├── volcengine/ # 火山引擎搜索 │ ├── zhihu/ # 知乎搜索 │ ├── union_image_search/ # 图片搜索 │ ├── rss_search/ # RSS 订阅搜索 │ ├── xiaoyuzhoufm/ # 小宇宙 FM 播客 │ ├── url_to_markdown/ # 网页转Markdown │ └── jina/ # Jina 搜索 ├── references/ # 参考文档 ├── responses/ # API 响应存档 ├── search_logs/ # 搜索日志（本地记录，不提交到远程） │ └── example_*.json # 示例响应文件 ├── scripts/ │ └── search_logger.py # 日志记录模块 ├── .env.example # 环境变量模板 └── README.md # 项目文档"
+                  - button "Copy" [ref=e1433] [cursor=pointer]:
+                    - img [ref=e1434]
+                - separator [ref=e1437]
+                - generic [ref=e1438]:
+                  - heading "🐛 故障排查" [level=2] [ref=e1439]
+                  - 'link "Permalink: 🐛 故障排查" [ref=e1440] [cursor=pointer]':
+                    - /url: "#-故障排查"
+                    - img [ref=e1441]
+                - generic [ref=e1443]:
+                  - heading "常见问题" [level=3] [ref=e1444]
+                  - 'link "Permalink: 常见问题" [ref=e1445] [cursor=pointer]':
+                    - /url: "#常见问题"
+                    - img [ref=e1446]
+                - generic [ref=e1448]:
+                  - heading "1. 平台返回 403 错误" [level=4] [ref=e1449]
+                  - 'link "Permalink: 1. 平台返回 403 错误" [ref=e1450] [cursor=pointer]':
+                    - /url: "#1-平台返回-403-错误"
+                    - img [ref=e1451]
+                - paragraph [ref=e1453]:
+                  - strong [ref=e1454]: 原因
+                  - text: ": API 密钥无效或请求频率过高"
+                - paragraph [ref=e1455]:
+                  - strong [ref=e1456]: 解决方案
+                  - text: ":"
+                - generic [ref=e1457]:
+                  - generic [ref=e1458]:
+                    - generic [ref=e1459]: "# 检查 API 密钥配置"
+                    - text: python union_search_cli.py doctor --platforms github google
+                    - generic [ref=e1460]: "# 降低并发数"
+                    - text: python union_search_cli.py search
+                    - generic [ref=e1461]: "\"query\""
+                    - text: "--max-workers 2"
+                  - button "Copy" [ref=e1463] [cursor=pointer]:
+                    - img [ref=e1464]
+                - generic [ref=e1467]:
+                  - heading "2. 图片下载失败" [level=4] [ref=e1468]
+                  - 'link "Permalink: 2. 图片下载失败" [ref=e1469] [cursor=pointer]':
+                    - /url: "#2-图片下载失败"
+                    - img [ref=e1470]
+                - paragraph [ref=e1472]:
+                  - strong [ref=e1473]: 原因
+                  - text: ": 缺少"
+                  - code [ref=e1474]: pyimagedl
+                  - text: 依赖
+                - paragraph [ref=e1475]:
+                  - strong [ref=e1476]: 解决方案
+                  - text: ":"
+                - generic [ref=e1477]:
+                  - generic [ref=e1478]: pip install pyimagedl
+                  - button "Copy" [ref=e1480] [cursor=pointer]:
+                    - img [ref=e1481]
+                - generic [ref=e1484]:
+                  - heading "3. 火山引擎解析错误" [level=4] [ref=e1485]
+                  - 'link "Permalink: 3. 火山引擎解析错误" [ref=e1486] [cursor=pointer]':
+                    - /url: "#3-火山引擎解析错误"
+                    - img [ref=e1487]
+                - paragraph [ref=e1489]:
+                  - strong [ref=e1490]: 状态
+                  - text: ": 已知问题，修复中"
+                - paragraph [ref=e1491]:
+                  - strong [ref=e1492]: 临时方案
+                  - text: ": 使用其他 AI 搜索平台替代"
+                - generic [ref=e1493]:
+                  - generic [ref=e1494]:
+                    - text: python union_search_cli.py search
+                    - generic [ref=e1495]: "\"query\""
+                    - text: "--platforms tavily metaso"
+                  - button "Copy" [ref=e1497] [cursor=pointer]:
+                    - img [ref=e1498]
+                - generic [ref=e1501]:
+                  - heading "获取帮助" [level=3] [ref=e1502]
+                  - 'link "Permalink: 获取帮助" [ref=e1503] [cursor=pointer]':
+                    - /url: "#获取帮助"
+                    - img [ref=e1504]
+                - list [ref=e1506]:
+                  - listitem [ref=e1507]:
+                    - text: 📖 查看
+                    - link "参考文档" [ref=e1508] [cursor=pointer]:
+                      - /url: /runningZ1/union-search-skill/blob/master/references
+                  - listitem [ref=e1509]:
+                    - text: 🔍 搜索
+                    - link "历史问题" [ref=e1510] [cursor=pointer]:
+                      - /url: /runningZ1/union-search-skill/blob/master/responses
+                  - listitem [ref=e1511]: 💬 提交 Issue
+                - separator [ref=e1512]
+                - generic [ref=e1513]:
+                  - heading "🤝 贡献指南" [level=2] [ref=e1514]
+                  - 'link "Permalink: 🤝 贡献指南" [ref=e1515] [cursor=pointer]':
+                    - /url: "#-贡献指南"
+                    - img [ref=e1516]
+                - paragraph [ref=e1518]: 欢迎提交 Issue 和 Pull Request！
+                - list [ref=e1519]:
+                  - listitem [ref=e1520]: Fork 本仓库
+                  - listitem [ref=e1521]:
+                    - text: 创建特性分支 (
+                    - code [ref=e1522]: git checkout -b feature/AmazingFeature
+                    - text: )
+                  - listitem [ref=e1523]:
+                    - text: 提交更改 (
+                    - code [ref=e1524]: git commit -m 'Add some AmazingFeature'
+                    - text: )
+                  - listitem [ref=e1525]:
+                    - text: 推送到分支 (
+                    - code [ref=e1526]: git push origin feature/AmazingFeature
+                    - text: )
+                  - listitem [ref=e1527]: 开启 Pull Request
+                - separator [ref=e1528]
+                - generic [ref=e1529]:
+                  - heading "📄 许可证" [level=2] [ref=e1530]
+                  - 'link "Permalink: 📄 许可证" [ref=e1531] [cursor=pointer]':
+                    - /url: "#-许可证"
+                    - img [ref=e1532]
+                - paragraph [ref=e1534]:
+                  - text: 本项目采用 MIT 许可证 - 查看
+                  - link "LICENSE" [ref=e1535] [cursor=pointer]:
+                    - /url: /runningZ1/union-search-skill/blob/master/LICENSE
+                  - text: 文件了解详情。
+                - separator [ref=e1536]
+                - generic [ref=e1537]:
+                  - heading "🙏 致谢" [level=2] [ref=e1538]
+                  - 'link "Permalink: 🙏 致谢" [ref=e1539] [cursor=pointer]':
+                    - /url: "#-致谢"
+                    - img [ref=e1540]
+                - paragraph [ref=e1542]: 感谢以下开源项目和 API 服务：
+                - list [ref=e1543]:
+                  - listitem [ref=e1544]:
+                    - link "requests" [ref=e1545] [cursor=pointer]:
+                      - /url: https://github.com/psf/requests
+                    - text: "- Python HTTP 库"
+                  - listitem [ref=e1546]:
+                    - link "lxml" [ref=e1547] [cursor=pointer]:
+                      - /url: https://lxml.de/
+                    - text: "- XML/HTML 解析"
+                  - listitem [ref=e1548]:
+                    - link "TikHub" [ref=e1549] [cursor=pointer]:
+                      - /url: https://www.tikhub.io
+                    - text: "- 社交媒体 API"
+                  - listitem [ref=e1550]:
+                    - link "Tavily" [ref=e1551] [cursor=pointer]:
+                      - /url: https://tavily.com
+                    - text: "- AI 搜索引擎"
+                  - listitem [ref=e1552]:
+                    - link "yt-dlp" [ref=e1553] [cursor=pointer]:
+                      - /url: https://github.com/yt-dlp/yt-dlp
+                    - text: "- 视频下载工具"
+                - separator [ref=e1554]
+                - generic [ref=e1555]:
+                  - paragraph [ref=e1556]:
+                    - strong [ref=e1557]: Made with ❤️ by the Union Search Team
+                  - paragraph [ref=e1558]:
+                    - link "⬆ 返回顶部" [ref=e1559] [cursor=pointer]:
+                      - /url: "#union-search-skill"
+        - generic [ref=e1563]:
+          - generic [ref=e1566]:
+            - heading "About" [level=2] [ref=e1567]
+            - paragraph [ref=e1568]: 统一搜索工具集 - 跨平台内容搜索解决方案，支持 B 站/抖音/小红书/GitHub/Twitter 等 20+ 平台
+            - heading "Resources" [level=3] [ref=e1569]
+            - link "Readme" [ref=e1571] [cursor=pointer]:
+              - /url: "#readme-ov-file"
+              - img [ref=e1572]
+              - text: Readme
+            - link "Activity" [ref=e1575] [cursor=pointer]:
+              - /url: /runningZ1/union-search-skill/activity
+              - img [ref=e1576]
+              - text: Activity
+            - heading "Stars" [level=3] [ref=e1578]
+            - link "244 stars" [ref=e1580] [cursor=pointer]:
+              - /url: /runningZ1/union-search-skill/stargazers
+              - img [ref=e1581]
+              - strong [ref=e1583]: "244"
+              - text: stars
+            - heading "Watchers" [level=3] [ref=e1584]
+            - link "2 watching" [ref=e1586] [cursor=pointer]:
+              - /url: /runningZ1/union-search-skill/watchers
+              - img [ref=e1587]
+              - strong [ref=e1589]: "2"
+              - text: watching
+            - heading "Forks" [level=3] [ref=e1590]
+            - link "25 forks" [ref=e1592] [cursor=pointer]:
+              - /url: /runningZ1/union-search-skill/forks
+              - img [ref=e1593]
+              - strong [ref=e1595]: "25"
+              - text: forks
+            - link "Report repository" [ref=e1597] [cursor=pointer]:
+              - /url: /contact/report-content?content_url=https%3A%2F%2Fgithub.com%2FrunningZ1%2Funion-search-skill&report=runningZ1+%28user%29
+          - generic [ref=e1599]:
+            - heading "Releases" [level=2] [ref=e1600]:
+              - link "Releases" [ref=e1601] [cursor=pointer]:
+                - /url: /runningZ1/union-search-skill/releases
+            - generic [ref=e1602]: No releases published
+          - generic [ref=e1604]:
+            - heading "Packages" [level=2] [ref=e1605]:
+              - link "Packages" [ref=e1606] [cursor=pointer]:
+                - /url: /users/runningZ1/packages?repo_name=union-search-skill
+            - generic [ref=e1607]: No packages published
+          - generic [ref=e1609]:
+            - heading "Contributors 2" [level=2] [ref=e1610]:
+              - link "Contributors 2" [ref=e1611] [cursor=pointer]:
+                - /url: /runningZ1/union-search-skill/graphs/contributors
+                - text: Contributors
+                - generic "2" [ref=e1612]
+            - list [ref=e1613]:
+              - listitem [ref=e1614]:
+                - link "@runningZ1" [ref=e1615] [cursor=pointer]:
+                  - /url: https://github.com/runningZ1
+                  - img "@runningZ1" [ref=e1616]
+                - link "runningZ1 ZiJiE.Z" [ref=e1618] [cursor=pointer]:
+                  - /url: https://github.com/runningZ1
+                  - strong [ref=e1619]: runningZ1
+                  - text: ZiJiE.Z
+              - listitem [ref=e1620]:
+                - link "@claude" [ref=e1621] [cursor=pointer]:
+                  - /url: https://github.com/claude
+                  - img "@claude" [ref=e1622]
+                - link "claude Claude" [ref=e1624] [cursor=pointer]:
+                  - /url: https://github.com/claude
+                  - strong [ref=e1625]: claude
+                  - text: Claude
+          - generic [ref=e1627]:
+            - heading "Languages" [level=2] [ref=e1628]
+            - list [ref=e1632]:
+              - listitem [ref=e1633]:
+                - link "Python 100.0%" [ref=e1634] [cursor=pointer]:
+                  - /url: /runningZ1/union-search-skill/search?l=python
+                  - img [ref=e1635]
+                  - generic [ref=e1637]: Python
+                  - generic [ref=e1638]: 100.0%
+  - contentinfo [ref=e1640]:
+    - heading "Footer" [level=2] [ref=e1641]
+    - generic [ref=e1642]:
+      - generic [ref=e1643]:
+        - link "GitHub Homepage" [ref=e1644] [cursor=pointer]:
+          - /url: https://github.com
+          - img [ref=e1645]
+        - generic [ref=e1647]: © 2026 GitHub, Inc.
+      - navigation "Footer" [ref=e1648]:
+        - heading "Footer navigation" [level=3] [ref=e1649]
+        - list "Footer navigation" [ref=e1650]:
+          - listitem [ref=e1651]:
+            - link "Terms" [ref=e1652] [cursor=pointer]:
+              - /url: https://docs.github.com/site-policy/github-terms/github-terms-of-service
+          - listitem [ref=e1653]:
+            - link "Privacy" [ref=e1654] [cursor=pointer]:
+              - /url: https://docs.github.com/site-policy/privacy-policies/github-privacy-statement
+          - listitem [ref=e1655]:
+            - link "Security" [ref=e1656] [cursor=pointer]:
+              - /url: https://github.com/security
+          - listitem [ref=e1657]:
+            - link "Status" [ref=e1658] [cursor=pointer]:
+              - /url: https://www.githubstatus.com/
+          - listitem [ref=e1659]:
+            - link "Community" [ref=e1660] [cursor=pointer]:
+              - /url: https://github.community/
+          - listitem [ref=e1661]:
+            - link "Docs" [ref=e1662] [cursor=pointer]:
+              - /url: https://docs.github.com/
+          - listitem [ref=e1663]:
+            - link "Contact" [ref=e1664] [cursor=pointer]:
+              - /url: https://support.github.com?tags=dotcom-footer
+          - listitem [ref=e1665]:
+            - button "Manage cookies" [ref=e1667] [cursor=pointer]
+          - listitem [ref=e1668]:
+            - button "Do not share my personal information" [ref=e1670] [cursor=pointer]

@@ -8,6 +8,9 @@ triggers:
 - 自选股
 - add_stock
 - remove_stock
+policy_groups:
+- finance
+platform_handlers: true
 input_schema:
   type: object
   properties: {}

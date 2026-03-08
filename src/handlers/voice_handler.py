@@ -433,7 +433,6 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
 
     # 检查用户权限
     if not await is_user_allowed(user_id):
-        await ctx.reply("⛔ 抱歉，您没有使用 AI 功能的权限。")
         return
 
     try:

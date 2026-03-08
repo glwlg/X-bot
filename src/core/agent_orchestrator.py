@@ -18,6 +18,7 @@ from core.platform.models import UnifiedContext
 from core.primitive_runtime import PrimitiveRuntime
 from core.prompt_composer import prompt_composer
 from core.orchestrator_runtime_tools import RuntimeToolAssembler, ToolCallDispatcher
+from core.runtime_callbacks import get_runtime_callback
 from core.task_inbox import task_inbox
 from core.task_manager import task_manager
 from core.tool_access_store import tool_access_store
@@ -284,10 +285,14 @@ class AgentOrchestrator:
             update_task_inbox_status=update_task_inbox_status,
         )
 
-        worker_progress_hook = user_data.get("worker_progress_callback")
+        worker_progress_hook = get_runtime_callback(ctx, "worker_progress_callback")
+        if not callable(worker_progress_hook):
+            worker_progress_hook = user_data.get("worker_progress_callback")
         if not callable(worker_progress_hook):
             worker_progress_hook = None
-        manager_progress_hook = user_data.get("manager_progress_callback")
+        manager_progress_hook = get_runtime_callback(ctx, "manager_progress_callback")
+        if not callable(manager_progress_hook):
+            manager_progress_hook = user_data.get("manager_progress_callback")
         if not callable(manager_progress_hook):
             manager_progress_hook = None
         progress_steps_raw = user_data.get("worker_progress_steps")
@@ -376,6 +381,25 @@ class AgentOrchestrator:
                         user_data.get("worker_progress_final_preview") or ""
                     )[:180],
                 }
+                if event_name in {"tool_call_started", "tool_call_finished"}:
+                    snapshot["name"] = str(payload.get("name") or "").strip()
+                if event_name == "tool_call_started":
+                    args = payload.get("args")
+                    if isinstance(args, dict):
+                        snapshot["args"] = dict(args)
+                elif event_name == "tool_call_finished":
+                    snapshot["ok"] = bool(payload.get("ok"))
+                    snapshot["summary"] = str(payload.get("summary") or "").strip()
+                    snapshot["terminal"] = bool(payload.get("terminal"))
+                    snapshot["task_outcome"] = str(
+                        payload.get("task_outcome") or ""
+                    ).strip()
+                    terminal_payload = payload.get("terminal_payload")
+                    if isinstance(terminal_payload, dict) and terminal_payload:
+                        snapshot["terminal_payload"] = dict(terminal_payload)
+                    terminal_text = str(payload.get("terminal_text") or "").strip()
+                    if terminal_text:
+                        snapshot["terminal_text"] = terminal_text
 
                 maybe_coro = worker_progress_hook(snapshot)
                 if inspect.isawaitable(maybe_coro):

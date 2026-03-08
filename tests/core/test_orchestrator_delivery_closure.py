@@ -496,3 +496,76 @@ async def test_manager_progress_callback_receives_tool_events(monkeypatch, tmp_p
         and event.get("text_preview") == "已停止 uptime-kuma。"
         for event in manager_events
     )
+
+
+@pytest.mark.asyncio
+async def test_worker_progress_callback_receives_terminal_payload(monkeypatch, tmp_path):
+    orchestrator = AgentOrchestrator()
+    user_id = "u_worker_progress_terminal_payload"
+
+    runtime_root = (tmp_path / "runtime_tasks").resolve()
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(heartbeat_store, "root", runtime_root)
+    heartbeat_store._locks.clear()
+
+    async def fake_stream(
+        message_history,
+        tools=None,
+        tool_executor=None,
+        system_instruction=None,
+        event_callback=None,
+    ):
+        del message_history, tools, tool_executor, system_instruction
+        if event_callback:
+            await event_callback(
+                "tool_call_finished",
+                {
+                    "turn": 2,
+                    "name": "bash",
+                    "ok": True,
+                    "summary": "✅ 图片已生成。",
+                    "terminal": True,
+                    "task_outcome": "done",
+                    "terminal_text": "✅ 图片已生成。\n📏 比例: 1:1",
+                    "terminal_payload": {
+                        "text": "✅ 图片已生成。\n📏 比例: 1:1",
+                        "files": [
+                            {
+                                "kind": "photo",
+                                "path": "/tmp/demo.png",
+                                "filename": "demo.png",
+                            }
+                        ],
+                    },
+                },
+            )
+        yield "✅ 图片已生成。\n📏 比例: 1:1"
+
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
+    monkeypatch.setattr(
+        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
+    )
+
+    ctx = DummyContext(user_id=user_id)
+    worker_events: list[dict[str, object]] = []
+
+    async def _progress_callback(snapshot):
+        worker_events.append(dict(snapshot or {}))
+
+    ctx.user_data["worker_progress_callback"] = _progress_callback
+    message_history = [{"role": "user", "parts": [{"text": "请画图"}]}]
+
+    chunks = [
+        chunk async for chunk in orchestrator.handle_message(ctx, message_history)
+    ]
+
+    assert chunks == ["✅ 图片已生成。\n📏 比例: 1:1"]
+    assert any(
+        event.get("event") == "tool_call_finished"
+        and event.get("terminal") is True
+        and isinstance(event.get("terminal_payload"), dict)
+        and event["terminal_payload"]["files"][0]["filename"] == "demo.png"
+        for event in worker_events
+    )

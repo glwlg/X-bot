@@ -7,6 +7,7 @@ import os
 import re
 import zlib
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 from core.platform.models import UnifiedContext, MessageType
 import random
@@ -14,8 +15,14 @@ from core.markdown_memory_store import markdown_memory_store
 from core.waiting_phrase_store import waiting_phrase_store
 
 from core.config import get_client_for_model
-from core.model_config import get_current_model, get_image_model
+from core.file_artifacts import (
+    extract_saved_file_rows,
+    merge_file_rows,
+    normalize_file_rows,
+)
+from core.model_config import get_current_model, get_vision_model
 from core.platform.exceptions import MediaProcessingError, MessageSendError
+from core.runtime_callbacks import pop_runtime_callback, set_runtime_callback
 from services.openai_adapter import generate_text
 
 from user_context import get_user_context, add_message
@@ -131,6 +138,53 @@ def _compact_text(text: str, limit: int = 220) -> str:
     return raw[:limit].rstrip() + "..."
 
 
+_VERBOSE_PROGRESS_MARKERS = (
+    "## ",
+    "```",
+    "http://",
+    "https://",
+    "【搜索结果摘要】",
+    "当前：",
+    "今天（",
+    "明天（",
+    "天气情况",
+    "保存路径",
+    "文件路径",
+    "{'ok': true",
+    "{'ok': True",
+)
+
+
+def _format_manager_progress_summary(
+    tool_name: str,
+    summary: str,
+    *,
+    ok: bool,
+) -> str:
+    raw = str(summary or "").strip()
+    if not raw:
+        return ""
+
+    normalized_tool = str(tool_name or "").strip().lower()
+    if normalized_tool.startswith("ext_"):
+        normalized_tool = normalized_tool[4:]
+
+    if normalized_tool == "load_skill":
+        return "技能已加载，正在继续执行。"
+
+    if not ok:
+        return _compact_text(raw.splitlines()[0].strip(), limit=180)
+
+    if (
+        "\n" in raw
+        or len(raw) > 120
+        or any(marker in raw for marker in _VERBOSE_PROGRESS_MARKERS)
+    ):
+        return "已完成当前步骤，正在整理结果。"
+
+    return _compact_text(raw, limit=180)
+
+
 def _humanize_manager_tool_name(tool_name: str) -> str:
     raw = str(tool_name or "").strip().lower()
     if not raw:
@@ -238,8 +292,13 @@ def _build_manager_progress_text(snapshot: dict[str, Any]) -> str:
     )
     detail_label = str(latest_step.get("detail_label") or "").strip()
     detail_value = _compact_text(str(latest_step.get("detail") or ""), limit=200)
-    summary = _compact_text(
-        str(latest_step.get("summary") or payload.get("summary") or ""), limit=180
+    summary = _format_manager_progress_summary(
+        str(latest_step.get("name") or payload.get("name") or "").strip(),
+        str(latest_step.get("summary") or payload.get("summary") or ""),
+        ok=(
+            str(latest_step.get("status") or "").strip().lower() != "failed"
+            and payload.get("ok") is not False
+        ),
     )
     failures = [
         _compact_text(str(item or ""), limit=80)
@@ -352,6 +411,56 @@ def _pop_pending_ui_payload(user_data: dict[str, Any]) -> dict[str, Any] | None:
     if not merged_actions:
         return None
     return {"actions": merged_actions}
+
+
+async def _send_result_files(
+    ctx: UnifiedContext,
+    file_rows: list[dict[str, str]],
+) -> bool:
+    delivered = False
+    for item in list(file_rows or []):
+        path_text = str(item.get("path") or "").strip()
+        if not path_text:
+            continue
+        path_obj = Path(path_text).expanduser().resolve()
+        if not path_obj.exists() or not path_obj.is_file():
+            continue
+        caption = str(item.get("caption") or "").strip() or None
+        filename = str(item.get("filename") or path_obj.name).strip() or path_obj.name
+        kind = str(item.get("kind") or "document").strip().lower() or "document"
+
+        try:
+            if kind == "photo":
+                await ctx.reply_photo(str(path_obj), caption=caption)
+            elif kind == "video":
+                await ctx.reply_video(str(path_obj), caption=caption)
+            elif kind == "audio":
+                await ctx.reply_audio(str(path_obj), caption=caption)
+            else:
+                document: str | bytes = str(path_obj)
+                output_name = filename
+                if filename.lower().endswith(".md"):
+                    try:
+                        from services.md_converter import adapt_md_file_for_platform
+
+                        adapted_bytes, adapted_name = adapt_md_file_for_platform(
+                            file_bytes=path_obj.read_bytes(),
+                            filename=filename,
+                            platform=str(getattr(ctx.message, "platform", "") or ""),
+                        )
+                        document = adapted_bytes
+                        output_name = adapted_name
+                    except Exception:
+                        logger.debug("Markdown attachment adaptation failed.", exc_info=True)
+                await ctx.reply_document(
+                    document=document,
+                    filename=output_name,
+                    caption=caption,
+                )
+            delivered = True
+        except Exception:
+            logger.warning("Failed to send result attachment: %s", path_obj, exc_info=True)
+    return delivered
 
 
 async def _should_include_memory_summary_for_task(
@@ -660,6 +769,13 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
     if not user_message:
         return
 
+    # 检查用户权限
+    from core.config import is_user_allowed
+
+    if not await is_user_allowed(user_id):
+        logger.info("Ignoring unauthorized AI chat from user_id=%s", user_id)
+        return
+
     # Keep heartbeat proactive delivery target aligned with the latest active chat.
     try:
         from core.heartbeat_store import heartbeat_store
@@ -675,15 +791,6 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
     # If using history later, we might want to avoid saving duplicates if we constructed a complex prmopt.
     # But for "chat record", raw input is best.
     await add_message(ctx, user_id, "user", user_message)
-
-    # 检查用户权限
-    from core.config import is_user_allowed
-
-    if not await is_user_allowed(user_id):
-        await ctx.reply(
-            f"⛔ 抱歉，您没有使用 AI 对话功能的权限。\n您的 ID 是: `{user_id}`\n\n"
-        )
-        return
 
     if await _try_handle_waiting_confirmation(ctx, user_message):
         return
@@ -861,6 +968,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         "manager_progress_final_preview": "",
     }
     manager_progress_steps: list[dict[str, Any]] = []
+    pending_manager_files: list[dict[str, str]] = []
     manager_progress_event_names = {
         "tool_call_started",
         "tool_call_finished",
@@ -967,6 +1075,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                 draft_id=draft_id,
                 text=progress_text,
                 message_thread_id=manager_progress_thread_id,
+                fallback_to_message=False,
             )
             state["manager_progress_last_rendered"] = progress_text
             state["manager_progress_last_sent_at"] = now
@@ -1018,6 +1127,15 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             tool_name = str(payload.get("name") or "").strip()
             tool_ok = bool(payload.get("ok"))
             summary = str(payload.get("summary") or "").strip()
+            terminal_payload = payload.get("terminal_payload")
+            if isinstance(terminal_payload, dict):
+                pending_manager_files[:] = merge_file_rows(
+                    pending_manager_files,
+                    normalize_file_rows(terminal_payload.get("files")),
+                    extract_saved_file_rows(
+                        str(terminal_payload.get("text") or "").strip()
+                    ),
+                )
             updated = False
             for idx in range(len(manager_progress_steps) - 1, -1, -1):
                 row = manager_progress_steps[idx]
@@ -1110,7 +1228,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
 
     current_task = asyncio.current_task()
     await task_manager.register_task(user_id, current_task, description="AI 对话")
-    ctx.user_data["manager_progress_callback"] = _manager_progress_callback
+    set_runtime_callback(ctx, "manager_progress_callback", _manager_progress_callback)
 
     try:
         message_history = []
@@ -1197,6 +1315,10 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         # 5. 发送最终回复并入库
         if final_text_response:
             ui_payload = _pop_pending_ui_payload(ctx.user_data)
+            pending_result_files = merge_file_rows(
+                pending_manager_files,
+                extract_saved_file_rows(final_text_response),
+            )
             streamed_delivery = (
                 stream_segment_enabled
                 and stream_chunks_sent > 0
@@ -1263,6 +1385,9 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                     )
                     sent_msg = await ctx.edit_message(msg_id, rendered_response)
 
+            if pending_result_files:
+                await _send_result_files(ctx, pending_result_files)
+
             # 记录模型回复到上下文 (Explicitly save final response)
             await add_message(ctx, user_id, "model", final_text_response)
 
@@ -1293,7 +1418,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                 msg_id, f"❌ Agent 运行出错：{e}\n\n请尝试 /new 重置对话。"
             )
     finally:
-        ctx.user_data.pop("manager_progress_callback", None)
+        pop_runtime_callback(ctx, "manager_progress_callback")
         task_manager.unregister_task(user_id)
 
 
@@ -1307,7 +1432,7 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
     from core.config import is_user_allowed
 
     if not await is_user_allowed(user_id):
-        await ctx.reply(f"⛔ 抱歉，您没有使用 AI 功能的权限。\n您的 ID 是: `{user_id}`")
+        logger.info("Ignoring unauthorized image message from user_id=%s", user_id)
         return
 
     try:
@@ -1396,6 +1521,7 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
 
         if final_text_response:
             ui_payload = _pop_pending_ui_payload(ctx.user_data)
+            pending_result_files = extract_saved_file_rows(final_text_response)
             rendered_response = await process_and_send_code_files(
                 ctx, final_text_response
             )
@@ -1445,6 +1571,9 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
                 except Exception as del_e:
                     logger.warning(f"Failed to delete thinking_msg: {del_e}")
 
+            if pending_result_files:
+                await _send_result_files(ctx, pending_result_files)
+
             await add_message(ctx, user_id, "model", final_text_response)
             await increment_stat(user_id, "photo_analyses")
         else:
@@ -1474,7 +1603,7 @@ async def handle_ai_video(ctx: UnifiedContext) -> None:
     from core.config import is_user_allowed
 
     if not await is_user_allowed(user_id):
-        await ctx.reply(f"⛔ 抱歉，您没有使用 AI 功能的权限。\n您的 ID 是: `{user_id}`")
+        logger.info("Ignoring unauthorized video message from user_id=%s", user_id)
         return
 
     try:
@@ -1534,7 +1663,7 @@ async def handle_ai_video(ctx: UnifiedContext) -> None:
             }
         ]
 
-        model_to_use = get_image_model() or get_current_model()
+        model_to_use = get_vision_model() or get_current_model()
         client_to_use = get_client_for_model(model_to_use, is_async=True)
         if client_to_use is None:
             raise RuntimeError("OpenAI async client is not initialized")
@@ -1598,6 +1727,7 @@ async def handle_sticker_message(ctx: UnifiedContext) -> None:
     from core.config import is_user_allowed
 
     if not await is_user_allowed(user_id):
+        logger.info("Ignoring unauthorized sticker message from user_id=%s", user_id)
         return  # Silent ignore for stickers if unauthorized? Or reply?
 
     try:
@@ -1652,7 +1782,7 @@ async def handle_sticker_message(ctx: UnifiedContext) -> None:
             }
         ]
 
-        model_to_use = get_image_model() or get_current_model()
+        model_to_use = get_vision_model() or get_current_model()
         client_to_use = get_client_for_model(model_to_use, is_async=True)
         if client_to_use is None:
             raise RuntimeError("OpenAI async client is not initialized")

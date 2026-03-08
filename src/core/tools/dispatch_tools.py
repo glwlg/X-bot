@@ -16,6 +16,7 @@ class DispatchTools:
         instruction: str,
         worker_id: str = "",
         backend: str = "",
+        priority: Any = None,
         source: str = "manager_dispatch",
         metadata: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
@@ -23,6 +24,7 @@ class DispatchTools:
             instruction=instruction,
             worker_id=worker_id,
             backend=backend,
+            priority=priority,
             source=source,
             metadata=metadata,
         )
@@ -43,6 +45,10 @@ class DispatchTools:
             worker_id=safe_worker_id,
             dead_letter_limit=min(20, safe_limit),
         )
+        worker_metrics = await dispatch_queue.worker_metrics(
+            worker_id=safe_worker_id,
+            limit=max(20, safe_limit),
+        )
         rows = [item.to_dict() for item in tasks]
         dead_letter = int(delivery_health.get("dead_letter") or 0)
         retrying = int(delivery_health.get("retrying") or 0)
@@ -51,9 +57,11 @@ class DispatchTools:
             "worker_id": safe_worker_id,
             "tasks": rows,
             "delivery_health": delivery_health,
+            "worker_metrics": worker_metrics,
             "summary": (
                 f"{len(rows)} recent worker task(s); "
-                f"dead_letter={dead_letter}; retrying={retrying}"
+                f"dead_letter={dead_letter}; retrying={retrying}; "
+                f"queue_depth={int(worker_metrics.get('queue_depth') or 0)}"
             ),
         }
 

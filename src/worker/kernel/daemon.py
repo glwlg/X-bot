@@ -21,6 +21,10 @@ class WorkerKernelDaemon:
             0.05,
             float(os.getenv("WORKER_TASK_CANCEL_POLL_SEC", "0.5")),
         )
+        self.lease_renew_sec = max(
+            5.0,
+            float(os.getenv("WORKER_TASK_LEASE_RENEW_SEC", "20")),
+        )
         self.max_concurrency = max(
             1,
             int(os.getenv("WORKER_KERNEL_MAX_CONCURRENCY", "2")),
@@ -110,6 +114,20 @@ class WorkerKernelDaemon:
                 return current
             await asyncio.sleep(self.cancel_poll_sec)
         return None
+
+    async def _renew_task_lease(self, task_id: str) -> None:
+        safe_task_id = str(task_id or "").strip()
+        if not safe_task_id:
+            return
+        while not self._stop_event.is_set():
+            await asyncio.sleep(self.lease_renew_sec)
+            ok = await self.queue.heartbeat_task(
+                task_id=safe_task_id,
+                claimer=self.worker_identity,
+                note="worker_kernel_lease",
+            )
+            if not ok:
+                return
 
     def _annotate_result(
         self,
@@ -210,6 +228,7 @@ class WorkerKernelDaemon:
         )
         cancel_watch_task: asyncio.Task | None = None
         run_program_task: asyncio.Task | None = None
+        lease_task: asyncio.Task | None = None
         try:
             program = self.loader.load_program(program_id=program_id, version=version)
             run_program_task = asyncio.create_task(
@@ -227,8 +246,12 @@ class WorkerKernelDaemon:
                 self._wait_for_task_cancel(task.task_id),
                 name=f"worker-cancel-watch-{task.task_id}",
             )
+            lease_task = asyncio.create_task(
+                self._renew_task_lease(task.task_id),
+                name=f"worker-lease-{task.task_id}",
+            )
             done, _pending = await asyncio.wait(
-                {run_program_task, cancel_watch_task},
+                {run_program_task, cancel_watch_task, lease_task},
                 return_when=asyncio.FIRST_COMPLETED,
             )
 
@@ -291,10 +314,23 @@ class WorkerKernelDaemon:
                     await self.queue.finish_task(task_id=task.task_id, result=result)
                     return
 
+            if lease_task in done and run_program_task is not None and not run_program_task.done():
+                logger.warning(
+                    "Worker kernel lease renewal stopped unexpectedly task_id=%s",
+                    task.task_id,
+                )
+
             if cancel_watch_task and not cancel_watch_task.done():
                 cancel_watch_task.cancel()
                 try:
                     await cancel_watch_task
+                except asyncio.CancelledError:
+                    pass
+
+            if lease_task and not lease_task.done():
+                lease_task.cancel()
+                try:
+                    await lease_task
                 except asyncio.CancelledError:
                     pass
 
@@ -346,6 +382,12 @@ class WorkerKernelDaemon:
                 cancel_watch_task.cancel()
                 try:
                     await cancel_watch_task
+                except asyncio.CancelledError:
+                    pass
+            if lease_task and not lease_task.done():
+                lease_task.cancel()
+                try:
+                    await lease_task
                 except asyncio.CancelledError:
                     pass
         result = self._annotate_result(

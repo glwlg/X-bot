@@ -603,13 +603,19 @@ async def check_rss_updates_job():
     await check_and_send_rss_updates(subscriptions)
 
 
-async def trigger_manual_rss_check(user_id: int) -> str:
+async def trigger_manual_rss_check(
+    user_id: int,
+    *,
+    suppress_busy_message: bool = False,
+) -> str:
     """
     [Tool Logic] 手动触发特定用户的 RSS 检查
     返回格式化后的更新内容文本，不直接发送。
     """
     # 获取锁
     if _rss_check_lock.locked():
+        if suppress_busy_message:
+            return ""
         return "⚠️ 正在进行定时更新检查，请稍后再试。"
 
     async with _rss_check_lock:

@@ -68,6 +68,7 @@ class ToolAccessStore:
         "group:coding",
         "group:management",
         "group:automation",
+        "group:skill-admin",
     ]
 
     def __init__(self):
@@ -206,7 +207,14 @@ class ToolAccessStore:
                 worker_deny = list(
                     (worker_default.get("tools") or {}).get("deny") or []
                 )
-                if worker_allow == ["group:all"] and worker_deny == ["group:coding"]:
+                legacy_worker_deny_sets = [
+                    {"group:coding"},
+                    {"group:coding", "group:management", "group:automation"},
+                ]
+                if worker_allow == ["group:all"] and any(
+                    set(worker_deny) == item and len(worker_deny) == len(item)
+                    for item in legacy_worker_deny_sets
+                ):
                     worker_default["tools"]["deny"] = list(self.WORKER_DEFAULT_DENY)
                 merged["worker_default"] = worker_default
 
@@ -221,9 +229,10 @@ class ToolAccessStore:
                         deny_entries = list(
                             (normalized.get("tools") or {}).get("deny") or []
                         )
-                        if allow_entries == ["group:all"] and deny_entries == [
-                            "group:coding"
-                        ]:
+                        if allow_entries == ["group:all"] and any(
+                            set(deny_entries) == item and len(deny_entries) == len(item)
+                            for item in legacy_worker_deny_sets
+                        ):
                             normalized["tools"]["deny"] = list(self.WORKER_DEFAULT_DENY)
                         normalized_workers[str(wid)] = normalized
                     merged["workers"] = normalized_workers
@@ -254,8 +263,40 @@ class ToolAccessStore:
             "group:memory": "记忆类：用户 MEMORY.md",
             "group:skill-admin": "技能治理类：skill_manager",
             "group:skills": "扩展技能总开关：ext_*",
-            "group:management": "管理调度类：list_workers/dispatch_worker/worker_status",
+            "group:management": "管理调度类：worker dispatch/status/software_delivery 等 manager 直连工具",
         }
+
+    @staticmethod
+    def _normalize_group_entries(value: Any) -> List[str]:
+        rows: List[str] = []
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, list):
+            return rows
+        for item in value:
+            token = str(item or "").strip().lower()
+            if not token:
+                continue
+            if not token.startswith("group:"):
+                token = f"group:{token}"
+            if token not in rows:
+                rows.append(token)
+        return rows
+
+    def _dynamic_skill_groups(self, skill_name: str) -> List[str]:
+        safe_skill = str(skill_name or "").strip().lower()
+        if not safe_skill:
+            return []
+        try:
+            from core.skill_loader import skill_loader
+
+            info = skill_loader.get_skill(safe_skill) or {}
+            groups = self._normalize_group_entries(info.get("policy_groups"))
+            if groups:
+                return groups
+        except Exception:
+            pass
+        return sorted(SKILL_FUNCTION_GROUPS.get(safe_skill, set()))
 
     def groups_for_tool(self, tool_name: str, *, kind: str = "tool") -> List[str]:
         name = str(tool_name or "").strip().lower()
@@ -279,11 +320,28 @@ class ToolAccessStore:
         if name in {"coding_backend", "coding-backend"}:
             groups.add("group:coding")
             groups.add("group:execution")
-        if name in SKILL_FUNCTION_GROUPS:
+        dynamic_skill_groups = self._dynamic_skill_groups(name)
+        if dynamic_skill_groups:
             groups.add("group:skills")
             groups.add(f"group:skill:{name}")
-            for item in SKILL_FUNCTION_GROUPS.get(name, set()):
+            for item in dynamic_skill_groups:
                 groups.add(item)
+        try:
+            from core.skill_loader import skill_loader
+
+            exported = skill_loader.get_tool_export(name)
+        except Exception:
+            exported = None
+        if isinstance(exported, dict):
+            skill_name = str(exported.get("skill_name") or "").strip().lower()
+            if skill_name:
+                groups.add("group:skills")
+                groups.add("group:execution")
+                groups.add(f"group:skill:{skill_name}")
+                for item in self._normalize_group_entries(
+                    exported.get("policy_groups")
+                ) or self._dynamic_skill_groups(skill_name):
+                    groups.add(item)
         if name in {"bash", "exec", "process"}:
             groups.add("group:execution")
             groups.add("group:primitives")
@@ -301,7 +359,7 @@ class ToolAccessStore:
             groups.add("group:skills")
             skill_name = name.removeprefix("ext_")
             groups.add(f"group:skill:{skill_name}")
-            for item in SKILL_FUNCTION_GROUPS.get(skill_name, set()):
+            for item in self._dynamic_skill_groups(skill_name):
                 groups.add(item)
             if any(
                 key in skill_name for key in ("browser", "search", "web", "research")

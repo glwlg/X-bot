@@ -1,0 +1,88 @@
+{
+  "model": {
+    "primary": "openai/gpt-4.1-mini",
+    "routing": "openai/gpt-4.1-mini",
+    "vision": "openai/gpt-4.1",
+    "image_generation": "openai/gpt-image-1",
+    "voice": "openai/gpt-4.1-mini"
+  },
+  "models": {
+    "primary": {
+      "openai/gpt-4.1-mini": {},
+      "openai/gpt-4.1": {}
+    },
+    "routing": {
+      "openai/gpt-4.1-mini": {}
+    },
+    "vision": {
+      "openai/gpt-4.1": {}
+    },
+    "image_generation": {
+      "openai/gpt-image-1": {}
+    },
+    "voice": {
+      "openai/gpt-4.1-mini": {}
+    }
+  },
+  "mode": "merge",
+  "providers": {
+    "openai": {
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "YOUR_API_KEY_HERE",
+      "api": "openai-completions",
+      "models": [
+        {
+          "id": "gpt-4.1-mini",
+          "name": "gpt-4.1-mini",
+          "reasoning": false,
+          "input": [
+            "text",
+            "image",
+            "voice"
+          ],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 128000,
+          "maxTokens": 32768
+        },
+        {
+          "id": "gpt-4.1",
+          "name": "gpt-4.1",
+          "reasoning": true,
+          "input": [
+            "text",
+            "image"
+          ],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 128000,
+          "maxTokens": 32768
+        },
+        {
+          "id": "gpt-image-1",
+          "name": "gpt-image-1",
+          "reasoning": false,
+          "input": [
+            "text"
+          ],
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cacheRead": 0,
+            "cacheWrite": 0
+          },
+          "contextWindow": 0,
+          "maxTokens": 0
+        }
+      ]
+    }
+  }
+}

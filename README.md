@@ -1,185 +1,272 @@
 # X-Bot
 
-**X-Bot** 是一个具有 **自进化能力** 的全能型 AI 智能体，集成了媒体下载、多模态对话、文档分析、语音交互和 AI 绘图功能。
+X-Bot 是一个多平台 AI Bot，当前采用 `Manager + Worker + API` 三服务拆分架构。
 
-它不仅仅是一个下载工具或简单的 AI 问答机器人，而是一个能够通过自主学习不断扩展能力的**智能生命体**。
+- `x-bot`：Core Manager，负责对话入口、工具编排、技能加载、任务派发、进度回传、受控软件交付
+- `x-bot-worker`：默认 Worker，负责异步任务执行、队列消费、结果落盘
+- `x-bot-api`：FastAPI + SPA，提供 Web/API 能力
 
-![logo](logo.png) 
+当前版本已经不是“单容器万能 bot”。代码、镜像、依赖和运行职责都按这三类服务拆开维护。
 
-## 🏗️ 系统架构
+![logo](logo.png)
 
-> **开发者说明**：详细的系统架构图、模块说明及开发指南，请参阅独立的开发文档：
-> 
-> 📚 **[X-Bot 开发手册 (DEVELOPMENT.md)](DEVELOPMENT.md)**
-> 🔍 **[Web Search 服务配置指南 (docs/web_search_config.md)](docs/web_search_config.md)**
+## 当前能力
 
-## 🌍 支持平台
+- 多平台接入：Telegram、Discord、钉钉 Stream，以及独立 Web/API 服务
+- 多模态交互：文本、图片、视频、语音、文档输入
+- Manager/Worker 异步执行：普通任务可派发给 worker，结果和过程会回传到当前对话
+- Skill 体系：技能放在 `skills/` 下，通过 `SKILL.md` 描述 SOP、参数契约、权限分组和可导出的 direct tool
+- 受控编码链路：代码类变更应走 `software_delivery`，支持 `target_service`、`rollout`、`validate_only`
+- 文件系统优先状态：聊天、记忆、任务、权限、队列都持久化在 `data/`
 
-X-Bot 现已支持多平台运行，一套代码，无缝体验：
+## 架构概览
 
-- **Telegram Bot**: 经典体验，功能最全，支持复杂的会话和菜单交互。
-- **Discord Bot**: 全新支持，流畅的 AI 对话，高清视频下载，原生 Button 交互。
+### 1. Core Manager
 
+Manager 是当前系统的统一入口，负责：
 
-## ✨ 核心功能
+- 接收平台消息和命令
+- 组装提示词、SOUL、工具面和技能信息
+- 按权限注入 `read/write/edit/bash/load_skill` 与 skill 导出的 direct tool
+- 对普通异步任务做 worker 派发、跟踪和结果整合
+- 对代码类任务执行 `software_delivery`
+- 把 manager 自身过程和 worker 过程回传给用户
 
-### 🤖 强大的 AI 能力
--   **多轮智能对话**：基于 OpenAI 对话模型，支持深层上下文理解。
--   **🧠 长期记忆 (New)**：
-    -   **个性化记忆**：自动记住你的偏好、习惯和重要信息（如“我住在北京”，“不要吃辣”）。
-    -   **隐私隔离**：采用**物理级文件隔离**架构，每个用户的记忆存储在独立的加密空间，绝无数据混淆风险。
--   **多模态分析**：
-    -   **图片分析**：发送图片，AI 识别内容并回答问题。
-    -   **视频分析**：发送视频，AI 理解画面并进行总结或问答。
-    -   **语音/音频分析**：支持语音消息及 .m4a/.mp3 等音频文件，自动转录并回复（支持 Caption 指令）。
-    -   **文档分析**：支持 PDF 和 DOCX 文档，提取内容并回答相关问题。
--   **🌐 高可靠网络搜索 (New)**：内置 Exa, Tavily, DuckDuckGo, SearXNG 等全免费容灾后撤（Fallback）搜索引擎池，并智能截取网页摘要。
--   **🎨 AI 绘图 (New)**：
-    -   **官方模型**：集成 OpenAI **gpt-image-1**，生成质量极高。
-    -   **简单指令**：只需说 "画一只猫" 或 "生成赛博朋克风格的街道"。
-    -   **独立通道**：支持配置独立的官方 API Key，与对话 LLM 隔离，确保稳定性。
+### 2. Worker Kernel
 
-### 📹 全能媒体下载
--   **支持平台**：YouTube, X (Twitter), Instagram, TikTok, Bilibili 等。
--   **多种格式**：支持下载高清视频或仅提取音频 (MP3)。
--   **智能处理**：
-    -   **秒传技术**：智能文件缓存与去重，已下载内容无需重复下载。
-    -   **大文件提示**：若视频/音频超过 Telegram 20MB 下载限制，Bot 会给出友好提示。
+Worker 从共享队列消费任务，执行默认 program，并把结果写回：
 
-### 📊 数据持久化
--   **文件系统存储**：用户对话、订阅、提醒与偏好数据持久化到 `data/` 目录。
--   **Docker 卷映射**：重启容器不丢失任何数据。
+- 任务队列：`data/system/dispatch/tasks.jsonl`
+- 结果队列：`data/system/dispatch/results.jsonl`
+- Worker 注册表：`data/WORKERS.json`
 
-## ✨ 进阶功能
+### 3. Skills
 
-### 📈 股票盯盘 (New)
--   **实时监控**：在交易时段（美股/港股/A股）实时监控自选股价格。
--   **智能推送**：当股价发生显著波动时自动推送消息。
--   **指令**：使用 `/watchlist` 管理自选股。
+Skill 是一等运行时扩展，位于：
 
-### 🌍 沉浸式翻译
--   **双向翻译**：开启后，自动将外语翻译为中文，中文翻译为英文。
--   **无缝体验**：使用 `/translate` 开启/关闭，专为跨语言交流设计。
+- `skills/builtin/`
+- `skills/learned/`
 
-### 📢 订阅监控
--   **RSS/关键词监控**：使用 `/monitor <关键词>` 或 `/subscribe <URL>` 订阅感兴趣的内容。
--   **管理订阅**：
-    -   `监控列表` / `订阅列表`：查看当前所有任务。
-    -   `取消监控 <关键词>` / `取消订阅 <URL>`：移除不再需要的任务。
--   **自动推送**：Bot 每 30 分钟检查一次，发现新内容自动推送到聊天窗口。
+默认调用路径是：
 
-### 💡 需求收集
--   **提交想法**：有新功能想要？使用 `/feature` 进入交互式需求提交模式。
--   **AI 生成文档**：Bot 会协助你完善需求，并自动生成结构化的需求文档。
+1. `load_skill`
+2. 模型读取 `SKILL.md`
+3. 按 SOP 使用 `bash` 执行 `scripts/execute.py`
 
-### 📓 NotebookLM 知识库 (New)
--   **个人知识库**：上传 PDF/网页/文本，构建专属知识库。
--   **Deep Dive 播客**：一键生成两人对话风格的英文播客，深入浅出讲解复杂内容。
--   **专业问答**：基于可靠来源回答问题，杜绝幻觉，并提供引用来源。
--   **指令**：说 "NotebookLM" 或 "/help" 查看详细指令。
+如果 skill 在 frontmatter 中声明了 `tool_exports`，它还可以被动态注入为 direct tool，而不需要再在核心代码里硬编码注册。
 
-### 🛳️ 智能部署管家 (New)
--   **自然语言部署**:
-    -   发送 "部署项目"，内置的 **Smart Deployment Manager** 会自动接管。
-    -   **自主规划**: 自动拉取代码、生成配置、解决端口冲突、执行健康检查。
-    -   **安全策略**: 强制使用 20000+ 端口，优先 Docker Compose，杜绝随意构建镜像。
-    -   **静默体验**: 执行过程零打扰，仅在部署成功后汇报访问地址。
--   **服务管理**:
-    -   **查看状态**：发送 "列出运行的服务"，按项目分组显示容器状态。
-    -   **安全停止**：发送 "停止 xx 服务"，安全停止（Stop）容器，**绝不删除**数据。
+## 目录结构
 
-### 💬 Agentic Core - 真正的智能体 (New)
--   **所想即所得**：无需死记硬背指令，直接说出你的需求。
--   **智能决策**：
-    -   发送 "下载这个视频 https://..." -> 自动调用下载工具
-    -   发送 "10分钟后提醒我喝水" -> 自动设置提醒
-    -   发送 "部署仓库 https://..." -> 自动部署 Docker 服务
-    -   发送 "列出运行的服务" -> 自动查询 Docker 状态
-    -   发送 "订阅这个RSS https://..." -> 自动添加订阅
-    -   发送 "监控关键词 AI" -> 自动订阅 Google News
-    -   发送 "帮我关注英伟达股票" -> 自动添加自选股
-    -   发送 "列出我的订阅" -> 自动查询用户状态文件
-
-### 🧑‍💻 Manager 软件交付能力 (New)
--   **需求到代码**：Manager 可根据自然语言需求生成并修改项目代码。
--   **Issue 驱动开发**：支持读取 GitHub Issue（正文/标签/评论）并按问题上下文实施修复或功能开发。
--   **自动交付链路**：支持实现后自动验证、提交代码、推送分支、创建 PR，并可回写 Issue 评论。
--   **任务可恢复**：开发任务状态持久化，支持中断后继续执行。
-
-### 🧬 Skill 自进化系统 (V2)
--   **无师自通**：遇到未知指令（如 "查询 GitHub 最新 Commit"），Bot 会自动编写 Python 代码并热加载新技能，实现即时能力扩展。
--   **技能组合**：AI 懂得像搭积木一样组合现有技能。例如 "搜索并订阅 RSS" 会自动串联 `web_search` 和 `rss_subscribe`。
--   **自我修复**：如果生成的代码报错，Bot 会自动阅读错误日志、修正代码并重启服务，直至运行成功。
--   **深度研究**：支持 Deep Research 模式，自主进行大规模信息搜集、阅读与汇总，生成长篇深度报告。
--   **安全沙箱**：自动生成的代码运行在受限环境中，确保系统安全。
-
-## 🚀 快速部署
-
-### 1. 准备环境
-确保已安装 [Docker](https://docs.docker.com/get-docker/) 和 [Docker Compose](https://docs.docker.com/compose/install/)。
-
-### 2. 获取配置
-创建一个 `.env` 文件（参考 `.env.example`）：
-
-```env
-# Telegram (Optional)
-TELEGRAM_BOT_TOKEN="你的 Telegram Bot Token"
-
-# Discord (Optional)
-DISCORD_BOT_TOKEN="你的 Discord Bot Token"
-
-# OpenAI (https://platform.openai.com/)
-LLM_API_KEY="你的 API Key"
-CORE_MODEL="gpt-4o-mini"
-ROUTING_MODEL="gpt-4o-mini"
-CREATOR_MODEL="gpt-4o" # 用于生成 Skill 代码的强力模型
-OPENAI_IMAGE_MODEL="gpt-image-1"
+```text
+.
+├── src/
+│   ├── api/          # FastAPI + SPA
+│   ├── core/         # 编排、提示词、工具装配、状态访问
+│   ├── handlers/     # 命令和消息入口
+│   ├── manager/      # 派发、relay、software delivery
+│   ├── platforms/    # Telegram / Discord / DingTalk 适配层
+│   ├── services/     # AI、下载、搜索等外部服务集成
+│   ├── shared/       # manager/worker 共用协议与队列
+│   └── worker/       # worker kernel 与 program runtime
+├── skills/           # builtin + learned skills
+├── data/             # 持久化状态
+├── config/           # 部署与运行时配置
+├── tests/            # pytest 测试
+├── docker-compose.yml
+├── README.md
+└── DEVELOPMENT.md
 ```
 
-### 3. 一键启动
+## 快速开始
+
+### 1. 准备配置
+
+复制环境变量模板：
+
+```bash
+cp .env.example .env
+cp config/models.example.json config/models.json
+```
+
+然后分两层配置：
+
+1. `.env`：平台接入、运行时路径、调度和发布相关配置
+2. `config/`：模型提供商、默认模型选择、部署目标等结构化配置
+
+`.env` 里至少按需填写这些项目：
+
+- `TELEGRAM_BOT_TOKEN`
+- `DISCORD_BOT_TOKEN`
+- `DINGTALK_CLIENT_ID`
+- `DINGTALK_CLIENT_SECRET`
+- `ADMIN_USER_IDS`
+- `SEARXNG_URL`
+
+如果要启用 Manager 的本地发布链路，还需要：
+
+- `X_DEPLOYMENT_STAGING_PATH`
+- `DEV_WORKSPACE_ROOT`
+- `DEV_TASKS_ROOT`
+- `GITHUB_TOKEN`
+
+`X_DEPLOYMENT_STAGING_PATH` 必须是宿主机绝对路径，并且容器内外路径一致。当前 Manager 是通过宿主机 Docker 做发布，不是容器内自建一层 Docker-in-Docker。
+
+### 1.1 `config/` 配置说明
+
+当前 `config/` 下有两个核心配置文件：
+
+- `config/models.json`
+- `config/models.example.json`
+- `config/deployment_targets.yaml`
+
+#### `config/models.json`
+
+模型配置已经统一迁移到 `config/models.json`，不再通过环境变量选择模型或 provider。
+
+仓库里默认提交的是示例文件 `config/models.example.json`。首次配置时请复制为 `config/models.json` 再修改：
+
+```bash
+cp config/models.example.json config/models.json
+```
+
+这个文件负责三件事：
+
+1. 选择默认模型
+   - `model.primary`
+   - `model.routing`
+   - `model.vision`
+   - `model.image_generation`
+   - `model.voice`
+2. 定义模型池
+   - `models.primary`
+   - `models.routing`
+   - `models.vision`
+   - `models.image_generation`
+3. 定义 provider 连接信息
+   - `providers.<provider>.baseUrl`
+   - `providers.<provider>.apiKey`
+   - `providers.<provider>.api`
+   - `providers.<provider>.models[]`
+
+其中：
+
+- `vision` 是看图/看视频/看表情包用的多模态理解模型
+- `image_generation` 是文生图模型
+- 旧字段 `image` 现在只作为 `vision` 的兼容别名，新的配置不要再用它表达生图模型
+
+如果你要切换模型或接入新的 provider，应该改这里，而不是改 `.env`。
+
+这个文件通常还会包含 provider 的密钥信息，不要把真实密钥提交到公开仓库。
+
+如果想把模型配置文件放到别处，可以在 `.env` 中设置：
+
+```bash
+MODELS_CONFIG_PATH="/absolute/path/to/models.json"
+```
+
+#### `config/deployment_targets.yaml`
+
+这个文件定义 `software_delivery rollout` 对应的服务映射关系，例如：
+
+- `manager -> x-bot / x-bot-manager`
+- `worker -> x-bot-worker / x-bot-worker`
+- `api -> x-bot-api / x-bot-api`
+
+如果你的 compose service 名或镜像名变了，应该改这个文件，而不是改发布代码。
+
+### 2. 安装依赖
+
+本地开发：
+
+```bash
+uv sync
+```
+
+容器运行：
+
 ```bash
 docker compose up --build -d
 ```
 
-### 4. 数据管理
-所有持久化数据存储在 `./data`（文件状态）、`./downloads`（媒体）和 `./skills`（技能）目录。
+### 3. 启动方式
 
-### 5. 权限管理
- Bot 启动后，管理员可以使用以下命令动态管理允许使用的用户白名单：
- - `/adduser <user_id> [备注]` : 添加用户到白名单
- - `/deluser <user_id>` : 从白名单移除用户
- - 所有白名单用户的权限数据将持久化保存在 `data/system/repositories/allowed_users.md`。
+本地直接运行：
 
-### 6. Worker 执行层与 Coding Backend
-当前版本采用 Manager/Worker 硬分离架构：Manager 负责调度和编程能力，Worker 负责异步执行任务。
-
-1. 选择 Worker 后端（示例）：
 ```bash
-/worker backend worker-main codex
-# 或
-/worker backend worker-main gemini-cli
+uv run python src/main.py
+uv run python src/worker_main.py
+uv run uvicorn api.main:app --host 0.0.0.0 --port 8764
 ```
 
-2. 若使用 `gemini-cli`，可在 `.env` 设置 `GEMINI_API_KEY` 并重启容器生效。
+容器方式：
 
-3. `/worker auth` 指令已移除，不再通过聊天命令管理 Worker 认证流程。
+```bash
+docker compose up --build -d
+docker compose logs -f x-bot
+docker compose logs -f x-bot-worker
+docker compose logs -f x-bot-api
+```
 
-## 🤖 使用指南
+## 常用命令
 
-### 常用命令
--   `/start` - 呼出主菜单
--   `/new` - 开启新话题（清除上下文）
--   `/image` - 快速进入画图模式
--   `/teach` - 教 Bot 新能力 (Core!)
--   `/skills` - 查看拥有的能力
--   `/feature` - 提交新功能需求
--   `/help` - 查看帮助信息
--   `/adduser` / `/deluser` - 用户权限管理（仅管理员）
+当前默认注册的通用命令包括：
 
-### 交互方式
--   **直接对话**：像和真人聊天一样，直接说出你的需求。
--   **教它做事**：如果它不会，试着说 "/teach 教你查汇率"。
--   **多模态**：发送图片问 "这是什么"，发送视频说 "总结一下"。
+- `/start`
+- `/new`
+- `/help`
+- `/chatlog`
+- `/skills`
+- `/reload_skills`
+- `/translate`
+- `/stop`
+- `/heartbeat`
+- `/worker`
+- `/acc`
 
----
-Enjoy X-Bot! 🚀
+Telegram 还保留：
+
+- `/feature`
+- `/teach`
+
+其中 `/teach` 现在只是过渡入口，会提示改用自然语言需求或 `software_delivery`/skill 流程，不再走旧版“直接生成扩展代码”的实现。
+
+## 运行时目录
+
+- `data/`：状态、任务、权限、聊天记录、心跳、software delivery 任务
+- `downloads/`：媒体下载产物
+- `skills/`：技能源码与 learned skills
+- `config/`：结构化运行配置，当前主要包括 `models.json` 和 `deployment_targets.yaml`
+
+## 进度回传
+
+- Worker 进度会通过 manager relay 回传到原对话
+- Manager 自身工具过程也会在对话内输出
+- Telegram 上优先使用 `sendMessageDraft` 做单条草稿流式刷新，避免刷屏
+
+## 镜像与依赖拆分
+
+当前 `docker-compose.yml` 使用三个独立 target：
+
+- `manager-runtime`
+- `worker-runtime`
+- `api-runtime`
+
+Python 依赖也按角色拆分在 `pyproject.toml`：
+
+- `manager`
+- `worker`
+- `api`
+- `optional-skill-runtime`
+
+这意味着后续可以只定向重建 `x-bot-worker` 或 `x-bot-api`，不再强制三者共用一张大镜像。
+
+## 开发文档
+
+- 架构与边界约束：[DEVELOPMENT.md](DEVELOPMENT.md)
+- Web 搜索配置：[docs/web_search_config.md](docs/web_search_config.md)
+
+## 当前维护原则
+
+- 文档以当前实现为准，不再保留未落地愿景描述
+- 代码类改动默认走受控 `software_delivery`
+- 新增可直接暴露给模型的 skill tool，优先通过 `SKILL.md` 的 `tool_exports` 声明，而不是改核心硬编码

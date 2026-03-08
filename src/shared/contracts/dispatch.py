@@ -23,6 +23,7 @@ class TaskEnvelope:
     instruction: str
     source: str
     backend: str = ""
+    priority: int = 0
     status: TaskStatus = "pending"
     metadata: Dict[str, Any] = field(default_factory=dict)
     created_at: str = field(default_factory=now_iso)
@@ -41,6 +42,7 @@ class TaskEnvelope:
             "instruction": str(self.instruction or "").strip(),
             "source": str(self.source or "manager_dispatch").strip(),
             "backend": str(self.backend or "").strip(),
+            "priority": int(self.priority or 0),
             "status": str(self.status or "pending").strip().lower(),
             "metadata": dict(self.metadata or {}),
             "created_at": str(self.created_at or now_iso()),
@@ -61,6 +63,7 @@ class TaskEnvelope:
         instruction = str(data.get("instruction") or "").strip()
         source = str(data.get("source") or "manager_dispatch").strip()
         backend = str(data.get("backend") or "").strip()
+        priority = int(data.get("priority") or 0)
         raw_status = str(data.get("status") or "pending").strip().lower()
         status: TaskStatus
         if raw_status in {"pending", "running", "done", "failed", "cancelled"}:
@@ -74,6 +77,7 @@ class TaskEnvelope:
             instruction=instruction,
             source=source,
             backend=backend,
+            priority=priority,
             status=status,
             metadata=dict(metadata) if isinstance(metadata, dict) else {},
             created_at=str(data.get("created_at") or now_iso()),

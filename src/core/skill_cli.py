@@ -13,7 +13,14 @@ from core.platform.models import Chat, MessageType, UnifiedContext, UnifiedMessa
 
 def prepare_default_env(repo_root: Path) -> None:
     data_dir = (repo_root / "data").resolve()
+    raw_models_config_path = str(
+        os.getenv("MODELS_CONFIG_PATH", "config/models.json") or "config/models.json"
+    ).strip()
+    models_config_path = Path(raw_models_config_path)
+    if not models_config_path.is_absolute():
+        models_config_path = (repo_root / models_config_path).resolve()
     os.environ.setdefault("DATA_DIR", str(data_dir))
+    os.environ["MODELS_CONFIG_PATH"] = str(models_config_path)
     os.environ.setdefault(
         "MANAGER_DISPATCH_ROOT",
         str((data_dir / "system" / "dispatch").resolve()),
@@ -71,7 +78,7 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--output-dir",
         default="",
-        help="Directory for files emitted by the skill. Defaults to current directory.",
+        help="Directory for files emitted by the skill. Defaults to DATA_DIR/user/skills/<skill>/outputs.",
     )
     parser.add_argument(
         "--raw-json",
@@ -139,10 +146,11 @@ async def run_execute_cli(
     ctx = build_context_from_args(args)
     result = execute_fn(ctx, params, runtime=None)
     rendered = await _collect_result(result)
+    output_dir = _resolve_output_dir(args, execute_fn=execute_fn)
     if bool(getattr(args, "raw_json", False)):
         print(json.dumps(rendered, ensure_ascii=False, indent=2, default=_json_default))
         return _exit_code_from_rendered(rendered)
-    return _render_default(rendered, output_dir=str(getattr(args, "output_dir", "") or ""))
+    return _render_default(rendered, output_dir=output_dir)
 
 
 async def _collect_result(result: Any) -> Any:
@@ -197,6 +205,47 @@ def _save_files(files: Any, *, output_dir: str) -> list[str]:
             target.write_text(str(payload), encoding="utf-8")
         saved_paths.append(str(target))
     return saved_paths
+
+
+def _resolve_output_dir(args: argparse.Namespace, *, execute_fn: Any) -> str:
+    explicit = str(getattr(args, "output_dir", "") or "").strip()
+    if explicit:
+        return explicit
+
+    configured = str(os.getenv("X_BOT_SKILL_OUTPUT_DIR", "") or "").strip()
+    if configured:
+        return configured
+
+    data_dir = Path(str(os.getenv("DATA_DIR", "data") or "data")).expanduser()
+    if not data_dir.is_absolute():
+        data_dir = data_dir.resolve()
+
+    skill_name = _infer_skill_name(execute_fn)
+    return str((data_dir / "user" / "skills" / skill_name / "outputs").resolve())
+
+
+def _infer_skill_name(execute_fn: Any) -> str:
+    code_obj = getattr(execute_fn, "__code__", None)
+    filename = str(getattr(code_obj, "co_filename", "") or "").strip()
+    if filename:
+        path = Path(filename).resolve()
+        parts = list(path.parts)
+        for root_name in ("builtin", "learned"):
+            if root_name in parts:
+                idx = parts.index(root_name)
+                if idx + 1 < len(parts):
+                    candidate = str(parts[idx + 1] or "").strip()
+                    if candidate:
+                        return candidate
+    module_name = str(getattr(execute_fn, "__module__", "") or "").strip()
+    if module_name:
+        parts = [part for part in module_name.split(".") if part]
+        if "scripts" in parts:
+            idx = parts.index("scripts")
+            if idx - 1 >= 0:
+                return parts[idx - 1]
+        return parts[-1]
+    return "unknown_skill"
 
 
 def _exit_code_from_rendered(rendered: Any) -> int:

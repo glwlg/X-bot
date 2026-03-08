@@ -325,7 +325,11 @@ class HeartbeatWorker:
                         from core.scheduler import trigger_manual_rss_check
 
                         rss_refresh_text = str(
-                            await trigger_manual_rss_check(user_id) or ""
+                            await trigger_manual_rss_check(
+                                user_id,
+                                suppress_busy_message=True,
+                            )
+                            or ""
                         ).strip()
                         rss_refresh_available = True
                     except Exception as exc:

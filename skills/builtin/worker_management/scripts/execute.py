@@ -39,6 +39,12 @@ def _build_parser() -> argparse.ArgumentParser:
     dispatch_parser.add_argument("--worker-id", default="", help="Optional worker id")
     dispatch_parser.add_argument("--backend", default="", help="Optional backend")
     dispatch_parser.add_argument(
+        "--priority",
+        type=int,
+        default=0,
+        help="Optional dispatch priority (-100 to 100)",
+    )
+    dispatch_parser.add_argument(
         "--source",
         default="worker_management_skill",
         help="Trace source label",
@@ -111,6 +117,7 @@ async def _run() -> int:
             instruction=str(args.instruction or "").strip(),
             worker_id=str(args.worker_id or "").strip(),
             backend=str(args.backend or "").strip(),
+            priority=int(args.priority or 0),
             source=str(args.source or "").strip() or "worker_management_skill",
             metadata=metadata,
         )

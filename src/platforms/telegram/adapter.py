@@ -228,11 +228,14 @@ class TelegramAdapter(BotAdapter):
         draft_id: int,
         text: str,
         message_thread_id: Optional[int] = None,
+        fallback_to_message: bool = True,
         **kwargs,
     ) -> Any:
         try:
             sender = getattr(self.bot, "send_message_draft", None)
             if not callable(sender):
+                if not fallback_to_message:
+                    raise MessageSendError("send_message_draft is not available")
                 return await self.send_message(chat_id=chat_id, text=text, **kwargs)
 
             html_text = markdown_to_telegram_html(text)
@@ -250,7 +253,12 @@ class TelegramAdapter(BotAdapter):
                 label="send_message_draft",
             )
         except Exception as e:
-            logger.warning("Telegram send_message_draft failed, fallback to send_message: %s", e)
+            logger.warning(
+                "Telegram send_message_draft failed, fallback to send_message: %s",
+                e,
+            )
+            if not fallback_to_message:
+                raise MessageSendError(str(e))
             return await self.send_message(chat_id=chat_id, text=text, **kwargs)
 
     async def send_document(
@@ -282,6 +290,90 @@ class TelegramAdapter(BotAdapter):
             )
         except Exception as e:
             logger.error(f"Telegram send_document failed: {e}")
+            raise MessageSendError(str(e))
+
+    async def send_photo(
+        self,
+        chat_id: int | str,
+        photo: Union[str, bytes],
+        caption: Optional[str] = None,
+        **kwargs,
+    ) -> Any:
+        try:
+            formatted_caption = markdown_to_telegram_html(caption) if caption else None
+            outgoing_photo: Union[str, bytes, io.BytesIO] = photo
+            if isinstance(photo, bytes):
+                file_obj = io.BytesIO(photo)
+                file_obj.name = "image.png"
+                outgoing_photo = file_obj
+            return await self._send_with_retry(
+                lambda: self.bot.send_photo(
+                    chat_id=self._coerce_chat_id(chat_id),
+                    photo=outgoing_photo,
+                    caption=formatted_caption,
+                    parse_mode="HTML",
+                    **kwargs,
+                ),
+                label="send_photo",
+            )
+        except Exception as e:
+            logger.error(f"Telegram send_photo failed: {e}")
+            raise MessageSendError(str(e))
+
+    async def send_video(
+        self,
+        chat_id: int | str,
+        video: Union[str, bytes],
+        caption: Optional[str] = None,
+        **kwargs,
+    ) -> Any:
+        try:
+            formatted_caption = markdown_to_telegram_html(caption) if caption else None
+            outgoing_video: Union[str, bytes, io.BytesIO] = video
+            if isinstance(video, bytes):
+                file_obj = io.BytesIO(video)
+                file_obj.name = "video.mp4"
+                outgoing_video = file_obj
+            return await self._send_with_retry(
+                lambda: self.bot.send_video(
+                    chat_id=self._coerce_chat_id(chat_id),
+                    video=outgoing_video,
+                    caption=formatted_caption,
+                    parse_mode="HTML",
+                    **kwargs,
+                ),
+                label="send_video",
+            )
+        except Exception as e:
+            logger.error(f"Telegram send_video failed: {e}")
+            raise MessageSendError(str(e))
+
+    async def send_audio(
+        self,
+        chat_id: int | str,
+        audio: Union[str, bytes],
+        caption: Optional[str] = None,
+        **kwargs,
+    ) -> Any:
+        try:
+            formatted_caption = markdown_to_telegram_html(caption) if caption else None
+            outgoing_audio: Union[str, bytes, io.BytesIO] = audio
+            if isinstance(audio, bytes):
+                file_obj = io.BytesIO(audio)
+                file_obj.name = "audio.mp3"
+                outgoing_audio = file_obj
+            return await self._send_with_retry(
+                lambda: self.bot.send_audio(
+                    chat_id=self._coerce_chat_id(chat_id),
+                    audio=outgoing_audio,
+                    caption=formatted_caption,
+                    parse_mode="HTML",
+                    **kwargs,
+                ),
+                label="send_audio",
+            )
+        except Exception as e:
+            logger.error(f"Telegram send_audio failed: {e}")
             raise MessageSendError(str(e))
 
     async def edit_text(

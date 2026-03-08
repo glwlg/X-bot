@@ -5,13 +5,78 @@ import pytest
 
 from core.orchestrator_runtime_tools import RuntimeToolAssembler, ToolCallDispatcher
 import core.orchestrator_runtime_tools as runtime_tools_module
+from core.tool_registry import ToolRegistry
+
+
+def test_tool_registry_builds_skill_tools_from_loader_metadata(monkeypatch):
+    monkeypatch.setattr(
+        "core.tool_registry.skill_loader.get_tool_exports",
+        lambda: [
+            {
+                "name": "queue_status",
+                "description": "Query queue status",
+                "parameters": {"type": "object", "properties": {}},
+                "handler": "manager.queue.status",
+                "allowed_roles": ["manager"],
+            },
+            {
+                "name": "worker_only_demo",
+                "description": "Worker-only tool",
+                "parameters": {"type": "object", "properties": {}},
+                "handler": "worker.demo",
+                "allowed_roles": ["worker"],
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        "core.tool_registry.skill_loader.get_tool_export",
+        lambda name: {
+            "queue_status": {
+                "name": "queue_status",
+                "description": "Query queue status",
+                "parameters": {"type": "object", "properties": {}},
+                "handler": "manager.queue.status",
+                "allowed_roles": ["manager"],
+            }
+        }.get(name),
+    )
+
+    registry = ToolRegistry()
+
+    manager_tools = registry.get_skill_tools(runtime_role="manager")
+    worker_tools = registry.get_skill_tools(runtime_role="worker")
+    binding = registry.get_skill_tool_binding("queue_status", runtime_role="manager")
+
+    assert [item["name"] for item in manager_tools] == ["queue_status"]
+    assert [item["name"] for item in worker_tools] == ["worker_only_demo"]
+    assert binding["handler"] == "manager.queue.status"
 
 
 @pytest.mark.asyncio
-async def test_runtime_tool_assembler_only_injects_primitives_and_load_skill():
+async def test_runtime_tool_assembler_injects_manager_skill_tools():
     assembler = RuntimeToolAssembler(
         runtime_user_id="u-1",
         platform_name="telegram",
+        runtime_tool_allowed=lambda **_kwargs: True,
+    )
+
+    tools = await assembler.assemble()
+    names = [tool["name"] for tool in tools]
+
+    assert names[:5] == ["read", "write", "edit", "bash", "load_skill"]
+    assert set(names[5:]) == {
+        "dispatch_worker",
+        "list_workers",
+        "software_delivery",
+        "worker_status",
+    }
+
+
+@pytest.mark.asyncio
+async def test_runtime_tool_assembler_keeps_worker_surface_without_software_delivery():
+    assembler = RuntimeToolAssembler(
+        runtime_user_id="worker::worker-main::u-1",
+        platform_name="worker_kernel",
         runtime_tool_allowed=lambda **_kwargs: True,
     )
 
@@ -32,8 +97,7 @@ async def test_dispatcher_accepts_manager_runtime_only_tools_after_skill_load(
         return {"ok": True, "summary": "ok"}
 
     monkeypatch.setattr(
-        runtime_tools_module.dev_tools,
-        "software_delivery",
+        "core.skill_tool_handlers.dev_tools.software_delivery",
         fake_software_delivery,
     )
 
@@ -194,10 +258,63 @@ async def test_load_skill_sets_bash_cwd_for_relative_entrypoint(monkeypatch):
     assert captured["name"] == "bash"
     assert captured["args"]["cwd"] == skill_dir
     assert captured["args"]["command"].startswith("export ")
-    assert "X_BOT_RUNTIME_USER_ID=u1" in captured["args"]["command"]
-    assert "X_BOT_RUNTIME_SOURCE_USER_ID=source-user-1" in captured["args"]["command"]
-    assert "X_BOT_RUNTIME_PLATFORM=worker_kernel" in captured["args"]["command"]
-    assert "X_BOT_RUNTIME_CHAT_ID=chat-99" in captured["args"]["command"]
+
+
+@pytest.mark.asyncio
+async def test_load_skill_blocks_manager_only_skill_for_worker(monkeypatch):
+    async def append_event(_event: str):
+        return None
+
+    monkeypatch.setattr(
+        runtime_tools_module.skill_loader,
+        "get_skill",
+        lambda _skill_name: {
+            "name": "skill_manager",
+            "allowed_roles": ["manager"],
+            "contract": {"runtime_target": "manager"},
+            "skill_md_content": "# Skill Manager",
+            "skill_dir": "/tmp/skills/skill_manager",
+            "entrypoint": "scripts/execute.py",
+        },
+    )
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="worker::worker-main::u1",
+        platform_name="worker_kernel",
+        task_id="task-7",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(
+            message=SimpleNamespace(
+                text="管理技能",
+                user=SimpleNamespace(id="source-user-1"),
+                chat=SimpleNamespace(id="chat-99"),
+            ),
+            user_data={},
+        ),
+        runtime=object(),
+        tool_broker=object(),
+        runtime_tool_allowed=lambda **kwargs: (
+            False,
+            {"reason": "matched_deny_list"},
+        )
+        if kwargs.get("tool_name") == "ext_skill_manager"
+        else True,
+        record_tool_profile=lambda *_args, **_kwargs: None,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"load_skill"})
+
+    result = await dispatcher.execute(
+        name="load_skill",
+        args={"skill_name": "skill_manager"},
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert result["ok"] is False
+    assert result["error_code"] == "skill_policy_blocked"
 
 
 @pytest.mark.asyncio

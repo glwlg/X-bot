@@ -1,315 +1,444 @@
 # 🔍 搜索聚合报告
 
-## 搜索: 江苏无锡 明天 天气
+## 搜索: site:bilibili.com 全站排行榜 2025
 
-### [Rain in Maryland this weekend, but spring-like weather arrives next week - CBS News](https://www.cbsnews.com/baltimore/video/rain-in-maryland-this-weekend-but-spring-like-weather-arrives-next-week/)
+### [年度榜单-哔哩哔哩_bilibili](https://search.bilibili.com/all?keyword=%E5%B9%B4%E5%BA%A6%E6%A6%9C%E5%8D%95)
 
-`tavily` · 🌐 cbsnews.com · 🕒 Fri, 06 Mar 2026 12:13:00 GMT
+`exa` · 🌐 search.bilibili.com
 
-Local
- Maryland
- Best of
- WJZ at 9
- Politics
- Consumer
- Business
- Health
- Entertainment
+幕最多收藏更多筛选全部日期最近一天最近一周最近半年全部时长10分钟以下10-30分钟30-60分钟60分钟以上
+分区筛选维护升级中，敬请期待【忍唱大挑战】2026年1月热歌榜TOP50，第一名竟然是TA？！
+1.2万300
+42:46
 
- First Alert Weather
- Radar & Maps
- Closings/Delays
- Weather Watchers
+### 【忍唱大挑战】2026年1月热歌榜TOP50，第一名竟然是TA？！ 
+黑糖音乐秀· 15小时前
 
- All Sports
- CBS Sports HQ
- Ravens
- Orioles
- Terps
- College Sports
- Horse Racing
- Golf
- Odds
+2025 XCin 实战篮球鞋年度TOP榜单
+36.7万3772
+35:42
+ ### 2025 XCin 实战篮球鞋*年度*TOP*榜单*
 
- WJZ at 9
- Community MVP
- Volunteer with WJZ
- WJZ and the Baltimore Banner
- HealthyMD
- WJZ Investigates
- AFRAM
- Black History Month
+XCin\_· 2025-12-06
 
- About Us
- Meet The Team
- Contact Us
- Share A News Tip
- Links & Numbers
- Nominate An MVP
- Advertise With Us
- Download The App
+2025年度最令人讨厌歌曲TOP10！  ...   【年终榜】2025华语乐坛新歌排行榜TOP50， 好家伙！粪坑里找金子，烂歌最多的一年！
+22.9万5982
+33:17
+ ### 【年终榜】2025华语乐坛新歌排行榜TOP50， 好家伙！粪坑里找金子，烂歌最多的一年！
+SavageTurely· 2025-12-30
+[  ...    ### 2025*年度*华语地区最喜欢的歌曲TOP10！
 
-# Rain in Maryland this weekend, but spring-like weather arrives next week
+阿张RayZhang· 01-16
 
-WJZ-TV meteorologist Steve Sosna has your latest weather forecast.
+2025跑鞋年度榜单——红榜
+30.4万519
+13:13 
+### 2025跑鞋*年度榜单*——红榜
 
-View CBS News In
+东哥真的很严格· 01-06
 
-CBS News App  Open
+年度榜单！外国人2025最爱的TOP10华语舞台  ...   【高清mv】手慢无啊。。。2025 年Billboard Hot 100 年度单曲榜TOP10
+8030
+36:57
+ ### 【高清mv】手慢无啊。。。2025 年Billboard Hot 100*年度*单曲榜 TOP10
 
-Chrome     Safari  Continue
+海风吹过洗澡堂· 02-06
+[  ...    
+深度解析 2025 Billboard Hot 100年度TOP10详细介绍 总有一首适合你
+2710
+16:15
+ ### 深度解析2025 Billboard Hot 100*年度*TOP10详细介绍 总有一首适合你
+海风吹过洗澡堂· 02-09
+[  ...    阿张RayZhang· 01-30
 
----
+「血泪×RGL」2025 Murda Music年度TOP 50榜
+219618
+35:46
+  ...   2025抖音热歌榜长期霸榜歌曲 （春节倒计时4天！）
+2.1万2
+37:41
+]
+### 2025抖音热歌榜长期霸榜歌曲 （春节倒计时4天！）
+  ...   【年终榜】2024年华语乐坛歌曲排行榜TOP50，流量称霸，好歌何在？
+100.7万2.4万
+38:37
+] ### 【年终榜】2024年华语乐坛歌曲排行榜TOP50，流量称霸，好歌何在？
 
-### [Next Weather: WBZ morning forecast for March 6, 2026 - CBS News](https://www.cbsnews.com/boston/video/next-weather-wbz-morning-forecast-for-march-6-2026/)
+SavageTurely· 2024-12-16
+[  ...    
+【路哥锐评】2025华语歌曲播放量TOP20！ 欢迎来到军阀割据群魔乱舞的乐坛时代~
+31.4万4563
+18:01
+ ### 【路哥锐评】2025华语歌曲播放量TOP20！ 欢迎来到军阀割据群魔乱舞的乐坛时代\~
 
-`tavily` · 🌐 cbsnews.com · 🕒 Fri, 06 Mar 2026 10:22:00 GMT
+路哥会写歌· 01-26
 
-All News
- Health
- I-Team
- Politics
- Education
- Business
- Consumer
- Entertainment
+如何查看B站2025年度报告 12.9万3
+00:25
 
- NEXT Weather Forecast
- Radar & Maps
- School Closings
- School Visits
- Climate Change
- Share Photos and Videos
- Join Weather Watchers
+### 如何查看B站2025*年度*报告
 
- All Sports
- CBS Sports HQ
- Patriots
- Red Sox
- Celtics
- Bruins
- Revolution
- Odds
-
- New England Living
- Question Everything
- It Happens Here
- Keller @ Large
- Wednesday's Child
- Climate Watch
- Change Makers
-
- Contact Us
- TV Schedule
- Meet Our Team
- Station Info
- Contests
- Jobs & Internships
- Download Our App
-
-# Next Weather: WBZ morning forecast for March 6, 2026
-
-Jason Mikell has your latest weather forecast.
-
-View CBS News In
-
-CBS News App  Open
-
-Chrome     Safari  Continue
+K-blue-Krystal· 2025-12-21
+[  ...   ![【Sunzz潮课】很主观 2025 
 
 ---
 
-### [Next Weather: WBZ midday forecast for March 5, 2026 - CBS News](https://www.cbsnews.com/boston/video/next-weather-wbz-midday-forecast-for-march-5-2026/)
+### [【总榜】见证历史？B站历史播放量TOP100 你都看过吗](https://www.bilibili.com/video/BV1W9K1zvEa2/)
 
-`tavily` · 🌐 cbsnews.com · 🕒 Thu, 05 Mar 2026 17:28:00 GMT
+`exa` · 🌐 bilibili.com · 🕒 2025-06-28T00:00:00.000Z
 
-All News
- Health
- I-Team
- Politics
- Education
- Business
- Consumer
- Entertainment
 
- NEXT Weather Forecast
- Radar & Maps
- School Closings
- School Visits
- Climate Change
- Share Photos and Videos
- Join Weather Watchers
+4726 2025-06-28 17:28:03
+未经作者授权，禁止转载1.4万
+3507
+9149
+728
+B站历史播放量TOP100，增加了简单的数据分析，还有TOP101-200 之前经常刷到各UP主的排行榜，但很少能看见全站视频的播放量排行榜。于是从去年开始统计千万播放以上的视频，但又怕排行榜做出来没人看，于是一直拖拖拖，终于下定决心做了前面的几期视频，没想到大家还挺很喜欢的。 后面鸽了这么长时间，还是把历史播放量排行榜鸽出来了（划掉）（主要是UP太菜了）
+数据、视频为UP主个人收集与制作。
+特别鸣谢 B站所有排行榜类UP们，共同创造了B站繁荣的所有UP主与用户们，以及正在看视频的你们。 09-24年度TOP10指路。09-14年播放量TOP10：BV1MCZBY3EWR15-19年播放量TOP10：BV1FndAYpEcG20-24年播放量TOP10：BV1pzLBzNE xT求三连，嘤嘤嘤\~\~\~  ...    鬼畜
+梗
+经典
+高能
+排行榜
+搞笑
+视频  ...    专注排行榜类视频\~
+关注1317
 
- All Sports
- CBS Sports HQ
- Patriots
- Red Sox
- Celtics
- Bruins
- Revolution
- Odds
+接下来播放自动连播
 
- New England Living
- Question Everything
- It Happens Here
- Keller @ Large
- Wednesday's Child
- Climate Watch
- Change Makers
+曾经两亿弹幕名场面
+塞连姆
+175.6万6934
 
- Contact Us
- TV Schedule
- Meet Our Team
- Station Info
- Contests
- Jobs & Internships
- Download Our App
+  ...    【2025网络热梗】全是名场面，从夯到拉都有哪些？
 
-# Next Weather: WBZ midday forecast for March 5, 2026
+抽象阿顾
+13.9万308
 
-Jason Mikell has your latest weather forecast.
 
-View CBS News In
+（2025年度总结）2025年烂梗vs以前的梗
+  ...    
 
-CBS News App  Open
+〖敢杀我的马〗见证破亿时刻！！！
+你の蛋拐
+106.1万434
 
-Chrome     Safari  Continue
 
----
+b站单视频播放排行榜TOP20，第一难以撼动
+ 猫猫失
+35.7万160
 
-### [Cloudy and misty Friday before warmer temperatures arrive in Philadelphia area - CBS News](https://www.cbsnews.com/philadelphia/video/cloudy-and-misty-friday-before-warmer-temperatures-arrive-in-philadelphia-area/)
 
-`tavily` · 🌐 cbsnews.com · 🕒 Fri, 06 Mar 2026 13:00:00 GMT
+第三个破亿视频\~b站2024年播放量前15视频！
 
-# Cloudy and misty Friday before warmer temperatures arrive in Philadelphia area
+天天排行
+105.6万429
 
-Friday is damp and cool with plenty of cloud cover in the Philadelphia region, but a pattern shift will come soon. NEXT Weather Meteorologist Kate Bilo is tracking when temperatures will warm up.
+[  ...    8.1万1
 
-View CBS News In
 
-CBS News App  Open
+B站视频5之最
 
-Chrome     Safari  Continue [...] All News
- Pennsylvania
- New Jersey
- Delaware
- National
- World
- Health
- Entertainment
- Politics
- Traffic & Transportation
- Business
- Recalls
+Mr\_Ozone
+13.6万259
 
- Latest Weather
- Radars
- Closings & Delays
-
- All Sports
- CBS Sports HQ
- Eagles
- Sixers
- Phillies
- Flyers
- Blue Coats
- College
- High School
- Odds
-
- Focusing on the Future
- Gallen of Questions
- Alex's Lemonade Stand
- Lights for the Fight
- More Than Pink
- Friday Football Frenzy
- Hispanic Heritage Month
- Joy of Sharing
- Black Business Month
- Mental Reset
- RMHC Telethon
- Summer Beat
- Spreading the Love
- The Heartbeat
-
- Station Info
- Contact Us
- Share Photos & Video
- Send Us a News Tip
- Advertise With Us
- Contests & Promotions
- Download The App
- About NEXTGEN TV
- Photo Galleries
- Mentioned On-Air
- Jobs & Internships
- Memorials
+[
+【Reaction】全世界
 
 ---
 
-### [NEXT Weather: 10 p.m. report for Minnesota on March 5, 2026 - CBS News](https://www.cbsnews.com/minnesota/video/next-weather-10-p-m-report-for-minnesota-on-march-5-2026/)
+### [2025最火热榜歌曲排行，收藏量TOP10有你喜欢的吗？](https://www.bilibili.com/video/BV1bAbcz3E1v/)
 
-`tavily` · 🌐 cbsnews.com · 🕒 Fri, 06 Mar 2026 04:28:00 GMT
+`exa` · 🌐 bilibili.com · 🕒 2025-08-13T00:00:00.000Z
 
-WCCO meteorologist Chris Shaffer says tomorrow will feature rounds of rain with a few rumbles of thunder possible mainly south tomorrow afternoon.
+页]
+* 番剧
+* 直播 * 游戏中心
+* 会员购
+* 漫画
+* 赛事
+* 投稿# 2025最火热榜歌曲排行，收藏量TOP10有你喜欢的吗？
+36.9万
+12 2025-08-13 13:30:00
+未经作者授权，禁止转载9930
+508
+1.1万
+2
+-
+发现《特别的人Cover方大同》
+音乐分享官
+方大同
+歌曲 流行音乐
+歌单
+郑润泽
+美美桑内
+蔡健雅
+音乐排行
+音乐榜单资讯
+ 
 
-View CBS News In
+熊大排行**发消息
+恭喜你挖掘到一个宝藏博主关注7.4万
 
-CBS News App  Open
+接下来播放自动连播
+ 【全网最全】25年最难听的神曲，全听过的网瘾很大，太讷了！
 
-Chrome     Safari  Continue [...] All News
- Twin Cities News
- Greater Minnesota News
- Wisconsin News
- WCCO Investigates
- Community Journalism
- Politics
- Immigration
- Crime
- Health
- Your Money
- Good Question
- Finding Minnesota
+颗秒排行
+1146.7万12.3万
 
- NEXT Weather
- Live Radar
- Closings & Delays
- Weather Watcher Network
+[  ...    白白的空格
+631.8万2.4万
 
- Latest Sports
- CBS Sports HQ
- Vikings
- Twins
- Timberwolves
- Lynx
- Wild
- United FC
- Aurora FC
- Gophers
- High School Sports Rally
 
- State Fair
- Good Question
- Finding Minnesota
- WCCO Investigates
- Mental Health Matters
- Talking Points
- On the Edge
- Vietnam 50 Years Later
- Footprint to Murder
- Home for the Holidays
- Savor Asia
+全网最全伤感EMO歌曲
 
- Station Info
- WCCO-TV News Team
- Links & Numbers
- Contests & Promotions
- Galleries
- WCCO-TV Jobs
- Download WCCO's App
- Advertise
- Memorials
+鲸落入境
+73.1万134
 
-# NEXT Weather: 10 p.m. report for Minnesota on March 5, 2026
+  ...    【无损音质】2025年播放量破亿的热门歌曲合集
+
+Music\_精彩音乐
+41.4万3
+
+
+盘点2025年最火的12首歌曲
+ 小签的网抑音乐
+62.4万2
+
+
+2025年最新流行歌曲120首，你都听过哪几首❓
+
+灵鹿浅语
+20.9万3
+
+[  ...    田一名sir
+2474.8万2.2万
+
+
+【Reaction】2025最火热榜Top10歌曲
+
+沙雕网友咸叽叽
+149.7万1.6万 
+
+2025很火的20首热门歌曲
+
+典藏音乐
+126.3万19
+
+[
+【宝藏音乐局】36首2025�
+
+---
+
+### [B站UP主日报2025年03月20日23点（v1.1） - 哔哩哔哩](http://www.bilibili.com/read/cv41075449/)
+
+`exa` · 🌐 bilibili.com
+
+丝数第3多：知识 罗翔说刑法 (3177.11万粉, +2100) 🚀昨日涨粉第1多：科技 华为终端 (+2.09万粉)
+
+🍉昨日掉粉最多：美食 隋卞做 (-52970粉)
+
+🔺昨日涨播放第4多：资讯 环球网 (+508.73万) 👍昨日点赞数第1多：音乐 账号已注销(是小光芒呀请关注新号) (+52.17万)
+
+📝昨日涨阅读第1多：游戏 网易率土之滨手游 (+5.09万) 🔋昨日充电人次最多：美食 食贫道 (+146人)
+
+各位观众早上好，今天是2025年03月21日，农历二月廿二，欢迎收看狸子每天定期更新的新人联播节目 o(∩\_∩)o
+
+# **📊近期UP主宏观经济数据：** 注：此栏目做到多少名取决于前一天的数据采集情况，并不受人为控制
+
+**◿ 排名对应粉丝数** - 第100名：5011923(+24)粉
+- 第1千名：1639947(+158)粉
+- 第5千名：549474(+138)粉
+- 第1万名：308190(+56)粉
+- 第5万名：56778(+17)粉  ...    凯尔特人被卖61亿美元， 2025MSI举办场地官宣 # **下面请看详细报道～**
+
+本期日报数据的作差时间段为 2025年03月19日23点→2025年03月20日23点（1天）
+
+# **👑粉丝数总榜**
+
+（标🅱️的为B站官方号） 001. 动画 🅱 哔哩哔哩漫画 (4522.43万粉, +1185)
+002. 生活 🅱 哔哩哔哩大会员 (3996.30万粉, +1.17万)
+003. 知识 罗翔说刑法 (3177.11万粉, +2100) 004. 游戏 🅱 云视听小电视-TV (3055.10万粉, +9005)
+005. 资讯 央视新闻 (2090.71万粉, +5738)
+006. 游戏 原神 (1992.01万粉, -1583)  ...    088. 知识 中国国家地理 (555.21万粉, +2037)
+089. 知识 罗老师哲学人生 (546.18万粉, +127)
+090. 生活 雷军 (534.05万粉, +4646)  ...    # **🚀粉丝数增加**
+
+此纪录目前由 哔哩哔哩晚会 保持（+283.94万粉/天，产生于 《UP主日报2021年01月01日11点》） 注：新入驻的UP有概率被漏掉（即使没漏掉也会至少延迟一天才能出现在日报上），如果你发现这种情况欢迎提醒狸子LePtC及时补充  ...    # **🍉粉丝数下降**
+
+此纪录目前由 九号电动 保持（-92.7万粉/天，产生于 [《UP主日报2024年11月
+
+---
+
+### [B站UP主日报2025年02月19日23点（v1.1） - 哔哩哔哩](https://www.bilibili.com/read/cv40763070/)
+
+`exa` · 🌐 bilibili.com
+
+�UP主日报2025年02月19日23点（v1.1）
+# B站UP主日报2025年02月19日23点（v1.1）
+2025年02月20日 03:03--浏览·--点赞·--评论
+ 狸工智能
+粉丝：2.3万文章：2757
+**关注
+👑粉丝数第3多：知识罗翔说刑法(3169.44万粉, +1299) 🚀昨日涨粉第1多：生活流量卡大忽悠(+3.90万粉)
+🍉昨日掉粉最多：游戏一拳人OPM(-2956粉)
+🔺昨日涨播放第3多：生活酱油白米饭boy(+1083.76万)  ...    🔋昨日充电人次最多：美食食贫道(+208人)
+
+各位观众早上好，今天是2025年02月20日，农历正月廿三，欢迎收看狸子每天定期更新的新人联播节目 o(∩\_∩)o # 📊近期UP主宏观经济数据：
+注：此栏目做到多少名取决于前一天的数据采集情况，并不受人为控制**◿ 排名对应粉丝数**
+* 第100名：4979666(+4590)粉 * 第1千名：1626179(+1163)粉
+* 第5千名：543490(+235)粉
+* 第1万名：304088(+57)粉  ...    * 5万粉：第55170(+22)名
+* 2万粉：第124232(+48)名# 📈今天你跑赢大盘了吗乛◡乛**◿ 粉丝量头部（排除官方号）平均日涨粉** * Top50：+1763.79粉/天(+24)
+* Top50\~500：+467.21粉/天(-11)
+* Top500\~5k：+283.76粉/天(+2)
+**◿ 粉丝量头部（排除官方号）平均日增播放**  ...    美国让乌克兰还五千亿，5070Ti性能约为4080S，iPhone16e，普京称愿同特朗普会面，王心凌粉丝开启军备竞赛  ...    # 下面请看详细报道～
+本期日报数据的作差时间段为2025年02月18日23点→2025年02月19日23点（1天）
+# 👑粉丝数总榜（标🅱️的为B站官方号） 1. 动画🅱哔哩哔哩漫画(4515.46万粉, +1636)
+2. 生活🅱哔哩哔哩大会员(3938.43万粉, +2.27万)  ...    🚀粉丝数增加此纪录目前由哔哩哔哩晚会保持（+283.94万粉/天，产生于《UP主日报2021年01月01日11点》） 注：新入驻的UP有概率被漏掉（即使没漏掉也会至少延迟一天才能出现在日报上），如果你发现这种情况欢迎提醒狸子LePtC及时补充
+1. 生活流量卡大忽悠(+3.90万粉)  ...    🍉粉丝数下降此纪录目前由九号电动保持（-92.7万粉/天，产生于[《UP主日报2024年
+
+---
+
+### [📊近期UP主宏观经济数据：](https://www.bilibili.com/read/cv43931240/)
+
+`exa` · 🌐 bilibili.com
+
+狸工智能编辑于2025年11月30日 10:29
+👑粉丝数第4多：知识罗翔说刑法​(3234.29万粉, +392)
+🚀昨日涨粉第1多：资讯中国军号​(+11.00万粉)  ...    各位观众早上好，今天是2025年11月30日，农历十月十一，欢迎收看狸子每天定期更新的新人联播节目 o(∩\_∩)o
+# **📊近期UP主宏观经济数据：** 注：此栏目做到多少名取决于前一天的数据采集情况，并不受人为控制**◿ 排名对应粉丝数**
+* 第100名：5464229(+3818)粉
+* 第1千名：1771335(+2168)粉
+* 第5千名：609408(-5)粉 * 第1万名：345892(+229)粉
+* 第5万名：66345(+57)粉
+* 第10万名：30796(+20)粉
+**◿ 粉丝数对应排名**
+* 百万粉：第2585(+2)名
+* 50万粉：第6437(+1)名  ...    **◿ 粉丝量头部（排除官方号）平均日涨粉**
+* Top50：+4157.94粉/天(+2141)
+* Top50\~500：+763.90粉/天(+604)
+* Top500\~5k：+411.57粉/天(+148)  ...    # **下面请看详细报道～**
+cut-off
+本期日报数据的作差时间段为2025年11月28日23点→2025年11月29日23点（1天）
+# **👑粉丝数总榜**
+（标🅱️的为B站官方号） 1. 生活🅱哔哩哔哩大会员(4619.60万粉, +3.03万)
+2. 动画🅱哔哩哔哩漫画(4609.35万粉, +2551)
+3. 游戏🅱云视听小电视-TV(3314.71万粉, +1.51万) 4. 知识罗翔说刑法(3234.29万粉, +392)
+5. 资讯央视新闻(2294.26万粉, +9748)
+6. 知识一数(2216.44万粉, +1.71万)
+7. 游戏🅱哔哩哔哩直播(2030.12万粉, +321)  ...    此纪录目前由哔哩哔哩晚会​保持（+283.94万粉/天，产生于《UP主日报2021年01月01日11点》​） 注：新入驻的UP有概率被漏掉（即使没漏掉也会至少延迟一天才能出现在日报上），如果你发现这种情况欢迎提醒狸子LePtC及时补充
+1. 资讯中国军号(+11.00万粉)
+2. 动画RingoTsuga津贺林吾(+6.92万粉)  ...    此纪录目前由听泉赏宝精彩切片​保持（-121.2万粉/天，产生于[《UP主日报2025年11月17日23点》​]<
+
+---
+
+### [B站UP主日报2025年01月24日23点（v1.1） - 哔哩哔哩](http://www.bilibili.com/read/cv40517678/)
+
+`exa` · 🌐 bilibili.com
+
+👑粉丝数第3多：知识罗翔说刑法​(3160.17万粉, +9252)
+🚀昨日涨粉第1多：游戏柯洁​(+14.09万粉)  ...   cut-off
+各位观众早上好，今天是2025年01月25日，农历腊月廿六，欢迎收看狸子每天定期更新的新人联播节目 o(∩\_∩)o
+# **📊近期UP主宏观经济数据：** 注：此栏目做到多少名取决于前一天的数据采集情况，并不受人为控制**◿ 排名对应粉丝数**
+* 第100名：4962884(-107)粉
+* 第1千名：1612875(+559)粉
+* 第5千名：535959(+161)粉  ...    **◿ 粉丝量头部（排除官方号）平均日涨粉**
+* Top50：+4858.59粉/天(+129)
+* Top50\~500：+1070.43粉/天(-154)
+* Top500\~5k：+467.18粉/天(-41)  ...    # **下面请看详细报道～**
+cut-off
+本期日报数据的作差时间段为2025年01月23日23点→2025年01月24日23点（1天）
+# **👑粉丝数总榜**
+（标🅱️的为B站官方号） 1. 动画🅱哔哩哔哩漫画(4502.11万粉, +2643)
+2. 生活🅱哔哩哔哩大会员(3856.28万粉, +2.66万)
+3. 知识罗翔说刑法(3160.17万粉, +9252)  ...   cut-off# **🚀粉丝数增加**
+此纪录目前由哔哩哔哩晚会​保持（+283.94万粉/天，产生于《UP主日报2021年01月01日11点》​） 注：新入驻的UP有概率被漏掉（即使没漏掉也会至少延迟一天才能出现在日报上），如果你发现这种情况欢迎提醒狸子LePtC及时补充
+1. 游戏柯洁(+14.09万粉)
+2. 娱乐春晚(+8.01万粉)  ...   cut-off# **🍉粉丝数下降**
+此纪录目前由九号电动​保持（-92.7万粉/天，产生于[《UP主日报2024年11月
+
+---
+
+### [B站UP主日报2025年06月27日23点（v1.1） - 哔哩哔哩](http://www.bilibili.com/read/cv42149866/)
+
+`exa` · 🌐 bilibili.com
+
+👑粉丝数第3多：知识罗翔说刑法​(3205.95万粉, +1686)
+🚀昨日涨粉第1多：游戏三角洲行动​(+9.24万粉)  ...    各位观众早上好，今天是2025年06月28日，农历六月初四，欢迎收看狸子每天定期更新的新人联播节目 o(∩\_∩)o
+# **📊近期UP主宏观经济数据：** 注：此栏目做到多少名取决于前一天的数据采集情况，并不受人为控制**◿ 排名对应粉丝数**
+* 第100名：5124198(+2886)粉
+* 第1千名：1684742(+2878)粉
+* 第5千名：574538(+263)粉  ...    **◿ 粉丝量头部（排除官方号）平均日涨粉**
+* Top50：+3140.26粉/天(+761)
+* Top50\~500：+831.01粉/天(+80)
+* Top500\~5k：+413.50粉/天(+86)  ...    # **🔍近期B站热搜词有：**
+获取失败# **下面请看详细报道～**
+cut-off
+本期日报数据的作差时间段为2025年06月26日23点→2025年06月27日23点（1天）
+# **👑粉丝数总榜** （标🅱️的为B站官方号）
+1. 动画🅱哔哩哔哩漫画(4548.38万粉, +2353)
+2. 生活🅱哔哩哔哩大会员(4160.21万粉, +2.16万)
+3. 知识罗翔说刑法(3205.95万粉, +1686)  ...    此纪录目前由哔哩哔哩晚会​保持（+283.94万粉/天，产生于《UP主日报2021年01月01日11点》​） 注：新入驻的UP有概率被漏掉（即使没漏掉也会至少延迟一天才能出现在日报上），如果你发现这种情况欢迎提醒狸子LePtC及时补充
+1. 游戏三角洲行动(+9.24万粉)
+2. 动画笔给你你来写\_(+5.39万粉)  ...    此纪录目前由唐卡七​保持（-92.7万粉/天，产生于[《UP主日报2025年06
+
+---
+
+### [B站UP主日报2025年12月13日23点（v1.1）](http://www.bilibili.com/read/cv44190602/)
+
+`exa` · 🌐 bilibili.com
+
+�UP主日报2025年12月13日23点（v1.1）
+
+2025年12月14日 02:30--浏览 · --点赞 · --评论 狸工智能
+
+粉丝：2.3万文章：2757
+
+关注
+
+👑粉丝数第4多：知识 罗翔说刑法(3226.64万粉, -2187) 🚀昨日涨粉第1多：游戏 关注我每期视频都点赞(+6.18万粉)
+
+🍉昨日掉粉最多：音乐 孽二狗子(-6996粉)  ...    各位观众早上好，今天是2025年12月14日，农历十月廿五，欢迎收看狸子每天定期更新的新人联播节目 o(∩_∩)o
+
+# 📊近期UP主宏观经济数据：
+
+注：此栏目做到多少名取决于前一天的数据采集情况，并不受人为控制
+
+◿ 排名对应粉丝数 - 第10万名： 31065(+25)粉
+- 第5万名： 66744(+37)粉
+- 第1万名： 347535(+31)粉 - 第5千名： 612231(+139)粉
+- 第1千名： 1774703(-121)粉
+- 第100名： 5462674(-140)粉  ...    # 下面请看详细报道～
+
+本期日报数据的作差时间段为 2025年12月12日23点→2025年12月13日23点（1天）
+
+# 👑粉丝数总榜
+
+（标🅱️的为B站官方号） 1. 知识 画渣花小烙(547.55万粉, +953)
+2. 资讯 波士顿圆脸(549.11万粉, +596)
+3. 资讯 央视网(549.13万粉, +4014)  ...    # 🚀粉丝数增加
+
+此纪录目前由 哔哩哔哩晚会保持（+283.94万粉/天，产生于 《UP主日报2021年01月01日11点》） 注：新入驻的UP有概率被漏掉（即使没漏掉也会至少延迟一天才能出现在日报上），如果你发现这种情况欢迎提醒狸子LePtC及时补充  ...    # 🍉粉丝数下降
+
+此纪录目前由 听泉赏宝精彩切片保持（-121.2万粉/天，产生于 [《UP主日报2025
+
+---
+
+### [游戏排行榜 - 哔哩哔哩游戏](https://game.bilibili.com/platform/ranks)
+
+`exa` · 🌐 game.bilibili.com
+
+�资源、有异化造物、甚至有旧文明的遗产，全都是珍贵的财富。
+但是别忘了，那里面空间紊乱，怪物肆虐，异变横生，终究是一场吞没世界的灾难，不是一般人该去的地方。
+所以不要进入空洞。  ...    在七种元素交汇的大陆——「提瓦特」，每个人都可以成为神。
+你从世界之外漂流而来，降临大地。在这广阔的世界中，你自由旅行、结识同伴、寻找掌控尘世元素的七神，直到与分离的血亲重聚，在终点见证一切旅途的沉淀。  ...    《小手电大派对》是一款轻竞技的自由匹配的派对休闲游戏！两手操作，第三人称视角，MOBA的操作手感，RPG的竞技策略，令人惊叹的精致的像素美术效果。快来加入充满趣味的全新游戏吧！
+【斗智斗勇，开黑大战】  ...    这片银河中有名为「星神」的存在，祂们造就现实，抹消星辰，在无数「世界」中留下祂们的痕迹。你——一名特殊的旅客，将与继承「开拓」意志的同伴一起，乘坐星穹列车穿越银河，沿着某位「星神」曾经所行之途前进。你将由此探索新的文明，结识新的伙伴，在无  ...    那么，准备好开始这段「开拓」之旅了吗？
+《崩坏：星穹铁道》是米哈游自研的全新银河冒险策略游戏。你将在游戏中登上星穹列车，造访寓居宇宙的万象世界，携手形形色色的旅伴，解救「星核」引发的种种危机，对抗「星神」践踏文明的意图。  ...    封印奇物的空间站、冰河永冻的异星球、巡猎孽物的巨型舰队...列车停靠的每一站，都是前所未见的银河风貌！以科技封印无数怪异的「无明之间」，为何无力收容「你」的躯壳？极寒地表上唯一温度正常的坐标，究竟隐藏着怎样的秘密？玉石妙算、几近仙法的长生  ...    《星穹铁道》的剧情表现由游戏引擎实时渲染。全新研发的角色表情系统增添了人物的鲜活，与高规格的场景相得益彰，提升了整体演出表现张力。米哈游旗下国人原创音乐团队HOYO-MiX的创作，更让人仿佛身临其境这场银河冒险之旅。你将直面异物「星核」在 银河间引发的种种异变和危机，在争执与携手之间亲历一段又一段邂逅。用自己的意志做出选择，抵达故事的结局吧！  ...    《星穹铁道》采用了全新的指令式战斗系统，操作简洁而富于策略。你可以借助「秘技」料敌机先，通过不同属性的「弱点击破」效果压制敌人，再释放华丽的「终结技」一锤定音，战斗节奏爽快又不失深度。而在随机迷宫「模拟宇宙」中，出人意料的随机事件、近百种  ...    作为叠纸游戏恋爱向全新之作，《恋与深空》延续《恋与》系列世界观，是一款近未来幻想的高沉浸3D恋爱游戏。通过超沉浸的代入式视角演出、丰富恋爱互动、多感官玩法设置提供高拟真恋爱体验， 让爱触手可及。
+【代入式3D剧情】 3D实时渲染代入式剧情，心动与冒险逐一在你眼前生动上演。独特的视角设计令你与他共度的重要时刻都能身临其境，更近距离感受他的呼吸与真实，打破现实与虚拟的界限，获得超拟真的沉浸式体验。
+【3D互动体验】  ...    起因不明并四处肆虐的天灾，席卷过的土地上出现了大量的神秘矿物——被人们称为“源石”。虽然源石的发现历史已久，但是依赖于技术的进步，其蕴含的能量使得文明顺利迈入现代，但与此同时，源石本身也催生出“感染者”的存在。  ...    【重返未来：1999 的特色】
+● 回到过去，重演旧日时代 ●
+“暴雨”后的世界在超越历史自身，时代的三幕五场在眼前依次呈现。去华尔街看看，也许你能看到1929年股市崩盘的第一瞬。
+● 全英配音，译制片风味中配 ●  ...    《第五人格》是网易首款非对称性对抗竞技手游。荒诞哥特画�
 
 ---

@@ -1,0 +1,10 @@
+targets:
+  manager:
+    service: x-bot
+    image: x-bot-manager
+  worker:
+    service: x-bot-worker
+    image: x-bot-worker
+  api:
+    service: x-bot-api
+    image: x-bot-api

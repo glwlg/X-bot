@@ -19,11 +19,13 @@ class _FakeManagerDispatchService:
         instruction: str,
         worker_id: str = "",
         backend: str = "",
+        priority: int = 0,
         source: str = "manager_dispatch",
         metadata: dict | None = None,
     ):
         _ = worker_id
         _ = backend
+        _ = priority
         _ = source
         _ = metadata
         return {
@@ -80,6 +82,18 @@ class _FakeDispatchQueue:
                     "status": "failed",
                 }
             ],
+        }
+
+    async def worker_metrics(self, *, worker_id: str = "", limit: int = 200):
+        _ = limit
+        return {
+            "worker_id": worker_id,
+            "pending": 0,
+            "running": 0,
+            "queue_depth": 0,
+            "avg_dispatch_latency_sec": 1.0,
+            "avg_completion_sec": 2.0,
+            "completion_rate": 1.0,
         }
 
     async def requeue_dead_letter(

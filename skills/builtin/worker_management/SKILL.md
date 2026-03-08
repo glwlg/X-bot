@@ -12,6 +12,60 @@ triggers:
 - worker_status
 allowed_roles:
 - manager
+policy_groups:
+- management
+platform_handlers: false
+tool_exports:
+- name: list_workers
+  description: List worker instances and their capabilities or status.
+  handler: manager.worker_management.list
+  prompt_hint: 派发前先用 `list_workers` 看当前可用 Worker、能力和负载。
+  policy_groups:
+  - management
+  parameters:
+    type: object
+    properties: {}
+- name: dispatch_worker
+  description: Dispatch a concrete execution task to a worker.
+  handler: manager.worker_management.dispatch
+  prompt_hint: 需要真实执行命令、长任务或操作型技能时，用 `dispatch_worker` 派给 Worker，不要自己代执行。
+  policy_groups:
+  - management
+  parameters:
+    type: object
+    properties:
+      instruction:
+        type: string
+        description: Task instruction for worker execution
+      worker_id:
+        type: string
+        description: Optional target worker id, omit to auto-select
+      backend:
+        type: string
+        description: Optional backend override
+      priority:
+        type: integer
+        description: Optional dispatch priority
+      metadata:
+        type: object
+        description: Optional metadata for traceability
+    required:
+    - instruction
+- name: worker_status
+  description: Query recent worker execution status and task history.
+  handler: manager.worker_management.status
+  prompt_hint: 已经派发过的异步任务，优先用 `worker_status` 查进度，不要重复 dispatch。
+  policy_groups:
+  - management
+  parameters:
+    type: object
+    properties:
+      worker_id:
+        type: string
+        description: Optional worker id
+      limit:
+        type: integer
+        description: Recent task limit
 input_schema:
   type: object
   properties: {}

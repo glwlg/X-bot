@@ -16,11 +16,13 @@ async def test_heartbeat_store_v2_create_and_checklist(tmp_path):
     state = await store.get_state("u1")
 
     assert state["spec"]["version"] == 2
-    assert state["spec"]["user_id"] == "u1"
+    assert state["spec"]["user_id"] == "user"
     assert "Check inbox for urgent emails" in state["checklist"]
     assert state["status"]["version"] == 2
+    assert state["status"]["user_id"] == "user"
     assert store.heartbeat_path("u1").exists()
     assert store.status_path("u1").exists()
+    assert store.heartbeat_path("u1").parent.name == "user"
 
 
 @pytest.mark.asyncio
@@ -49,10 +51,11 @@ tasks:
     (user_dir / "HEARTBEAT.md").write_text(legacy_text, encoding="utf-8")
 
     state = await store.get_state("u2")
+    shared_dir = store.root / "user"
 
     assert state["spec"]["version"] == 2
     assert state["checklist"] == []
-    assert (user_dir / "HEARTBEAT.v1.bak.md").exists()
+    assert (shared_dir / "HEARTBEAT.v1.bak.md").exists()
     notes = state["status"].get("migration_notes") or []
     assert notes
 
@@ -81,10 +84,11 @@ tasks:
     (user_dir / "HEARTBEAT.md").write_text(legacy_text, encoding="utf-8")
 
     state = await store.get_state("u2b")
+    shared_dir = store.root / "user"
 
     assert state["spec"]["version"] == 2
     assert state["checklist"] == []
-    assert (user_dir / "HEARTBEAT.v1.bak.md").exists()
+    assert (shared_dir / "HEARTBEAT.v1.bak.md").exists()
     notes = state["status"].get("migration_notes") or []
     assert notes
 

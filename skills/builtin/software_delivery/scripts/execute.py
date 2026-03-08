@@ -64,6 +64,22 @@ def _build_parser() -> argparse.ArgumentParser:
         help="JSON array of validation commands",
     )
     parser.add_argument(
+        "--target-service",
+        default="manager",
+        help="Target service: manager | worker | api",
+    )
+    parser.add_argument(
+        "--rollout",
+        default="none",
+        help="Rollout mode: none | local",
+    )
+    parser.add_argument(
+        "--validate-only",
+        choices=("true", "false"),
+        default="false",
+        help="Stop after validation and skip publish/rollout",
+    )
+    parser.add_argument(
         "--auto-publish",
         choices=("true", "false"),
         default="true",
@@ -129,6 +145,9 @@ async def _run() -> int:
         auto_publish=_as_bool(str(args.auto_publish)),
         auto_push=_as_bool(str(args.auto_push)),
         auto_pr=_as_bool(str(args.auto_pr)),
+        target_service=str(args.target_service or "").strip(),
+        rollout=str(args.rollout or "").strip(),
+        validate_only=_as_bool(str(args.validate_only)),
     )
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     return 0 if bool(result.get("ok", False)) else 1

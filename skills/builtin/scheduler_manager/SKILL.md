@@ -12,6 +12,9 @@ triggers:
 - 周期执行
 - 每天
 - 每小时
+policy_groups:
+- automation
+platform_handlers: true
 input_schema:
   type: object
   properties: {}

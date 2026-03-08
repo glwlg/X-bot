@@ -8,6 +8,9 @@ triggers:
 - manage_deployment
 - 安装服务
 - install
+policy_groups:
+- ops
+platform_handlers: true
 input_schema:
   type: object
   properties:
