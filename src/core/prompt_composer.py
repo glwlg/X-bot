@@ -92,7 +92,7 @@ class PromptComposer:
             parts.append("\n" + manager_prompt)
         elif str(mode or "").strip().lower() == "media_image":
             parts.append(
-                "\n【当前任务要求】\n这是一次图片分析请求。你需要保持你的角色语气，结合图片与用户指令完成任务。\n如果用户明确要求记账/入账，请优先调用 `ext_quick_accounting` 完成真实入账；其他场景优先直接给出分析结论，避免无关工具调用。"
+                "\n【当前任务要求】\n这是一次图片分析请求。你需要保持你的角色语气，结合图片与用户指令完成任务。\n如果用户明确要求记账/入账，请优先调用 `quick_accounting` 完成真实入账；其他场景优先直接给出分析结论，避免无关工具调用。"
             )
 
         # 注入 Skill 目录与 load_skill 使用引导
@@ -199,9 +199,8 @@ class PromptComposer:
                 prompt_hint = str(exported.get("prompt_hint") or "").strip()
                 if not prompt_hint:
                     desc = _short_desc(str(tool.get("description") or ""), limit=72)
-                    prompt_hint = (
-                        f"可直接调用 `{tool_name}`"
-                        + (f"：{desc}" if desc else "")
+                    prompt_hint = f"可直接调用 `{tool_name}`" + (
+                        f"：{desc}" if desc else ""
                     )
                 lines.append(f"- {prompt_hint}")
 

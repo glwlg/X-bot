@@ -5,75 +5,98 @@ import base64
 import logging
 import os
 from contextlib import suppress
-from datetime import datetime
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
-from core.platform.models import Chat, MessageType, UnifiedContext, UnifiedMessage, User
-from core.prompt_composer import prompt_composer
-from core.skill_loader import skill_loader
 from services.ai_service import AiService
 from shared.contracts.dispatch import TaskEnvelope, TaskResult
 
 logger = logging.getLogger(__name__)
 
 _ai_service = AiService()
+_VALID_RECORD_TYPES = {"支出", "收入", "转账"}
 
 
-class _ManagerSilentAdapter:
-    async def reply_text(self, ctx, text: str, ui=None, **kwargs):
-        _ = (ctx, text, ui, kwargs)
-        return SimpleNamespace(id="manager-web-accounting-reply")
-
-    async def edit_text(self, ctx, message_id: str, text: str, **kwargs):
-        _ = (ctx, message_id, text, kwargs)
-        return SimpleNamespace(id=message_id)
-
-    async def reply_document(
-        self, ctx, document, filename=None, caption=None, **kwargs
-    ):
-        _ = (ctx, document, filename, caption, kwargs)
-        return SimpleNamespace(id="manager-web-accounting-doc")
-
-    async def reply_photo(self, ctx, photo, caption=None, **kwargs):
-        _ = (ctx, photo, caption, kwargs)
-        return SimpleNamespace(id="manager-web-accounting-photo")
-
-    async def reply_video(self, ctx, video, caption=None, **kwargs):
-        _ = (ctx, video, caption, kwargs)
-        return SimpleNamespace(id="manager-web-accounting-video")
-
-    async def reply_audio(self, ctx, audio, caption=None, **kwargs):
-        _ = (ctx, audio, caption, kwargs)
-        return SimpleNamespace(id="manager-web-accounting-audio")
-
-    async def delete_message(self, ctx, message_id: str, chat_id=None, **kwargs):
-        _ = (ctx, message_id, chat_id, kwargs)
-        return True
-
-    async def send_chat_action(self, ctx, action: str, chat_id=None, **kwargs):
-        _ = (ctx, action, chat_id, kwargs)
-        return True
-
-    async def download_file(self, ctx, file_id: str, **kwargs):
-        _ = (ctx, file_id, kwargs)
-        raise RuntimeError(
-            "manager web accounting context does not support file download"
-        )
-
-
-def _build_quick_accounting_tool_declaration(skill: dict) -> dict:
-    schema = skill.get("input_schema") if isinstance(skill, dict) else None
-    if not isinstance(schema, dict):
-        schema = {"type": "object", "properties": {}}
-    description = str(skill.get("description") or "") if isinstance(skill, dict) else ""
+def _build_accounting_draft_tool_declaration() -> dict:
     return {
-        "name": "ext_quick_accounting",
+        "name": "submit_accounting_draft",
         "description": (
-            description + " 这是网页版图片记账场景，必须调用该工具完成真实入账。"
+            "提交这张交易图片的结构化记账草稿。"
+            "必须基于图片内容提取字段后调用此工具。"
         ).strip(),
-        "parameters": schema,
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "type": {
+                    "type": "string",
+                    "enum": sorted(_VALID_RECORD_TYPES),
+                },
+                "amount": {"type": "number"},
+                "category": {"type": "string"},
+                "account": {"type": "string"},
+                "target_account": {"type": "string"},
+                "payee": {"type": "string"},
+                "remark": {"type": "string"},
+                "record_time": {"type": "string"},
+            },
+            "required": ["type", "amount", "category", "account"],
+        },
+    }
+
+
+def _build_system_instruction() -> str:
+    return (
+        "你是网页图片自动记账执行器。\n"
+        "目标：先识别交易图片中的关键信息，再调用唯一可用的工具 `submit_accounting_draft` 提交结构化记账草稿。\n"
+        "限制：禁止调用 `load_skill`、`skill_manager`、`read`、`write`、`edit`、`bash`，"
+        "也禁止调用任何未出现在工具列表中的工具。\n"
+        "要求：优先提取 `type`、`amount`、`category`、`account`、`target_account`、"
+        "`payee`、`remark`、`record_time`。\n"
+        "当字段不完整时，可做保守推断，但不要编造明显不存在的信息。\n"
+        "一旦 `submit_accounting_draft` 调用成功，立即停止，不要继续尝试其他工具。"
+    ).strip()
+
+
+def _normalize_accounting_draft(
+    data: dict[str, object],
+    *,
+    fallback_book_id: Any,
+) -> dict[str, Any]:
+    record_type = str(data.get("type") or "").strip()
+    if record_type not in _VALID_RECORD_TYPES:
+        raise ValueError(f"交易类型不支持：{record_type or '空'}")
+
+    try:
+        amount = float(data.get("amount") or 0)
+    except (TypeError, ValueError):
+        raise ValueError(f"金额解析错误：{data.get('amount')}")
+    if amount <= 0:
+        raise ValueError("金额必须大于 0")
+
+    category_name = str(data.get("category") or "").strip() or "未分类"
+    account_name = str(data.get("account") or "").strip()
+    if not account_name:
+        raise ValueError("账户不能为空，请补充支付账户")
+
+    target_account_name = str(data.get("target_account") or "").strip()
+    if record_type == "转账" and not target_account_name:
+        raise ValueError("转账必须填写 target_account")
+
+    try:
+        book_id = int(fallback_book_id) if fallback_book_id is not None else 0
+    except (TypeError, ValueError):
+        book_id = 0
+
+    return {
+        "type": record_type,
+        "amount": amount,
+        "category_name": category_name,
+        "account_name": account_name,
+        "target_account_name": target_account_name,
+        "payee": str(data.get("payee") or "").strip()[:100],
+        "remark": str(data.get("remark") or "").strip()[:500],
+        "record_time": str(data.get("record_time") or "").strip(),
+        "book_id": book_id,
     }
 
 
@@ -105,108 +128,24 @@ def _load_image(task: TaskEnvelope) -> tuple[bytes, str]:
     return raw, mime_type
 
 
-def _build_ctx(task: TaskEnvelope) -> UnifiedContext:
-    metadata = dict(task.metadata or {})
-    user_id = int(metadata.get("accounting_user_id") or 0)
-    if user_id <= 0:
-        raise RuntimeError("missing accounting user id")
-    book_id = int(metadata.get("accounting_book_id") or 0)
-    if book_id <= 0:
-        raise RuntimeError("missing accounting book id")
-
-    now = datetime.now()
-    runtime_user = User(
-        id=str(user_id),
-        username=f"web_user_{user_id}",
-        first_name="WebUser",
-    )
-    runtime_chat = Chat(
-        id=f"web-accounting-{user_id}",
-        type="private",
-        title="web-accounting",
-    )
-    runtime_message = UnifiedMessage(
-        id=f"web-accounting-{int(now.timestamp())}",
-        platform="web_accounting",
-        user=runtime_user,
-        chat=runtime_chat,
-        date=now,
-        type=MessageType.IMAGE,
-        text=str(task.instruction or ""),
-    )
-    ctx = UnifiedContext(
-        message=runtime_message,
-        platform_ctx=SimpleNamespace(user_data={}),
-        platform_event=None,
-        _adapter=_ManagerSilentAdapter(),
-        user=runtime_user,
-    )
-    ctx.user_data["runtime_user_id"] = f"web::{user_id}"
-    ctx.user_data["accounting_user_id"] = user_id
-    ctx.user_data["accounting_book_id"] = book_id
-    ctx.user_data["accounting_source"] = str(
-        metadata.get("accounting_source") or "web_clipboard"
-    )
-    return ctx
-
-
-def _extract_record_and_book_id(
-    data: dict[str, Any],
-    *,
-    fallback_book_id: Any,
-) -> tuple[int, int]:
+def _extract_accounting_draft(data: dict[str, Any]) -> dict[str, Any]:
     payload = data.get("payload") if isinstance(data, dict) else None
     if isinstance(payload, dict):
-        record_id_raw = payload.get("record_id")
-        book_id_raw = payload.get("book_id")
-    else:
-        record_id_raw = data.get("record_id")
-        book_id_raw = data.get("book_id")
-
-    try:
-        record_id = int(record_id_raw) if record_id_raw is not None else 0
-    except (TypeError, ValueError):
-        record_id = 0
-
-    try:
-        book_id = int(book_id_raw) if book_id_raw is not None else 0
-    except (TypeError, ValueError):
-        try:
-            book_id = int(fallback_book_id) if fallback_book_id is not None else 0
-        except (TypeError, ValueError):
-            book_id = 0
-    return record_id, book_id
+        draft = payload.get("draft") or payload.get("accounting_draft")
+        if isinstance(draft, dict):
+            return dict(draft)
+    draft = data.get("draft") if isinstance(data, dict) else None
+    if isinstance(draft, dict):
+        return dict(draft)
+    return {}
 
 
 async def run_web_accounting_auto_image_task(task: TaskEnvelope) -> TaskResult:
     metadata = dict(task.metadata or {})
 
-    skill = skill_loader.get_skill("quick_accounting")
-    if not isinstance(skill, dict):
-        return TaskResult(
-            task_id=task.task_id,
-            worker_id=task.worker_id,
-            ok=False,
-            summary="服务端未加载 quick_accounting 技能",
-            error="service_skill_missing",
-            payload={
-                "text": "服务端未加载 quick_accounting 技能，请联系管理员检查部署。"
-            },
-        )
-
     image_bytes, mime_type = _load_image(task)
-    tool_decl = _build_quick_accounting_tool_declaration(skill)
-    ctx = _build_ctx(task)
-    system_instruction = prompt_composer.compose_base(
-        runtime_user_id=str(ctx.user_data.get("runtime_user_id") or ""),
-        platform=str(getattr(ctx.message, "platform", "") or ""),
-        tools=[tool_decl],
-        runtime_policy_ctx={
-            "agent_kind": "core-manager",
-            "policy": {"tools": {"allow": ["tool:ext_quick_accounting"], "deny": []}},
-        },
-        mode="media_image",
-    )
+    tool_decl = _build_accounting_draft_tool_declaration()
+    system_instruction = _build_system_instruction()
 
     called = 0
     last_error = ""
@@ -219,11 +158,12 @@ async def run_web_accounting_auto_image_task(task: TaskEnvelope) -> TaskResult:
         float(os.getenv("WEB_ACCOUNTING_STREAM_TIMEOUT_SEC", "75")),
     )
     loop = asyncio.get_running_loop()
-    success_future: asyncio.Future[dict[str, int]] = loop.create_future()
+    success_future: asyncio.Future[dict[str, Any]] = loop.create_future()
 
     async def tool_executor(name: str, args: dict[str, object]) -> dict:
         nonlocal called, last_error, captured_data
-        if name != "ext_quick_accounting":
+        if name != "submit_accounting_draft":
+            last_error = f"Tool not allowed: {name}"
             return {
                 "ok": False,
                 "error_code": "tool_not_allowed",
@@ -231,12 +171,63 @@ async def run_web_accounting_auto_image_task(task: TaskEnvelope) -> TaskResult:
                 "failure_mode": "recoverable",
             }
         called += 1
-        return {
-            "ok": False,
-            "error_code": "deprecated_extension_executor",
-            "message": "The extension executor has been removed. Please use LLM SOPs + primitive tools.",
-            "failure_mode": "fatal",
+        try:
+            draft = _normalize_accounting_draft(
+                dict(args or {}),
+                fallback_book_id=metadata.get("accounting_book_id"),
+            )
+        except ValueError as exc:
+            last_error = str(exc or "记账草稿校验失败").strip()
+            return {
+                "ok": False,
+                "error_code": "invalid_accounting_draft",
+                "message": last_error,
+                "failure_mode": "recoverable",
+            }
+
+        tool_result = {
+            "ok": True,
+            "terminal": True,
+            "task_outcome": "done",
+            "payload": {
+                "text": "已提取记账草稿",
+                "message": "已提取记账草稿",
+                "draft": draft,
+                "book_id": int(draft.get("book_id") or 0),
+            }
         }
+
+        payload = tool_result.get("payload")
+        captured_data = dict(tool_result)
+        if isinstance(payload, dict):
+            captured_data["payload"] = dict(payload)
+
+        extracted_draft = _extract_accounting_draft(captured_data)
+        if extracted_draft and not success_future.done():
+            success_future.set_result(
+                {
+                    "draft": extracted_draft,
+                    "book_id": int(extracted_draft.get("book_id") or 0),
+                }
+            )
+        else:
+            failure_text = str(
+                (
+                    payload.get("text")
+                    if isinstance(payload, dict)
+                    else ""
+                )
+                or tool_result.get("message")
+                or tool_result.get("text")
+                or tool_result.get("summary")
+                or ""
+            ).strip()
+            last_error = (
+                failure_text[:500]
+                if failure_text
+                else "submit_accounting_draft 未返回有效的 draft"
+            )
+        return tool_result
 
     message_history = [
         {
@@ -277,7 +268,7 @@ async def run_web_accounting_auto_image_task(task: TaskEnvelope) -> TaskResult:
                 consume_task.cancel()
                 with suppress(asyncio.CancelledError):
                     await consume_task
-            success_text = "记账成功"
+            success_text = "草稿解析成功"
             return TaskResult(
                 task_id=task.task_id,
                 worker_id=task.worker_id,
@@ -286,7 +277,7 @@ async def run_web_accounting_auto_image_task(task: TaskEnvelope) -> TaskResult:
                 payload={
                     "text": success_text,
                     "message": success_text,
-                    "record_id": int(result.get("record_id") or 0),
+                    "draft": dict(result.get("draft") or {}),
                     "book_id": int(result.get("book_id") or 0),
                     "tool_called": called,
                 },
@@ -309,13 +300,9 @@ async def run_web_accounting_auto_image_task(task: TaskEnvelope) -> TaskResult:
             with suppress(asyncio.CancelledError):
                 await consume_task
 
-    record_id, book_id = _extract_record_and_book_id(
-        captured_data,
-        fallback_book_id=metadata.get("accounting_book_id"),
-    )
-
-    if record_id > 0:
-        success_text = "记账成功"
+    draft = _extract_accounting_draft(captured_data)
+    if draft:
+        success_text = "草稿解析成功"
         return TaskResult(
             task_id=task.task_id,
             worker_id=task.worker_id,
@@ -324,8 +311,8 @@ async def run_web_accounting_auto_image_task(task: TaskEnvelope) -> TaskResult:
             payload={
                 "text": success_text,
                 "message": success_text,
-                "record_id": record_id,
-                "book_id": book_id,
+                "draft": draft,
+                "book_id": int(draft.get("book_id") or 0),
                 "tool_called": called,
             },
         )
@@ -351,8 +338,8 @@ async def run_web_accounting_auto_image_task(task: TaskEnvelope) -> TaskResult:
         payload={
             "text": detail[:500],
             "message": detail[:500],
-            "record_id": 0,
-            "book_id": book_id,
+            "draft": draft,
+            "book_id": int(metadata.get("accounting_book_id") or 0),
             "tool_called": called,
         },
     )

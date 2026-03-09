@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib
 import json
 import logging
 import sys
@@ -27,10 +28,33 @@ from core.skill_cli import (
 
 prepare_default_env(REPO_ROOT)
 
-from sqlalchemy import select
+from sqlalchemy import Column, Integer, Table, select
 from sqlalchemy.exc import SQLAlchemyError
 
-from api.core.database import get_session_maker
+from api.core.database import Base, get_session_maker
+
+
+def _ensure_users_table_registered() -> None:
+    if "users" in Base.metadata.tables:
+        return
+    try:
+        importlib.import_module("api.auth.models")
+    except ModuleNotFoundError as exc:
+        missing = str(getattr(exc, "name", "") or "").strip()
+        if missing != "fastapi_users":
+            raise
+    if "users" in Base.metadata.tables:
+        return
+    Table(
+        "users",
+        Base.metadata,
+        Column("id", Integer, primary_key=True),
+        extend_existing=True,
+    )
+
+
+_ensure_users_table_registered()
+
 from api.models.accounting import Account, Book, Category, Record
 from api.models.binding import PlatformUserBinding
 from core.accounting_store import get_active_book_id

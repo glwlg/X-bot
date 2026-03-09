@@ -29,6 +29,7 @@ export interface AccountItem {
     balance: number
     include_in_assets: boolean
     book_id?: number
+    aliases?: string[]
 }
 
 export interface BalanceTrendItem {
@@ -259,6 +260,11 @@ export const updateAccount = (accountId: number, data: { name?: string; type?: s
 
 export const deleteAccount = (accountId: number) =>
     request.delete(`/accounting/accounts/${accountId}`)
+
+export const mergeAccount = (accountId: number, targetAccountId: number) =>
+    request.post<{ message: string; account: AccountItem }>(`/accounting/accounts/${accountId}/merge`, {
+        target_account_id: targetAccountId,
+    })
 
 export const getAccountDetail = (accountId: number) =>
     request.get<AccountItem>(`/accounting/accounts/${accountId}`)

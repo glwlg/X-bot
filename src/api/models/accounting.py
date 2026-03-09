@@ -25,6 +25,26 @@ class Account(Base):
     include_in_assets: Mapped[bool] = mapped_column(default=True, nullable=False)
 
 
+class AccountAlias(Base):
+    __tablename__ = "accounting_account_aliases"
+    __table_args__ = (
+        UniqueConstraint(
+            "book_id",
+            "name",
+            name="uq_accounting_account_alias_book_name",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    book_id: Mapped[int] = mapped_column(
+        ForeignKey("accounting_books.id", ondelete="CASCADE"), nullable=False
+    )
+    account_id: Mapped[int] = mapped_column(
+        ForeignKey("accounting_accounts.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+
+
 class Category(Base):
     __tablename__ = "accounting_categories"
     id: Mapped[int] = mapped_column(primary_key=True)
