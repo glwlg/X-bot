@@ -155,10 +155,13 @@ async def test_resolve_attempt_blocked_moves_session_to_waiting_user(
     stored = await task_inbox.get(session.task_id)
     assert stored is not None
     assert stored.status == "waiting_user"
+    assert stored.metadata["delivery_state"] == "pending"
+    assert "任务暂时卡住了" in str(stored.metadata["last_user_visible_summary"])
     active = await heartbeat_store.get_session_active_task("u-1")
     assert active is not None
     assert active["status"] == "waiting_user"
     assert active["session_task_id"] == session.task_id
+    assert active["delivery_state"] == "pending"
 
 
 @pytest.mark.asyncio
@@ -367,6 +370,8 @@ async def test_resolve_attempt_final_completes_session(monkeypatch, _isolated_st
     stored = await task_inbox.get(session.task_id)
     assert stored is not None
     assert stored.status == "completed"
+    assert stored.metadata["delivery_state"] == "pending"
+    assert str(stored.metadata.get("resume_window_until") or "").strip()
     active = await heartbeat_store.get_session_active_task("u-3")
     assert active is None
 

@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import io
 import inspect
 import logging
 import os
@@ -9,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from core.agent_orchestrator import agent_orchestrator
+from core.background_delivery import push_background_text, split_background_chunks
 from core.heartbeat_store import heartbeat_store
 from core.platform.models import Chat, MessageType, UnifiedContext, UnifiedMessage, User
 from core.platform.registry import adapter_manager
@@ -425,9 +425,9 @@ class HeartbeatWorker:
 
         if self.enable_rss_signal and numeric_user_id > 0 and not has_rss_focus:
             with contextlib.suppress(Exception):
-                from core.state_store import get_user_subscriptions
+                from core.state_store import list_subscriptions
 
-                subs = await get_user_subscriptions(numeric_user_id)
+                subs = await list_subscriptions(numeric_user_id)
                 if subs:
                     specs.append(
                         {
@@ -470,7 +470,7 @@ class HeartbeatWorker:
     @staticmethod
     def _build_heartbeat_task_prompt(*, task_id: str, goal: str, readonly: bool) -> str:
         readonly_line = (
-            "当前为 readonly 模式：仅允许检查、查询、总结；允许执行用于状态去重的轻量写入（如 RSS last_entry_hash）。"
+            "当前为 readonly 模式：仅允许检查、查询、总结；允许执行用于订阅去重状态的轻量写入。"
             if readonly
             else "当前为 execute 模式：可以按需派发 worker 完成任务。"
         )
@@ -490,31 +490,7 @@ class HeartbeatWorker:
 
     @staticmethod
     def _split_push_chunks(text: str, limit: int = 3500) -> list[str]:
-        raw = str(text or "").strip()
-        if not raw:
-            return []
-        if len(raw) <= limit:
-            return [raw]
-
-        chunks: list[str] = []
-        remaining = raw
-        while remaining:
-            if len(remaining) <= limit:
-                chunks.append(remaining)
-                break
-
-            cut = remaining.rfind("\n\n", 0, limit)
-            if cut < int(limit * 0.6):
-                cut = remaining.rfind("\n", 0, limit)
-            if cut < int(limit * 0.4):
-                cut = limit
-
-            part = remaining[:cut].strip()
-            if part:
-                chunks.append(part)
-            remaining = remaining[cut:].strip()
-
-        return chunks
+        return split_background_chunks(text, limit=limit)
 
     @staticmethod
     def _build_headless_context(user_id: str) -> UnifiedContext:
@@ -555,124 +531,28 @@ class HeartbeatWorker:
         chat_id: str,
         text: str,
     ) -> bool:
-        payload = str(text or "").strip()
-        if not payload:
-            return True
-
-        filename = f"heartbeat-{datetime.now().strftime('%Y%m%d-%H%M%S')}.md"
-        caption = "📝 内容较长，完整结果见附件。"
-        document_bytes = payload.encode("utf-8")
-
-        # Platform-adaptive format conversion
-        try:
-            from services.md_converter import adapt_md_file_for_platform
-
-            document_bytes, filename = adapt_md_file_for_platform(
-                file_bytes=document_bytes,
-                filename=filename,
-                platform=platform,
-            )
-        except Exception:
-            pass
-
-        try:
-            send_document = getattr(adapter, "send_document", None)
-            if callable(send_document):
-                send_result = send_document(
-                    chat_id=chat_id,
-                    document=document_bytes,
-                    filename=filename,
-                    caption=caption,
-                )
-                if inspect.isawaitable(send_result):
-                    await send_result
-                return True
-
-            bot = getattr(adapter, "bot", None)
-            if platform == "telegram" and bot is not None:
-                file_obj = io.BytesIO(document_bytes)
-                file_obj.name = filename
-                send_result = bot.send_document(
-                    chat_id=chat_id,
-                    document=file_obj,
-                    caption=caption,
-                )
-                if inspect.isawaitable(send_result):
-                    await send_result
-                return True
-        except Exception as exc:
-            logger.warning(
-                "Heartbeat attachment push failed, fallback to chunked text. "
-                "platform=%s chat=%s err=%s",
-                platform,
-                chat_id,
-                exc,
-            )
-
-        return False
+        return await push_background_text(
+            platform=platform,
+            chat_id=chat_id,
+            text=text,
+            adapter=adapter,
+            filename_prefix="heartbeat",
+            file_enabled=True,
+            file_threshold=1,
+            max_text_chunks=0,
+        )
 
     async def _push_to_target(self, platform: str, chat_id: str, text: str) -> bool:
         try:
-            adapter = adapter_manager.get_adapter(platform)
-        except Exception:
-            return False
-
-        try:
-            payload_text = str(text or "").strip()
-            chunks = self._split_push_chunks(payload_text)
-            if not chunks:
-                return True
-
-            if (
-                self.push_file_enabled
-                and (
-                    len(chunks) > self.push_max_text_chunks
-                    or len(payload_text) > self.push_file_threshold
-                )
-                and await self._push_markdown_attachment(
-                    adapter=adapter,
-                    platform=platform,
-                    chat_id=chat_id,
-                    text=payload_text,
-                )
-            ):
-                return True
-
-            total = len(chunks)
-            for idx, chunk in enumerate(chunks, start=1):
-                payload = chunk
-                if total > 1:
-                    payload = f"[{idx}/{total}]\n{chunk}"
-
-                send_message = getattr(adapter, "send_message", None)
-                if callable(send_message):
-                    send_result = send_message(chat_id=chat_id, text=payload)
-                    if inspect.isawaitable(send_result):
-                        await send_result
-                    continue
-
-                bot = getattr(adapter, "bot", None)
-                if platform == "telegram" and bot is not None:
-                    html_payload = payload
-                    with contextlib.suppress(Exception):
-                        from platforms.telegram.formatter import (
-                            markdown_to_telegram_html,
-                        )
-
-                        html_payload = markdown_to_telegram_html(payload)
-                    send_result = bot.send_message(
-                        chat_id=chat_id,
-                        text=html_payload,
-                        parse_mode="HTML",
-                        disable_web_page_preview=True,
-                    )
-                    if inspect.isawaitable(send_result):
-                        await send_result
-                    continue
-
-                return False
-
-            return True
+            return await push_background_text(
+                platform=platform,
+                chat_id=chat_id,
+                text=text,
+                filename_prefix="heartbeat",
+                file_enabled=self.push_file_enabled,
+                file_threshold=self.push_file_threshold,
+                max_text_chunks=self.push_max_text_chunks,
+            )
         except Exception as exc:
             logger.error(
                 "Heartbeat push failed: platform=%s chat=%s err=%s",
@@ -680,7 +560,7 @@ class HeartbeatWorker:
                 chat_id,
                 exc,
             )
-        return False
+            return False
 
     @staticmethod
     def _create_orchestrator_stream(ctx: UnifiedContext, message_history: list):

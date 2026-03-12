@@ -1,15 +1,11 @@
-"""
-RSS Subscription and Monitoring Skill Script
-"""
+"""RSS Subscription Skill Script."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
 import logging
-import re
 import sys
-import urllib.parse
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -32,10 +28,10 @@ from core.skill_cli import (
 prepare_default_env(REPO_ROOT)
 
 from core.state_store import (
-    add_subscription,
+    create_subscription,
     delete_subscription,
-    delete_subscription_by_id,
-    get_user_subscriptions,
+    get_subscription,
+    list_subscriptions,
 )
 from stats import increment_stat
 
@@ -78,18 +74,14 @@ def _rss_usage_text() -> str:
         "用法:\n"
         "`/rss list`\n"
         "`/rss add <RSS URL>`\n"
-        "`/rss monitor <关键词>`\n"
-        "`/rss remove <RSS URL>`\n"
+        "`/rss remove <订阅ID>`\n"
         "`/rss refresh`\n"
         "`/rss help`"
     )
 
 
-async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> str:
-    """执行 RSS 订阅或关键词监控"""
-    action = str(params.get("action") or "").strip().lower()
-    action = action.replace("-", "_").replace(" ", "_")
-
+def _normalize_action(value: str) -> str:
+    action = str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
     action_alias = {
         "list_subscriptions": "list",
         "list_subscription": "list",
@@ -105,97 +97,88 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> str:
         "delete_subscription": "remove",
     }
     action = action_alias.get(action, action)
-    if action:
-        if any(token in action for token in ("refresh", "check", "update", "latest")):
-            action = "refresh"
-        elif any(token in action for token in ("remove", "delete", "unsub")):
-            action = "remove"
-        elif any(token in action for token in ("list", "subs", "subscription", "feed")):
-            action = "list"
-    # 支持 url 或 keyword 参数
-    raw_target = str(params.get("url") or params.get("keyword", "") or "").strip()
-    url = raw_target
+    if action in {"check", "run", "latest"}:
+        return "refresh"
+    return action
+
+
+def _extract_target(params: dict) -> str:
+    raw_target = str(
+        params.get("url")
+        or params.get("keyword")
+        or params.get("target")
+        or params.get("query")
+        or ""
+    ).strip()
     command_token = raw_target
     if command_token.startswith("/"):
         command_token = command_token[1:]
-    command_token = command_token.strip().lower()
+    token = command_token.strip().lower()
+    if token in {"list", "list_subs", "subscriptions", "subs"}:
+        return ""
+    return raw_target
+
+
+async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> dict:
+    action = _normalize_action(str(params.get("action") or ""))
+    raw_target = str(
+        params.get("url")
+        or params.get("keyword")
+        or params.get("target")
+        or params.get("query")
+        or ""
+    ).strip()
+    target = _extract_target(params)
     message_text = str(getattr(getattr(ctx, "message", None), "text", "") or "").lower()
 
-    if not action and command_token in {
-        "list",
-        "list_subs",
-        "subscriptions",
-        "subs",
-    }:
-        action = "list"
-        url = ""
-    elif not action and command_token in {"refresh", "check", "run", "latest"}:
-        action = "refresh"
-        url = ""
-    elif not action and command_token in {
-        "remove",
-        "unsubscribe",
-        "delete",
-    }:
-        action = "remove"
-        url = ""
-
     if not action:
-        action = "refresh" if not url else "add"
-
-    if action in {"check", "run", "latest"}:
-        action = "refresh"
+        raw_token = raw_target.lower().lstrip("/")
+        if raw_token in {"list", "list_subs", "subscriptions", "subs"}:
+            action = "list"
+            target = ""
+        elif raw_token in {"refresh", "check", "run", "latest"}:
+            action = "refresh"
+            target = ""
+        elif raw_token in {"remove", "unsubscribe", "delete"}:
+            action = "remove"
+            target = ""
+        else:
+            token = str(target or "").strip().lower().lstrip("/")
+            if token in {"list", "list_subs", "subscriptions", "subs"}:
+                action = "list"
+                target = ""
+            elif token in {"refresh", "check", "run", "latest"}:
+                action = "refresh"
+                target = ""
+            elif token in {"remove", "unsubscribe", "delete"}:
+                action = "remove"
+                target = ""
+            else:
+                action = "refresh" if not target else "add"
 
     if action == "list":
-        update_tokens = (
-            "更新",
-            "最新",
-            "check",
-            "refresh",
-            "update",
-            "latest",
-            "有没有",
-        )
-        explicit_list_only_tokens = (
-            "只看列表",
-            "仅列表",
-            "list only",
-            "只列出",
-        )
+        update_tokens = ("更新", "最新", "check", "refresh", "update", "latest", "有没有")
+        explicit_list_only_tokens = ("只看列表", "仅列表", "list only", "只列出")
         has_update_goal = any(token in message_text for token in update_tokens)
-        list_only_goal = any(
-            token in message_text for token in explicit_list_only_tokens
-        )
+        list_only_goal = any(token in message_text for token in explicit_list_only_tokens)
         if has_update_goal and not list_only_goal:
             action = "refresh"
 
-    if action == "list":
-        url = ""
-
     if action == "refresh":
-        msg = await refresh_user_subscriptions(ctx)
-        # if msg: await ctx.reply(msg)
-        return {"text": msg, "ui": {}}
-
+        return {"text": await refresh_user_subscriptions(ctx), "ui": {}}
     if action == "list":
         return await list_subs_command(ctx)
-
     if action == "remove":
-        if url:
-            # Direct remove if URL is provided
-            user_id = ctx.message.user.id
-            success = await delete_subscription(user_id, url)
-            if success:
-                # await ctx.reply(f"🗑️ 已取消订阅：`{url}`")
-                return {"text": f"✅ 已取消订阅: {url}", "ui": {}}
-            else:
-                # await ctx.reply(...)
-                return {"text": f"❌ 取消失败，未找到该订阅：`{url}`", "ui": {}}
-            # Interactive remove
-            return await show_unsubscribe_menu(ctx)
-
-    # Default: Add
-    return await process_subscribe(ctx, url)
+        if target:
+            return await remove_subscription_by_target(ctx, target)
+        return await show_unsubscribe_menu(ctx)
+    if action == "monitor":
+        return {"text": "❌ 关键词监控已下线，仅支持真实 RSS/Atom 订阅。", "ui": {}}
+    if action == "add":
+        if not target:
+            return {"text": "用法: `/rss add <RSS URL>`", "ui": {}}
+        return await process_subscribe(ctx, target)
+    return {"text": _rss_usage_text(), "ui": {}}
 
 
 def register_handlers(adapter_manager):
@@ -209,208 +192,108 @@ def register_handlers(adapter_manager):
         sub, args = _parse_rss_subcommand(ctx.message.text or "")
         if sub == "list":
             return await list_subs_command(ctx)
-
         if sub == "add":
-            target = args.strip()
-            if not target:
+            if not args.strip():
                 return {"text": "用法: `/rss add <RSS URL>`", "ui": {}}
-            return await process_subscribe(ctx, target)
-
+            return await process_subscribe(ctx, args.strip())
         if sub == "monitor":
-            keyword = args.strip()
-            if not keyword:
-                return {"text": "用法: `/rss monitor <关键词>`", "ui": {}}
-            return await process_monitor(ctx, keyword)
-
+            return {"text": "❌ 关键词监控已下线，仅支持真实 RSS/Atom 订阅。", "ui": {}}
         if sub == "remove":
-            target = args.strip()
-            if target:
-                success = await delete_subscription(ctx.message.user.id, target)
-                if success:
-                    return {"text": f"✅ 已取消订阅: {target}", "ui": {}}
-                return {"text": f"❌ 未找到订阅: {target}", "ui": {}}
+            if args.strip():
+                return await remove_subscription_by_target(ctx, args.strip())
             return await show_unsubscribe_menu(ctx)
-
         if sub == "refresh":
-            msg = await refresh_user_subscriptions(ctx)
-            return {"text": msg, "ui": {}}
-
+            return {"text": await refresh_user_subscriptions(ctx), "ui": {}}
         return {"text": _rss_usage_text(), "ui": {}}
 
-    adapter_manager.on_command("rss", cmd_rss, description="RSS/新闻订阅管理")
-
-    # Callbacks
+    adapter_manager.on_command("rss", cmd_rss, description="RSS 订阅管理")
     adapter_manager.on_callback_query("^unsub_", handle_unsubscribe_callback)
 
 
 async def fetch_feed_safe(url: str):
-    """Safely fetch and parse RSS feed asynchronously"""
+    """Safely fetch and parse RSS feed asynchronously."""
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
         response = await client.get(url)
         response.raise_for_status()
         content = response.content
 
         loop = asyncio.get_running_loop()
-        # Parse content in thread pool
         return await loop.run_in_executor(None, feedparser.parse, content)
 
 
-async def process_subscribe(ctx: UnifiedContext, url: str):
-    """实际处理订阅逻辑 (Returns dict)"""
-    try:
-        user_id = ctx.message.user.id
-    except (ValueError, TypeError):
-        user_id = ctx.message.user.id
-        logger.warning(f"Failed to cast user_id {user_id} to int")
-
-    if not url.startswith("http"):
-        # 尝试作为关键词处理 (集成 Monitor 功能)
-        logger.info(f"Input '{url}' is not a URL, treating as keyword for monitor.")
-
-        # 使用 Google News 搜索该关键词
-        keywords = re.split(r"[、,，]+", url.strip())
-        keywords = [k.strip() for k in keywords if k.strip()]
-
-        if not keywords:
-            return {"text": "❌ 请输入有效的 HTTP/HTTPS 链接或监控关键词。", "ui": {}}
-
-        # 如果是多个关键词，直接调用 process_monitor 批量处理
-        return await process_monitor(ctx, url)
+async def process_subscribe(ctx: UnifiedContext, url: str) -> dict:
+    target = str(url or "").strip()
+    if not target.startswith(("http://", "https://")):
+        return {"text": "❌ `/rss add` 只接受真实 RSS/Atom 链接。", "ui": {}}
 
     try:
-        # msg = await ctx.reply("🔍 正在验证 RSS 源...")
+        feed = await fetch_feed_safe(target)
+    except Exception as exc:
+        logger.error("Feed fetch failed: %s", exc)
+        return {"text": f"❌ 无法连接到 RSS 源: {exc}", "ui": {}}
 
-        # Use safe async fetch
-        try:
-            feed = await fetch_feed_safe(url)
-        except Exception as e:
-            logger.error(f"Feed fetch failed: {e}")
-            # await ctx.edit_message(...)
-            return {"text": f"❌ 无法连接到 RSS 源: {e}", "ui": {}}
+    title = str(feed.feed.get("title") or "").strip() or target
+    platform = str(ctx.message.platform or "telegram").strip() or "telegram"
 
-        title = feed.feed.get("title", url)
-        if not title:
-            title = url
+    try:
+        created = await create_subscription(
+            ctx.message.user.id,
+            {
+                "title": title,
+                "platform": platform,
+                "feed_url": target,
+            },
+        )
+    except Exception as exc:
+        if "already exists" in str(exc):
+            return {"text": "⚠️ 您已经订阅过这个 RSS 源了。", "ui": {}}
+        return {"text": f"❌ 订阅失败: {exc}", "ui": {}}
 
-        try:
-            platform = ctx.message.platform if ctx.message.platform else "telegram"
-            await add_subscription(user_id, url, title, platform=platform)
-            # await ctx.edit_message(...)
-            try:
-                uid_int = int(user_id)
-                await increment_stat(uid_int, "subscriptions_added")
-            except:
-                pass
-            return {
-                "text": f"✅ **订阅成功！**\n\n源：{title}\nBot 将每 30 分钟检查一次更新。",
-                "ui": {},
-            }
-        except Exception as e:
-            if "UNIQUE constraint failed" in str(e):
-                return {"text": "⚠️ 您已经订阅过这个源了。", "ui": {}}
-            else:
-                return {"text": f"❌ 订阅失败: {e}", "ui": {}}
+    try:
+        await increment_stat(int(ctx.message.user.id), "subscriptions_added")
+    except Exception:
+        pass
 
-    except Exception as e:
-        logger.error(f"Subscribe error: {e}")
-        return {"text": "❌ 无法访问该 RSS 源。", "ui": {}}
-
-
-async def process_monitor(ctx: UnifiedContext, keyword: str):
-    """实际处理监控逻辑，支持多关键词 (Returns dict)"""
-    user_id = ctx.message.user.id
-
-    keywords = re.split(r"[、,，]+", keyword.strip())
-    keywords = [k.strip() for k in keywords if k.strip()]
-
-    if not keywords:
-        return {"text": "❌ 请输入有效的关键词。", "ui": {}}
-
-    # msg = await ctx.reply(f"🔍 正在配置 {len(keywords)} 个关键词监控...")
-
-    platform = ctx.message.platform if ctx.message.platform else "telegram"
-
-    success_list = []
-    failed_list = []
-    existed_list = []
-
-    for kw in keywords:
-        encoded_keyword = urllib.parse.quote(kw)
-        rss_url = f"https://news.google.com/rss/search?q={encoded_keyword}&hl=zh-CN&gl=CN&ceid=CN:zh-Hans"
-        title = f"监控: {kw}"
-
-        try:
-            await add_subscription(user_id, rss_url, title, platform=platform)
-            success_list.append(kw)
-        except Exception as e:
-            if "UNIQUE constraint failed" in str(e):
-                existed_list.append(kw)
-            else:
-                logger.error(f"Monitor error for '{kw}': {e}")
-                failed_list.append(kw)
-
-    result_parts = []
-    if success_list:
-        result_parts.append(f"✅ 已添加监控 ({platform})：{', '.join(success_list)}")
-    if existed_list:
-        result_parts.append(f"⚠️ 已存在：{', '.join(existed_list)}")
-    if failed_list:
-        result_parts.append(f"❌ 添加失败：{', '.join(failed_list)}")
-
-    result_msg = (
-        "**监控设置完成！**\n\n"
-        + "\n".join(result_parts)
-        + "\n\n来源：Google News\nBot 将每 30 分钟推送相关新闻。"
-    )
-
-    # await ctx.edit_message(...)
-    return {"text": result_msg, "ui": {}}
+    return {
+        "text": (
+            "✅ **RSS 订阅已创建**\n\n"
+            f"ID：`{created['id']}`\n"
+            f"标题：{created['title']}\n"
+            "Bot 将每 30 分钟检查一次更新。"
+        ),
+        "ui": {},
+    }
 
 
-async def list_subs_command(ctx: UnifiedContext) -> str:
-    """返回订阅列表（用于 /rss list）"""
-    # Note: Permission check removed from here, should be done by caller/agent
-
-    user_id = ctx.message.user.id
-
-    subs = await get_user_subscriptions(user_id)
-
+async def list_subs_command(ctx: UnifiedContext) -> dict:
+    subs = await list_subscriptions(ctx.message.user.id)
     if not subs:
-        # await ctx.reply("📭 您当前没有订阅任何 RSS 源。")
-        return {"text": "📭 您当前没有订阅任何 RSS 源。", "ui": {}}
+        return {"text": "📭 您当前没有任何 RSS 订阅。", "ui": {}}
 
-    msg = "📋 **您的订阅列表**：\n\n"
+    msg = "📋 **您的订阅列表**\n\n"
     for sub in subs:
-        title = sub["title"]
-        url = sub["feed_url"]
-        msg += f"• [{title}]({url})\n\n"
+        msg += (
+            f"• `#{sub['id']}` [RSS] **{sub['title']}**\n"
+            f"  {sub['feed_url']}\n\n"
+        )
 
-    msg += "也可以直接点击下方按钮取消订阅："
+    msg += "使用 `/rss remove <订阅ID>` 取消订阅。"
 
     actions = []
     temp_row = []
     for sub in subs:
-        short_title = (
-            sub["title"][:10] + ".." if len(sub["title"]) > 10 else sub["title"]
-        )
-        btn = {"text": f"❌ {short_title}", "callback_data": f"unsub_{sub['id']}"}
-        temp_row.append(btn)
-
-        if len(temp_row) == 2:
+        label = f"❌ #{sub['id']}"
+        temp_row.append({"text": label, "callback_data": f"unsub_{sub['id']}"})
+        if len(temp_row) == 3:
             actions.append(temp_row)
             temp_row = []
-
     if temp_row:
         actions.append(temp_row)
 
-    logger.info(f"list_subs_command text:{msg} actions: {actions}")
     return {"text": msg, "ui": {"actions": actions}}
 
 
 async def refresh_user_subscriptions(ctx: UnifiedContext) -> str:
-    """
-    [Tool] 手动刷新当前用户的订阅
-    """
     user_id = ctx.message.user.id
 
     if ctx.platform_ctx:
@@ -418,39 +301,54 @@ async def refresh_user_subscriptions(ctx: UnifiedContext) -> str:
             await ctx.platform_ctx.bot.send_chat_action(
                 chat_id=ctx.message.chat.id, action="typing"
             )
-        except:
+        except Exception:
             pass
 
     from core.scheduler import trigger_manual_rss_check
 
     result_text = await trigger_manual_rss_check(user_id)
-
     if result_text:
         return result_text
-    else:
-        return "✅ 检查完成，您订阅的内容暂时没有更新。"
+    return "✅ 检查完成，当前 RSS 订阅没有新增内容。"
 
 
-async def show_unsubscribe_menu(ctx: UnifiedContext) -> None:
-    """显示取消订阅菜单"""
-    user_id = ctx.message.user.id
-    subs = await get_user_subscriptions(user_id)
-
+async def show_unsubscribe_menu(ctx: UnifiedContext) -> dict:
+    subs = await list_subscriptions(ctx.message.user.id)
     if not subs:
-        return {"text": "📭 您当前没有订阅任何内容。", "ui": {}}
+        return {"text": "📭 您当前没有任何 RSS 订阅。", "ui": {}}
 
     actions = []
     for sub in subs:
-        title = sub["title"] or sub["feed_url"][:30]
-        actions.append([{"text": f"❌ {title}", "callback_data": f"unsub_{sub['id']}"}])
-
+        label = f"❌ #{sub['id']} {sub['title']}"
+        actions.append([{"text": label[:28], "callback_data": f"unsub_{sub['id']}"}])
     actions.append([{"text": "🚫 取消", "callback_data": "unsub_cancel"}])
 
     return {"text": "📋 **请选择要取消的订阅**：", "ui": {"actions": actions}}
 
 
-async def handle_unsubscribe_callback(ctx: UnifiedContext) -> None:
-    """处理取消订阅按钮回调"""
+async def remove_subscription_by_target(ctx: UnifiedContext, target: str) -> dict:
+    raw = str(target or "").strip()
+    if not raw:
+        return {"text": "用法: `/rss remove <订阅ID>`", "ui": {}}
+
+    try:
+        sub_id = int(raw.lstrip("#"))
+    except ValueError:
+        return {"text": "❌ `/rss remove` 现在只支持按订阅 ID 删除。", "ui": {}}
+
+    sub = await get_subscription(ctx.message.user.id, sub_id)
+    if sub is None:
+        return {"text": f"❌ 未找到订阅 `#{sub_id}`。", "ui": {}}
+    success = await delete_subscription(ctx.message.user.id, sub_id)
+    if not success:
+        return {"text": f"❌ 删除失败，订阅 `#{sub_id}` 可能已不存在。", "ui": {}}
+    return {
+        "text": f"✅ 已取消订阅 `#{sub_id}`：{sub['title']}",
+        "ui": {},
+    }
+
+
+async def handle_unsubscribe_callback(ctx: UnifiedContext):
     data = ctx.callback_data
     if not data:
         return
@@ -458,44 +356,31 @@ async def handle_unsubscribe_callback(ctx: UnifiedContext) -> None:
     await ctx.answer_callback()
 
     if data == "unsub_cancel":
-        # await ctx.reply("👌 已取消操作。")
         return "👌 已取消操作。"
 
     try:
-        sub_id = int(data.replace("unsub_", ""))
-        user_id = ctx.callback_user_id
+        sub_id = int(str(data).replace("unsub_", ""))
     except ValueError:
-        # await ctx.reply("❌ 无效的操作。")
         return "❌ 无效的操作。"
 
-    success = await delete_subscription_by_id(sub_id, user_id)
-
+    success = await delete_subscription(ctx.callback_user_id, sub_id)
     if success:
-        return "✅ 订阅已取消。"
-    else:
-        return "❌ 取消失败，订阅可能已不存在。"
+        return f"✅ 已取消订阅 `#{sub_id}`。"
+    return "❌ 取消失败，订阅可能已不存在。"
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="RSS subscribe skill CLI bridge.",
-    )
+    parser = argparse.ArgumentParser(description="RSS subscribe skill CLI bridge.")
     add_common_arguments(parser)
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     subparsers.add_parser("list", help="List subscriptions")
 
     add_parser = subparsers.add_parser("add", help="Add an RSS feed subscription")
-    add_parser.add_argument("target", help="RSS URL or keyword")
-
-    monitor_parser = subparsers.add_parser(
-        "monitor",
-        help="Monitor one or more keywords",
-    )
-    monitor_parser.add_argument("keyword", help="Keyword or comma-separated keywords")
+    add_parser.add_argument("target", help="RSS URL")
 
     remove_parser = subparsers.add_parser("remove", help="Remove a subscription")
-    remove_parser.add_argument("target", help="RSS URL or keyword")
+    remove_parser.add_argument("target", help="Subscription ID")
 
     subparsers.add_parser("refresh", help="Refresh subscriptions now")
     return parser
@@ -506,24 +391,19 @@ def _params_from_args(args: argparse.Namespace) -> dict:
     if command == "list":
         return merge_params(args, {"action": "list"})
     if command == "add":
-        target = str(args.target or "").strip()
-        return merge_params(args, {"action": "add", "url": target})
-    if command == "monitor":
-        keyword = str(args.keyword or "").strip()
-        return merge_params(args, {"action": "monitor", "keyword": keyword})
+        return merge_params(args, {"action": "add", "url": str(args.target or "").strip()})
     if command == "remove":
-        target = str(args.target or "").strip()
-        return merge_params(args, {"action": "remove", "url": target})
+        return merge_params(
+            args, {"action": "remove", "target": str(args.target or "").strip()}
+        )
     if command == "refresh":
         return merge_params(args, {"action": "refresh"})
     raise SystemExit(f"unsupported command: {command}")
 
 
-async def _run() -> int:
-    parser = _build_parser()
-    args = parser.parse_args()
-    return await run_execute_cli(execute, args=args, params=_params_from_args(args))
-
-
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(_run()))
+    run_execute_cli(
+        _build_parser(),
+        _params_from_args,
+        execute,
+    )

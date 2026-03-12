@@ -14,7 +14,6 @@ from core.skill_loader import skill_loader
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 RuntimeToolAllowed = Callable[..., Any]
-RecordToolProfile = Callable[[str, Any, float], None]
 TodoMarkStep = Callable[[str, str, str], Any]
 AppendSessionEvent = Callable[[str], Awaitable[None]]
 OnWorkerDispatched = Callable[[str, str], None]
@@ -104,7 +103,6 @@ class ToolCallDispatcher:
     runtime: Any
     tool_broker: Any
     runtime_tool_allowed: RuntimeToolAllowed
-    record_tool_profile: RecordToolProfile
     todo_mark_step: TodoMarkStep
     append_session_event: AppendSessionEvent
     on_worker_dispatched: OnWorkerDispatched | None = None
@@ -538,7 +536,6 @@ class ToolCallDispatcher:
             dispatcher=self,
             args=tool_args,
         )
-        self.record_tool_profile(tool_name, result, started)
         return result
 
     def _should_retry_extension(self, result: Dict[str, Any]) -> bool:
@@ -611,7 +608,6 @@ class ToolCallDispatcher:
                 "message": f"Tool not available: {tool_name}",
                 "failure_mode": "recoverable",
             }
-            self.record_tool_profile(tool_name, unknown, started)
             return unknown
 
         user_data = getattr(self.ctx, "user_data", None)
@@ -644,7 +640,6 @@ class ToolCallDispatcher:
                     ),
                     "failure_mode": "recoverable",
                 }
-                self.record_tool_profile(tool_name, blocked, started)
                 return blocked
 
             if (
@@ -662,7 +657,6 @@ class ToolCallDispatcher:
                     ),
                     "failure_mode": "recoverable",
                 }
-                self.record_tool_profile(tool_name, blocked, started)
                 return blocked
 
             if not self._policy_allows(tool_name, kind="tool"):
@@ -672,7 +666,6 @@ class ToolCallDispatcher:
                     "message": f"Tool policy blocked: {tool_name}",
                     "failure_mode": "recoverable",
                 }
-                self.record_tool_profile(tool_name, blocked, started)
                 return blocked
             normalized_args = self._normalize_legacy_user_path(
                 tool_name=tool_name,
@@ -694,7 +687,6 @@ class ToolCallDispatcher:
                 task_workspace_root=self.task_workspace_root,
             )
             self.todo_mark_step("act", "in_progress", f"Tool `{tool_name}` finished.")
-            self.record_tool_profile(tool_name, result, started)
             return result
 
         if tool_name == "load_skill":
@@ -706,7 +698,6 @@ class ToolCallDispatcher:
                     "message": "Missing 'skill_name' argument",
                     "failure_mode": "recoverable",
                 }
-                self.record_tool_profile(tool_name, result, started)
                 return result
 
             skill_info = skill_loader.get_skill(skill_name) or {}
@@ -737,7 +728,6 @@ class ToolCallDispatcher:
                     ),
                     "failure_mode": "recoverable",
                 }
-                self.record_tool_profile(tool_name, result, started)
                 return result
 
             if allowed_roles and self._runtime_role() not in allowed_roles:
@@ -750,7 +740,6 @@ class ToolCallDispatcher:
                     ),
                     "failure_mode": "recoverable",
                 }
-                self.record_tool_profile(tool_name, result, started)
                 return result
 
             if self._runtime_role() == "worker" and runtime_target == "manager":
@@ -763,7 +752,6 @@ class ToolCallDispatcher:
                     ),
                     "failure_mode": "recoverable",
                 }
-                self.record_tool_profile(tool_name, result, started)
                 return result
 
             content = str(skill_info.get("skill_md_content") or "").strip()
@@ -774,7 +762,6 @@ class ToolCallDispatcher:
                     "message": f"Skill '{skill_name}' not found or has no content.",
                     "failure_mode": "recoverable",
                 }
-                self.record_tool_profile(tool_name, result, started)
                 return result
 
             skill_dir = str(skill_info.get("skill_dir") or "").strip()
@@ -826,7 +813,6 @@ class ToolCallDispatcher:
                 "absolute_entrypoint": absolute_entrypoint,
             }
             self.todo_mark_step("act", "in_progress", f"Tool `load_skill` loaded '{skill_name}'.")
-            self.record_tool_profile(tool_name, result, started)
             return result
 
         binding_result = await self._execute_skill_tool_binding(
@@ -853,10 +839,6 @@ class ToolCallDispatcher:
                 "extensions": items,
                 "summary": f"{len(items)} extension(s) available",
             }
-            self.record_tool_profile(tool_name, result, started)
-            return result
-
-            self.record_tool_profile(tool_name, result, started)
             return result
 
         self.todo_mark_step("act", "blocked", f"Unknown tool `{tool_name}`.")
@@ -868,5 +850,4 @@ class ToolCallDispatcher:
             "error_code": "unknown_tool",
             "message": f"Unknown tool: {tool_name}",
         }
-        self.record_tool_profile(tool_name, unknown, started)
         return unknown

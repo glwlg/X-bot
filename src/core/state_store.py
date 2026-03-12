@@ -6,6 +6,12 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, cast
 
+from core.subscription_types import (
+    default_title,
+    normalize_platform,
+    normalize_provider,
+)
+
 _state_io = importlib.import_module("core.state_io")
 init_db = _state_io.init_db
 next_id = _state_io.next_id
@@ -461,190 +467,231 @@ async def check_user_allowed_in_db(user_id: int | str) -> bool:
     return any(item["user_id"] == uid for item in rows)
 
 
-def _subs_path(user_id: int | str):
-    return user_path(user_id, "rss", "subscriptions.md")
+def _subs_path() -> Path:
+    return user_path("user", "rss", "subscriptions.md")
 
 
-def _normalize_subscription(raw: dict[str, Any]) -> dict[str, Any]:
+def _normalize_subscription(raw: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+
+    try:
+        sub_id = int(raw.get("id") or 0)
+    except Exception:
+        return None
+    if sub_id <= 0:
+        return None
+
+    user_id = str(raw.get("user_id") or "").strip()
+    if not user_id:
+        return None
+
+    feed_url = str(raw.get("feed_url") or "").strip()
+    if not feed_url:
+        return None
+
+    try:
+        provider = normalize_provider(raw.get("provider"), feed_url=feed_url)
+    except ValueError:
+        return None
+
+    title = str(raw.get("title") or "").strip()
+    if not title:
+        title = default_title(feed_url=feed_url)
+
     return {
-        "feed_url": str(raw.get("feed_url") or "").strip(),
-        "title": str(raw.get("title") or "").strip(),
-        "platform": str(raw.get("platform") or "telegram").strip() or "telegram",
+        "id": sub_id,
+        "user_id": user_id,
+        "provider": provider,
+        "title": title,
+        "platform": normalize_platform(raw.get("platform")),
+        "feed_url": feed_url,
         "last_etag": str(raw.get("last_etag") or "").strip(),
         "last_modified": str(raw.get("last_modified") or "").strip(),
         "last_entry_hash": str(raw.get("last_entry_hash") or "").strip(),
     }
 
 
-def _to_runtime_rows(
-    user_id: int | str, rows: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    runtime: list[dict[str, Any]] = []
-    for index, item in enumerate(rows, start=1):
-        feed_url = str(item.get("feed_url") or "").strip()
-        if not feed_url:
-            continue
-        runtime.append(
-            {
-                "id": index,
-                "user_id": str(user_id),
-                "feed_url": feed_url,
-                "title": str(item.get("title") or feed_url),
-                "platform": str(item.get("platform") or "telegram"),
-                "last_etag": str(item.get("last_etag") or ""),
-                "last_modified": str(item.get("last_modified") or ""),
-                "last_entry_hash": str(item.get("last_entry_hash") or ""),
-            }
-        )
-    return runtime
+def _serialize_subscription(row: dict[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_subscription(row)
+    if normalized is None:
+        raise ValueError("invalid subscription row")
+    return normalized
 
 
-async def _read_user_subscriptions(user_id: int | str) -> list[dict[str, Any]]:
-    path = _subs_path(user_id)
-    data = await read_json(path, [])
+async def _read_subscription_rows() -> list[dict[str, Any]]:
+    data = await read_json(_subs_path(), [])
     if not isinstance(data, list):
         return []
-    normalized = [
-        _normalize_subscription(item) for item in data if isinstance(item, dict)
-    ]
-    return [item for item in normalized if item.get("feed_url")]
+    rows: list[dict[str, Any]] = []
+    for item in data:
+        normalized = _normalize_subscription(item)
+        if normalized is not None:
+            rows.append(normalized)
+    return rows
 
 
-async def _write_user_subscriptions(
-    user_id: int | str, rows: list[dict[str, Any]]
-) -> None:
+async def _write_subscription_rows(rows: list[dict[str, Any]]) -> None:
     payload: list[dict[str, Any]] = []
     for row in rows:
-        feed_url = str(row.get("feed_url") or "").strip()
-        if not feed_url:
+        payload.append(_serialize_subscription(row))
+    payload.sort(key=lambda item: (str(item.get("user_id") or ""), int(item["id"])))
+    await write_json(_subs_path(), payload)
+
+
+def _find_subscription_index(
+    rows: list[dict[str, Any]], user_id: int | str, sub_id: int
+) -> int:
+    uid = str(user_id or "").strip()
+    for index, row in enumerate(rows):
+        if str(row.get("user_id") or "") != uid:
             continue
-        payload.append(
-            {
-                "feed_url": feed_url,
-                "title": str(row.get("title") or feed_url),
-                "platform": str(row.get("platform") or "telegram"),
-                "last_etag": str(row.get("last_etag") or ""),
-                "last_modified": str(row.get("last_modified") or ""),
-                "last_entry_hash": str(row.get("last_entry_hash") or ""),
-            }
-        )
-    await write_json(_subs_path(user_id), payload)
+        if int(row.get("id") or 0) == int(sub_id):
+            return index
+    return -1
 
 
-async def add_subscription(
+def _assert_unique_subscription(
+    rows: list[dict[str, Any]],
+    candidate: dict[str, Any],
+    *,
+    ignore_id: int | None = None,
+) -> None:
+    for row in rows:
+        if ignore_id is not None and int(row.get("id") or 0) == int(ignore_id):
+            continue
+        if str(row.get("user_id") or "") != str(candidate.get("user_id") or ""):
+            continue
+        if str(row.get("feed_url") or "").strip() == str(candidate.get("feed_url") or "").strip():
+            raise ValueError("feed subscription already exists")
+
+
+def _validate_subscription_payload(
     user_id: int | str,
-    feed_url: str,
-    title: str,
-    platform: str = "telegram",
-):
-    rows = await _read_user_subscriptions(user_id)
-    target_url = str(feed_url or "").strip()
-    if not target_url:
-        raise ValueError("feed_url is required")
-    if any(str(item.get("feed_url") or "").strip() == target_url for item in rows):
-        raise ValueError(
-            "UNIQUE constraint failed: subscriptions.user_id, subscriptions.feed_url"
-        )
+    payload: dict[str, Any],
+    *,
+    existing: dict[str, Any] | None = None,
+    subscription_id: int | None = None,
+) -> dict[str, Any]:
+    source = dict(existing or {})
+    source.update(dict(payload or {}))
+    platform = normalize_platform(source.get("platform"))
+    feed_url = str(source.get("feed_url") or "").strip()
+    if not feed_url:
+        raise ValueError("feed_url is required for RSS subscriptions")
+    for removed_field in ("kind", "query", "scope"):
+        if str(source.get(removed_field) or "").strip():
+            raise ValueError("关键词监控已下线，仅支持 RSS 订阅")
 
-    rows.append(
-        {
-            "feed_url": target_url,
-            "title": str(title or target_url),
-            "platform": str(platform or "telegram"),
-            "last_etag": "",
-            "last_modified": "",
-            "last_entry_hash": "",
-        }
-    )
-    await _write_user_subscriptions(user_id, rows)
+    provider = normalize_provider(source.get("provider"), feed_url=feed_url)
+    title = str(source.get("title") or "").strip()
+    if not title:
+        title = default_title(feed_url=feed_url)
 
-
-async def delete_subscription(user_id: int | str, feed_url: str) -> bool:
-    rows = await _read_user_subscriptions(user_id)
-    target = str(feed_url or "").strip()
-    kept = [item for item in rows if str(item.get("feed_url") or "").strip() != target]
-    changed = len(kept) != len(rows)
-    if changed:
-        await _write_user_subscriptions(user_id, kept)
-    return changed
+    return {
+        "id": int(subscription_id or source.get("id") or 0),
+        "user_id": str(user_id or "").strip(),
+        "provider": provider,
+        "title": title,
+        "platform": platform,
+        "feed_url": feed_url,
+        "last_etag": str(source.get("last_etag") or "").strip(),
+        "last_modified": str(source.get("last_modified") or "").strip(),
+        "last_entry_hash": str(source.get("last_entry_hash") or "").strip(),
+    }
 
 
-async def delete_subscription_by_id(sub_id: int, user_id: int | str) -> bool:
-    sid = int(sub_id)
-    rows = await _read_user_subscriptions(user_id)
-    runtime_rows = _to_runtime_rows(user_id, rows)
-    target = next(
-        (item for item in runtime_rows if int(item.get("id") or 0) == sid), None
-    )
-    if not target:
-        return False
-    return await delete_subscription(user_id, str(target.get("feed_url") or ""))
+async def create_subscription(user_id: int | str, payload: dict[str, Any]) -> dict[str, Any]:
+    rows = await _read_subscription_rows()
+    sub_id = await next_id("subscriptions", start=1)
+    record = _validate_subscription_payload(user_id, payload, subscription_id=sub_id)
+    _assert_unique_subscription(rows, record)
+    rows.append(record)
+    await _write_subscription_rows(rows)
+    return record
 
 
-async def get_user_subscriptions(user_id: int | str) -> list[dict[str, Any]]:
-    rows = await _read_user_subscriptions(user_id)
-    return _to_runtime_rows(user_id, rows)
+async def list_subscriptions(user_id: int | str) -> list[dict[str, Any]]:
+    uid = str(user_id or "").strip()
+    rows = await _read_subscription_rows()
+    return [row for row in rows if str(row.get("user_id") or "") == uid]
+
+
+async def get_subscription(user_id: int | str, sub_id: int) -> dict[str, Any] | None:
+    rows = await _read_subscription_rows()
+    index = _find_subscription_index(rows, user_id, sub_id)
+    if index < 0:
+        return None
+    return rows[index]
 
 
 async def update_subscription(
     sub_id: int,
     user_id: int | str,
-    title: str | None = None,
-    feed_url: str | None = None,
+    payload: dict[str, Any],
 ) -> bool:
-    rows = await _read_user_subscriptions(user_id)
-    runtime_rows = _to_runtime_rows(user_id, rows)
-    target = next(
-        (item for item in runtime_rows if int(item.get("id") or 0) == int(sub_id)),
-        None,
+    rows = await _read_subscription_rows()
+    index = _find_subscription_index(rows, user_id, sub_id)
+    if index < 0:
+        return False
+    current = rows[index]
+    updated = _validate_subscription_payload(
+        user_id,
+        payload,
+        existing=current,
+        subscription_id=sub_id,
     )
-    if not target:
-        return False
-    idx = int(sub_id) - 1
-    if idx < 0 or idx >= len(rows):
-        return False
-    if title is not None:
-        rows[idx]["title"] = str(title).strip()
-    if feed_url is not None:
-        new_url = str(feed_url).strip()
-        if not new_url:
-            raise ValueError("feed_url cannot be empty")
-        rows[idx]["feed_url"] = new_url
-    await _write_user_subscriptions(user_id, rows)
+    _assert_unique_subscription(rows, updated, ignore_id=sub_id)
+    rows[index] = updated
+    await _write_subscription_rows(rows)
     return True
 
 
-async def get_all_subscriptions() -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    for uid in all_user_ids():
-        path = _subs_path(uid)
-        if not path.exists():
-            continue
-        rows = await _read_user_subscriptions(uid)
-        merged.extend(_to_runtime_rows(uid, rows))
-    return merged
+async def delete_subscription(user_id: int | str, sub_id: int) -> bool:
+    rows = await _read_subscription_rows()
+    index = _find_subscription_index(rows, user_id, sub_id)
+    if index < 0:
+        return False
+    rows.pop(index)
+    await _write_subscription_rows(rows)
+    return True
 
 
-async def update_subscription_status(
+async def list_all_subscriptions() -> list[dict[str, Any]]:
+    return await _read_subscription_rows()
+
+
+async def list_feed_subscriptions() -> list[dict[str, Any]]:
+    return await _read_subscription_rows()
+
+
+async def update_feed_subscription_state(
     user_id: int | str,
-    feed_url: str,
+    sub_id: int,
+    *,
     last_entry_hash: str,
     last_etag: str | None = None,
     last_modified: str | None = None,
-):
-    rows = await _read_user_subscriptions(user_id)
-    target_url = str(feed_url or "").strip()
-    changed = False
-    for item in rows:
-        if str(item.get("feed_url") or "").strip() != target_url:
-            continue
-        item["last_entry_hash"] = str(last_entry_hash or "")
-        item["last_etag"] = str(last_etag or "")
-        item["last_modified"] = str(last_modified or "")
-        changed = True
-        break
-    if changed:
-        await _write_user_subscriptions(user_id, rows)
+) -> bool:
+    rows = await _read_subscription_rows()
+    index = _find_subscription_index(rows, user_id, sub_id)
+    if index < 0:
+        return False
+    target = rows[index]
+    target["last_entry_hash"] = str(last_entry_hash or "").strip()
+    target["last_etag"] = str(last_etag or "").strip()
+    target["last_modified"] = str(last_modified or "").strip()
+    rows[index] = target
+    await _write_subscription_rows(rows)
+    return True
+
+
+async def get_user_subscriptions(user_id: int | str) -> list[dict[str, Any]]:
+    return await list_subscriptions(user_id)
+
+
+async def get_all_subscriptions() -> list[dict[str, Any]]:
+    return await list_all_subscriptions()
 
 
 def _reminders_path(user_id: int | str):

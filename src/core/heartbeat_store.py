@@ -258,6 +258,11 @@ class HeartbeatStore:
                 task.get("resume_instruction_preview", ""), 2000
             ),
             "adjustments_count": max(0, int(task.get("adjustments_count") or 0)),
+            "delivery_state": _truncate(task.get("delivery_state", ""), 40).lower(),
+            "last_user_visible_summary": _truncate(
+                task.get("last_user_visible_summary", ""), 2400
+            ),
+            "resume_window_until": _truncate(task.get("resume_window_until", ""), 64),
         }
         if not normalized["id"]:
             return None
@@ -766,6 +771,9 @@ class HeartbeatStore:
                 "last_blocking_reason",
                 "resume_instruction_preview",
                 "adjustments_count",
+                "delivery_state",
+                "last_user_visible_summary",
+                "resume_window_until",
             ):
                 if key in fields:
                     current[key] = fields[key]

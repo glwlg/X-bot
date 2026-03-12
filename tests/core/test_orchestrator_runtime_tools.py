@@ -41,7 +41,6 @@ async def test_software_delivery_falls_back_to_user_request(monkeypatch):
         runtime=object(),
         tool_broker=object(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -89,7 +88,6 @@ async def test_software_delivery_inferrs_skill_action_from_request(monkeypatch):
         runtime=object(),
         tool_broker=object(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -136,7 +134,6 @@ async def test_software_delivery_rewrites_plan_to_skill_modify_without_repo_hint
         runtime=object(),
         tool_broker=object(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -185,7 +182,6 @@ async def test_software_delivery_keeps_plan_when_repo_hint_present(monkeypatch):
         runtime=object(),
         tool_broker=object(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -241,7 +237,6 @@ async def test_software_delivery_external_skill_integration_routes_to_local_skil
         runtime=object(),
         tool_broker=object(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -285,7 +280,6 @@ async def test_manager_blocks_bash_when_software_delivery_intent(monkeypatch):
         runtime=object(),
         tool_broker=_FakeToolBroker(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -345,7 +339,6 @@ async def test_manager_allows_loaded_skill_cli_bash_when_request_mentions_code()
         runtime=object(),
         tool_broker=_FakeToolBroker(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -389,7 +382,6 @@ async def test_worker_allows_bash_even_when_request_mentions_code(monkeypatch):
         runtime=object(),
         tool_broker=_FakeToolBroker(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -427,7 +419,6 @@ async def test_manager_allows_bash_for_non_coding_ops(monkeypatch):
         runtime=object(),
         tool_broker=_FakeToolBroker(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -465,7 +456,6 @@ async def test_manager_blocks_write_to_repo_code_path():
         runtime=object(),
         tool_broker=_FakeToolBroker(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -507,7 +497,6 @@ async def test_manager_allows_write_to_runtime_data_path():
         runtime=object(),
         tool_broker=_FakeToolBroker(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -550,7 +539,6 @@ async def test_manager_rewrites_legacy_user1_path_for_read_tool(monkeypatch):
         runtime=object(),
         tool_broker=_FakeToolBroker(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -592,7 +580,6 @@ async def test_worker_rewrites_legacy_user1_path_to_single_user_root(monkeypatch
         runtime=object(),
         tool_broker=_FakeToolBroker(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -638,7 +625,6 @@ async def test_bash_rewrites_legacy_user_path_to_single_user_root(monkeypatch):
         runtime=object(),
         tool_broker=_FakeToolBroker(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )

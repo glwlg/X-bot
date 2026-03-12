@@ -7,13 +7,13 @@ import logging
 import datetime
 import html
 import re
-import urllib.parse
 import dateutil.parser
 import feedparser
 import hashlib
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
+from core.background_delivery import push_background_text
 from core.heartbeat_store import heartbeat_store
 from core.platform.registry import adapter_manager
 from core.platform.models import UnifiedContext
@@ -23,10 +23,11 @@ from core.state_store import (
     add_reminder,
     delete_reminder,
     get_pending_reminders,
-    get_all_subscriptions,
-    update_subscription_status,
     get_user_watchlist,
     get_all_watchlist_users,
+    list_feed_subscriptions,
+    list_subscriptions,
+    update_feed_subscription_state,
 )
 from core.state_store import get_all_active_tasks, save_message, get_latest_session_id
 
@@ -141,13 +142,6 @@ async def _remember_proactive_delivery_target(
         logger.debug("Failed to remember proactive delivery target.", exc_info=True)
 
 
-def _is_google_rss_redirect(url: str) -> bool:
-    parsed = urllib.parse.urlparse(str(url or "").strip())
-    host = (parsed.netloc or "").lower()
-    path = (parsed.path or "").lower()
-    return host.endswith("news.google.com") and "/rss/articles/" in path
-
-
 def _extract_urls_from_html(raw_html: str) -> list[str]:
     text = str(raw_html or "")
     if not text:
@@ -172,8 +166,6 @@ def _resolve_entry_link(entry: object, fallback_url: str) -> str:
 
     primary = str(_entry_get("link", "") or "").strip()
     candidates: list[str] = []
-    if primary:
-        candidates.append(primary)
 
     links = _entry_get("links", [])
     if isinstance(links, list):
@@ -209,27 +201,22 @@ def _resolve_entry_link(entry: object, fallback_url: str) -> str:
         seen.add(url)
         normalized.append(url)
 
+    if primary and primary not in seen:
+        normalized.insert(0, primary)
+
     for url in normalized:
         if not url.startswith("http"):
-            continue
-        if _is_google_rss_redirect(url):
             continue
         return url
 
     return primary or fallback
 
 
-def _get_entry_hash(entry: object, feed_url: str) -> str:
+def _get_entry_hash(entry: object, _feed_url: str) -> str:
     """基于内容为 RSS 条目生成稳定的特征 hash"""
     title = str(getattr(entry, "get", lambda *x: "")("title", "") or "")
     if title:
-        raw_title = title
-        if _is_google_rss_redirect(feed_url) or "news.google.com" in str(feed_url):
-            # 对于 Google News, 标题通常会带有 " - 来源" 后缀，导致同义新闻聚合更新时 ID 虽然改变，标题大体一致
-            raw_title = re.sub(r"\s+-\s+[^-]+$", "", title).strip()
-
-        # 只取前 100 个字符进行哈希，防止微调，但对全量字符哈希也是足够安全并且确定的
-        return hashlib.md5(raw_title.encode("utf-8")).hexdigest()
+        return hashlib.md5(title.encode("utf-8")).hexdigest()
 
     # Fallback 到 ID 获取 link
     fallback_id = str(getattr(entry, "id", getattr(entry, "link", None)) or "")
@@ -255,37 +242,15 @@ async def send_via_adapter(
     **kwargs,
 ):
     """Helper to send message via available adapters"""
-
-    # 尝试获取对应平台的 Adapter
-    try:
-        adapter = adapter_manager.get_adapter(platform)
-    except Exception:
-        adapter = None
-
-    if adapter:
-        try:
-            send_message = getattr(adapter, "send_message", None)
-            if callable(send_message):
-                await send_message(chat_id=chat_id, text=text)
-            else:
-                bot = getattr(adapter, "bot", None)
-                if platform == "telegram" and bot is not None:
-                    from platforms.telegram.formatter import markdown_to_telegram_html
-
-                    await bot.send_message(
-                        chat_id=chat_id,
-                        text=markdown_to_telegram_html(text),
-                        parse_mode="HTML",
-                        disable_web_page_preview=True,
-                        **kwargs,
-                    )
-                else:
-                    logger.warning(f"Unknown platform or no send method: {platform}")
-            return
-        except Exception as e:
-            logger.error(f"{platform} send failed: {e}")
-    else:
-        logger.warning(f"No adapter found for platform: {platform}")
+    _ = (parse_mode, kwargs)
+    ok = await push_background_text(
+        platform=str(platform or "telegram"),
+        chat_id=str(chat_id),
+        text=str(text or ""),
+        filename_prefix="background",
+    )
+    if not ok:
+        logger.warning("Background push failed platform=%s chat=%s", platform, chat_id)
 
 
 async def send_reminder_job(
@@ -425,315 +390,263 @@ async def generate_entry_summary(title: str, content: str, link: str) -> str:
         return content[:200] + "..." if len(content) > 200 else content
 
 
-# 全局锁，防止定时任务和手动触发撞车
+FEED_CHECK_INTERVAL_SEC = 30 * 60
 _rss_check_lock = asyncio.Lock()
 
 
-async def fetch_formatted_rss_updates(
-    user_id: int = None, subscriptions: list = None
-) -> tuple[str, list, dict]:
-    """
-    获取并格式化 RSS 更新，但不发送。
-    返回: (formatted_message, pending_updates_list, user_updates_map)
-    user_updates_map: dict[(platform, user_id)] -> list
-    """
-    # 1. 获取订阅 (如果没有传入)
-    if not subscriptions:
-        if user_id:
-            from core.state_store import get_user_subscriptions
+def _format_feed_updates(updates: list[dict[str, str]]) -> str:
+    if not updates:
+        return ""
+    lines = [f"📢 **RSS 更新 ({len(updates)} 条)**", ""]
+    for update in updates:
+        lines.append(f"🔹 **{update['feed_title']}**")
+        lines.append(f"[{update['title']}]({update['link']})")
+        lines.append(f"📝 {update['summary']}")
+        lines.append("")
+    return "\n".join(lines).strip()
 
-            subscriptions = await get_user_subscriptions(user_id)
-        else:
-            subscriptions = await get_all_subscriptions()
 
+def _split_message_batches(header: str, items: list[str], *, limit: int = 4000) -> list[str]:
+    batches: list[str] = []
+    current = header
+    for item in items:
+        if len(current) + len(item) + 1 > limit and current != header:
+            batches.append(current.rstrip())
+            current = header
+        current += item
+    if current.strip():
+        batches.append(current.rstrip())
+    return batches
+
+
+async def _fetch_feed_updates(
+    *,
+    user_id: int | str | None = None,
+    subscriptions: list[dict[str, object]] | None = None,
+) -> tuple[str, list[dict[str, object]], dict[tuple[str, str], list[dict[str, object]]]]:
+    if subscriptions is None:
+        subscriptions = (
+            await list_subscriptions(user_id) if user_id is not None else await list_feed_subscriptions()
+        )
+    subscriptions = list(subscriptions or [])
     if not subscriptions:
         return "", [], {}
 
-    # 2. 按 feed_url 分组
-    feed_map = {}
+    feed_map: dict[str, list[dict[str, object]]] = {}
     for sub in subscriptions:
-        url = sub["feed_url"]
-        if url not in feed_map:
-            feed_map[url] = []
-        feed_map[url].append(sub)
+        url = str(sub.get("feed_url") or "").strip()
+        if not url:
+            continue
+        feed_map.setdefault(url, []).append(sub)
 
-    user_updates = {}  # (platform, user_id) -> list of updates
-    all_pending_updates = []
-
-    # 3. 抓取逻辑
+    user_updates: dict[tuple[str, str], list[dict[str, object]]] = {}
+    pending_updates: list[dict[str, object]] = []
     loop = asyncio.get_running_loop()
 
-    # Shared client for all fetches
     async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
         for url, subs in feed_map.items():
+            request_headers: dict[str, str] = {}
+            first_sub = subs[0]
+            if str(first_sub.get("last_etag") or "").strip():
+                request_headers["If-None-Match"] = str(first_sub.get("last_etag") or "")
+            if str(first_sub.get("last_modified") or "").strip():
+                request_headers["If-Modified-Since"] = str(
+                    first_sub.get("last_modified") or ""
+                )
+
             try:
-                # 1. Async Fetch
-                try:
-                    response = await client.get(url)
-                    response.raise_for_status()
-                    content = response.content
-                except Exception as e:
-                    logger.error(f"Network error checking feed {url}: {e}")
+                response = await client.get(url, headers=request_headers)
+                if response.status_code == 304:
                     continue
+                response.raise_for_status()
+            except Exception as e:
+                logger.error("Network error checking feed %s: %s", url, e)
+                continue
 
-                # 2. Threaded Parse
-                feed = await loop.run_in_executor(None, feedparser.parse, content)
+            try:
+                feed = await loop.run_in_executor(None, feedparser.parse, response.content)
+            except Exception as e:
+                logger.error("Failed to parse feed %s: %s", url, e)
+                continue
 
-                if feed.bozo and feed.bozo_exception:
-                    # Some feeds result in bozo but have entries, log but continue
-                    logger.warning(f"Feed bozo {url}: {feed.bozo_exception}")
+            if getattr(feed, "bozo", False) and getattr(feed, "bozo_exception", None):
+                logger.warning("Feed bozo %s: %s", url, feed.bozo_exception)
+            if not getattr(feed, "entries", None):
+                continue
 
-                if not feed.entries:
-                    continue
+            current_ids: list[str] = []
+            for entry in list(feed.entries)[:20]:
+                e_id = _get_entry_hash(entry, url)
+                legacy_id = str(getattr(entry, "id", getattr(entry, "link", None)) or "")
+                if e_id and e_id not in current_ids:
+                    current_ids.append(e_id)
+                if legacy_id and legacy_id not in current_ids:
+                    current_ids.append(legacy_id)
+            new_hash_str = ",".join(current_ids[:30])
+            response_etag = str(response.headers.get("etag") or getattr(feed, "etag", "") or "")
+            response_modified = str(
+                response.headers.get("last-modified")
+                or getattr(feed, "modified", "")
+                or ""
+            )
 
-                current_ids = []
-                for entry in feed.entries[:20]:
-                    e_id = _get_entry_hash(entry, url)
-                    legacy_id = str(
-                        getattr(entry, "id", getattr(entry, "link", None)) or ""
+            for sub in subs:
+                last_hashes = [
+                    h.strip()
+                    for h in str(sub.get("last_entry_hash") or "").split(",")
+                    if h.strip()
+                ]
+                entries_to_push: list[object] = []
+                if not last_hashes:
+                    if feed.entries:
+                        entries_to_push.append(feed.entries[0])
+                else:
+                    for entry in feed.entries:
+                        e_id = _get_entry_hash(entry, url)
+                        legacy_id = str(
+                            getattr(entry, "id", getattr(entry, "link", None)) or ""
+                        )
+                        if len(last_hashes) == 1 and (
+                            e_id in last_hashes or legacy_id in last_hashes
+                        ):
+                            break
+                        if (e_id and e_id not in last_hashes) and legacy_id not in last_hashes:
+                            entries_to_push.append(entry)
+                        if len(entries_to_push) >= 3:
+                            break
+
+                for latest_entry in entries_to_push:
+                    title = str(
+                        getattr(latest_entry, "get", lambda *_: "")("title", "无标题")
+                        or "无标题"
+                    )
+                    link = _resolve_entry_link(latest_entry, fallback_url=url)
+                    feed_title = str(feed.feed.get("title", sub.get("title") or "RSS 订阅"))
+
+                    content_field = ""
+                    if hasattr(latest_entry, "summary"):
+                        content_field = str(latest_entry.summary or "")
+                    elif hasattr(latest_entry, "content") and latest_entry.content:
+                        content_field = str(latest_entry.content[0].get("value", "") or "")
+                    elif hasattr(latest_entry, "description"):
+                        content_field = str(latest_entry.description or "")
+
+                    content_clean = re.sub(r"<[^>]+>", "", content_field).strip()
+                    summary = (
+                        await generate_entry_summary(title, content_clean, link)
+                        if content_clean
+                        else "暂无摘要"
                     )
 
-                    if e_id and e_id not in current_ids:
-                        current_ids.append(e_id)
-
-                    # 同时保留原始的 ID (防止一次性将所有的老的新闻全推过来)
-                    if legacy_id and legacy_id not in current_ids:
-                        current_ids.append(legacy_id)
-
-                # 保留前 30 个哈希防止过长
-                new_hash_str = ",".join(current_ids[:30])
-
-                for sub in subs:
-                    last_hash_str = str(sub.get("last_entry_hash") or "")
-                    last_hashes = [
-                        h.strip() for h in last_hash_str.split(",") if h.strip()
-                    ]
-
-                    entries_to_push = []
-                    if not last_hashes:
-                        # 新订阅，只取最新的一条推送
-                        if feed.entries:
-                            entries_to_push.append(feed.entries[0])
-                    else:
-                        for entry in feed.entries:
-                            e_id = _get_entry_hash(entry, url)
-                            legacy_id = str(
-                                getattr(entry, "id", getattr(entry, "link", None)) or ""
-                            )
-
-                            # 防止老旧系统由于 hash 变换导致全量推送，如果在上一次 hashes 中存在老 legacy_id 或是我们计算的等价的 e_id，都要进行拦截
-                            if len(last_hashes) == 1 and (
-                                e_id in last_hashes or legacy_id in last_hashes
-                            ):
-                                break
-
-                            if (e_id and e_id not in last_hashes) and (
-                                legacy_id not in last_hashes
-                            ):
-                                entries_to_push.append(entry)
-
-                            if len(entries_to_push) >= 3:  # 每次最多推 3 条
-                                break
-
-                    for latest_entry in entries_to_push:
-                        title = str(
-                            getattr(latest_entry, "get", lambda *_: "")(
-                                "title", "无标题"
-                            )
-                            or "无标题"
-                        )
-                        link = _resolve_entry_link(latest_entry, fallback_url=url)
-                        feed_title = feed.feed.get("title", "RSS 订阅")
-
-                        # Content summary logic...
-                        content_field = ""
-                        if hasattr(latest_entry, "summary"):
-                            content_field = latest_entry.summary
-                        elif hasattr(latest_entry, "content") and latest_entry.content:
-                            content_field = latest_entry.content[0].get("value", "")
-                        elif hasattr(latest_entry, "description"):
-                            content_field = latest_entry.description
-
-                        content_clean = re.sub(r"<[^>]+>", "", content_field).strip()
-
-                        if content_clean:
-                            summary = await generate_entry_summary(
-                                title, content_clean, link
-                            )
-                        else:
-                            summary = "暂无摘要"
-
-                        uid = sub["user_id"]
-                        plat = sub.get("platform", "telegram")
-                        key = (plat, uid)
-
-                        if key not in user_updates:
-                            user_updates[key] = []
-
-                        update_item = {
+                    uid = str(sub.get("user_id") or "")
+                    plat = str(sub.get("platform") or "telegram")
+                    key = (plat, uid)
+                    user_updates.setdefault(key, []).append(
+                        {
+                            "subscription_id": int(sub.get("id") or 0),
+                            "user_id": uid,
+                            "platform": plat,
                             "feed_title": feed_title,
                             "title": title,
                             "summary": summary,
                             "link": link,
-                            "user_id": uid,
-                            "feed_url": sub["feed_url"],
-                            "entry_id": new_hash_str,
-                            "etag": getattr(feed, "etag", None),
-                            "modified": getattr(feed, "modified", None),
+                            "last_entry_hash": new_hash_str,
+                            "last_etag": response_etag,
+                            "last_modified": response_modified,
                         }
-
-                        user_updates[key].append(update_item)
-                        all_pending_updates.append(update_item)
-
-            except Exception as e:
-                logger.error(f"Error checking feed {url}: {e}")
-
-    # 4. 格式化输出 (按用户汇总)
-    final_output = ""
-    # 如果是指定用户 (Tool 场景)，生成一个大的文本块
-    # 注意：Tool 场景通常只针对单一平台 (Telegram) 或者需要适配
-    if user_id:
-        for key, updates in user_updates.items():
-            if key[1] == user_id:
-                final_output += (
-                    f"📢 **RSS 订阅日报 ({len(updates)} 条更新) [via {key[0]}]**\n\n"
-                )
-                for update in updates:
-                    final_output += (
-                        f"🔹 **{update['feed_title']}**\n"
-                        f"[{update['title']}]({update['link']})\n"
-                        f"📝 {update['summary']}\n\n"
                     )
+                    pending_updates.append(user_updates[key][-1])
 
-    return final_output, all_pending_updates, user_updates
-
-
-async def mark_updates_as_read(pending_updates: list):
-    """更新订阅状态"""
-    for update in pending_updates:
-        try:
-            await update_subscription_status(
-                update["user_id"],
-                update["feed_url"],
-                update["entry_id"],
-                update["etag"],
-                update["modified"],
-            )
-        except Exception as e:
-            logger.error(
-                f"Failed to update subscription status for {update.get('feed_url')}: {e}"
-            )
-
-
-async def check_and_send_rss_updates(subscriptions: list):
-    """
-    [定时任务逻辑] 检查并直接发送 RSS 更新 (带锁)
-    """
-    if _rss_check_lock.locked():
-        logger.info("RSS check already in progress, waiting for lock...")
-
-    async with _rss_check_lock:
-        try:
-            _, _, user_updates_map = await fetch_formatted_rss_updates(
-                subscriptions=subscriptions
-            )
-        except Exception as e:
-            logger.error(f"Fetch updates failed: {e}")
-            return 0
-
-        if not user_updates_map:
-            return 0
-
-        sent_count = 0
-        success_updates = []
-
-        # 批量发送消息
-        for (platform, uid), updates in user_updates_map.items():
-            target_platform, target_chat_id = await _resolve_proactive_delivery_target(
-                uid,
-                platform,
-            )
-            if not target_platform or not target_chat_id:
-                logger.warning(
-                    "RSS push skipped: no delivery target for user=%s on %s",
-                    uid,
-                    platform,
-                )
+    formatted = ""
+    if user_id is not None:
+        for (platform, uid), updates in user_updates.items():
+            if str(uid) != str(user_id):
                 continue
+            section = _format_feed_updates(updates)
+            if not section:
+                continue
+            if formatted:
+                formatted += "\n\n"
+            formatted += section
+    return formatted, pending_updates, user_updates
 
-            msg_header = f"📢 **RSS 订阅日报 ({len(updates)} 条更新)**\n\n"
-            msg_body = ""
-            current_batch = []
 
-            for update in updates:
-                item_text = (
-                    f"🔹 **{update['feed_title']}**\n"
-                    f"[{update['title']}]({update['link']})\n"
-                    f"📝 {update['summary']}\n\n"
+async def _mark_feed_updates_as_read(pending_updates: list[dict[str, object]]) -> None:
+    seen: set[tuple[str, int]] = set()
+    for update in pending_updates:
+        uid = str(update.get("user_id") or "").strip()
+        sub_id = int(update.get("subscription_id") or 0)
+        key = (uid, sub_id)
+        if not uid or sub_id <= 0 or key in seen:
+            continue
+        seen.add(key)
+        try:
+            await update_feed_subscription_state(
+                uid,
+                sub_id,
+                last_entry_hash=str(update.get("last_entry_hash") or ""),
+                last_etag=str(update.get("last_etag") or ""),
+                last_modified=str(update.get("last_modified") or ""),
+            )
+        except Exception as e:
+            logger.error("Failed to update feed subscription state for %s/%s: %s", uid, sub_id, e)
+
+
+async def _send_feed_updates(
+    user_updates_map: dict[tuple[str, str], list[dict[str, object]]]
+) -> int:
+    sent_count = 0
+    delivered_updates: list[dict[str, object]] = []
+    for (platform, uid), updates in user_updates_map.items():
+        target_platform, target_chat_id = await _resolve_proactive_delivery_target(uid, platform)
+        if not target_platform or not target_chat_id:
+            logger.warning("Feed push skipped: no delivery target for user=%s on %s", uid, platform)
+            continue
+
+        items = []
+        for update in updates:
+            items.append(
+                f"🔹 **{update['feed_title']}**\n"
+                f"[{update['title']}]({update['link']})\n"
+                f"📝 {update['summary']}\n\n"
+            )
+
+        batches = _split_message_batches(
+            f"📢 **RSS 更新 ({len(updates)} 条)**\n\n",
+            items,
+        )
+        try:
+            for idx, batch in enumerate(batches, start=1):
+                header = batch
+                if idx > 1 and batch.startswith("📢 **RSS 更新"):
+                    header = batch.replace("📢 **RSS 更新", "📢 **RSS 更新 (续)", 1)
+                await send_via_adapter(
+                    chat_id=target_chat_id,
+                    text=header,
+                    platform=target_platform,
                 )
+            await _remember_proactive_delivery_target(uid, target_platform, target_chat_id)
+            delivered_updates.extend(updates)
+            sent_count += len(batches)
+        except Exception as e:
+            logger.error("Failed to send feed updates to %s on %s: %s", uid, platform, e)
 
-                # 长度检查 & 分批发送
-                if len(msg_header) + len(msg_body) + len(item_text) > 4000:
-                    try:
-                        await send_via_adapter(
-                            chat_id=target_chat_id,
-                            text=msg_header + msg_body,
-                            platform=target_platform,
-                        )
-                        await _remember_proactive_delivery_target(
-                            uid,
-                            target_platform,
-                            target_chat_id,
-                        )
-                        success_updates.extend(current_batch)
-                        sent_count += 1
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to send batch to {uid} on {platform}: {e}"
-                        )
-
-                    msg_body = ""
-                    msg_header = "📢 **RSS 订阅日报 (续)**\n\n"
-                    current_batch = []
-
-                msg_body += item_text
-                current_batch.append(update)
-
-            if msg_body:
-                try:
-                    await send_via_adapter(
-                        chat_id=target_chat_id,
-                        text=msg_header + msg_body,
-                        platform=target_platform,
-                    )
-                    await _remember_proactive_delivery_target(
-                        uid,
-                        target_platform,
-                        target_chat_id,
-                    )
-                    success_updates.extend(current_batch)
-                    sent_count += 1
-                except Exception as e:
-                    logger.error(
-                        f"Failed to send final batch to {uid} on {platform}: {e}"
-                    )
-
-        # 统一更新状态
-        await mark_updates_as_read(success_updates)
-
-        return sent_count
+    await _mark_feed_updates_as_read(delivered_updates)
+    return sent_count
 
 
-async def check_rss_updates_job():
-    """检查 RSS 更新的任务 (定时调用)"""
-    logger.info("Checking for RSS updates...")
-
-    subscriptions = await get_all_subscriptions()
-    if not subscriptions:
-        logger.info("No subscriptions found.")
-        return
-
-    await check_and_send_rss_updates(subscriptions)
+async def check_feed_updates_job():
+    logger.info("Checking RSS feed updates...")
+    if _rss_check_lock.locked():
+        logger.info("Subscription check already in progress, waiting for lock...")
+    async with _rss_check_lock:
+        subscriptions = await list_feed_subscriptions()
+        if not subscriptions:
+            logger.info("No feed subscriptions found.")
+            return
+        _, _, user_updates_map = await _fetch_feed_updates(subscriptions=subscriptions)
+        if user_updates_map:
+            await _send_feed_updates(user_updates_map)
 
 
 async def trigger_manual_rss_check(
@@ -741,42 +654,30 @@ async def trigger_manual_rss_check(
     *,
     suppress_busy_message: bool = False,
 ) -> str:
-    """
-    [Tool Logic] 手动触发特定用户的 RSS 检查
-    返回格式化后的更新内容文本，不直接发送。
-    """
-    # 获取锁
     if _rss_check_lock.locked():
         if suppress_busy_message:
             return ""
         return "⚠️ 正在进行定时更新检查，请稍后再试。"
 
     async with _rss_check_lock:
-        formatted_text, all_pending, _ = await fetch_formatted_rss_updates(
-            user_id=user_id
-        )
-
-        if all_pending:
-            # 标记为已读 (因为即将返回给 Agent 展示)
-            await mark_updates_as_read(all_pending)
-            return formatted_text
-        else:
-            return ""
+        feed_text, feed_pending, _ = await _fetch_feed_updates(user_id=user_id)
+        if feed_pending:
+            await _mark_feed_updates_as_read(feed_pending)
+        return feed_text
 
 
 def start_rss_scheduler():
-    """启动 RSS 检查定时任务"""
-    interval = 30 * 60
-
+    """启动 RSS 订阅定时任务"""
+    now = datetime.datetime.now()
     scheduler.add_job(
-        check_rss_updates_job,
+        check_feed_updates_job,
         "interval",
-        seconds=interval,
-        next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=30),
-        id="rss_check",
+        seconds=FEED_CHECK_INTERVAL_SEC,
+        next_run_time=now + datetime.timedelta(seconds=30),
+        id="feed_check",
         replace_existing=True,
     )
-    logger.info(f"RSS scheduler started, interval={interval}s")
+    logger.info("RSS scheduler started: interval=%ss", FEED_CHECK_INTERVAL_SEC)
 
 
 # --- 股票盯盘推送 ---

@@ -92,6 +92,17 @@ class _FakeDispatchQueue:
         return dict(self.result)
 
 
+class _FakeSessionTaskStore:
+    def __init__(self, snapshot=None):
+        self.snapshot = snapshot
+
+    async def get_active(self, _user_id: str):
+        return self.snapshot
+
+    async def get(self, _task_id: str):
+        return self.snapshot
+
+
 @pytest.mark.asyncio
 async def test_stop_command_cancels_worker_tasks_and_updates_heartbeat(monkeypatch):
     async def _allow(_ctx):
@@ -122,6 +133,11 @@ async def test_stop_command_cancels_worker_tasks_and_updates_heartbeat(monkeypat
         dispatch_queue_module,
         "dispatch_queue",
         fake_dispatch_queue,
+    )
+    monkeypatch.setattr(
+        start_handlers,
+        "session_task_store",
+        _FakeSessionTaskStore(),
     )
 
     ctx = _DummyContext("u-stop")
@@ -170,6 +186,11 @@ async def test_stop_command_reports_no_active_task(monkeypatch):
         "dispatch_queue",
         fake_dispatch_queue,
     )
+    monkeypatch.setattr(
+        start_handlers,
+        "session_task_store",
+        _FakeSessionTaskStore(),
+    )
 
     ctx = _DummyContext("u-idle")
     await start_handlers.stop_command(ctx)
@@ -177,6 +198,58 @@ async def test_stop_command_reports_no_active_task(monkeypatch):
     assert fake_task_manager.cancel_calls == ["u-idle"]
     assert len(ctx.replies) == 2
     assert "当前没有正在执行的任务" in ctx.replies[-1]
+
+
+@pytest.mark.asyncio
+async def test_stop_command_renders_session_brief_when_available(monkeypatch):
+    async def _allow(_ctx):
+        return True
+
+    monkeypatch.setattr(start_handlers, "check_permission_unified", _allow)
+
+    fake_task_manager = _FakeTaskManager(
+        active_info={
+            "todo_path": "/tmp/todo.md",
+            "heartbeat_path": "/tmp/heartbeat.md",
+            "active_task_id": "tsk-session-1",
+        },
+        cancelled_desc="worker_dispatch",
+    )
+    fake_heartbeat_store = _FakeHeartbeatStore(active_task=None)
+    fake_dispatch_queue = _FakeDispatchQueue(
+        {
+            "pending_cancelled": 0,
+            "running_signaled": 1,
+            "job_ids": ["j-1"],
+        }
+    )
+
+    snapshot = SimpleNamespace(
+        session_task_id="tsk-session-1",
+        stage_index=2,
+        stage_total=3,
+        stage_title="验证结果并整理交付",
+    )
+
+    monkeypatch.setattr(task_manager_module, "task_manager", fake_task_manager)
+    monkeypatch.setattr(heartbeat_store_module, "heartbeat_store", fake_heartbeat_store)
+    monkeypatch.setattr(
+        dispatch_queue_module,
+        "dispatch_queue",
+        fake_dispatch_queue,
+    )
+    monkeypatch.setattr(
+        start_handlers,
+        "session_task_store",
+        _FakeSessionTaskStore(snapshot=snapshot),
+    )
+
+    ctx = _DummyContext("u-stop-brief")
+    await start_handlers.stop_command(ctx)
+
+    final_text = ctx.replies[-1]
+    assert "任务：`tsk-session-1`" in final_text
+    assert "阶段：2/3 - 验证结果并整理交付" in final_text
 
 
 @pytest.mark.asyncio
@@ -204,6 +277,11 @@ async def test_button_callback_continue_resumes_waiting_task(monkeypatch):
     monkeypatch.setattr(
         "manager.relay.closure_service.manager_closure_service",
         fake_service,
+    )
+    monkeypatch.setattr(
+        start_handlers,
+        "session_task_store",
+        _FakeSessionTaskStore(),
     )
 
     ctx = _DummyContext("u-callback", text="noop")

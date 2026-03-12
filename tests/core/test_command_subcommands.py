@@ -63,7 +63,10 @@ def test_stock_rss_schedule_remind_deploy_subcommand_parsers():
     assert stock._parse_stock_subcommand("/stock unknown") == ("help", "")
 
     assert rss._parse_rss_subcommand("/rss") == ("list", "")
-    assert rss._parse_rss_subcommand("/rss monitor AI") == ("monitor", "AI")
+    assert rss._parse_rss_subcommand("/rss add https://example.com/rss.xml") == (
+        "add",
+        "https://example.com/rss.xml",
+    )
     assert rss._parse_rss_subcommand("/rss whatever") == ("help", "")
 
     assert schedule._parse_schedule_subcommand("/schedule") == ("list", "")

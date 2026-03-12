@@ -462,3 +462,92 @@ async def test_handle_ai_chat_does_not_attach_plain_path_from_final_text(
     await ai_handlers.handle_ai_chat(ctx)
 
     assert not ctx.photos
+
+
+@pytest.mark.asyncio
+async def test_handle_ai_chat_injects_recent_followup_context(monkeypatch):
+    import core.config as config_module
+    import core.heartbeat_store as heartbeat_module
+    import core.task_manager as task_manager_module
+    from core.agent_orchestrator import agent_orchestrator
+    from handlers import message_utils
+
+    captured: dict[str, str] = {}
+
+    async def _allow_user(_user_id):
+        return True
+
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    async def _false(*_args, **_kwargs):
+        return False
+
+    async def _empty_history(*_args, **_kwargs):
+        return []
+
+    async def _fake_process_reply_message(_ctx):
+        return False, "", None, ""
+
+    async def _fake_get_user_settings(_uid):
+        return {}
+
+    async def _identity_process_code_files(_ctx, text):
+        return text
+
+    class _FakeSessionTaskStore:
+        async def get_active(self, _user_id: str):
+            return None
+
+        async def match_followup(self, _user_id: str, _user_message: str):
+            return {
+                "session_task_id": "tsk-prev-1",
+                "context_text": (
+                    "【任务续接上下文】\n"
+                    "- 最近任务：`tsk-prev-1`\n"
+                    "- 最近结果摘要：n8n 已关闭。\n"
+                    "这句短回复是在承接上一条已完成任务。"
+                ),
+            }
+
+    async def _fake_handle_message(_ctx, message_history):
+        captured["last_user_text"] = str(message_history[-1]["parts"][0]["text"])
+        yield "好的，我继续处理。"
+
+    monkeypatch.setattr(config_module, "is_user_allowed", _allow_user)
+    monkeypatch.setattr(heartbeat_module.heartbeat_store, "set_delivery_target", _noop)
+    monkeypatch.setattr(ai_handlers, "add_message", _noop)
+    monkeypatch.setattr(ai_handlers, "increment_stat", _noop)
+    monkeypatch.setattr(ai_handlers, "_try_handle_waiting_confirmation", _false)
+    monkeypatch.setattr(ai_handlers, "_try_handle_memory_commands", _false)
+    monkeypatch.setattr(ai_handlers, "get_user_settings", _fake_get_user_settings)
+    monkeypatch.setattr(ai_handlers, "get_user_context", _empty_history)
+    monkeypatch.setattr(
+        ai_handlers, "process_and_send_code_files", _identity_process_code_files
+    )
+    async def _fake_bind_followup(_ctx, _msg: str):
+        return (
+            "【任务续接上下文】\n"
+            "- 最近任务：`tsk-prev-1`\n"
+            "- 最近结果摘要：n8n 已关闭。\n"
+            "这句短回复是在承接上一条已完成任务。"
+        )
+
+    monkeypatch.setattr(
+        ai_handlers,
+        "maybe_bind_recent_followup_context",
+        _fake_bind_followup,
+    )
+    monkeypatch.setattr(message_utils, "process_reply_message", _fake_process_reply_message)
+    monkeypatch.setattr(agent_orchestrator, "handle_message", _fake_handle_message)
+    monkeypatch.setattr(task_manager_module.task_manager, "register_task", _noop)
+    monkeypatch.setattr(task_manager_module.task_manager, "is_cancelled", lambda _uid: False)
+    monkeypatch.setattr(task_manager_module.task_manager, "unregister_task", lambda _uid: None)
+
+    ctx = _DummyChatContext()
+    ctx.message.text = "需要"
+
+    await ai_handlers.handle_ai_chat(ctx)
+
+    assert "任务续接上下文" in captured["last_user_text"]
+    assert "当前用户补充：需要" in captured["last_user_text"]

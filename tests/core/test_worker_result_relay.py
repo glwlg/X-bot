@@ -1,8 +1,10 @@
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 import manager.relay.result_relay as relay_module
+from manager.relay.delivery_store import delivery_store
 from manager.relay.result_relay import WorkerResultRelay
 from shared.contracts.dispatch import TaskEnvelope, TaskResult
 from shared.queue.dispatch_queue import DispatchQueue
@@ -32,6 +34,19 @@ class _FakeAdapter:
         return {"ok": True}
 
 
+def _reset_delivery_store(tmp_path: Path) -> None:
+    root = (tmp_path / "system" / "delivery").resolve()
+    jobs_root = (root / "jobs").resolve()
+    events_path = (root / "events.jsonl").resolve()
+    jobs_root.mkdir(parents=True, exist_ok=True)
+    events_path.write_text("", encoding="utf-8")
+    delivery_store.root = root
+    delivery_store.jobs_root = jobs_root
+    delivery_store.events_path = events_path
+    delivery_store._loaded = False
+    delivery_store._jobs = {}
+
+
 @pytest.fixture(autouse=True)
 def _disable_live_delivery_summary(monkeypatch):
     async def fallback_summary(self, *, task, result, text, files):
@@ -47,6 +62,12 @@ def _disable_live_delivery_summary(monkeypatch):
         "_summarize_delivery_body",
         fallback_summary,
     )
+
+
+@pytest.fixture(autouse=True)
+def _isolated_delivery_store(tmp_path):
+    _reset_delivery_store(tmp_path)
+    return tmp_path
 
 
 async def _create_finished_task(
@@ -483,6 +504,10 @@ async def test_worker_result_relay_process_once_marks_delivered(monkeypatch):
             _ = limit
             return [task]
 
+        async def get_task(self, task_id: str):
+            _ = task_id
+            return task
+
         async def latest_result(self, task_id: str):
             _ = task_id
 
@@ -496,10 +521,6 @@ async def test_worker_result_relay_process_once_marks_delivered(monkeypatch):
             self.marked.append(str(task_id))
             return True
 
-        async def clear_relay_retry(self, task_id: str):
-            _ = task_id
-            return True
-
     fake_queue = _FakeDispatchQueue()
     monkeypatch.setattr(relay_module, "dispatch_queue", fake_queue)
 
@@ -508,6 +529,44 @@ async def test_worker_result_relay_process_once_marks_delivered(monkeypatch):
 
     assert fake_queue.marked == ["tsk-process-1"]
     assert fake_adapter.messages
+
+
+@pytest.mark.asyncio
+async def test_delivery_jobs_prioritize_interactive_before_background():
+    relay = WorkerResultRelay()
+    interactive = TaskEnvelope(
+        task_id="tsk-interactive",
+        worker_id="worker-main",
+        instruction="帮我总结仓库结构",
+        source="user_chat",
+        status="done",
+        metadata={"user_id": "u-1"},
+    )
+    background = TaskEnvelope(
+        task_id="tsk-background",
+        worker_id="worker-main",
+        instruction="heartbeat run",
+        source="heartbeat",
+        status="done",
+        metadata={"user_id": "u-1", "session_task_id": "hb-1"},
+    )
+
+    await delivery_store.ensure_job(
+        task=background,
+        priority=relay._delivery_priority(background),
+        body_mode=relay._delivery_body_mode(background),
+    )
+    await delivery_store.ensure_job(
+        task=interactive,
+        priority=relay._delivery_priority(interactive),
+        body_mode=relay._delivery_body_mode(interactive),
+    )
+
+    ready = await delivery_store.list_ready(limit=10)
+
+    assert [job.task_id for job in ready][:2] == ["tsk-interactive", "tsk-background"]
+    assert ready[0].priority == "interactive"
+    assert ready[1].priority == "background"
 
 
 @pytest.mark.asyncio
@@ -526,13 +585,170 @@ async def test_worker_result_relay_missing_target_schedules_retry(
     relay = WorkerResultRelay()
     await relay.process_once()
 
-    task = await queue.get_task(finished.task_id)
-    assert task is not None
-    assert not str(task.delivered_at or "").strip()
-    relay_meta = dict((task.metadata or {}).get("_relay") or {})
-    assert int(relay_meta.get("attempts") or 0) == 1
-    assert str(relay_meta.get("state") or "") == "retrying"
-    assert str(relay_meta.get("next_retry_at") or "").strip()
+    job = await delivery_store.get(finished.task_id)
+    assert job is not None
+    assert job.status == "retrying"
+    assert job.attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_worker_result_relay_suppresses_startup_replay_for_old_dead_letter(
+    monkeypatch,
+):
+    class _FakeDispatchQueue:
+        def __init__(self):
+            self.marked: list[str] = []
+
+        async def list_undelivered(self, *, limit: int = 20):
+            _ = limit
+            return [
+                TaskEnvelope(
+                    task_id="tsk-old-dead",
+                    worker_id="worker-main",
+                    instruction="legacy failed task",
+                    source="user_chat",
+                    status="failed",
+                    metadata={"_relay": {"state": "dead_letter"}},
+                    created_at=(
+                        datetime.now().astimezone() - timedelta(days=2)
+                    ).isoformat(timespec="seconds"),
+                    updated_at=(
+                        datetime.now().astimezone() - timedelta(days=2)
+                    ).isoformat(timespec="seconds"),
+                    ended_at=(
+                        datetime.now().astimezone() - timedelta(days=2)
+                    ).isoformat(timespec="seconds"),
+                )
+            ]
+
+        async def mark_delivered(self, task_id: str):
+            self.marked.append(str(task_id))
+            return True
+
+    fake_queue = _FakeDispatchQueue()
+    monkeypatch.setattr(relay_module, "dispatch_queue", fake_queue)
+
+    relay = WorkerResultRelay()
+    relay.started_at_ts = datetime.now().astimezone().timestamp()
+    await relay._ensure_delivery_jobs()
+
+    job = await delivery_store.get("tsk-old-dead")
+    assert job is not None
+    assert job.status == "suppressed"
+    assert fake_queue.marked == ["tsk-old-dead"]
+
+
+@pytest.mark.asyncio
+async def test_worker_result_relay_suppresses_stale_undelivered_on_startup(
+    monkeypatch,
+):
+    old_ts = (datetime.now().astimezone() - timedelta(hours=2)).isoformat(
+        timespec="seconds"
+    )
+
+    class _FakeDispatchQueue:
+        def __init__(self):
+            self.marked: list[str] = []
+
+        async def list_undelivered(self, *, limit: int = 20):
+            _ = limit
+            return [
+                TaskEnvelope(
+                    task_id="tsk-old-undelivered",
+                    worker_id="worker-main",
+                    instruction="old result",
+                    source="user_chat",
+                    status="done",
+                    metadata={},
+                    created_at=old_ts,
+                    updated_at=old_ts,
+                    ended_at=old_ts,
+                )
+            ]
+
+        async def mark_delivered(self, task_id: str):
+            self.marked.append(str(task_id))
+            return True
+
+    fake_queue = _FakeDispatchQueue()
+    monkeypatch.setattr(relay_module, "dispatch_queue", fake_queue)
+
+    relay = WorkerResultRelay()
+    relay.replay_max_age_sec = 300
+    relay.started_at_ts = datetime.now().astimezone().timestamp()
+    await relay._ensure_delivery_jobs()
+
+    job = await delivery_store.get("tsk-old-undelivered")
+    assert job is not None
+    assert job.status == "suppressed"
+    assert fake_queue.marked == ["tsk-old-undelivered"]
+    assert str(job.next_retry_at or "").strip() == ""
+
+
+@pytest.mark.asyncio
+async def test_worker_result_relay_suppresses_existing_retry_job_for_old_task(
+    monkeypatch,
+):
+    old_ts = (datetime.now().astimezone() - timedelta(hours=3)).isoformat(
+        timespec="seconds"
+    )
+
+    class _FakeDispatchQueue:
+        def __init__(self):
+            self.marked: list[str] = []
+
+        async def list_undelivered(self, *, limit: int = 20):
+            _ = limit
+            return [
+                TaskEnvelope(
+                    task_id="tsk-old-retrying",
+                    worker_id="worker-main",
+                    instruction="old result",
+                    source="user_chat",
+                    status="done",
+                    metadata={},
+                    created_at=old_ts,
+                    updated_at=old_ts,
+                    ended_at=old_ts,
+                )
+            ]
+
+        async def mark_delivered(self, task_id: str):
+            self.marked.append(str(task_id))
+            return True
+
+    fake_queue = _FakeDispatchQueue()
+    monkeypatch.setattr(relay_module, "dispatch_queue", fake_queue)
+
+    relay = WorkerResultRelay()
+    relay.replay_max_age_sec = 300
+    relay.started_at_ts = datetime.now().astimezone().timestamp()
+    await delivery_store.ensure_job(
+        task=TaskEnvelope(
+            task_id="tsk-old-retrying",
+            worker_id="worker-main",
+            instruction="old result",
+            source="user_chat",
+            status="done",
+            metadata={},
+            created_at=old_ts,
+            updated_at=old_ts,
+            ended_at=old_ts,
+        ),
+    )
+    await delivery_store.schedule_retry(
+        task_id="tsk-old-retrying",
+        reason="delivery_failed",
+        retry_after_sec=1,
+        max_retries=6,
+    )
+
+    await relay._ensure_delivery_jobs()
+
+    job = await delivery_store.get("tsk-old-retrying")
+    assert job is not None
+    assert job.status == "suppressed"
+    assert fake_queue.marked == ["tsk-old-retrying"]
 
 
 @pytest.mark.asyncio
@@ -556,20 +772,17 @@ async def test_worker_result_relay_moves_to_dead_letter_after_max_retries(
     await relay.process_once()
     await relay.process_once()
 
-    task = await queue.get_task(finished.task_id)
-    assert task is not None
-    assert not str(task.delivered_at or "").strip()
-    relay_meta = dict((task.metadata or {}).get("_relay") or {})
-    assert int(relay_meta.get("attempts") or 0) == 2
-    assert str(relay_meta.get("state") or "") == "dead_letter"
-    assert str(relay_meta.get("dead_letter_at") or "").strip()
+    job = await delivery_store.get(finished.task_id)
+    assert job is not None
+    assert job.status == "dead_letter"
+    assert job.attempts == 2
+    assert str(job.updated_at or "").strip()
 
     # dead-letter tasks should stop retrying further attempts.
     await relay.process_once()
-    task_again = await queue.get_task(finished.task_id)
-    assert task_again is not None
-    relay_meta_again = dict((task_again.metadata or {}).get("_relay") or {})
-    assert int(relay_meta_again.get("attempts") or 0) == 2
+    job_again = await delivery_store.get(finished.task_id)
+    assert job_again is not None
+    assert job_again.attempts == 2
 
 
 @pytest.mark.asyncio

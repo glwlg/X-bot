@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict
 
 from core.file_artifacts import extract_saved_file_rows, merge_file_rows, normalize_file_rows
 from core.heartbeat_store import heartbeat_store
+from core.task_cards import format_stage_continue_card, format_waiting_user_card
 from core.task_inbox import task_inbox
 from manager.dispatch.service import manager_dispatch_service
 from manager.planning.stage_planner import (
@@ -33,6 +34,12 @@ def _safe_text(value: Any, *, limit: int = 4000) -> str:
 
 def _now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
+
+
+def _future_iso(seconds: int) -> str:
+    return (datetime.now().astimezone() + timedelta(seconds=max(0, int(seconds or 0)))).isoformat(
+        timespec="seconds"
+    )
 
 
 def _session_task_id(metadata: Dict[str, Any]) -> str:
@@ -226,62 +233,6 @@ class ManagerClosureService:
             ]
         }
 
-    @staticmethod
-    def _next_stage_text(
-        *,
-        session_task_id: str,
-        stage_index: int,
-        stage_total: int,
-        stage_title: str,
-    ) -> str:
-        task_line = f"任务：`{session_task_id}`" if session_task_id else "任务继续推进中"
-        stage_line = (
-            f"阶段 {stage_index}/{max(1, stage_total)}"
-            if stage_index > 0 and stage_total > 0
-            else "下一阶段"
-        )
-        title_line = f"：{stage_title}" if stage_title else ""
-        return f"⏳ {task_line}\n\n已完成当前阶段，正在继续 {stage_line}{title_line}。"
-
-    @staticmethod
-    def _waiting_text(
-        *,
-        session_task_id: str,
-        stage_index: int,
-        stage_total: int,
-        stage_title: str,
-        completed_lines: list[str],
-        blocking_reason: str,
-    ) -> str:
-        lines = [
-            "⏸ 任务暂时卡住了，但我还没有结束它。",
-        ]
-        if session_task_id:
-            header = f"任务：`{session_task_id}`"
-            if stage_index > 0 and stage_total > 0:
-                header += f" | 阶段 {stage_index}/{max(1, stage_total)}"
-            lines.extend(["", header])
-        if completed_lines:
-            lines.extend(["", "已完成：", *completed_lines])
-        if blocking_reason or stage_title:
-            lines.extend(
-                [
-                    "",
-                    "当前卡点：",
-                    f"- {blocking_reason or f'在“{stage_title}”阶段暂时未完成收口。'}",
-                ]
-            )
-        lines.extend(
-            [
-                "",
-                "建议下一步：",
-                "- 回复“继续”，我会基于现有结果换一种策略继续推进",
-                "- 也可以直接补充要求/约束，我会在同一个任务里调整方案",
-                "- 如果不需要继续，回复“停止”",
-            ]
-        )
-        return "\n".join(lines).strip()
-
     async def _load_session_state(
         self,
         *,
@@ -364,7 +315,7 @@ class ManagerClosureService:
             normalize_file_rows(session_meta.get("collected_files") or []),
             _result_files(result),
         )
-        text = self._waiting_text(
+        text = format_waiting_user_card(
             session_task_id=session_task_id,
             stage_index=stage_index,
             stage_total=stage_total,
@@ -381,6 +332,9 @@ class ManagerClosureService:
                 "task_goal": task_goal,
                 "last_blocking_reason": blocking_reason,
                 "collected_files": collected_files,
+                "delivery_state": "pending",
+                "last_user_visible_summary": _safe_text(text, limit=2400),
+                "resume_window_until": "",
             }
         )
         merged_metadata = _remember_closure(
@@ -414,6 +368,9 @@ class ManagerClosureService:
                     result=result,
                     default=blocking_reason,
                 ),
+                delivery_state="pending",
+                last_user_visible_summary=_safe_text(text, limit=2400),
+                resume_window_until="",
                 needs_confirmation=True,
                 confirmation_deadline="",
                 last_blocking_reason=blocking_reason,
@@ -519,6 +476,8 @@ class ManagerClosureService:
                     "original_user_request": original_user_request,
                     "last_blocking_reason": "",
                     "collected_files": merged_files,
+                    "delivery_state": "pending",
+                    "last_user_visible_summary": _safe_text(output or summary, limit=2400),
                 }
             )
             if next_stage is None:
@@ -529,6 +488,7 @@ class ManagerClosureService:
                 final_payload["delivery_mode"] = "full_text"
                 final_payload["user_facing_output"] = True
                 final_result["payload"] = final_payload
+                merged_metadata["resume_window_until"] = _future_iso(15 * 60)
                 await self._persist_session_metadata(
                     task_inbox_id=task_inbox_id,
                     status="completed",
@@ -548,6 +508,9 @@ class ManagerClosureService:
                         needs_confirmation=False,
                         confirmation_deadline="",
                         result_summary=summary,
+                        delivery_state="pending",
+                        last_user_visible_summary=_safe_text(output or summary, limit=2400),
+                        resume_window_until=_future_iso(15 * 60),
                         clear_active=True,
                         last_blocking_reason="",
                         resume_instruction_preview="",
@@ -654,7 +617,7 @@ class ManagerClosureService:
             except Exception:
                 logger.debug("Failed to refresh assigned worker after next stage dispatch", exc_info=True)
 
-            text = self._next_stage_text(
+            text = format_stage_continue_card(
                 session_task_id=session_task_id,
                 stage_index=stage_index,
                 stage_total=stage_total,
@@ -662,6 +625,8 @@ class ManagerClosureService:
             )
             latest_task = await task_inbox.get(task_inbox_id)
             latest_metadata = dict((latest_task.metadata if latest_task else {}) or {})
+            latest_metadata["delivery_state"] = "pending"
+            latest_metadata["last_user_visible_summary"] = _safe_text(text, limit=2400)
             latest_metadata = _remember_closure(
                 latest_metadata,
                 attempt_task_id=task.task_id,

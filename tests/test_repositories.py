@@ -158,39 +158,76 @@ class TestSubscriptionRepo:
     """测试订阅 Repository"""
 
     @pytest.mark.asyncio
-    async def test_add_subscription(self, mock_db):
+    async def test_create_feed_subscription(self, mock_db):
         """测试添加订阅"""
         from core.state_io import init_db
         from core.state_store import (
-            add_subscription,
-            get_user_subscriptions,
+            create_subscription,
+            list_subscriptions,
         )
 
         await init_db()
 
-        await add_subscription(12345, "https://example.com/rss", "测试订阅")
+        await create_subscription(
+            12345,
+            {
+                "title": "测试订阅",
+                "feed_url": "https://example.com/rss",
+            },
+        )
 
-        subs = await get_user_subscriptions(12345)
+        subs = await list_subscriptions(12345)
         assert len(subs) == 1
         assert subs[0]["title"] == "测试订阅"
+        assert subs[0]["feed_url"] == "https://example.com/rss"
 
     @pytest.mark.asyncio
     async def test_delete_subscription(self, mock_db):
         """测试删除订阅"""
         from core.state_io import init_db
         from core.state_store import (
-            add_subscription,
+            create_subscription,
             delete_subscription,
-            get_user_subscriptions,
+            list_subscriptions,
         )
 
         await init_db()
 
-        await add_subscription(12345, "https://example.com/rss", "测试订阅")
-        await delete_subscription(12345, "https://example.com/rss")
+        created = await create_subscription(
+            12345,
+            {
+                "title": "测试订阅",
+                "feed_url": "https://example.com/rss",
+            },
+        )
+        await delete_subscription(12345, created["id"])
 
-        subs = await get_user_subscriptions(12345)
+        subs = await list_subscriptions(12345)
         assert len(subs) == 0
+
+    @pytest.mark.asyncio
+    async def test_list_subscriptions_filters_by_user(self, mock_db):
+        from core.state_io import init_db
+        from core.state_store import create_subscription, list_subscriptions
+
+        await init_db()
+
+        await create_subscription(
+            12345,
+            {"title": "A", "feed_url": "https://example.com/a.xml"},
+        )
+        await create_subscription(
+            67890,
+            {"title": "B", "feed_url": "https://example.com/b.xml"},
+        )
+
+        subs_a = await list_subscriptions(12345)
+        subs_b = await list_subscriptions(67890)
+
+        assert len(subs_a) == 1
+        assert len(subs_b) == 1
+        assert subs_a[0]["title"] == "A"
+        assert subs_b[0]["title"] == "B"
 
 
 class TestAllowedUsersStateStore:

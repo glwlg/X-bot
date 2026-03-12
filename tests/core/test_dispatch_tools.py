@@ -65,25 +65,6 @@ class _FakeDispatchQueue:
             )
         ]
 
-    async def delivery_health(
-        self, *, worker_id: str = "", dead_letter_limit: int = 20
-    ):
-        _ = dead_letter_limit
-        return {
-            "worker_id": worker_id,
-            "undelivered": 2,
-            "retrying": 1,
-            "dead_letter": 1,
-            "result_persist_error": 0,
-            "recent_dead_letters": [
-                {
-                    "task_id": "tsk-dead-1",
-                    "worker_id": worker_id or "worker-main",
-                    "status": "failed",
-                }
-            ],
-        }
-
     async def worker_metrics(self, *, worker_id: str = "", limit: int = 200):
         _ = limit
         return {
@@ -94,6 +75,30 @@ class _FakeDispatchQueue:
             "avg_dispatch_latency_sec": 1.0,
             "avg_completion_sec": 2.0,
             "completion_rate": 1.0,
+        }
+
+
+class _FakeDeliveryStore:
+    async def delivery_health(
+        self, *, worker_id: str = "", dead_letter_limit: int = 20
+    ):
+        _ = dead_letter_limit
+        return {
+            "worker_id": worker_id,
+            "undelivered": 2,
+            "retrying": 1,
+            "dead_letter": 1,
+            "avg_delivery_latency_sec": 12.5,
+            "max_delivery_latency_sec": 24.0,
+            "oldest_undelivered_age_sec": 91.0,
+            "result_persist_error": 0,
+            "recent_dead_letters": [
+                {
+                    "task_id": "tsk-dead-1",
+                    "worker_id": worker_id or "worker-main",
+                    "status": "failed",
+                }
+            ],
         }
 
     async def requeue_dead_letter(
@@ -159,6 +164,11 @@ async def test_worker_status_reads_from_shared_dispatch_queue(monkeypatch):
         "dispatch_queue",
         _FakeDispatchQueue(),
     )
+    monkeypatch.setattr(
+        dispatch_tools_module,
+        "delivery_store",
+        _FakeDeliveryStore(),
+    )
 
     tools = dispatch_tools_module.DispatchTools()
     result = await tools.worker_status(worker_id="worker-main", limit=5)
@@ -168,14 +178,16 @@ async def test_worker_status_reads_from_shared_dispatch_queue(monkeypatch):
     assert result["tasks"][0]["worker_id"] == "worker-main"
     assert int(result["delivery_health"]["dead_letter"]) == 1
     assert "dead_letter=1" in str(result["summary"] or "")
+    assert "avg_delivery_latency=12.5s" in str(result["summary"] or "")
+    assert "oldest_undelivered=91.0s" in str(result["summary"] or "")
 
 
 @pytest.mark.asyncio
 async def test_retry_dead_letter_delegates_to_dispatch_queue(monkeypatch):
     monkeypatch.setattr(
         dispatch_tools_module,
-        "dispatch_queue",
-        _FakeDispatchQueue(),
+        "delivery_store",
+        _FakeDeliveryStore(),
     )
 
     tools = dispatch_tools_module.DispatchTools()
@@ -193,8 +205,8 @@ async def test_retry_dead_letter_delegates_to_dispatch_queue(monkeypatch):
 async def test_retry_dead_letter_requires_task_id(monkeypatch):
     monkeypatch.setattr(
         dispatch_tools_module,
-        "dispatch_queue",
-        _FakeDispatchQueue(),
+        "delivery_store",
+        _FakeDeliveryStore(),
     )
 
     tools = dispatch_tools_module.DispatchTools()

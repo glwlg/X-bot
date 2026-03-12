@@ -131,3 +131,40 @@ async def test_execute_update_intent_overrides_list_alias_to_refresh(monkeypatch
     assert result["text"] == "REFRESH_OK"
     assert called["refresh"] == 1
     assert called["list"] == 0
+
+
+@pytest.mark.asyncio
+async def test_execute_monitor_returns_disabled_message(monkeypatch):
+    module = _load_rss_execute_module()
+
+    ctx = SimpleNamespace(
+        message=SimpleNamespace(
+            user=SimpleNamespace(id=1),
+            platform="telegram",
+            chat=SimpleNamespace(id=1),
+        ),
+        platform_ctx=None,
+    )
+
+    result = await module.execute(ctx, {"action": "monitor", "keyword": "AI"})
+
+    assert "关键词监控已下线" in result["text"]
+
+
+@pytest.mark.asyncio
+async def test_remove_subscription_requires_numeric_id():
+    module = _load_rss_execute_module()
+
+    ctx = SimpleNamespace(
+        message=SimpleNamespace(
+            user=SimpleNamespace(id=1),
+            platform="telegram",
+            chat=SimpleNamespace(id=1),
+        ),
+        callback_user_id=1,
+        platform_ctx=None,
+    )
+
+    result = await module.remove_subscription_by_target(ctx, "https://example.com/rss")
+
+    assert "只支持按订阅 ID 删除" in result["text"]

@@ -14,22 +14,20 @@ from typing import Any, Dict
 from core.file_artifacts import extract_saved_file_rows, normalize_file_rows
 from core.heartbeat_store import heartbeat_store
 from core.platform.registry import adapter_manager
+from core.task_inbox import task_inbox
 from manager.relay.closure_service import manager_closure_service
+from manager.relay.delivery_policy import (
+    delivery_body_mode_for_task,
+    delivery_priority_for_task,
+    is_heartbeat_delivery,
+)
+from manager.relay.delivery_store import DeliveryJob, delivery_store
+from manager.relay.progress_relay import PROGRESS_EVENTS_TO_DELIVER, build_progress_text
 from services.md_converter import adapt_md_file_for_platform
 from shared.contracts.dispatch import TaskEnvelope
 from shared.queue.dispatch_queue import dispatch_queue
 
 logger = logging.getLogger(__name__)
-
-PROGRESS_EVENTS_TO_DELIVER = frozenset(
-    {
-        "tool_call_started",
-        "tool_call_finished",
-        "retry_after_failure",
-        "max_turn_limit",
-        "loop_guard",
-    }
-)
 
 _RAW_MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\((?:https?://|/)[^)]+\)")
 _DELIVERY_PATH_LINE_RE = re.compile(
@@ -306,145 +304,6 @@ def _fallback_delivery_body(
     return "任务执行完成。"
 
 
-def _is_heartbeat_delivery(task: TaskEnvelope) -> bool:
-    if str(task.source or "").strip().lower() == "heartbeat":
-        return True
-    metadata = dict(task.metadata or {})
-    candidates = (
-        metadata.get("session_id"),
-        metadata.get("session_task_id"),
-        metadata.get("task_goal"),
-        metadata.get("original_user_request"),
-    )
-    for value in candidates:
-        text = str(value or "").strip().lower()
-        if text.startswith("hb-") or text == "heartbeat":
-            return True
-    return False
-
-
-def _format_progress_summary(tool_name: str, summary: str, *, ok: bool) -> str:
-    raw = str(summary or "").strip()
-    if not raw:
-        return ""
-
-    normalized_tool = str(tool_name or "").strip().lower()
-    if normalized_tool.startswith("ext_"):
-        normalized_tool = normalized_tool[4:]
-
-    if normalized_tool == "load_skill":
-        return "技能已加载，正在继续执行。"
-
-    if not ok:
-        first_line = raw.splitlines()[0].strip()
-        return first_line[:160]
-
-    if (
-        "\n" in raw
-        or len(raw) > 120
-        or any(marker in raw for marker in _VERBOSE_PROGRESS_MARKERS)
-        or _RAW_MARKDOWN_LINK_RE.search(raw) is not None
-    ):
-        if normalized_tool == "bash":
-            return "已获得结果，正在整理最终回复。"
-        return "已完成当前步骤，正在继续处理。"
-
-    return raw[:160]
-
-
-def _humanize_tool_name(tool_name: str) -> str:
-    raw = str(tool_name or "").strip().lower()
-    if not raw:
-        return ""
-    if raw.startswith("ext_"):
-        raw = raw[4:]
-    alias = {
-        "web_search": "搜索",
-        "web_browser": "网页浏览",
-        "rss_subscribe": "RSS 订阅",
-        "stock_watch": "股票行情",
-        "reminder": "提醒",
-        "deployment_manager": "部署",
-        "web_extractor": "网页提取",
-        "load_skill": "加载技能",
-        "daily_query": "日常查询",
-        "bash": "Shell",
-        "read": "读取文件",
-        "write": "写入文件",
-        "edit": "编辑文件",
-    }
-    if raw in alias:
-        return alias[raw]
-    return raw.replace("_", " ")
-
-
-def _build_progress_text(task: TaskEnvelope, progress: Dict[str, Any]) -> str:
-    progress_obj = dict(progress or {})
-    event = str(progress_obj.get("event") or "").strip().lower()
-    worker_name = str(task.metadata.get("worker_name") or task.worker_id or "执行助手")
-    visible_task_id = (
-        str(task.metadata.get("user_visible_task_id") or "").strip()
-        or str(task.metadata.get("session_task_id") or "").strip()
-        or str(task.metadata.get("task_inbox_id") or "").strip()
-        or str(task.task_id or "").strip()
-    )
-    stage_index = max(0, int(task.metadata.get("stage_index") or 0))
-    stage_total = max(0, int(task.metadata.get("stage_total") or 0))
-    stage_title = str(task.metadata.get("stage_title") or "").strip()
-    turn = max(0, int(progress_obj.get("turn") or 0))
-    recent_steps = [
-        dict(item) for item in list(progress_obj.get("recent_steps") or []) if isinstance(item, dict)
-    ]
-    latest_step = recent_steps[-1] if recent_steps else {}
-    tool_name = _humanize_tool_name(
-        str(latest_step.get("name") or progress_obj.get("running_tool") or "").strip()
-    )
-    raw_summary = str(latest_step.get("summary") or "").strip()
-    latest_status = str(latest_step.get("status") or "").strip().lower()
-    summary = _format_progress_summary(
-        str(latest_step.get("name") or progress_obj.get("running_tool") or "").strip(),
-        raw_summary,
-        ok=latest_status != "failed",
-    )
-    failed_tools = [
-        _humanize_tool_name(str(item).strip())
-        for item in list(progress_obj.get("failed_tools") or [])
-        if str(item).strip()
-    ]
-
-    lines = [f"⏳ {worker_name} 正在处理任务", f"任务ID：`{visible_task_id}`"]
-    if stage_index > 0 and stage_total > 0:
-        stage_line = f"阶段：{stage_index}/{max(1, stage_total)}"
-        if stage_title:
-            stage_line += f" - {stage_title}"
-        lines.append(stage_line)
-    if turn > 0:
-        lines.append(f"回合：{turn}")
-
-    if event == "tool_call_started":
-        lines.append(f"动作：开始执行 `{tool_name or '工具'}`")
-    elif event == "tool_call_finished":
-        if latest_status == "failed":
-            lines.append(f"动作：`{tool_name or '工具'}` 执行失败")
-        else:
-            lines.append(f"动作：`{tool_name or '工具'}` 执行完成")
-    elif event == "retry_after_failure":
-        lines.append("动作：工具失败后自动重试")
-    elif event == "max_turn_limit":
-        lines.append("动作：工具回合达到上限，准备结束当前尝试")
-    elif event == "loop_guard":
-        lines.append("动作：检测到重复调用，已触发循环保护")
-    else:
-        lines.append("动作：执行中")
-
-    if summary:
-        lines.append(f"摘要：{summary[:160]}")
-    elif failed_tools:
-        lines.append("最近失败：" + "，".join(failed_tools[-3:]))
-
-    return "\n".join(lines).strip()
-
-
 _NON_REPAIRABLE_FAILURE_MARKERS = (
     "missing required env",
     "environment variable",
@@ -515,6 +374,11 @@ class WorkerResultRelay:
             self.retry_base_sec,
             float(os.getenv("WORKER_RESULT_RELAY_RETRY_MAX_SEC", "300") or 300),
         )
+        self.replay_max_age_sec = max(
+            60.0,
+            float(os.getenv("WORKER_RESULT_RELAY_REPLAY_MAX_AGE_SEC", "900") or 900),
+        )
+        self.started_at_ts = time.time()
         self._stop_event = asyncio.Event()
         self._loop_task: asyncio.Task | None = None
 
@@ -609,6 +473,9 @@ class WorkerResultRelay:
         self,
         task: TaskEnvelope,
         result: Dict[str, Any],
+        *,
+        delivery_priority: str = "interactive",
+        body_mode: str = "auto",
     ) -> tuple[str, dict[str, Any], list[dict[str, str]]]:
         ok = bool(result.get("ok"))
         worker_name = str(task.metadata.get("worker_name") or task.worker_id or "执行助手")
@@ -623,6 +490,13 @@ class WorkerResultRelay:
                             files,
                         )
                     )
+                )
+            elif body_mode == "raw_text" or delivery_priority == "background":
+                body = _fallback_delivery_body(
+                    task,
+                    result,
+                    text=text or str(result.get("summary") or ""),
+                    files=files,
                 )
             else:
                 body = await self._summarize_delivery_body(
@@ -830,6 +704,7 @@ class WorkerResultRelay:
             return
         if self._loop_task and not self._loop_task.done():
             return
+        self.started_at_ts = time.time()
         self._stop_event.clear()
         self._loop_task = asyncio.create_task(
             self._run_loop(),
@@ -868,12 +743,12 @@ class WorkerResultRelay:
 
     async def process_once(self) -> None:
         await self._process_running_progress()
+        await self._ensure_delivery_jobs()
 
-        rows = await dispatch_queue.list_undelivered(limit=20)
-        for task in rows:
-            if self._is_dead_letter(task):
-                continue
-            if self._is_backoff_pending(task):
+        jobs = await delivery_store.list_ready(limit=20)
+        for job in jobs:
+            task = await dispatch_queue.get_task(job.task_id)
+            if task is None:
                 continue
 
             platform, chat_id = await self._resolve_delivery_target(task)
@@ -882,7 +757,20 @@ class WorkerResultRelay:
                     task,
                     reason="missing_delivery_target",
                 )
+                retry_state = await delivery_store.get(task.task_id)
+                await self._sync_session_delivery_state(
+                    task=task,
+                    delivery_state=str(getattr(retry_state, "status", "retrying") or "retrying"),
+                )
                 continue
+
+            await delivery_store.ensure_job(
+                task=task,
+                priority=str(job.priority or self._delivery_priority(task)),
+                body_mode=str(job.body_mode or self._delivery_body_mode(task)),
+                target_platform=platform,
+                target_chat_id=chat_id,
+            )
 
             await self._drain_task_progress(
                 task=task,
@@ -896,19 +784,41 @@ class WorkerResultRelay:
                 if result_obj
                 else {"ok": False, "error": task.error}
             )
+            prepared = await self._prepare_delivery_content(
+                platform=platform,
+                chat_id=chat_id,
+                task=task,
+                result=result_dict,
+                delivery_job=job,
+            )
             delivered = await self._deliver_task(
                 platform=platform,
                 chat_id=chat_id,
                 task=task,
                 result=result_dict,
+                delivery_job=job,
+                prepared=prepared,
             )
             if delivered:
-                await dispatch_queue.clear_relay_retry(task.task_id)
+                await delivery_store.mark_delivered(
+                    task.task_id,
+                    summary=str(prepared.get("text") or "")[:3000],
+                )
                 await dispatch_queue.mark_delivered(task.task_id)
+                await self._sync_session_delivery_state(
+                    task=task,
+                    delivery_state="delivered",
+                    summary=str(prepared.get("text") or "")[:2400],
+                )
             else:
                 await self._schedule_retry(
                     task,
                     reason="delivery_failed",
+                )
+                retry_state = await delivery_store.get(task.task_id)
+                await self._sync_session_delivery_state(
+                    task=task,
+                    delivery_state=str(getattr(retry_state, "status", "retrying") or "retrying"),
                 )
 
     async def _process_running_progress(self) -> None:
@@ -959,7 +869,7 @@ class WorkerResultRelay:
             if event_name not in PROGRESS_EVENTS_TO_DELIVER:
                 continue
 
-            text = _build_progress_text(task, item)
+            text = build_progress_text(task, item)
             sent = await self._deliver_progress(
                 task=task,
                 platform=platform,
@@ -1003,17 +913,53 @@ class WorkerResultRelay:
         delay = self.retry_base_sec * (2**exponent)
         return min(self.retry_max_sec, delay)
 
+    @staticmethod
+    def _delivery_priority(task: TaskEnvelope) -> str:
+        return delivery_priority_for_task(task)
+
+    def _delivery_body_mode(self, task: TaskEnvelope) -> str:
+        return delivery_body_mode_for_task(task)
+
+    def _task_finished_ts(self, task: TaskEnvelope) -> float:
+        for raw in (task.ended_at, task.updated_at, task.created_at):
+            ts = self._parse_iso_ts(str(raw or ""))
+            if ts > 0:
+                return ts
+        return 0.0
+
+    def _should_suppress_startup_replay(
+        self,
+        *,
+        task: TaskEnvelope,
+        existing_job: DeliveryJob | None,
+    ) -> bool:
+        if existing_job is not None and str(existing_job.status or "").strip().lower() in {
+            "delivered",
+            "suppressed",
+        }:
+            return False
+        relay = self._relay_meta(task)
+        if str(relay.get("state") or "").strip().lower() == "dead_letter":
+            return True
+        finished_ts = self._task_finished_ts(task)
+        if finished_ts <= 0:
+            return False
+        if finished_ts >= max(0.0, self.started_at_ts - 5.0):
+            return False
+        age_sec = max(0.0, time.time() - finished_ts)
+        return age_sec > self.replay_max_age_sec
+
     async def _schedule_retry(
         self,
         task: TaskEnvelope,
         *,
         reason: str,
     ) -> None:
-        relay = self._relay_meta(task)
-        current_attempts = max(0, int(relay.get("attempts") or 0))
+        existing = await delivery_store.get(task.task_id)
+        current_attempts = max(0, int(getattr(existing, "attempts", 0) or 0))
         next_attempt = current_attempts + 1
         backoff_sec = self._backoff_sec(next_attempt)
-        state = await dispatch_queue.bump_relay_retry(
+        state = await delivery_store.schedule_retry(
             task_id=task.task_id,
             reason=reason,
             retry_after_sec=backoff_sec,
@@ -1038,41 +984,123 @@ class WorkerResultRelay:
                 backoff_sec,
             )
 
-    async def _resolve_delivery_target(self, task: TaskEnvelope) -> tuple[str, str]:
-        meta = dict(task.metadata or {})
-        platform = str(meta.get("platform") or "").strip().lower()
-        chat_id = str(meta.get("chat_id") or "").strip()
-        if platform and platform != "heartbeat_daemon" and chat_id:
-            return platform, chat_id
+    async def _sync_session_delivery_state(
+        self,
+        *,
+        task: TaskEnvelope,
+        delivery_state: str,
+        summary: str = "",
+    ) -> None:
+        metadata = dict(task.metadata or {})
+        task_inbox_id = str(metadata.get("task_inbox_id") or "").strip()
+        safe_state = str(delivery_state or "").strip().lower()
+        safe_summary = str(summary or "").strip()[:2400]
+        if task_inbox_id:
+            try:
+                session_task = await task_inbox.get(task_inbox_id)
+                if session_task is not None:
+                    merged_metadata = dict(session_task.metadata or {})
+                    if (
+                        str(merged_metadata.get("delivery_state") or "").strip().lower()
+                        != safe_state
+                        or (
+                            safe_summary
+                            and merged_metadata.get("last_user_visible_summary") != safe_summary
+                        )
+                    ):
+                        merged_metadata["delivery_state"] = safe_state
+                        if safe_summary:
+                            merged_metadata["last_user_visible_summary"] = safe_summary
+                        await task_inbox.update_status(
+                            task_inbox_id,
+                            session_task.status,
+                            event="delivery_state_changed",
+                            detail=safe_state[:200],
+                            metadata=merged_metadata,
+                        )
+            except Exception:
+                logger.debug(
+                    "Failed to sync task inbox delivery state task=%s state=%s",
+                    task.task_id,
+                    safe_state,
+                    exc_info=True,
+                )
 
-        user_id = str(meta.get("user_id") or "").strip()
+        user_id = str(metadata.get("user_id") or "").strip()
         if not user_id:
-            return "", ""
-        target = await heartbeat_store.get_delivery_target(user_id)
-        target_platform = str(target.get("platform") or "").strip().lower()
-        target_chat_id = str(target.get("chat_id") or "").strip()
-        if target_platform and target_chat_id:
-            return target_platform, target_chat_id
-        return "", ""
+            return
+        try:
+            active_task = await heartbeat_store.get_session_active_task(user_id)
+            if not active_task:
+                return
+            active_session = (
+                str(active_task.get("session_task_id") or "").strip()
+                or str(active_task.get("task_inbox_id") or "").strip()
+            )
+            task_session = (
+                str(metadata.get("session_task_id") or "").strip()
+                or str(metadata.get("task_inbox_id") or "").strip()
+            )
+            if active_session and task_session and active_session != task_session:
+                return
+            fields: Dict[str, Any] = {}
+            if str(active_task.get("delivery_state") or "").strip().lower() != safe_state:
+                fields["delivery_state"] = safe_state
+            if safe_summary and active_task.get("last_user_visible_summary") != safe_summary:
+                fields["last_user_visible_summary"] = safe_summary
+            if fields:
+                await heartbeat_store.update_session_active_task(user_id, **fields)
+        except Exception:
+            logger.debug(
+                "Failed to sync heartbeat delivery state task=%s state=%s",
+                task.task_id,
+                safe_state,
+                exc_info=True,
+            )
 
-    async def _deliver_task(
+    async def _ensure_delivery_jobs(self) -> None:
+        rows = await dispatch_queue.list_undelivered(limit=20)
+        for task in rows:
+            existing_job = await delivery_store.get(task.task_id)
+            if self._should_suppress_startup_replay(
+                task=task,
+                existing_job=existing_job,
+            ):
+                await delivery_store.ensure_job(
+                    task=task,
+                    priority=self._delivery_priority(task),
+                    body_mode=self._delivery_body_mode(task),
+                )
+                await delivery_store.mark_suppressed(
+                    task.task_id,
+                    reason="startup_replay_suppressed",
+                    summary="suppressed stale undelivered task on relay startup",
+                )
+                await dispatch_queue.mark_delivered(task.task_id)
+                await self._sync_session_delivery_state(
+                    task=task,
+                    delivery_state="suppressed",
+                )
+                continue
+            await delivery_store.ensure_job(
+                task=task,
+                priority=self._delivery_priority(task),
+                body_mode=self._delivery_body_mode(task),
+            )
+            await self._sync_session_delivery_state(
+                task=task,
+                delivery_state="pending",
+            )
+
+    async def _prepare_delivery_content(
         self,
         *,
         platform: str,
         chat_id: str,
         task: TaskEnvelope,
         result: Dict[str, Any],
-    ) -> bool:
-        try:
-            adapter = adapter_manager.get_adapter(platform)
-        except Exception:
-            logger.warning(
-                "Worker relay skip: adapter missing platform=%s task=%s",
-                platform,
-                task.task_id,
-            )
-            return False
-
+        delivery_job: DeliveryJob | None = None,
+    ) -> Dict[str, Any]:
         closure = await manager_closure_service.resolve_attempt(
             task=task,
             result=result,
@@ -1080,12 +1108,27 @@ class WorkerResultRelay:
             chat_id=chat_id,
         )
         closure_kind = str(closure.get("kind") or "").strip().lower()
+        job_priority = (
+            str(getattr(delivery_job, "priority", "") or "").strip().lower()
+            or self._delivery_priority(task)
+        )
+        body_mode = (
+            str(getattr(delivery_job, "body_mode", "") or "").strip().lower()
+            or self._delivery_body_mode(task)
+        )
         if closure_kind == "legacy":
-            text, ui, files = await self._build_delivery_text(task, result)
+            text, ui, files = await self._build_delivery_text(
+                task,
+                result,
+                delivery_priority=job_priority,
+                body_mode=body_mode,
+            )
         elif closure_kind == "final":
             text, ui, files = await self._build_delivery_text(
                 task,
                 dict(closure.get("result") or result),
+                delivery_priority=job_priority,
+                body_mode=body_mode,
             )
         else:
             text = str(closure.get("text") or "").strip()
@@ -1117,6 +1160,64 @@ class WorkerResultRelay:
                     + f"`{repair_task_id}`"
                     + "，Manager 会继续把这个 skill 修到可直接调用。"
                 ).strip()
+        return {
+            "text": text,
+            "ui": ui,
+            "files": files,
+            "closure_kind": closure_kind,
+        }
+
+    async def _resolve_delivery_target(self, task: TaskEnvelope) -> tuple[str, str]:
+        meta = dict(task.metadata or {})
+        platform = str(meta.get("platform") or "").strip().lower()
+        chat_id = str(meta.get("chat_id") or "").strip()
+        if platform and platform != "heartbeat_daemon" and chat_id:
+            return platform, chat_id
+
+        user_id = str(meta.get("user_id") or "").strip()
+        if not user_id:
+            return "", ""
+        target = await heartbeat_store.get_delivery_target(user_id)
+        target_platform = str(target.get("platform") or "").strip().lower()
+        target_chat_id = str(target.get("chat_id") or "").strip()
+        if target_platform and target_chat_id:
+            return target_platform, target_chat_id
+        return "", ""
+
+    async def _deliver_task(
+        self,
+        *,
+        platform: str,
+        chat_id: str,
+        task: TaskEnvelope,
+        result: Dict[str, Any],
+        delivery_job: DeliveryJob | None = None,
+        prepared: Dict[str, Any] | None = None,
+    ) -> bool:
+        try:
+            adapter = adapter_manager.get_adapter(platform)
+        except Exception:
+            logger.warning(
+                "Worker relay skip: adapter missing platform=%s task=%s",
+                platform,
+                task.task_id,
+            )
+            return False
+
+        prepared_obj = dict(prepared or {})
+        if not prepared_obj:
+            prepared_obj = await self._prepare_delivery_content(
+                platform=platform,
+                chat_id=chat_id,
+                task=task,
+                result=result,
+                delivery_job=delivery_job,
+            )
+        text = str(prepared_obj.get("text") or "").strip()
+        ui = dict(prepared_obj.get("ui") or {})
+        files = normalize_file_rows(prepared_obj.get("files") or [])
+        if not text:
+            text = "任务执行完成，但无可展示输出。"
 
         delivered_any = False
         chunks = _split_chunks(text)

@@ -7,7 +7,7 @@
 | Task | Location | Notes |
 |------|----------|-------|
 | Tool assembly and execution loop | `src/core/agent_orchestrator.py`, `src/core/orchestrator_runtime_tools.py`, `src/core/primitive_runtime.py` | merges core/manager/extension tools and drives call loop |
-| Tool definitions, broker, and profile gating | `src/core/tool_registry.py`, `src/core/tool_broker.py`, `src/core/tool_access_store.py`, `src/core/tool_profile_store.py` | runtime-visible tool set, access policy, compatibility surface |
+| Tool definitions, broker, and access gating | `src/core/tool_registry.py`, `src/core/tool_broker.py`, `src/core/tool_access_store.py` | runtime-visible tool set, access policy, compatibility surface |
 | Extension execution pipeline | `src/core/extension_router.py`, `src/core/extension_executor.py`, `src/core/tools/extension_tools.py`, `src/core/skill_loader.py` | skill routing, execution, and contract adaptation |
 | Prompt policy and personality chain | `src/core/prompt_composer.py`, `src/core/prompts.py`, `src/core/soul_store.py`, `src/core/model_config.py` | system constraints + SOUL + model choices |
 | Orchestrator context and event closure | `src/core/orchestrator_context.py`, `src/core/orchestrator_event_handler.py` | context snapshots and delivery completion handling |

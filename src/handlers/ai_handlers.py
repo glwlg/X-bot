@@ -27,6 +27,7 @@ from user_context import get_user_context, add_message
 from core.state_store import get_user_settings
 from stats import increment_stat
 from core.prompt_composer import prompt_composer
+from handlers.chat_task_bridge import maybe_bind_recent_followup_context
 from .media_utils import extract_media_input
 from .message_utils import process_and_send_code_files
 
@@ -702,6 +703,13 @@ async def _try_handle_memory_commands(ctx: UnifiedContext, user_message: str) ->
     return False
 
 
+async def _maybe_bind_recent_followup_context(
+    ctx: UnifiedContext,
+    user_message: str,
+) -> str:
+    return await maybe_bind_recent_followup_context(ctx, user_message)
+
+
 async def handle_ai_chat(ctx: UnifiedContext) -> None:
     """
     处理普通文本消息，使用对话模型生成回复
@@ -875,6 +883,8 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         if is_media and not has_media:
             return
 
+    followup_context = await _maybe_bind_recent_followup_context(ctx, user_message)
+
     # URL 逻辑已移交给 Agent (skill: web_browser, download_video)
     # 不再进行硬编码预加载或弹窗
 
@@ -897,6 +907,11 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             "回答时优先使用已检索到的事实，不要编造未给出的信息。\n\n"
             f"用户请求：{user_message}"
         )
+    if followup_context:
+        final_user_message = (
+            f"{followup_context}\n\n"
+            f"当前用户补充：{final_user_message}"
+        ).strip()
 
     # User message already saved at start of function.
     # await add_message(context, user_id, "user", final_user_message)
@@ -1201,7 +1216,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         if history and len(history) > 0 and history[-1]["role"] == "user":
             # Check if the last DB message matches our current text (sanity check)
             last_db_text = history[-1]["parts"][0]["text"]
-            if last_db_text == final_user_message:
+            if last_db_text in {user_message, final_user_message}:
                 # Remove it, so we can replace it with the Rich version
                 history.pop()
 

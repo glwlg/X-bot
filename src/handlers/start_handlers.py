@@ -1,6 +1,8 @@
 import logging
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from core.platform.models import UnifiedContext
+from core.session_task_store import session_task_store
+from core.task_cards import build_session_brief_lines
 from .base_handlers import check_permission_unified, CONVERSATION_END
 
 logger = logging.getLogger(__name__)
@@ -79,11 +81,14 @@ async def stop_command(ctx: UnifiedContext) -> None:
     active_task_id = (
         active_info.get("active_task_id") if isinstance(active_info, dict) else None
     )
+    session_snapshot = await session_task_store.get_active(str(user_id))
     if not active_task_id:
         hb_active = await heartbeat_store.get_session_active_task(str(user_id))
         if hb_active:
             active_task_id = str(hb_active.get("id") or "")
             heartbeat_path = str(heartbeat_store.heartbeat_path(str(user_id)))
+    if session_snapshot is None and active_task_id:
+        session_snapshot = await session_task_store.get(str(active_task_id))
 
     # 尝试取消任务
     cancelled_desc = await task_manager.cancel_task(user_id)
@@ -117,22 +122,33 @@ async def stop_command(ctx: UnifiedContext) -> None:
 
     if cancelled_desc or active_task_id or worker_cancelled_total > 0:
         task_type_text = cancelled_desc or "worker_dispatch"
-        heartbeat_line = f"\n💓 心跳文件: `{heartbeat_path}`" if heartbeat_path else ""
-        todo_line = f"\n📋 旧任务文件: `{todo_path}`" if todo_path else ""
-        worker_line = ""
+        lines = ["🛑 **已中断任务**", ""]
+        if session_snapshot is not None:
+            lines.extend(
+                build_session_brief_lines(
+                    session_task_id=session_snapshot.session_task_id
+                    or str(active_task_id or "").strip(),
+                    stage_index=session_snapshot.stage_index,
+                    stage_total=session_snapshot.stage_total,
+                    stage_title=session_snapshot.stage_title,
+                )
+            )
+        elif active_task_id:
+            lines.append(f"任务：`{str(active_task_id).strip()}`")
+        lines.append(f"任务类型：{task_type_text}")
         if worker_cancelled_total > 0:
-            worker_line = (
-                "\n🧰 Worker 任务: "
+            lines.append(
+                "🧰 Worker 任务: "
                 f"取消排队 {worker_pending_cancelled} 个，"
                 f"中断运行 {worker_running_signaled} 个"
             )
+        if heartbeat_path:
+            lines.append(f"💓 心跳文件：`{heartbeat_path}`")
+        if todo_path:
+            lines.append(f"📋 旧任务文件：`{todo_path}`")
+        lines.extend(["", "如需继续，请重新发送您的请求。"])
         await ctx.reply(
-            f"🛑 **已中断任务**\n\n"
-            f"任务类型: {task_type_text}\n\n"
-            f"如需继续，请重新发送您的请求。"
-            f"{worker_line}"
-            f"{heartbeat_line}"
-            f"{todo_line}"
+            "\n".join(lines).strip()
         )
     else:
         await ctx.reply(
@@ -161,7 +177,6 @@ async def help_command(ctx: UnifiedContext) -> None:
         '• "下载这个视频的音频 https://..."\n\n'
         "📈 **行情与资讯**\n"
         '• "帮我关注英伟达股票"\n'
-        '• "监控关键词 AI" (Google News)\n'
         '• "订阅 RSS https://..."\n\n'
         "⏰ **实用工具**\n"
         '• "10分钟后提醒我喝水"\n'
@@ -279,7 +294,6 @@ async def button_callback(ctx: UnifiedContext) -> int:
                 '• "下载这个视频的音频 https://..."\n\n'
                 "📈 **行情与资讯**\n"
                 '• "帮我关注英伟达股票"\n'
-                '• "监控关键词 AI" (Google News)\n'
                 '• "订阅 RSS https://..."\n\n'
                 "⏰ **实用工具**\n"
                 '• "10分钟后提醒我喝水"\n'
@@ -389,16 +403,14 @@ async def button_callback(ctx: UnifiedContext) -> int:
                     "您还没有订阅任何内容。\n\n"
                     "**使用方法：**\n"
                     "• /rss add `<URL>` : 订阅 RSS\n"
-                    "• /rss monitor `<关键词>` : 监控新闻\n"
                 )
             else:
                 text = "📢 **我的订阅列表**\n\n"
                 for sub in subs:
                     title = sub["title"] or "无标题"
-                    url = sub["feed_url"]
-                    text += f"• [{title}]({url})\n"
+                    text += f"• `#{sub['id']}` [RSS] [{title}]({sub['feed_url']})\n"
 
-                text += "\n使用 /rss remove `<URL>` 取消订阅。"
+                text += "\n使用 /rss remove `<订阅ID>` 取消订阅。"
 
             await ctx.edit_message(msg_id, text, reply_markup=reply_markup)
             return CONVERSATION_END

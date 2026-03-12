@@ -4,11 +4,11 @@ import core.scheduler as scheduler_module
 from core.scheduler import _resolve_entry_link
 
 
-def test_resolve_entry_link_prefers_source_url_over_google_redirect():
+def test_resolve_entry_link_prefers_primary_link():
     entry = {
-        "link": "https://news.google.com/rss/articles/CBMiabc123",
+        "link": "https://news.example.com/story/42?from=rss",
         "summary": (
-            '<a href="https://news.example.com/story/42?from=rss">新闻标题</a>'
+            '<a href="https://news.example.com/story/43?from=rss">新闻标题</a>'
             '<font color="#6f6f6f">via Example</font>'
         ),
     }
@@ -17,14 +17,14 @@ def test_resolve_entry_link_prefers_source_url_over_google_redirect():
     assert resolved == "https://news.example.com/story/42?from=rss"
 
 
-def test_resolve_entry_link_falls_back_when_no_source_url():
+def test_resolve_entry_link_falls_back_when_no_primary_link():
     entry = {
-        "link": "https://news.google.com/rss/articles/CBMiabc123",
+        "link": "",
         "summary": "no links here",
     }
 
     resolved = _resolve_entry_link(entry, fallback_url="https://fallback.example.com")
-    assert resolved == "https://news.google.com/rss/articles/CBMiabc123"
+    assert resolved == "https://fallback.example.com"
 
 
 @pytest.mark.asyncio

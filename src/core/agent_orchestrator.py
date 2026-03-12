@@ -23,7 +23,6 @@ from core.task_inbox import task_inbox
 from core.task_manager import task_manager
 from core.tool_access_store import tool_access_store
 from core.tool_broker import ToolBroker
-from core.tool_profile_store import tool_profile_store
 from services.ai_service import AiService
 
 logger = logging.getLogger(__name__)
@@ -156,7 +155,6 @@ class AgentOrchestrator:
                 kind="tool",
             )
         ]
-        extension_candidates = self._rank_extension_candidates(extension_candidates)
         logger.info(
             "Extension candidates selected: raw=%s filtered=%s",
             [candidate.name for candidate in raw_extension_candidates] or "none",
@@ -208,7 +206,6 @@ class AgentOrchestrator:
             runtime=self.runtime,
             tool_broker=self.tool_broker,
             runtime_tool_allowed=self._runtime_tool_allowed,
-            record_tool_profile=self._record_tool_profile,
             todo_mark_step=todo_session.mark_step,
             append_session_event=append_session_event,
             on_worker_dispatched=on_worker_dispatched,
@@ -246,11 +243,6 @@ class AgentOrchestrator:
                     "error_code": "system_error",
                     "message": str(exc),
                 }
-                self._record_tool_profile(
-                    name=name,
-                    result=error_result,
-                    started=started,
-                )
                 return error_result
 
         system_instruction = self._build_system_instruction(
@@ -487,9 +479,6 @@ class AgentOrchestrator:
                         kind="tool",
                     )
                 ]
-                extension_candidates = self._rank_extension_candidates(
-                    extension_candidates
-                )
                 tools = await tooling_assembler.assemble()
                 tool_dispatcher.set_available_tool_names(
                     tooling_assembler.tool_names(tools)
@@ -654,19 +643,6 @@ class AgentOrchestrator:
             seen_names.add(name)
         return deduped
 
-    def _rank_extension_candidates(
-        self,
-        extension_candidates: list,
-    ) -> list:
-        if not extension_candidates:
-            return []
-        ranked = sorted(
-            extension_candidates,
-            key=lambda candidate: tool_profile_store.score_tool(candidate.tool_name),
-            reverse=True,
-        )
-        return ranked
-
     def _runtime_tool_allowed(
         self,
         *,
@@ -699,24 +675,6 @@ class AgentOrchestrator:
                 detail.get("agent_id"),
             )
         return allowed
-
-    def _record_tool_profile(self, name: str, result: Any, started: float) -> None:
-        elapsed_ms = max(0.0, (time.perf_counter() - started) * 1000.0)
-        success = True
-        if isinstance(result, dict):
-            if "ok" in result:
-                success = bool(result.get("ok"))
-            elif result.get("success") is False:
-                success = False
-            else:
-                text = str(result.get("message") or result.get("summary") or "")
-                success = not text.lower().startswith(("error", "❌"))
-        elif isinstance(result, str):
-            success = not str(result).strip().lower().startswith(("error", "❌"))
-        try:
-            tool_profile_store.record(name, success=success, latency_ms=elapsed_ms)
-        except Exception:
-            logger.debug("Failed to record tool profile: %s", name, exc_info=True)
 
     def _should_auto_evolve(
         self,

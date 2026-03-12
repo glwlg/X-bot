@@ -128,7 +128,6 @@ async def test_dispatcher_accepts_manager_runtime_only_tools_after_skill_load(
             "worker_status",
             "software_delivery",
         },
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -165,7 +164,6 @@ async def test_dispatcher_keeps_runtime_only_management_tools_blocked_for_worker
         tool_broker=object(),
         runtime_tool_allowed=lambda **kwargs: kwargs.get("tool_name")
         in {"read", "write", "edit", "bash", "load_skill"},
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -232,7 +230,6 @@ async def test_load_skill_sets_bash_cwd_for_relative_entrypoint(monkeypatch):
         runtime=object(),
         tool_broker=_FakeToolBroker(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -300,7 +297,6 @@ async def test_load_skill_blocks_manager_only_skill_for_worker(monkeypatch):
         )
         if kwargs.get("tool_name") == "ext_skill_manager"
         else True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -358,7 +354,6 @@ async def test_bash_env_prefers_forced_worker_delivery_target(monkeypatch):
         runtime=object(),
         tool_broker=_FakeToolBroker(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -421,7 +416,6 @@ async def test_bash_env_export_wraps_chained_commands(monkeypatch):
         runtime=object(),
         tool_broker=_FakeToolBroker(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )

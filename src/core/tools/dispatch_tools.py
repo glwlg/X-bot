@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict
 
 from manager.dispatch.service import manager_dispatch_service
+from manager.relay.delivery_store import delivery_store
 from shared.queue.dispatch_queue import dispatch_queue
 
 
@@ -41,7 +42,7 @@ class DispatchTools:
             worker_id=safe_worker_id,
             limit=safe_limit,
         )
-        delivery_health = await dispatch_queue.delivery_health(
+        delivery_health = await delivery_store.delivery_health(
             worker_id=safe_worker_id,
             dead_letter_limit=min(20, safe_limit),
         )
@@ -52,6 +53,12 @@ class DispatchTools:
         rows = [item.to_dict() for item in tasks]
         dead_letter = int(delivery_health.get("dead_letter") or 0)
         retrying = int(delivery_health.get("retrying") or 0)
+        oldest_undelivered_age_sec = float(
+            delivery_health.get("oldest_undelivered_age_sec") or 0.0
+        )
+        avg_delivery_latency_sec = float(
+            delivery_health.get("avg_delivery_latency_sec") or 0.0
+        )
         return {
             "ok": True,
             "worker_id": safe_worker_id,
@@ -61,6 +68,8 @@ class DispatchTools:
             "summary": (
                 f"{len(rows)} recent worker task(s); "
                 f"dead_letter={dead_letter}; retrying={retrying}; "
+                f"avg_delivery_latency={avg_delivery_latency_sec:.1f}s; "
+                f"oldest_undelivered={oldest_undelivered_age_sec:.1f}s; "
                 f"queue_depth={int(worker_metrics.get('queue_depth') or 0)}"
             ),
         }
@@ -80,7 +89,7 @@ class DispatchTools:
                 "summary": "task_id is required",
             }
 
-        result = await dispatch_queue.requeue_dead_letter(
+        result = await delivery_store.requeue_dead_letter(
             task_id=safe_task_id,
             reason=reason,
         )

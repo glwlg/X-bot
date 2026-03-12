@@ -391,12 +391,18 @@ async def test_heartbeat_push_prefers_chunked_text_for_two_chunks(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_heartbeat_specs_skip_auto_rss_when_checklist_already_rss(monkeypatch):
-    async def _fake_get_user_subscriptions(_user_id: int):
-        return [{"id": 1, "feed_url": "https://example.com/rss.xml", "title": "AI"}]
+    async def _fake_list_subscriptions(_user_id: int):
+        return [
+            {
+                "id": 1,
+                "feed_url": "https://example.com/rss.xml",
+                "title": "AI",
+            }
+        ]
 
     monkeypatch.setattr(
-        "core.state_store.get_user_subscriptions",
-        _fake_get_user_subscriptions,
+        "core.state_store.list_subscriptions",
+        _fake_list_subscriptions,
     )
 
     worker = HeartbeatWorker()
