@@ -26,7 +26,7 @@ entrypoint: scripts/execute.py
 
 # Skill Manager
 
-通过 `bash` 调用 CLI。创建和修改技能时，本 skill 会转走 manager 的 `software_delivery` 模板任务，不要自己临时拼接另外一套流程。
+通过 `bash` 调用 CLI。创建和修改技能时，本 skill 会直接在本地技能目录驱动 manager 的 `codex_session`，不再依赖 `software_delivery`。如果 Codex 中途提出澄清问题，应直接回答并继续当前 coding session。
 
 ## Commands
 

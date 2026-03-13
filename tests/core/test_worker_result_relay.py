@@ -219,11 +219,7 @@ async def test_worker_result_relay_extracts_saved_file_marker(monkeypatch, tmp_p
     result = {
         "ok": True,
         "payload": {
-            "text": (
-                "✅ 图片已成功生成！\n"
-                f"saved_file={image_path}\n"
-                "请查收。"
-            ),
+            "text": (f"✅ 图片已成功生成！\nsaved_file={image_path}\n请查收。"),
         },
     }
 
@@ -838,7 +834,9 @@ async def test_worker_result_relay_delivers_progress_updates(monkeypatch):
             _ = limit
             return [task]
 
-        async def ack_progress_events(self, task_id: str, *, upto_seq: int, last_event: str):
+        async def ack_progress_events(
+            self, task_id: str, *, upto_seq: int, last_event: str
+        ):
             self.acked.append((task_id, upto_seq, last_event))
             return True
 
@@ -900,7 +898,9 @@ async def test_worker_result_relay_progress_hides_verbose_tool_output(monkeypatc
             _ = limit
             return [task]
 
-        async def ack_progress_events(self, task_id: str, *, upto_seq: int, last_event: str):
+        async def ack_progress_events(
+            self, task_id: str, *, upto_seq: int, last_event: str
+        ):
             _ = (task_id, upto_seq, last_event)
             return True
 
@@ -947,27 +947,26 @@ async def test_worker_result_relay_auto_repairs_failed_learned_skill(monkeypatch
         },
     )
 
-    async def fake_software_delivery(**kwargs):
-        assert kwargs.get("action") == "skill_modify"
-        assert kwargs.get("skill_name") == "union-search-skill"
-        assert kwargs.get("source") == "worker_skill_auto_repair"
+    async def fake_codex_start(**kwargs):
+        assert kwargs.get("cwd") == "/app/skills/learned/union_search_skill"
+        assert "请修复技能 `union-search-skill`" in str(kwargs.get("instruction") or "")
         return {
             "ok": True,
-            "task_id": "dev-auto-repair-1",
-            "status": "queued",
+            "data": {"session_id": "cx-auto-repair-1", "status": "done"},
         }
 
     monkeypatch.setattr(
-        "manager.dev.service.manager_dev_service.software_delivery",
-        fake_software_delivery,
+        "manager.dev.codex_session_service.codex_session_service.start",
+        fake_codex_start,
     )
-    async def fake_list_recent(limit=40):
-        _ = limit
-        return []
+
+    async def fake_recent_auto_repair_exists(_skill_name: str) -> bool:
+        return False
 
     monkeypatch.setattr(
-        "manager.dev.task_store.dev_task_store.list_recent",
-        fake_list_recent,
+        WorkerResultRelay,
+        "_recent_auto_repair_exists",
+        staticmethod(fake_recent_auto_repair_exists),
     )
 
     relay = WorkerResultRelay()
@@ -998,5 +997,5 @@ async def test_worker_result_relay_auto_repairs_failed_learned_skill(monkeypatch
     assert delivered is True
     assert fake_adapter.messages
     final_text = str(fake_adapter.messages[-1].get("text") or "")
-    assert "dev-auto-repair-1" in final_text
+    assert "cx-auto-repair-1" in final_text
     assert "自动发起技能修复任务" in final_text

@@ -63,12 +63,15 @@ async def test_orchestrator_core_manager_default_tools_are_dispatch_only(monkeyp
     ]
 
     assert chunks == ["ok"]
-    assert captured["tool_names"] == [
-        "list_workers",
+    assert set(captured["tool_names"]) == {
+        "codex_session",
         "dispatch_worker",
+        "git_ops",
+        "gh_cli",
+        "list_workers",
+        "repo_workspace",
         "worker_status",
-        "software_delivery",
-    ]
+    }
     assert "call_skill" not in captured["tool_names"]
 
 

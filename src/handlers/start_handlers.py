@@ -147,9 +147,7 @@ async def stop_command(ctx: UnifiedContext) -> None:
         if todo_path:
             lines.append(f"📋 旧任务文件：`{todo_path}`")
         lines.extend(["", "如需继续，请重新发送您的请求。"])
-        await ctx.reply(
-            "\n".join(lines).strip()
-        )
+        await ctx.reply("\n".join(lines).strip())
     else:
         await ctx.reply(
             "ℹ️ **当前没有正在执行的任务**\n\n您可以直接发送新消息开始对话。"
@@ -167,7 +165,7 @@ async def help_command(ctx: UnifiedContext) -> None:
         "• **对话**：直接发送文本、语音。\n"
         '• **识图**：发送照片，问 "这是什么"。\n'
         '• **绘图**："画一只赛博朋克风格的猫"。\n'
-        '• **翻译**：使用 "开启翻译模式" 实现同声传译。\n\n'
+        "• **翻译**：直接发送需要翻译的内容即可。\n\n"
         "📓 **NotebookLM 知识库**\n"
         '• **播客**："下载这个视频的播客" 或 "生成播客"。\n'
         '• **问答**："询问 Kubernetes 调度原理"。\n'
@@ -189,9 +187,6 @@ async def help_command(ctx: UnifiedContext) -> None:
         "**常用命令：**\n"
         "/start 主菜单 | /new 新对话 | /chatlog 检索 | /heartbeat 心跳 | /worker Worker"
     )
-
-
-
 
 
 async def button_callback(ctx: UnifiedContext) -> int:
@@ -230,9 +225,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                     await heartbeat_store.append_session_event(
                         hb_user_id, f"user_confirm_continue:{task_id}"
                     )
-                    await ctx.reply(
-                        str(resume.get("message") or "✅ 已确认继续执行。")
-                    )
+                    await ctx.reply(str(resume.get("message") or "✅ 已确认继续执行。"))
                 else:
                     await ctx.reply(
                         str(
@@ -282,9 +275,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
                 "• **对话**：直接发送文本、语音。\n"
                 '• **识图**：发送照片，问 "这是什么"。\n'
                 '• **绘图**："画一只赛博朋克风格的猫"。\n'
-                '• **翻译**：使用 "开启翻译模式" 实现同声传译。\n\n'
-                '• **绘图**："画一只赛博朋克风格的猫"。\n'
-                '• **翻译**：使用 "开启翻译模式" 实现同声传译。\n\n'
+                "• **翻译**：直接发送需要翻译的内容即可。\n\n"
                 "📓 **NotebookLM 知识库**\n"
                 '• **播客**："下载这个视频的播客" 或 "生成播客"。\n'
                 '• **问答**："询问 Kubernetes 调度原理"。\n'
@@ -413,37 +404,6 @@ async def button_callback(ctx: UnifiedContext) -> int:
                 text += "\n使用 /rss remove `<订阅ID>` 取消订阅。"
 
             await ctx.edit_message(msg_id, text, reply_markup=reply_markup)
-            return CONVERSATION_END
-
-        elif data == "toggle_translation":
-            keyboard = [
-                [InlineKeyboardButton("« 返回主菜单", callback_data="back_to_main")]
-            ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-
-            user_id = ctx.message.user.id
-            from core.state_store import get_user_settings, set_translation_mode
-
-            settings = await get_user_settings(user_id)
-            current_status = settings.get("auto_translate", 0)
-            new_status = not current_status
-            await set_translation_mode(user_id, new_status)
-
-            status_text = "🌍 **已开启**" if new_status else "🚫 **已关闭**"
-            desc = (
-                "现在发送任何文本消息，我都会为您自动翻译。\n(外语->中文，中文->英文)"
-                if new_status
-                else "已恢复正常 AI 助手模式。"
-            )
-
-            await ctx.edit_message(
-                msg_id,
-                f"ℹ️ **沉浸式翻译模式**\n\n"
-                f"当前状态：{status_text}\n\n"
-                f"{desc}\n\n"
-                "点击按钮可再次切换。",
-                reply_markup=reply_markup,
-            )
             return CONVERSATION_END
 
         elif data == "remind_help":

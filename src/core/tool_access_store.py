@@ -47,7 +47,6 @@ SKILL_FUNCTION_GROUPS = {
     "account_manager": {"group:account", "group:security"},
     "skill_manager": {"group:skill-admin"},
     "worker_management": {"group:management"},
-    "software_delivery": {"group:management"},
     "download_video": {"group:media"},
     "news_article_writer": {"group:content", "group:research"},
     "xlsx": {"group:data"},
@@ -263,7 +262,7 @@ class ToolAccessStore:
             "group:memory": "记忆类：用户 MEMORY.md",
             "group:skill-admin": "技能治理类：skill_manager",
             "group:skills": "扩展技能总开关：ext_*",
-            "group:management": "管理调度类：worker dispatch/status/software_delivery 等 manager 直连工具",
+            "group:management": "管理调度类：worker dispatch/status、repo workspace、git/gh/codex manager 直连工具",
         }
 
     @staticmethod
@@ -349,7 +348,10 @@ class ToolAccessStore:
             "list_workers",
             "dispatch_worker",
             "worker_status",
-            "software_delivery",
+            "repo_workspace",
+            "codex_session",
+            "git_ops",
+            "gh_cli",
         }:
             groups.add("group:management")
             groups.add("group:execution")

@@ -22,13 +22,14 @@ class TestRepositoryBase:
         assert repo_root().exists()
         assert users_root().exists()
 
-    def test_user_path_uses_single_private_root(self, mock_db):
-        from core.state_paths import user_path
+    def test_user_path_uses_per_user_root(self, mock_db):
+        from core.state_paths import shared_user_path, user_path
 
-        target = user_path("42", "settings.md")
+        target = user_path("42", "profile.md")
+        shared = shared_user_path("profile.md")
 
-        assert target.parts[-2:] == ("user", "settings.md")
-        assert "42" not in target.as_posix()
+        assert target.parts[-2:] == ("user", "profile.md")
+        assert shared.parts[-2:] == ("user", "profile.md")
 
     @pytest.mark.asyncio
     async def test_next_id_counter(self, mock_db):
@@ -350,15 +351,15 @@ class TestRepositoryStateFiles:
         from core.state_io import read_json, write_json
         from core.state_paths import user_path
 
-        target = user_path("42", "settings.md")
+        target = user_path("42", "profile.md")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(":::not-yaml:::\n---broken", encoding="utf-8")
 
         await write_json(target, {"foo": "bar"})
 
-        backups = sorted(target.parent.glob("settings.md.bak-*"))
+        backups = sorted(target.parent.glob("profile.md.bak-*"))
         assert len(backups) == 1
-        assert re.match(r"settings\.md\.bak-\d{8}-\d{6}$", backups[0].name)
+        assert re.match(r"profile\.md\.bak-\d{8}-\d{6}$", backups[0].name)
         assert backups[0].read_text(encoding="utf-8") == ":::not-yaml:::\n---broken"
 
         loaded = await read_json(target, {})
@@ -369,10 +370,10 @@ class TestRepositoryStateFiles:
         "label,path_parts,payload,expected",
         [
             (
-                "settings",
-                ("user", "7", ("settings.md",)),
-                {"auto_translate": 1, "target_lang": "zh-CN"},
-                {"version": 1, "auto_translate": 1, "target_lang": "zh-CN"},
+                "profile",
+                ("user", "7", ("profile.md",)),
+                {"nickname": "alice", "timezone": "Asia/Shanghai"},
+                {"version": 1, "nickname": "alice", "timezone": "Asia/Shanghai"},
             ),
             (
                 "subscriptions",

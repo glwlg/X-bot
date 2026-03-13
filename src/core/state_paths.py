@@ -1,92 +1,39 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
-import re
-import shutil
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote, unquote
 
 DATA_DIR = importlib.import_module("core.config").DATA_DIR
 _PRIVATE_DIR_NAME = "user"
-_LEGACY_IMPORT_MARKER = ".legacy-import-complete"
+_LOGICAL_USER_IDS_FILE = ".logical_user_ids.json"
 
 
 def _runtime_data_dir() -> Path:
     return Path(os.getenv("DATA_DIR", DATA_DIR)).resolve()
 
 
-def _configured_admin_ids() -> list[str]:
-    try:
-        admin_ids = getattr(importlib.import_module("core.config"), "ADMIN_USER_IDS", set())
-    except Exception:
-        admin_ids = set()
-    return [str(item).strip() for item in sorted(admin_ids) if str(item).strip()]
-
-
-def _legacy_users_root() -> Path:
-    return (_runtime_data_dir() / "users").resolve()
-
-
-def _iter_legacy_user_dirs(preferred_user_id: int | str | None = None) -> list[Path]:
-    root = _legacy_users_root()
-    if not root.exists():
-        return []
-
-    candidates: list[Path] = []
-    seen: set[str] = set()
-
-    def add(name: Any) -> None:
-        safe = _safe_part(name, fallback="")
-        if not safe or safe in seen:
-            return
-        path = (root / safe).resolve()
-        if not path.exists() or not path.is_dir():
-            return
-        seen.add(safe)
-        candidates.append(path)
-
-    add(preferred_user_id)
-    for admin_id in _configured_admin_ids():
-        add(admin_id)
-    return candidates
-
-
-def _merge_missing_tree(src: Path, dst: Path) -> None:
-    if not src.exists() or not src.is_dir():
-        return
-    for child in src.rglob("*"):
-        if not child.is_file():
-            continue
-        relative = child.relative_to(src)
-        target = (dst / relative).resolve()
-        if target.exists():
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(child, target)
-
-
-def _private_root(preferred_user_id: int | str | None = None) -> Path:
+def single_user_root() -> Path:
     root = (_runtime_data_dir() / _PRIVATE_DIR_NAME).resolve()
     root.mkdir(parents=True, exist_ok=True)
-    marker = (root / _LEGACY_IMPORT_MARKER).resolve()
-    if marker.exists():
-        return root
-
-    for legacy_dir in _iter_legacy_user_dirs(preferred_user_id):
-        _merge_missing_tree(legacy_dir, root)
-
-    marker.write_text("ok\n", encoding="utf-8")
     return root
 
 
+def shared_user_path(*parts: str) -> Path:
+    return _append_safe_parts(single_user_root(), parts)
+
+
 def users_root() -> Path:
-    root = _private_root()
+    root = (_runtime_data_dir() / "users").resolve()
+    root.mkdir(parents=True, exist_ok=True)
     return root
 
 
 def repo_root() -> Path:
-    root = (_runtime_data_dir() / "system" / "repositories").resolve()
+    root = system_path("repositories")
     root.mkdir(parents=True, exist_ok=True)
     return root
 
@@ -95,30 +42,86 @@ def _safe_part(value: Any, fallback: str = "unknown") -> str:
     raw = str(value or "").strip()
     if not raw:
         return fallback
-    safe = re.sub(r"[^a-zA-Z0-9_\-:.]+", "_", raw)
+    if raw in {".", ".."}:
+        return fallback
+    safe = quote(raw, safe="._-:")
+    if safe in {".", ".."}:
+        return fallback
     return safe or fallback
 
 
-def user_path(user_id: int | str, *parts: str) -> Path:
-    path = _private_root(user_id).resolve()
+def _append_safe_parts(base: Path, parts: tuple[str, ...]) -> Path:
+    path = base.resolve()
     for part in parts:
-        path = (path / str(part)).resolve()
+        path = (path / _safe_part(part)).resolve()
     return path
+
+
+def _logical_user_id_from_dir(name: str) -> str:
+    return unquote(str(name or "")).strip()
+
+
+def _logical_user_ids_path() -> Path:
+    return (single_user_root() / _LOGICAL_USER_IDS_FILE).resolve()
+
+
+def _load_registered_user_ids() -> list[str]:
+    path = _logical_user_ids_path()
+    try:
+        if not path.exists():
+            return []
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    if not isinstance(loaded, list):
+        return []
+    rows: list[str] = []
+    for item in loaded:
+        token = str(item or "").strip()
+        if token and token not in rows:
+            rows.append(token)
+    return rows
+
+
+def _remember_logical_user_id(user_id: int | str) -> None:
+    token = str(user_id or "").strip()
+    if not token or token == "private":
+        return
+    path = _logical_user_ids_path()
+    rows = _load_registered_user_ids()
+    if token in rows:
+        return
+    rows.append(token)
+    try:
+        path.write_text(
+            json.dumps(rows, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except Exception:
+        return
+
+
+def user_path(user_id: int | str, *parts: str) -> Path:
+    _remember_logical_user_id(user_id)
+    return _append_safe_parts(single_user_root(), parts)
 
 
 def system_path(*parts: str) -> Path:
-    path = repo_root()
-    for part in parts:
-        path = (path / str(part)).resolve()
-    return path
+    root = (_runtime_data_dir() / "system").resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return _append_safe_parts(root, parts)
 
 
 def all_user_ids() -> list[str]:
+    rows = _load_registered_user_ids()
     root = users_root()
-    if not root.exists():
-        return []
-    try:
-        has_content = any(item.name != _LEGACY_IMPORT_MARKER for item in root.iterdir())
-    except Exception:
-        has_content = False
-    return [_PRIVATE_DIR_NAME] if has_content else []
+    if root.exists():
+        for item in root.iterdir():
+            if not item.is_dir() or item.name == "":
+                continue
+            logical_user_id = _logical_user_id_from_dir(item.name)
+            if not logical_user_id or logical_user_id == "private":
+                continue
+            if logical_user_id not in rows:
+                rows.append(logical_user_id)
+    return sorted(rows)

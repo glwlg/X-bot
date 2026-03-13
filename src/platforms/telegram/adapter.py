@@ -205,6 +205,10 @@ class TelegramAdapter(BotAdapter):
         try:
             html_text = markdown_to_telegram_html(text)
             reply_markup = kwargs.pop("reply_markup", None)
+            disable_web_page_preview = kwargs.pop(
+                "disable_web_page_preview",
+                True,
+            )
             if not reply_markup and ui:
                 reply_markup = self._render_ui(ui)
             return await self._send_with_retry(
@@ -212,7 +216,7 @@ class TelegramAdapter(BotAdapter):
                     chat_id=chat_id,
                     text=html_text,
                     parse_mode="HTML",
-                    disable_web_page_preview=True,
+                    disable_web_page_preview=disable_web_page_preview,
                     reply_markup=reply_markup,
                     **kwargs,
                 ),

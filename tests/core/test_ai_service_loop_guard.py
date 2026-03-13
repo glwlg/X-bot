@@ -4,6 +4,7 @@ import json
 import pytest
 
 import services.ai_service as ai_service_module
+from manager.integrations.gh_cli_service import GhCliService
 from services.ai_service import AiService
 
 
@@ -687,5 +688,251 @@ async def test_ai_service_async_dispatch_emits_progress_notice(monkeypatch):
     assert "完成后会自动把结果发给你" in text
     assert any(
         name == "final_response" and payload.get("source") == "async_dispatch"
+        for name, payload in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_ai_service_does_not_short_circuit_on_gh_auth_probe_success(
+    monkeypatch, tmp_path
+):
+    service = AiService()
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    class FakeModels:
+        def __init__(self):
+            self.calls = 0
+
+        async def create(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content="",
+                                tool_calls=[
+                                    SimpleNamespace(
+                                        id="call-1",
+                                        function=SimpleNamespace(
+                                            name="gh_cli",
+                                            arguments=json.dumps(
+                                                {
+                                                    "action": "auth_status",
+                                                    "hostname": "github.com",
+                                                },
+                                                ensure_ascii=False,
+                                            ),
+                                        ),
+                                    )
+                                ],
+                            )
+                        )
+                    ]
+                )
+
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="继续执行了后续开发步骤。",
+                            tool_calls=[],
+                        )
+                    )
+                ]
+            )
+
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeModels()
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    monkeypatch.setattr(ai_service_module, "openai_async_client", FakeClient())
+
+    gh_service = GhCliService()
+
+    async def fake_status(hostname: str):
+        assert hostname == "github.com"
+        return {
+            "authenticated": True,
+            "text": "Logged in to github.com as octocat",
+            "raw": {"ok": True},
+        }
+
+    monkeypatch.setattr(gh_service, "_auth_status_command", fake_status)
+
+    async def fake_tool_executor(name, args):
+        assert name == "gh_cli"
+        return await gh_service.handle(**dict(args))
+
+    events = []
+
+    async def event_callback(event, payload):
+        events.append((event, dict(payload)))
+        if event == "tool_call_finished" and payload.get("terminal"):
+            return {
+                "stop": True,
+                "final_text": str(payload.get("terminal_text") or ""),
+            }
+        return None
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "继续开发"}]}],
+        tools=[
+            {
+                "name": "gh_cli",
+                "description": "",
+                "parameters": {"type": "object"},
+            }
+        ],
+        tool_executor=fake_tool_executor,
+        system_instruction="test",
+        event_callback=event_callback,
+    ):
+        chunks.append(chunk)
+
+    assert chunks == ["继续执行了后续开发步骤。"]
+    assert any(
+        name == "tool_call_finished"
+        and payload.get("name") == "gh_cli"
+        and payload.get("terminal") is False
+        for name, payload in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_ai_service_does_not_short_circuit_on_gh_exec_success(
+    monkeypatch, tmp_path
+):
+    service = AiService()
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    class FakeModels:
+        def __init__(self):
+            self.calls = 0
+
+        async def create(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content="",
+                                tool_calls=[
+                                    SimpleNamespace(
+                                        id="call-1",
+                                        function=SimpleNamespace(
+                                            name="gh_cli",
+                                            arguments=json.dumps(
+                                                {
+                                                    "action": "exec",
+                                                    "hostname": "github.com",
+                                                    "argv": [
+                                                        "pr",
+                                                        "list",
+                                                        "--repo",
+                                                        "Scenx/fuck-skill",
+                                                        "--json",
+                                                        "number",
+                                                    ],
+                                                    "timeout_sec": 30,
+                                                },
+                                                ensure_ascii=False,
+                                            ),
+                                        ),
+                                    )
+                                ],
+                            )
+                        )
+                    ]
+                )
+
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="后续步骤还会继续，不会把 [] 直接回给用户。",
+                            tool_calls=[],
+                        )
+                    )
+                ]
+            )
+
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeModels()
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    monkeypatch.setattr(ai_service_module, "openai_async_client", FakeClient())
+
+    gh_service = GhCliService()
+
+    async def fake_run_capture(argv, *, cwd=None, timeout_sec=120):
+        assert argv == [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            "Scenx/fuck-skill",
+            "--json",
+            "number",
+        ]
+        assert cwd is None
+        assert timeout_sec == 30
+        return {
+            "ok": True,
+            "exit_code": 0,
+            "output": "[]",
+            "stdout": "[]",
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(gh_service, "_run_capture", fake_run_capture)
+
+    async def fake_tool_executor(name, args):
+        assert name == "gh_cli"
+        return await gh_service.handle(**dict(args))
+
+    events = []
+
+    async def event_callback(event, payload):
+        events.append((event, dict(payload)))
+        if event == "tool_call_finished" and payload.get("terminal"):
+            return {
+                "stop": True,
+                "final_text": str(payload.get("terminal_text") or ""),
+            }
+        return None
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "继续开发"}]}],
+        tools=[
+            {
+                "name": "gh_cli",
+                "description": "",
+                "parameters": {"type": "object"},
+            }
+        ],
+        tool_executor=fake_tool_executor,
+        system_instruction="test",
+        event_callback=event_callback,
+    ):
+        chunks.append(chunk)
+
+    assert chunks == ["后续步骤还会继续，不会把 [] 直接回给用户。"]
+    assert any(
+        name == "tool_call_finished"
+        and payload.get("name") == "gh_cli"
+        and payload.get("terminal") is False
+        and payload.get("summary") == "[]"
         for name, payload in events
     )

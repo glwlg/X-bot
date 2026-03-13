@@ -91,12 +91,29 @@ def _truncate(value: Any, max_len: int) -> str:
     return text[:max_len]
 
 
+def _encode_user_dir_name(user_id: str) -> str:
+    return f"uid={user_id.encode('utf-8').hex()}"
+
+
+def _decode_user_dir_name(name: str) -> str | None:
+    if not name.startswith("uid="):
+        return None
+    payload = name[4:]
+    if not payload or len(payload) % 2 != 0:
+        return None
+    try:
+        return bytes.fromhex(payload).decode("utf-8")
+    except Exception:
+        return None
+
+
 class HeartbeatStore:
     """Per-user heartbeat configuration + runtime status store."""
 
     def __init__(self):
         self.root = (Path(DATA_DIR) / "runtime_tasks").resolve()
         self.root.mkdir(parents=True, exist_ok=True)
+        self.default_user_id = "0"
         self.shared_dir_name = "user"
         self.legacy_import_marker = ".legacy-import-complete"
         self.lock_timeout_sec = max(
@@ -117,14 +134,120 @@ class HeartbeatStore:
         )
         self._locks: Dict[str, asyncio.Lock] = {}
 
+    def _docs_root(self) -> Path:
+        path = self.root.parent.resolve()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _heartbeat_file_token(self, user_id: str | None) -> str:
+        normalized = self._normalize_user_id(user_id)
+        if normalized == self.shared_dir_name:
+            return ""
+        if normalized not in {".", ".."} and re.fullmatch(
+            r"[A-Za-z0-9_-]+", normalized
+        ):
+            return normalized
+        return _encode_user_dir_name(normalized)
+
+    def _decode_heartbeat_file_token(self, token: str) -> str | None:
+        raw = str(token or "").strip()
+        if not raw:
+            return self.shared_dir_name
+        decoded = _decode_user_dir_name(raw)
+        if decoded is not None:
+            return decoded
+        if re.fullmatch(r"[A-Za-z0-9_-]+", raw):
+            return raw
+        return None
+
+    def _list_heartbeat_docs(self) -> List[Path]:
+        docs_root = self._docs_root()
+        paths: List[Path] = []
+        for path in docs_root.glob("HEARTBEAT*.md"):
+            if not path.is_file():
+                continue
+            name = path.name
+            if name.endswith(".v1.bak.md"):
+                continue
+            if name == "HEARTBEAT.md" or (
+                name.startswith("HEARTBEAT.") and name.endswith(".md")
+            ):
+                paths.append(path.resolve())
+        return sorted(paths)
+
+    def _heartbeat_doc_user_id(self, path: Path) -> str | None:
+        name = path.name
+        if name == "HEARTBEAT.md":
+            if path.exists():
+                try:
+                    parsed, _checklist = self._parse_markdown(
+                        path.read_text(encoding="utf-8")
+                    )
+                except Exception:
+                    parsed = {}
+                explicit = str(parsed.get("user_id") or "").strip()
+                if explicit:
+                    return explicit
+            return self.shared_dir_name
+        if not name.startswith("HEARTBEAT.") or not name.endswith(".md"):
+            return None
+        token = name[len("HEARTBEAT.") : -3]
+        if token.endswith(".v1.bak"):
+            return None
+        decoded = self._decode_heartbeat_file_token(token)
+        if decoded:
+            return decoded
+        if path.exists():
+            try:
+                parsed, _checklist = self._parse_markdown(
+                    path.read_text(encoding="utf-8")
+                )
+            except Exception:
+                parsed = {}
+            explicit = str(parsed.get("user_id") or "").strip()
+            if explicit:
+                return explicit
+        return None
+
     def heartbeat_path(self, user_id: str) -> Path:
-        return self._user_dir(user_id) / "HEARTBEAT.md"
+        token = self._heartbeat_file_token(user_id)
+        if not token:
+            return (self._docs_root() / "HEARTBEAT.md").resolve()
+        return (self._docs_root() / f"HEARTBEAT.{token}.md").resolve()
 
     def status_path(self, user_id: str) -> Path:
         return self._user_dir(user_id) / "STATUS.json"
 
     def backup_legacy_path(self, user_id: str) -> Path:
-        return self._user_dir(user_id) / "HEARTBEAT.v1.bak.md"
+        hb_path = self.heartbeat_path(user_id)
+        if hb_path.name == "HEARTBEAT.md":
+            return (self._docs_root() / "HEARTBEAT.v1.bak.md").resolve()
+        return hb_path.with_name(f"{hb_path.stem}.v1.bak.md").resolve()
+
+    def _normalize_user_id(self, user_id: str | None) -> str:
+        raw = str(user_id or "").strip()
+        return raw or self.default_user_id
+
+    def _user_dir_name(self, user_id: str | None) -> str:
+        normalized = self._normalize_user_id(user_id)
+        if (
+            normalized != self.shared_dir_name
+            and normalized not in {".", ".."}
+            and re.fullmatch(r"[A-Za-z0-9_-]+", normalized)
+        ):
+            return normalized
+        return _encode_user_dir_name(normalized)
+
+    def _legacy_shared_dir(self) -> Path:
+        path = (self.root / self.shared_dir_name).resolve()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _legacy_shared_heartbeat_path(self) -> Path:
+        return self._legacy_shared_dir() / "HEARTBEAT.md"
+
+    def _legacy_shared_status_path(self) -> Path:
+        return self._legacy_shared_dir() / "STATUS.json"
 
     def _legacy_user_dirs(self, user_id: str | None = None) -> List[Path]:
         candidates: List[Path] = []
@@ -135,14 +258,43 @@ class HeartbeatStore:
             if not raw or raw == self.shared_dir_name or raw in seen:
                 return
             path = (self.root / raw).resolve()
+            try:
+                path.relative_to(self.root)
+            except ValueError:
+                return
             if not path.exists() or not path.is_dir():
                 return
             seen.add(raw)
             candidates.append(path)
 
+        def add_path(path: Path) -> None:
+            try:
+                relative = path.resolve().relative_to(self.root).as_posix()
+            except Exception:
+                return
+            add(relative)
+
         add(user_id)
         for admin_id in sorted(ADMIN_USER_IDS):
             add(str(admin_id))
+        if user_id is None and self.root.exists():
+            for path in self.root.rglob("*"):
+                if not path.is_dir():
+                    continue
+                try:
+                    relative_path = path.resolve().relative_to(self.root)
+                except Exception:
+                    continue
+                if (
+                    relative_path.parts
+                    and relative_path.parts[0] == self.shared_dir_name
+                ):
+                    continue
+                relative = relative_path.as_posix()
+                if "/" not in relative:
+                    continue
+                if (path / "HEARTBEAT.md").exists() or (path / "STATUS.json").exists():
+                    add_path(path)
         return candidates
 
     @staticmethod
@@ -160,23 +312,17 @@ class HeartbeatStore:
             shutil.copy2(child, target)
 
     def _ensure_shared_dir(self, user_id: str | None = None) -> Path:
-        path = (self.root / self.shared_dir_name).resolve()
+        path = self._legacy_shared_dir()
         path.mkdir(parents=True, exist_ok=True)
-        marker = (path / self.legacy_import_marker).resolve()
-        if marker.exists():
-            return path
-
-        for legacy_dir in self._legacy_user_dirs(user_id):
-            self._merge_missing_tree(legacy_dir, path)
-
-        marker.write_text("ok\n", encoding="utf-8")
         return path
 
     def _user_dir(self, user_id: str) -> Path:
-        return self._ensure_shared_dir(user_id)
+        path = (self.root / self._user_dir_name(user_id)).resolve()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
 
     def _user_lock(self, user_id: str) -> asyncio.Lock:
-        key = self.shared_dir_name
+        key = self._normalize_user_id(user_id)
         lock = self._locks.get(key)
         if lock is None:
             lock = asyncio.Lock()
@@ -184,7 +330,7 @@ class HeartbeatStore:
         return lock
 
     def _default_spec(self, user_id: str) -> Dict[str, Any]:
-        canonical_user_id = self.shared_dir_name
+        canonical_user_id = self._normalize_user_id(user_id)
         return {
             "version": 2,
             "user_id": canonical_user_id,
@@ -199,7 +345,7 @@ class HeartbeatStore:
         }
 
     def _default_status(self, user_id: str) -> Dict[str, Any]:
-        canonical_user_id = self.shared_dir_name
+        canonical_user_id = self._normalize_user_id(user_id)
         return {
             "version": 2,
             "user_id": canonical_user_id,
@@ -445,6 +591,176 @@ class HeartbeatStore:
             summary_parts.append("legacy heartbeat payload migrated")
         return "; ".join(summary_parts)
 
+    def _legacy_shared_checklist(
+        self, user_id: str, parsed: Dict[str, Any], checklist: List[str]
+    ) -> List[str]:
+        normalized_user_id = self._normalize_user_id(user_id)
+        by_user = parsed.get("checklist_by_user")
+        if isinstance(by_user, dict):
+            rows = by_user.get(normalized_user_id)
+            if isinstance(rows, list):
+                return [str(item).strip() for item in rows if str(item or "").strip()]
+        if str(parsed.get("user_id") or "").strip() == normalized_user_id:
+            return list(checklist)
+        return []
+
+    @staticmethod
+    def _read_json_payload(path: Path) -> Dict[str, Any] | None:
+        if not path.exists():
+            return None
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            return None
+        if not isinstance(loaded, dict):
+            return None
+        return loaded
+
+    def _read_legacy_shared_status_payload(self) -> Dict[str, Any] | None:
+        return self._read_json_payload(self._legacy_shared_status_path())
+
+    def _legacy_shared_status(
+        self, user_id: str, payload: Dict[str, Any] | None = None
+    ) -> Dict[str, Any] | None:
+        loaded = (
+            payload
+            if isinstance(payload, dict)
+            else self._read_legacy_shared_status_payload()
+        )
+        if not isinstance(loaded, dict):
+            return None
+
+        normalized_user_id = self._normalize_user_id(user_id)
+        owns_top_level_status = (
+            str(loaded.get("user_id") or "").strip() == normalized_user_id
+        )
+        status = dict(loaded) if owns_top_level_status else {}
+        for source_key, target_key in (
+            ("heartbeat_by_user", "heartbeat"),
+            ("delivery_by_user", "delivery"),
+            ("session_by_user", "session"),
+        ):
+            scoped = loaded.get(source_key)
+            if not isinstance(scoped, dict):
+                continue
+            scoped_value = scoped.get(normalized_user_id)
+            if isinstance(scoped_value, dict):
+                status[target_key] = scoped_value
+        status["user_id"] = normalized_user_id
+        return self._normalize_status(normalized_user_id, status)
+
+    def _legacy_shared_owner_ids(
+        self, parsed: Dict[str, Any], status_payload: Dict[str, Any] | None
+    ) -> set[str]:
+        owners: set[str] = set()
+
+        def add_owner(value: Any) -> None:
+            owner = str(value or "").strip()
+            if owner and owner != self.shared_dir_name:
+                owners.add(owner)
+
+        add_owner(parsed.get("user_id"))
+        for key in ("spec_by_user", "checklist_by_user"):
+            scoped = parsed.get(key)
+            if isinstance(scoped, dict):
+                for owner_id in scoped.keys():
+                    add_owner(owner_id)
+
+        if isinstance(status_payload, dict):
+            add_owner(status_payload.get("user_id"))
+            for key in ("heartbeat_by_user", "delivery_by_user", "session_by_user"):
+                scoped = status_payload.get(key)
+                if isinstance(scoped, dict):
+                    for owner_id in scoped.keys():
+                        add_owner(owner_id)
+
+        return owners
+
+    def _has_explicit_legacy_owner(
+        self,
+        user_id: str,
+        parsed: Dict[str, Any],
+        status_payload: Dict[str, Any] | None,
+    ) -> bool:
+        normalized_user_id = self._normalize_user_id(user_id)
+        return normalized_user_id in self._legacy_shared_owner_ids(
+            parsed, status_payload
+        )
+
+    def _legacy_shared_state(
+        self, user_id: str
+    ) -> Tuple[Dict[str, Any], List[str], Dict[str, Any]] | None:
+        return self._legacy_state_from_paths(
+            user_id,
+            self._legacy_shared_heartbeat_path(),
+            self._legacy_shared_status_path(),
+        )
+
+    def _legacy_state_from_paths(
+        self, user_id: str, hb_path: Path, status_path: Path
+    ) -> Tuple[Dict[str, Any], List[str], Dict[str, Any]] | None:
+        status_payload = self._read_json_payload(status_path)
+        if not hb_path.exists() and status_payload is None:
+            return None
+
+        raw_text = hb_path.read_text(encoding="utf-8") if hb_path.exists() else ""
+        parsed, checklist = self._parse_markdown(raw_text)
+        normalized_user_id = self._normalize_user_id(user_id)
+        ownership_source = parsed
+        migration_note = ""
+
+        if raw_text and self._is_legacy_heartbeat(parsed, raw_text):
+            backup = self.backup_legacy_path(normalized_user_id)
+            if not backup.exists():
+                backup.write_text(raw_text, encoding="utf-8")
+            migration_note = self._summarize_legacy(parsed, raw_text)
+            parsed = self._default_spec(normalized_user_id)
+            checklist = []
+
+        if not self._has_explicit_legacy_owner(
+            user_id, ownership_source, status_payload
+        ):
+            return None
+
+        status = self._legacy_shared_status(user_id, status_payload)
+
+        spec_source = parsed
+        spec_by_user = parsed.get("spec_by_user")
+        if isinstance(spec_by_user, dict):
+            scoped_spec = spec_by_user.get(normalized_user_id)
+            if isinstance(scoped_spec, dict):
+                spec_source = scoped_spec
+            elif str(parsed.get("user_id") or "").strip() != normalized_user_id:
+                spec_source = {}
+        elif str(parsed.get("user_id") or "").strip() != normalized_user_id:
+            spec_source = {}
+        spec = self._normalize_spec(normalized_user_id, spec_source)
+        scoped_checklist = self._legacy_shared_checklist(
+            normalized_user_id, parsed, checklist
+        )
+        status = status or self._default_status(normalized_user_id)
+        if migration_note:
+            notes = status.get("migration_notes")
+            if not isinstance(notes, list):
+                notes = []
+            notes.append(f"{_now_iso()} | {migration_note}")
+            status["migration_notes"] = notes[-20:]
+            status["last_update"] = _now_iso()
+        return spec, scoped_checklist, status
+
+    def _legacy_user_state(
+        self, user_id: str
+    ) -> Tuple[Dict[str, Any], List[str], Dict[str, Any]] | None:
+        for legacy_dir in self._legacy_user_dirs(user_id):
+            legacy_state = self._legacy_state_from_paths(
+                user_id,
+                legacy_dir / "HEARTBEAT.md",
+                legacy_dir / "STATUS.json",
+            )
+            if legacy_state is not None:
+                return legacy_state
+        return None
+
     def _read_status_raw_unlocked(self, user_id: str) -> Dict[str, Any]:
         path = self.status_path(user_id)
         if not path.exists():
@@ -476,8 +792,21 @@ class HeartbeatStore:
         self, user_id: str
     ) -> Tuple[Dict[str, Any], List[str], Dict[str, Any]]:
         hb_path = self.heartbeat_path(user_id)
-        status = self._read_status_raw_unlocked(user_id)
+        status_path = self.status_path(user_id)
 
+        if not hb_path.exists() and not status_path.exists():
+            legacy_state = self._legacy_user_state(user_id)
+            if legacy_state is None:
+                legacy_state = self._legacy_shared_state(user_id)
+            if legacy_state is not None:
+                spec, checklist, status = legacy_state
+                hb_path.write_text(
+                    self._render_markdown(spec, checklist), encoding="utf-8"
+                )
+                self._write_status_unlocked(user_id, status)
+                return spec, checklist, self._read_status_raw_unlocked(user_id)
+
+        status = self._read_status_raw_unlocked(user_id)
         if not hb_path.exists():
             spec = self._default_spec(user_id)
             checklist: List[str] = []
@@ -525,12 +854,43 @@ class HeartbeatStore:
             }
 
     async def list_users(self) -> List[str]:
-        shared_dir = self._ensure_shared_dir()
-        if (shared_dir / "HEARTBEAT.md").exists() or (
-            shared_dir / "STATUS.json"
-        ).exists():
-            return [self.shared_dir_name]
-        return []
+        await self.normalize_runtime_tree()
+        users: set[str] = set()
+        for legacy_dir in self._legacy_user_dirs():
+            try:
+                users.add(legacy_dir.resolve().relative_to(self.root).as_posix())
+            except Exception:
+                continue
+
+        for path in self._list_heartbeat_docs():
+            user_id = self._heartbeat_doc_user_id(path)
+            if user_id:
+                users.add(user_id)
+
+        if self.root.exists():
+            for child in self.root.iterdir():
+                if (
+                    child.is_dir()
+                    and child.name != self.shared_dir_name
+                    and (
+                        child.name.startswith("uid=")
+                        or (child / "HEARTBEAT.md").exists()
+                        or (child / "STATUS.json").exists()
+                    )
+                ):
+                    users.add(_decode_user_dir_name(child.name) or child.name)
+
+        shared_hb = self._legacy_shared_heartbeat_path()
+        parsed: Dict[str, Any] = {}
+        if shared_hb.exists():
+            parsed, _checklist = self._parse_markdown(
+                shared_hb.read_text(encoding="utf-8")
+            )
+
+        status_payload = self._read_legacy_shared_status_payload()
+        users.update(self._legacy_shared_owner_ids(parsed, status_payload))
+
+        return sorted(users)
 
     async def compact_user(self, user_id: str) -> None:
         async with self._user_lock(user_id):
@@ -676,36 +1036,10 @@ class HeartbeatStore:
         return "NOTICE"
 
     async def normalize_runtime_tree(self) -> int:
-        """
-        Collapse legacy per-user runtime directories into the shared single-user root.
-        """
-        if not self.root.exists():
+        legacy_dirs = self._legacy_user_dirs()
+        if not legacy_dirs:
             return 0
-        target = self._ensure_shared_dir()
-        allowed_ids = {
-            str(admin_id).strip()
-            for admin_id in ADMIN_USER_IDS
-            if str(admin_id).strip()
-        }
-        moved = 0
-        for child in sorted(self.root.iterdir()):
-            if not child.is_dir() or child.name == self.shared_dir_name:
-                continue
-            name = child.name.strip()
-            if "::" in name:
-                canonical = name.split("::")[-1].strip()
-                if not canonical or canonical not in allowed_ids:
-                    continue
-            elif name not in allowed_ids:
-                continue
-            self._merge_missing_tree(child, target)
-            try:
-                if not any(child.iterdir()):
-                    child.rmdir()
-            except Exception:
-                pass
-            moved += 1
-        return moved
+        return len(legacy_dirs)
 
     async def get_delivery_target(self, user_id: str) -> Dict[str, str]:
         state = await self.get_state(user_id)

@@ -21,15 +21,6 @@ DEFAULT_SYSTEM_PROMPT = f"""# Role
 高效解决用户当前问题。
 """
 
-# 翻译助手提示词
-TRANSLATION_SYSTEM_PROMPT = (
-    """你是一个专业的翻译助手。请根据以下规则进行翻译：\n"""
-    "1. 如果输入是中文，请翻译成英文。\n"
-    "2. 如果输入是其他语言，请翻译成简体中文。\n"
-    "3. 只输出译文，不要包含任何解释或额外的文本。\n"
-    "4. 保持原文的语气和格式。"
-)
-
 # 媒体分析提示词
 MEDIA_ANALYSIS_PROMPT = (
     f"""你是一个友好的助手，可以分析图片和视频内容并回答问题。请用{LANGUAGE}回复。"""
@@ -54,7 +45,6 @@ MEDIA_ANALYSIS_PROMPT = (
 #     "   - 凭据应交由账号管理能力处理，不进入记忆文件。\n"
 #     "\n"
 #     "5. **业务状态文件（受控范围）**：\n"
-#     "   - 用户设置：`data/users/<uid>/settings.md`\n"
 #     "   - RSS 订阅：`data/users/<uid>/rss/subscriptions.md`\n"
 #     "   - 股票自选：`data/users/<uid>/stock/watchlist.md`\n"
 #     "   - 用户提醒：`data/users/<uid>/automation/reminders.md`\n"
@@ -141,6 +131,9 @@ MEMORY_MANAGEMENT_GUIDE = ""
 MANAGER_CORE_PROMPT = (
     "【注意事项】\n"
     "{management_tool_guidance}\n"
+    "当用户已经给出足够的创意或风格方向时，不要先追问风格偏好；应直接选一个合理方案继续实现，只有真正缺少关键约束时才提问。\n"
+    "仓库开发优先按 `repo_workspace` → `codex_session` → `git_ops` → `gh_cli` 推进，不要把仓库代码修改、git commit/push 或 PR 流程退化成原始 `write/edit/bash` 的手工串联。\n"
+    "`gh_cli auth_status` 成功只是内部预检，不要单独向用户汇报；只有认证异常、未登录，或用户明确要求查看 GitHub 登录状态时才需要显式说明。\n"
     "编码工作由 Manager 自己执行，不要派发给 Worker。\n"
     "除非你的技能明确可以处理本次任务，否则一律交给worker处理。\n"
     "派发给 Worker 时只描述目标、范围和约束，不要把 README、仓库文档或你猜测出来的脚本/命令示例写进任务正文。\n"

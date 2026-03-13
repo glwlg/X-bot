@@ -6,7 +6,7 @@
 """
 
 import logging
-from core.state_store import get_user_settings, set_translation_mode, search_messages
+from core.state_store import search_messages
 from .base_handlers import check_permission_unified
 from core.platform.models import UnifiedContext
 
@@ -19,34 +19,6 @@ from .feature_handlers import (
 )
 
 logger = logging.getLogger(__name__)
-
-
-# --- Translation (保留在此文件中，较小) ---
-
-
-async def toggle_translation_command(ctx: UnifiedContext) -> None:
-    """处理 /translate 命令，切换沉浸式翻译模式"""
-    if not await check_permission_unified(ctx):
-        return
-
-    user_id = ctx.message.user.id  # Settings now support str IDs
-
-    settings = await get_user_settings(user_id)
-    current_status = settings.get("auto_translate", 0)
-
-    new_status = not current_status
-    await set_translation_mode(user_id, new_status)
-
-    if new_status:
-        await ctx.reply(
-            "🌍 **沉浸式翻译模式：已开启**\n\n"
-            "现在发送任何文本消息，我都会为您自动翻译。\n"
-            "• 外语 -> 中文\n"
-            "• 中文 -> 英文\n\n"
-            "再次输入 /translate 可关闭。"
-        )
-    else:
-        await ctx.reply("🚫 **沉浸式翻译模式：已关闭**\n\n已恢复正常 AI 助手模式。")
 
 
 async def chatlog_command(ctx: UnifiedContext) -> None:
@@ -77,8 +49,6 @@ async def chatlog_command(ctx: UnifiedContext) -> None:
 
 # 导出所有函数
 __all__ = [
-    # Translation
-    "toggle_translation_command",
     "chatlog_command",
     # Reminder
     # Feature

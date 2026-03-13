@@ -17,7 +17,8 @@ from core.background_delivery import push_background_text
 from core.heartbeat_store import heartbeat_store
 from core.platform.registry import adapter_manager
 from core.platform.models import UnifiedContext
-from shared.queue.dispatch_queue import dispatch_queue
+from core.proactive_delivery import resolve_proactive_target
+from shared.contracts.proactive_delivery_target import normalize_proactive_platform
 
 from core.state_store import (
     add_reminder,
@@ -37,90 +38,16 @@ logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
 
 
-def _normalize_proactive_platform(platform: str) -> str:
-    normalized = str(platform or "").strip().lower()
-    if normalized == "worker_runtime":
-        return "telegram"
-    return normalized
-
-
 async def _resolve_proactive_delivery_target(
     user_id: int | str,
     platform: str,
+    metadata: dict[str, object] | None = None,
 ) -> tuple[str, str]:
-    normalized_platform = _normalize_proactive_platform(platform)
-    user_id_text = str(user_id or "").strip()
-
-    if (
-        normalized_platform
-        and normalized_platform != "heartbeat_daemon"
-        and user_id_text == heartbeat_store.shared_dir_name
-    ):
-        (
-            fallback_platform,
-            fallback_chat_id,
-        ) = await _recent_delivery_target_for_platform(
-            normalized_platform,
-        )
-        if fallback_platform and fallback_chat_id:
-            return fallback_platform, fallback_chat_id
-
-    delivery = await heartbeat_store.get_delivery_target(user_id_text)
-    target_platform = _normalize_proactive_platform(delivery.get("platform", ""))
-    target_chat_id = str(delivery.get("chat_id") or "").strip()
-
-    if target_platform and target_chat_id:
-        if not normalized_platform or normalized_platform == target_platform:
-            return target_platform, target_chat_id
-
-    if (
-        normalized_platform
-        and normalized_platform != "heartbeat_daemon"
-        and user_id_text != heartbeat_store.shared_dir_name
-    ):
-        (
-            fallback_platform,
-            fallback_chat_id,
-        ) = await _recent_delivery_target_for_platform(
-            normalized_platform,
-        )
-        if fallback_platform and fallback_chat_id:
-            return fallback_platform, fallback_chat_id
-
-    if normalized_platform and normalized_platform != "heartbeat_daemon":
-        if user_id_text and user_id_text != heartbeat_store.shared_dir_name:
-            return normalized_platform, user_id_text
-
-    return "", ""
-
-
-async def _recent_delivery_target_for_platform(platform: str) -> tuple[str, str]:
-    normalized_platform = _normalize_proactive_platform(platform)
-    if not normalized_platform or normalized_platform == "heartbeat_daemon":
-        return "", ""
-
-    try:
-        tasks = await dispatch_queue.list_tasks(limit=50)
-    except Exception:
-        return "", ""
-
-    for task in tasks:
-        meta = dict(task.metadata or {})
-        task_platform = _normalize_proactive_platform(meta.get("platform", ""))
-        session_id = str(meta.get("session_id") or "").strip()
-        chat_id = str(meta.get("chat_id") or "").strip()
-        user_id = str(meta.get("user_id") or "").strip()
-        if session_id.startswith("hb-"):
-            continue
-        if chat_id in {"0", heartbeat_store.shared_dir_name}:
-            continue
-        if user_id in {"0", heartbeat_store.shared_dir_name}:
-            continue
-        if task_platform != normalized_platform or not chat_id:
-            continue
-        return task_platform, chat_id
-
-    return "", ""
+    return await resolve_proactive_target(
+        owner_user_id=str(user_id or "").strip(),
+        platform=platform,
+        metadata=metadata,
+    )
 
 
 async def _remember_proactive_delivery_target(
@@ -128,7 +55,7 @@ async def _remember_proactive_delivery_target(
     platform: str,
     chat_id: str,
 ) -> None:
-    target_platform = _normalize_proactive_platform(platform)
+    target_platform = normalize_proactive_platform(platform)
     target_chat_id = str(chat_id or "").strip()
     if not target_platform or not target_chat_id:
         return
@@ -251,6 +178,7 @@ async def send_via_adapter(
     )
     if not ok:
         logger.warning("Background push failed platform=%s chat=%s", platform, chat_id)
+    return bool(ok)
 
 
 async def send_reminder_job(
@@ -406,7 +334,9 @@ def _format_feed_updates(updates: list[dict[str, str]]) -> str:
     return "\n".join(lines).strip()
 
 
-def _split_message_batches(header: str, items: list[str], *, limit: int = 4000) -> list[str]:
+def _split_message_batches(
+    header: str, items: list[str], *, limit: int = 4000
+) -> list[str]:
     batches: list[str] = []
     current = header
     for item in items:
@@ -423,10 +353,14 @@ async def _fetch_feed_updates(
     *,
     user_id: int | str | None = None,
     subscriptions: list[dict[str, object]] | None = None,
-) -> tuple[str, list[dict[str, object]], dict[tuple[str, str], list[dict[str, object]]]]:
+) -> tuple[
+    str, list[dict[str, object]], dict[tuple[str, str], list[dict[str, object]]]
+]:
     if subscriptions is None:
         subscriptions = (
-            await list_subscriptions(user_id) if user_id is not None else await list_feed_subscriptions()
+            await list_subscriptions(user_id)
+            if user_id is not None
+            else await list_feed_subscriptions()
         )
     subscriptions = list(subscriptions or [])
     if not subscriptions:
@@ -464,7 +398,9 @@ async def _fetch_feed_updates(
                 continue
 
             try:
-                feed = await loop.run_in_executor(None, feedparser.parse, response.content)
+                feed = await loop.run_in_executor(
+                    None, feedparser.parse, response.content
+                )
             except Exception as e:
                 logger.error("Failed to parse feed %s: %s", url, e)
                 continue
@@ -477,13 +413,17 @@ async def _fetch_feed_updates(
             current_ids: list[str] = []
             for entry in list(feed.entries)[:20]:
                 e_id = _get_entry_hash(entry, url)
-                legacy_id = str(getattr(entry, "id", getattr(entry, "link", None)) or "")
+                legacy_id = str(
+                    getattr(entry, "id", getattr(entry, "link", None)) or ""
+                )
                 if e_id and e_id not in current_ids:
                     current_ids.append(e_id)
                 if legacy_id and legacy_id not in current_ids:
                     current_ids.append(legacy_id)
             new_hash_str = ",".join(current_ids[:30])
-            response_etag = str(response.headers.get("etag") or getattr(feed, "etag", "") or "")
+            response_etag = str(
+                response.headers.get("etag") or getattr(feed, "etag", "") or ""
+            )
             response_modified = str(
                 response.headers.get("last-modified")
                 or getattr(feed, "modified", "")
@@ -510,7 +450,9 @@ async def _fetch_feed_updates(
                             e_id in last_hashes or legacy_id in last_hashes
                         ):
                             break
-                        if (e_id and e_id not in last_hashes) and legacy_id not in last_hashes:
+                        if (
+                            e_id and e_id not in last_hashes
+                        ) and legacy_id not in last_hashes:
                             entries_to_push.append(entry)
                         if len(entries_to_push) >= 3:
                             break
@@ -521,13 +463,17 @@ async def _fetch_feed_updates(
                         or "无标题"
                     )
                     link = _resolve_entry_link(latest_entry, fallback_url=url)
-                    feed_title = str(feed.feed.get("title", sub.get("title") or "RSS 订阅"))
+                    feed_title = str(
+                        feed.feed.get("title", sub.get("title") or "RSS 订阅")
+                    )
 
                     content_field = ""
                     if hasattr(latest_entry, "summary"):
                         content_field = str(latest_entry.summary or "")
                     elif hasattr(latest_entry, "content") and latest_entry.content:
-                        content_field = str(latest_entry.content[0].get("value", "") or "")
+                        content_field = str(
+                            latest_entry.content[0].get("value", "") or ""
+                        )
                     elif hasattr(latest_entry, "description"):
                         content_field = str(latest_entry.description or "")
 
@@ -553,6 +499,29 @@ async def _fetch_feed_updates(
                             "last_entry_hash": new_hash_str,
                             "last_etag": response_etag,
                             "last_modified": response_modified,
+                            **(
+                                {
+                                    "resource_binding": {
+                                        "platform": plat,
+                                        "owner_user_id": uid,
+                                        **{
+                                            binding_key: str(
+                                                sub.get(binding_key) or ""
+                                            ).strip()
+                                            for binding_key in (
+                                                "chat_id",
+                                                "platform_user_id",
+                                            )
+                                            if str(sub.get(binding_key) or "").strip()
+                                        },
+                                    }
+                                }
+                                if any(
+                                    str(sub.get(binding_key) or "").strip()
+                                    for binding_key in ("chat_id", "platform_user_id")
+                                )
+                                else {}
+                            ),
                         }
                     )
                     pending_updates.append(user_updates[key][-1])
@@ -589,18 +558,25 @@ async def _mark_feed_updates_as_read(pending_updates: list[dict[str, object]]) -
                 last_modified=str(update.get("last_modified") or ""),
             )
         except Exception as e:
-            logger.error("Failed to update feed subscription state for %s/%s: %s", uid, sub_id, e)
+            logger.error(
+                "Failed to update feed subscription state for %s/%s: %s", uid, sub_id, e
+            )
 
 
 async def _send_feed_updates(
-    user_updates_map: dict[tuple[str, str], list[dict[str, object]]]
+    user_updates_map: dict[tuple[str, str], list[dict[str, object]]],
 ) -> int:
     sent_count = 0
     delivered_updates: list[dict[str, object]] = []
     for (platform, uid), updates in user_updates_map.items():
-        target_platform, target_chat_id = await _resolve_proactive_delivery_target(uid, platform)
+        target_metadata = updates[0] if updates else None
+        target_platform, target_chat_id = await _resolve_proactive_delivery_target(
+            uid, platform, metadata=target_metadata
+        )
         if not target_platform or not target_chat_id:
-            logger.warning("Feed push skipped: no delivery target for user=%s on %s", uid, platform)
+            logger.warning(
+                "Feed push skipped: no delivery target for user=%s on %s", uid, platform
+            )
             continue
 
         items = []
@@ -616,20 +592,34 @@ async def _send_feed_updates(
             items,
         )
         try:
+            delivery_ok = True
             for idx, batch in enumerate(batches, start=1):
                 header = batch
                 if idx > 1 and batch.startswith("📢 **RSS 更新"):
                     header = batch.replace("📢 **RSS 更新", "📢 **RSS 更新 (续)", 1)
-                await send_via_adapter(
+                delivery_ok = await send_via_adapter(
                     chat_id=target_chat_id,
                     text=header,
                     platform=target_platform,
                 )
-            await _remember_proactive_delivery_target(uid, target_platform, target_chat_id)
+                if not delivery_ok:
+                    break
+            if not delivery_ok:
+                logger.warning(
+                    "Feed push failed: adapter delivery unsuccessful for user=%s on %s",
+                    uid,
+                    target_platform,
+                )
+                continue
+            await _remember_proactive_delivery_target(
+                uid, target_platform, target_chat_id
+            )
             delivered_updates.extend(updates)
             sent_count += len(batches)
         except Exception as e:
-            logger.error("Failed to send feed updates to %s on %s: %s", uid, platform, e)
+            logger.error(
+                "Failed to send feed updates to %s on %s: %s", uid, platform, e
+            )
 
     await _mark_feed_updates_as_read(delivered_updates)
     return sent_count
@@ -848,20 +838,18 @@ async def run_skill_cron_job(
     """
     通用 Skill 定时任务执行器
     """
-    try:
-        user_id = int(str(user_id))
-    except ValueError, TypeError:
-        user_id = 0
+    user_id_text = str(user_id or "").strip()
+    if not user_id_text:
+        user_id_text = "0"
 
     logger.info(
-        f"[Cron] Executing scheduled skill: '{instruction}' for user {user_id} on {platform}"
+        f"[Cron] Executing scheduled skill: '{instruction}' for user {user_id_text} on {platform}"
     )
 
     try:
         from core.platform.models import UnifiedMessage, User, Chat, MessageType
         from core.agent_orchestrator import agent_orchestrator
 
-        user_id_text = str(user_id)
         mock_user = User(id=user_id_text, username="Cron User", is_bot=False)
         mock_chat = Chat(id=user_id_text, type="private")
         mock_message = UnifiedMessage(
@@ -920,24 +908,24 @@ async def run_skill_cron_job(
 
         full_response = "".join(final_output).strip()
         # Push Notification Logic
-        if need_push and user_id > 0:
+        if need_push and user_id_text not in {"", "0"}:
             if full_response:
                 (
                     target_platform,
                     target_chat_id,
                 ) = await _resolve_proactive_delivery_target(
-                    user_id,
+                    user_id_text,
                     platform,
                 )
                 if not target_platform or not target_chat_id:
                     logger.warning(
                         "[Cron] Push skipped: no delivery target for user=%s on %s",
-                        user_id,
+                        user_id_text,
                         platform,
                     )
                 else:
                     logger.info(
-                        f"[Cron] Pushing result to {user_id} on {target_platform}"
+                        f"[Cron] Pushing result to {user_id_text} on {target_platform}"
                     )
                     await send_via_adapter(
                         chat_id=target_chat_id,
@@ -945,7 +933,7 @@ async def run_skill_cron_job(
                         platform=target_platform,
                     )
                     await _remember_proactive_delivery_target(
-                        user_id,
+                        user_id_text,
                         target_platform,
                         target_chat_id,
                     )

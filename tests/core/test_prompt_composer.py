@@ -1,4 +1,5 @@
 from core.prompt_composer import prompt_composer
+from core.soul_store import SoulPayload
 
 
 def test_prompt_composer_minimal_shape():
@@ -16,6 +17,58 @@ def test_prompt_composer_minimal_shape():
     )
 
     assert "【SOUL】" in text
+
+
+def test_prompt_composer_includes_manager_agents_before_soul(monkeypatch):
+    monkeypatch.setattr(
+        prompt_composer,
+        "_load_manager_agents_doc",
+        lambda: "# Manager Manual\n- first read this",
+    )
+    monkeypatch.setattr(
+        "core.prompt_composer.soul_store.resolve_for_runtime_user",
+        lambda _user_id: SoulPayload(
+            agent_kind="core-manager",
+            agent_id="core-manager",
+            path="/tmp/SOUL.MD",
+            content="# Core Manager SOUL\n- tone: warm",
+            updated_at="2026-03-13T00:00:00+08:00",
+            latest_version_id="",
+        ),
+    )
+    monkeypatch.setattr(prompt_composer, "_build_skill_catalog", lambda **_kwargs: "")
+
+    text = prompt_composer.compose_base(runtime_user_id="123", platform="telegram")
+
+    assert "【AGENTS】" in text
+    assert text.index("【AGENTS】") < text.index("【SOUL】")
+
+
+def test_prompt_composer_does_not_inject_manager_agents_for_worker(monkeypatch):
+    monkeypatch.setattr(
+        prompt_composer,
+        "_load_manager_agents_doc",
+        lambda: "# Manager Manual\n- manager only",
+    )
+    monkeypatch.setattr(
+        "core.prompt_composer.soul_store.resolve_for_runtime_user",
+        lambda _user_id: SoulPayload(
+            agent_kind="worker",
+            agent_id="worker-main",
+            path="/tmp/worker/SOUL.MD",
+            content="# Worker SOUL\n- focused execution",
+            updated_at="2026-03-13T00:00:00+08:00",
+            latest_version_id="",
+        ),
+    )
+    monkeypatch.setattr(prompt_composer, "_build_skill_catalog", lambda **_kwargs: "")
+
+    text = prompt_composer.compose_base(
+        runtime_user_id="worker::worker-main::123",
+        platform="worker_kernel",
+    )
+
+    assert "【AGENTS】" not in text
 
 
 def test_prompt_composer_worker_pool_info_contains_summary_and_skill_hints(monkeypatch):
@@ -132,23 +185,23 @@ def test_prompt_composer_builds_manager_tool_guidance_from_skill_metadata(
         "core.prompt_composer.tool_registry.get_skill_tools",
         lambda **_kwargs: [
             {
-                "name": "software_delivery",
-                "description": "开发交付",
+                "name": "repo_workspace",
+                "description": "准备工作区",
             },
             {
-                "name": "dispatch_worker",
-                "description": "派发任务",
+                "name": "codex_session",
+                "description": "编程会话",
             },
         ],
     )
     monkeypatch.setattr(
         "core.skill_loader.skill_loader.get_tool_export",
         lambda name: {
-            "software_delivery": {
-                "prompt_hint": "开发任务优先走 `software_delivery`。",
+            "repo_workspace": {
+                "prompt_hint": "开发任务先准备 `repo_workspace`。",
             },
-            "dispatch_worker": {
-                "prompt_hint": "执行型任务交给 `dispatch_worker`。",
+            "codex_session": {
+                "prompt_hint": "代码实现优先走 `codex_session`。",
             },
         }.get(name),
     )
@@ -162,5 +215,39 @@ def test_prompt_composer_builds_manager_tool_guidance_from_skill_metadata(
         platform="telegram",
     )
 
-    assert "software_delivery" in text
-    assert "dispatch_worker" in text
+    assert "repo_workspace" in text
+    assert "codex_session" in text
+
+
+def test_prompt_composer_manager_prompt_emphasizes_direct_dev_toolchain(monkeypatch):
+    monkeypatch.setattr(prompt_composer, "_load_manager_agents_doc", lambda: "")
+    monkeypatch.setattr(
+        "core.prompt_composer.soul_store.resolve_for_runtime_user",
+        lambda _user_id: SoulPayload(
+            agent_kind="core-manager",
+            agent_id="core-manager",
+            path="/tmp/SOUL.MD",
+            content="# Core Manager SOUL\n- tone: warm",
+            updated_at="2026-03-13T00:00:00+08:00",
+            latest_version_id="",
+        ),
+    )
+    monkeypatch.setattr(prompt_composer, "_build_skill_catalog", lambda **_kwargs: "")
+    monkeypatch.setattr(
+        prompt_composer,
+        "_build_manager_tool_guidance",
+        lambda **_kwargs: "- 开发任务先准备 `repo_workspace`。\n- 代码实现优先走 `codex_session`。",
+    )
+
+    text = prompt_composer.compose_base(
+        runtime_user_id="u-1",
+        platform="telegram",
+        mode="manager",
+    )
+
+    assert "当用户已经给出足够的创意或风格方向时，不要先追问风格偏好" in text
+    assert (
+        "仓库开发优先按 `repo_workspace` → `codex_session` → `git_ops` → `gh_cli` 推进"
+        in text
+    )
+    assert "`gh_cli auth_status` 成功只是内部预检" in text

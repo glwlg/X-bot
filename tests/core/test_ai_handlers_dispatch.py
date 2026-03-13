@@ -253,6 +253,30 @@ def test_build_manager_progress_text_hides_verbose_tool_output():
     assert "Daily Query" not in text
 
 
+def test_build_manager_progress_text_hides_internal_preflight_success():
+    text = ai_handlers._build_manager_progress_text(
+        {
+            "event": "tool_call_finished",
+            "task_id": "mgr-auth-probe",
+            "turn": 4,
+            "ok": True,
+            "history_visibility": "suppress_success",
+            "recent_steps": [
+                {
+                    "name": "gh_cli",
+                    "status": "done",
+                    "summary": "auth probe ok for github.com",
+                    "detail_label": "操作",
+                    "detail": "auth_status",
+                    "history_visibility": "suppress_success",
+                }
+            ],
+        }
+    )
+
+    assert "结果：" not in text
+
+
 @pytest.mark.asyncio
 async def test_try_handle_waiting_confirmation_treats_text_as_adjustment(monkeypatch):
     class _FakeHeartbeatStore:
@@ -278,7 +302,10 @@ async def test_try_handle_waiting_confirmation_treats_text_as_adjustment(monkeyp
 
         async def resume_waiting_task(self, **kwargs):
             self.calls.append(dict(kwargs))
-            return {"ok": True, "message": "✅ 已记录你的补充说明，正在继续推进阶段 1/2。"}
+            return {
+                "ok": True,
+                "message": "✅ 已记录你的补充说明，正在继续推进阶段 1/2。",
+            }
 
     fake_service = _FakeClosureService()
     monkeypatch.setattr("core.heartbeat_store.heartbeat_store", _FakeHeartbeatStore())
@@ -427,14 +454,11 @@ async def test_handle_ai_chat_does_not_attach_plain_path_from_final_text(
     async def _fake_process_reply_message(_ctx):
         return False, "", None, ""
 
-    async def _fake_get_user_settings(_uid):
-        return {}
-
     async def _identity_process_code_files(_ctx, text):
         return text
 
     async def _fake_handle_message(_ctx, _message_history):
-        yield "✅ 图片已成功生成！\n" f"文件路径: `{image_path}`\n" "请查收。"
+        yield f"✅ 图片已成功生成！\n文件路径: `{image_path}`\n请查收。"
 
     monkeypatch.setattr(config_module, "is_user_allowed", _allow_user)
     monkeypatch.setattr(
@@ -446,16 +470,21 @@ async def test_handle_ai_chat_does_not_attach_plain_path_from_final_text(
     monkeypatch.setattr(ai_handlers, "increment_stat", _noop)
     monkeypatch.setattr(ai_handlers, "_try_handle_waiting_confirmation", _false)
     monkeypatch.setattr(ai_handlers, "_try_handle_memory_commands", _false)
-    monkeypatch.setattr(ai_handlers, "get_user_settings", _fake_get_user_settings)
     monkeypatch.setattr(ai_handlers, "get_user_context", _empty_history)
     monkeypatch.setattr(
         ai_handlers, "process_and_send_code_files", _identity_process_code_files
     )
-    monkeypatch.setattr(message_utils, "process_reply_message", _fake_process_reply_message)
+    monkeypatch.setattr(
+        message_utils, "process_reply_message", _fake_process_reply_message
+    )
     monkeypatch.setattr(agent_orchestrator, "handle_message", _fake_handle_message)
     monkeypatch.setattr(task_manager_module.task_manager, "register_task", _noop)
-    monkeypatch.setattr(task_manager_module.task_manager, "is_cancelled", lambda _uid: False)
-    monkeypatch.setattr(task_manager_module.task_manager, "unregister_task", lambda _uid: None)
+    monkeypatch.setattr(
+        task_manager_module.task_manager, "is_cancelled", lambda _uid: False
+    )
+    monkeypatch.setattr(
+        task_manager_module.task_manager, "unregister_task", lambda _uid: None
+    )
 
     ctx = _DummyChatContext()
 
@@ -489,9 +518,6 @@ async def test_handle_ai_chat_injects_recent_followup_context(monkeypatch):
     async def _fake_process_reply_message(_ctx):
         return False, "", None, ""
 
-    async def _fake_get_user_settings(_uid):
-        return {}
-
     async def _identity_process_code_files(_ctx, text):
         return text
 
@@ -520,11 +546,11 @@ async def test_handle_ai_chat_injects_recent_followup_context(monkeypatch):
     monkeypatch.setattr(ai_handlers, "increment_stat", _noop)
     monkeypatch.setattr(ai_handlers, "_try_handle_waiting_confirmation", _false)
     monkeypatch.setattr(ai_handlers, "_try_handle_memory_commands", _false)
-    monkeypatch.setattr(ai_handlers, "get_user_settings", _fake_get_user_settings)
     monkeypatch.setattr(ai_handlers, "get_user_context", _empty_history)
     monkeypatch.setattr(
         ai_handlers, "process_and_send_code_files", _identity_process_code_files
     )
+
     async def _fake_bind_followup(_ctx, _msg: str):
         return (
             "【任务续接上下文】\n"
@@ -538,11 +564,17 @@ async def test_handle_ai_chat_injects_recent_followup_context(monkeypatch):
         "maybe_bind_recent_followup_context",
         _fake_bind_followup,
     )
-    monkeypatch.setattr(message_utils, "process_reply_message", _fake_process_reply_message)
+    monkeypatch.setattr(
+        message_utils, "process_reply_message", _fake_process_reply_message
+    )
     monkeypatch.setattr(agent_orchestrator, "handle_message", _fake_handle_message)
     monkeypatch.setattr(task_manager_module.task_manager, "register_task", _noop)
-    monkeypatch.setattr(task_manager_module.task_manager, "is_cancelled", lambda _uid: False)
-    monkeypatch.setattr(task_manager_module.task_manager, "unregister_task", lambda _uid: None)
+    monkeypatch.setattr(
+        task_manager_module.task_manager, "is_cancelled", lambda _uid: False
+    )
+    monkeypatch.setattr(
+        task_manager_module.task_manager, "unregister_task", lambda _uid: None
+    )
 
     ctx = _DummyChatContext()
     ctx.message.text = "需要"

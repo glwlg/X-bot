@@ -24,7 +24,6 @@ from core.runtime_callbacks import pop_runtime_callback, set_runtime_callback
 from services.openai_adapter import generate_text
 
 from user_context import get_user_context, add_message
-from core.state_store import get_user_settings
 from stats import increment_stat
 from core.prompt_composer import prompt_composer
 from handlers.chat_task_bridge import maybe_bind_recent_followup_context
@@ -142,9 +141,13 @@ def _format_manager_progress_summary(
     summary: str,
     *,
     ok: bool,
+    history_visibility: str = "",
 ) -> str:
     raw = str(summary or "").strip()
     if not raw:
+        return ""
+
+    if str(history_visibility or "").strip().lower() == "suppress_success" and ok:
         return ""
 
     normalized_tool = str(tool_name or "").strip().lower()
@@ -179,10 +182,12 @@ def _humanize_manager_tool_name(tool_name: str) -> str:
         "write": "写入文件",
         "edit": "编辑文件",
         "load_skill": "加载技能",
+        "codex_session": "编程会话",
         "dispatch_worker": "派发助手",
+        "git_ops": "Git 操作",
         "worker_status": "查询状态",
         "list_workers": "列出助手",
-        "software_delivery": "交付流程",
+        "repo_workspace": "仓库工作区",
         "web_search": "搜索",
         "web_extractor": "网页提取",
     }
@@ -229,11 +234,27 @@ def _summarize_manager_tool_args(
         if worker_name:
             return "助手", worker_name
 
-    if raw == "software_delivery":
+    if raw == "repo_workspace":
         action = _compact_text(str(args.get("action") or ""), limit=80)
-        task_id = _compact_text(str(args.get("task_id") or ""), limit=120)
-        if action and task_id:
-            return "操作", f"{action}: {task_id}"
+        workspace_id = _compact_text(str(args.get("workspace_id") or ""), limit=120)
+        if action and workspace_id:
+            return "操作", f"{action}: {workspace_id}"
+        if action:
+            return "操作", action
+
+    if raw == "codex_session":
+        action = _compact_text(str(args.get("action") or ""), limit=80)
+        session_id = _compact_text(str(args.get("session_id") or ""), limit=120)
+        if action and session_id:
+            return "会话", f"{action}: {session_id}"
+        if action:
+            return "操作", action
+
+    if raw == "git_ops":
+        action = _compact_text(str(args.get("action") or ""), limit=80)
+        workspace_id = _compact_text(str(args.get("workspace_id") or ""), limit=120)
+        if action and workspace_id:
+            return "操作", f"{action}: {workspace_id}"
         if action:
             return "操作", action
 
@@ -280,6 +301,11 @@ def _build_manager_progress_text(snapshot: dict[str, Any]) -> str:
         ok=(
             str(latest_step.get("status") or "").strip().lower() != "failed"
             and payload.get("ok") is not False
+        ),
+        history_visibility=str(
+            latest_step.get("history_visibility")
+            or payload.get("history_visibility")
+            or ""
         ),
     )
     failures = [
@@ -401,7 +427,9 @@ async def _send_result_files(
                         document = adapted_bytes
                         output_name = adapted_name
                     except Exception:
-                        logger.debug("Markdown attachment adaptation failed.", exc_info=True)
+                        logger.debug(
+                            "Markdown attachment adaptation failed.", exc_info=True
+                        )
                 await ctx.reply_document(
                     document=document,
                     filename=output_name,
@@ -409,7 +437,9 @@ async def _send_result_files(
                 )
             delivered = True
         except Exception:
-            logger.warning("Failed to send result attachment: %s", path_obj, exc_info=True)
+            logger.warning(
+                "Failed to send result attachment: %s", path_obj, exc_info=True
+            )
     return delivered
 
 
@@ -788,78 +818,6 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         )
         return
 
-    # 检查是否开启了沉浸式翻译
-    settings = await get_user_settings(user_id)
-    if settings.get("auto_translate", 0):
-        # 检查是否是退出指令
-        if user_message.strip().lower() in [
-            "/cancel",
-            "退出",
-            "关闭翻译",
-            "退出翻译",
-            "cancel",
-        ]:
-            from core.state_store import set_translation_mode
-
-            await set_translation_mode(user_id, False)
-            await ctx.reply("🚫 已退出沉浸式翻译模式。")
-            return
-
-        # 翻译模式开启
-        thinking_msg = await ctx.reply("🌍 翻译中...")
-        await ctx.send_chat_action(action="typing")
-
-        try:
-            system_instruction = prompt_composer.compose_base(
-                runtime_user_id=str(user_id),
-                platform=str(getattr(ctx.message, "platform", "") or ""),
-                tools=[],
-                runtime_policy_ctx={
-                    "agent_kind": "core-manager",
-                    "policy": {"tools": {"allow": [], "deny": []}},
-                },
-                mode="translate",
-            )
-            translation_request = (
-                "请执行翻译任务。\n"
-                "- 如果输入是中文，翻译成英文。\n"
-                "- 如果输入是其他语言，翻译成简体中文。\n"
-                "- 只输出译文，不要解释。\n\n"
-                f"输入：{user_message}"
-            )
-            model_to_use = get_current_model()
-            client_to_use = get_client_for_model(model_to_use, is_async=True)
-            if client_to_use is None:
-                raise RuntimeError("OpenAI async client is not initialized")
-            translated = await generate_text(
-                async_client=client_to_use,
-                model=model_to_use,
-                contents=translation_request,
-                config={"system_instruction": system_instruction},
-            )
-            translated = str(translated or "").strip()
-            if translated:
-                translation_text = f"🌍 **译文**\n\n{translated}"
-                msg_id = getattr(
-                    thinking_msg, "message_id", getattr(thinking_msg, "id", None)
-                )
-                await ctx.edit_message(msg_id, translation_text)
-                await add_message(ctx, user_id, "model", translation_text)
-                # 统计
-                await increment_stat(user_id, "translations_count")
-            else:
-                msg_id = getattr(
-                    thinking_msg, "message_id", getattr(thinking_msg, "id", None)
-                )
-                await ctx.edit_message(msg_id, "❌ 无法翻译。")
-        except Exception as e:
-            logger.error(f"Translation error: {e}")
-            msg_id = getattr(
-                thinking_msg, "message_id", getattr(thinking_msg, "id", None)
-            )
-            await ctx.edit_message(msg_id, "❌ 翻译服务出错。")
-        return
-
     memory_snapshot = ""
 
     # --- Agent Orchestration ---
@@ -909,8 +867,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         )
     if followup_context:
         final_user_message = (
-            f"{followup_context}\n\n"
-            f"当前用户补充：{final_user_message}"
+            f"{followup_context}\n\n当前用户补充：{final_user_message}"
         ).strip()
 
     # User message already saved at start of function.
@@ -963,7 +920,9 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
 
             now = time.time()
             if now - state["last_update_time"] > 2.5:
-                manager_progress_text = str(state.get("manager_progress_text") or "").strip()
+                manager_progress_text = str(
+                    state.get("manager_progress_text") or ""
+                ).strip()
                 if manager_progress_text and not state["final_text"]:
                     try:
                         await _push_manager_progress_update(force=False)
@@ -1024,7 +983,9 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             task_id = str(state.get("manager_progress_task_id") or "").strip()
             draft_id = int(state.get("manager_progress_draft_id") or 0)
             if not draft_id:
-                seed = task_id or f"{chat_id}:{user_id}:{getattr(thinking_msg, 'id', '')}"
+                seed = (
+                    task_id or f"{chat_id}:{user_id}:{getattr(thinking_msg, 'id', '')}"
+                )
                 draft_id = max(1, zlib.crc32(seed.encode("utf-8")) & 0x7FFFFFFF)
                 state["manager_progress_draft_id"] = draft_id
             await send_draft(
@@ -1084,6 +1045,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             tool_name = str(payload.get("name") or "").strip()
             tool_ok = bool(payload.get("ok"))
             summary = str(payload.get("summary") or "").strip()
+            history_visibility = str(payload.get("history_visibility") or "").strip()
             terminal_payload = payload.get("terminal_payload")
             if isinstance(terminal_payload, dict):
                 pending_manager_files[:] = merge_file_rows(
@@ -1104,6 +1066,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                     continue
                 row["status"] = "done" if tool_ok else "failed"
                 row["summary"] = summary[:180]
+                row["history_visibility"] = history_visibility
                 row["turn"] = turn
                 updated = True
                 break
@@ -1113,6 +1076,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                         "name": tool_name,
                         "status": "done" if tool_ok else "failed",
                         "summary": summary[:180],
+                        "history_visibility": history_visibility,
                         "detail_label": "",
                         "detail": "",
                         "turn": turn,

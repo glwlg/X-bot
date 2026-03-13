@@ -1,7 +1,7 @@
 """
 语音消息处理模块
 
-统一将语音转写为文字后，再按普通文本消息处理，或进行语音翻译。
+统一将语音转写为文字后，再按普通文本消息处理。
 """
 
 import logging
@@ -376,59 +376,7 @@ async def transcribe_voice(voice_bytes: bytes, mime_type: str) -> str | None:
         return None
 
 
-async def transcribe_and_translate_voice(
-    voice_bytes: bytes, mime_type: str
-) -> dict | None:
-    """
-    转写语音并翻译为双语对照
-
-    Returns:
-        {"original": "原文", "original_lang": "语言", "translated": "译文"} 或 None
-    """
-    if not voice_bytes:
-        logger.warning("Voice translation skipped: empty audio payload.")
-        return None
-
-    try:
-        prompt = (
-            "请完成以下任务：\n"
-            "1. 将语音转写为文字\n"
-            "2. 识别语音的语言\n"
-            "3. 如果是中文，翻译为英文；如果是其他语言，翻译为中文\n\n"
-            "请严格按以下格式输出（不要添加其他内容）：\n"
-            "原文语言：[语言名称]\n"
-            "原文：[转写的原文]\n"
-            "译文：[翻译后的文字]"
-        )
-
-        text = await _run_audio_prompt(prompt, voice_bytes, mime_type)
-        if not text:
-            return None
-
-        # 解析结果
-        text = text.strip()
-        result = {}
-
-        for line in text.split("\n"):
-            if line.startswith("原文语言："):
-                result["original_lang"] = line.replace("原文语言：", "").strip()
-            elif line.startswith("原文："):
-                result["original"] = line.replace("原文：", "").strip()
-            elif line.startswith("译文："):
-                result["translated"] = line.replace("译文：", "").strip()
-
-        if result.get("original") and result.get("translated"):
-            return result
-        return None
-
-    except Exception as e:
-        logger.error(f"Voice translation error: {e}")
-        return None
-
-
 async def handle_voice_message(ctx: UnifiedContext) -> None:
-    from core.state_store import get_user_settings
-
     user_id = ctx.message.user.id
 
     # 检查用户权限
@@ -456,15 +404,7 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
         else (ctx.message.text or "").strip() or None
     )
 
-    # 检查是否开启翻译模式
-    settings = await get_user_settings(user_id)
-    translate_mode = settings.get("auto_translate", 0)
-
-    # 发送处理中提示
-    if translate_mode:
-        thinking_msg = await ctx.reply("🌍 正在翻译语音内容...")
-    else:
-        thinking_msg = await ctx.reply("🎤 正在理解语音内容...")
+    thinking_msg = await ctx.reply("🎤 正在理解语音内容...")
 
     # 发送"正在输入"状态
     await ctx.send_chat_action(action="typing")
@@ -477,40 +417,6 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
                 thinking_msg, "message_id", getattr(thinking_msg, "id", None)
             )
             await ctx.edit_message(msg_id, "❌ 未能读取语音数据，请重试。")
-            return
-
-        # 翻译模式：双语对照输出
-        if translate_mode:
-            result = await transcribe_and_translate_voice(voice_bytes, mime_type)
-
-            if not result:
-                msg_id = getattr(
-                    thinking_msg, "message_id", getattr(thinking_msg, "id", None)
-                )
-                await ctx.edit_message(msg_id, "❌ 无法识别或翻译语音内容，请重试。")
-                return
-
-            original_lang = result.get("original_lang", "未知")
-            original = result.get("original", "")
-            translated = result.get("translated", "")
-
-            output = (
-                f"🎤 **语音翻译**\n\n"
-                f"📝 **原文** ({original_lang}):\n"
-                f"「{original}」\n\n"
-                f"🌐 **译文**:\n"
-                f"「{translated}」"
-            )
-
-            msg_id = getattr(
-                thinking_msg, "message_id", getattr(thinking_msg, "id", None)
-            )
-            await ctx.edit_message(msg_id, output)
-
-            # 记录统计
-            from stats import increment_stat
-
-            await increment_stat(user_id, "translations_count")
             return
 
         await process_as_voice_message(

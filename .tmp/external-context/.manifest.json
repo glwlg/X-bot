@@ -1,0 +1,17 @@
+{
+  "version": "1.0",
+  "last_updated": "2026-03-12T00:00:00Z",
+  "libraries": {
+    "github-cli": {
+      "files": [
+        {
+          "filename": "device-code-login-noninteractive.md",
+          "topic": "device-code login in non-interactive and container environments",
+          "tech_stack": "CLI / containers / CI",
+          "fetched": "2026-03-12T00:00:00Z",
+          "source": "GitHub CLI manual + GitHub Docs"
+        }
+      ]
+    }
+  }
+}

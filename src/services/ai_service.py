@@ -171,7 +171,9 @@ class AiService:
                 if not candidate_models and current_model:
                     candidate_models = [current_model]
                 if not candidate_models:
-                    raise RuntimeError("No candidate model available for current request")
+                    raise RuntimeError(
+                        "No candidate model available for current request"
+                    )
 
                 last_error: Exception | None = None
                 for index, candidate_model in enumerate(candidate_models):
@@ -660,6 +662,14 @@ class AiService:
                                         "terminal_ui": terminal_ui,
                                         "terminal_payload": terminal_payload,
                                         "failure_mode": failure_mode,
+                                        "history_visibility": (
+                                            str(
+                                                tool_result.get("history_visibility")
+                                                or ""
+                                            ).strip()
+                                            if isinstance(tool_result, dict)
+                                            else ""
+                                        ),
                                     },
                                 )
                                 current_history.append(
@@ -677,6 +687,25 @@ class AiService:
                                         ),
                                     }
                                 )
+                                if (
+                                    tool_ok
+                                    and isinstance(tool_result, dict)
+                                    and str(tool_result.get("history_visibility") or "")
+                                    .strip()
+                                    .lower()
+                                    == "suppress_success"
+                                ):
+                                    current_history.append(
+                                        {
+                                            "role": "user",
+                                            "content": (
+                                                "系统提示：上一步工具只是内部预检且已成功，"
+                                                "不要把该成功结果直接回复给用户。"
+                                                "如果当前任务还没完成，请继续调用后续工具或继续执行；"
+                                                "只有当认证异常、未登录或用户明确询问状态时，才需要显式说明认证情况。"
+                                            ),
+                                        }
+                                    )
                                 if self._should_apply_cost_guards(tool_name):
                                     per_tool_call_count[tool_name] = (
                                         int(per_tool_call_count.get(tool_name) or 0) + 1
@@ -1055,6 +1084,11 @@ class AiService:
     @staticmethod
     def _summarize_tool_result(tool_result) -> str:
         if isinstance(tool_result, dict):
+            history_visibility = (
+                str(tool_result.get("history_visibility") or "").strip().lower()
+            )
+            if history_visibility == "suppress_success" and bool(tool_result.get("ok")):
+                return "tool preflight ok"
             if "text" in tool_result and tool_result["text"]:
                 return str(tool_result["text"])[:200]
             if "result" in tool_result and tool_result["result"]:
@@ -1109,6 +1143,21 @@ class AiService:
     def _sanitize_tool_result_for_history(tool_result: Any) -> Any:
         def _sanitize(value: Any) -> Any:
             if isinstance(value, dict):
+                history_visibility = (
+                    str(value.get("history_visibility") or "").strip().lower()
+                )
+                if history_visibility == "suppress_success" and bool(value.get("ok")):
+                    return {
+                        "ok": True,
+                        "data": {
+                            "continue_task_without_user_notice": True,
+                            "authenticated": bool(
+                                dict(value.get("data") or {})
+                                .get("auth_status", {})
+                                .get("authenticated")
+                            ),
+                        },
+                    }
                 sanitized: dict[str, Any] = {}
                 for key, item in value.items():
                     key_text = str(key)

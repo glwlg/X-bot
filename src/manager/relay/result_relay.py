@@ -33,7 +33,9 @@ _RAW_MARKDOWN_LINK_RE = re.compile(r"\[[^\]]+\]\((?:https?://|/)[^)]+\)")
 _DELIVERY_PATH_LINE_RE = re.compile(
     r"(?im)^\s*(?:保存路径|文件路径|图片路径|输出路径|附件路径|图片已保存至|saved to|output file|file path)\s*[:：=].*$"
 )
-_SECTION_HEADER_CANDIDATE_RE = re.compile(r"^[#>*\-\s`]*([^\n]{1,32}?)[#>*\-\s`]*[:：]?\s*$")
+_SECTION_HEADER_CANDIDATE_RE = re.compile(
+    r"^[#>*\-\s`]*([^\n]{1,32}?)[#>*\-\s`]*[:：]?\s*$"
+)
 _INTERNAL_SECTION_TITLES = {
     "工具选择策略",
     "执行日志",
@@ -247,14 +249,23 @@ def _looks_like_raw_worker_output(text: str, files: list[dict[str, str]]) -> boo
     lowered = raw.lower()
     if any(
         marker in raw
-        for marker in ("【搜索结果摘要】", "工具选择策略", "执行日志", "过程记录", "任务编号")
+        for marker in (
+            "【搜索结果摘要】",
+            "工具选择策略",
+            "执行日志",
+            "过程记录",
+            "任务编号",
+        )
     ):
         return True
     if len(_RAW_MARKDOWN_LINK_RE.findall(raw)) >= 2:
         return True
     if raw.count("\n- [") >= 2:
         return True
-    if any(str(item.get("filename") or "").lower().startswith("search_report") for item in files):
+    if any(
+        str(item.get("filename") or "").lower().startswith("search_report")
+        for item in files
+    ):
         return True
     if len(raw) >= 1000 and not any(marker in raw for marker in _USER_READY_MARKERS):
         return True
@@ -391,7 +402,11 @@ class WorkerResultRelay:
         files: list[dict[str, str]],
     ) -> str:
         fallback = _fallback_delivery_body(task, result, text=text, files=files)
-        if fallback and not _looks_like_raw_worker_output(fallback, files) and len(fallback) <= 320:
+        if (
+            fallback
+            and not _looks_like_raw_worker_output(fallback, files)
+            and len(fallback) <= 320
+        ):
             return fallback
         if not _looks_like_raw_worker_output(text, files):
             return fallback
@@ -405,7 +420,9 @@ class WorkerResultRelay:
         except Exception:
             return fallback
 
-        model_name = str(get_routing_model() or get_model_for_input("text") or "").strip()
+        model_name = str(
+            get_routing_model() or get_model_for_input("text") or ""
+        ).strip()
         if not model_name:
             return fallback
         client = get_client_for_model(model_name, is_async=True)
@@ -478,7 +495,9 @@ class WorkerResultRelay:
         body_mode: str = "auto",
     ) -> tuple[str, dict[str, Any], list[dict[str, str]]]:
         ok = bool(result.get("ok"))
-        worker_name = str(task.metadata.get("worker_name") or task.worker_id or "执行助手")
+        worker_name = str(
+            task.metadata.get("worker_name") or task.worker_id or "执行助手"
+        )
         text, ui, files = _extract_payload(result)
 
         if ok:
@@ -557,7 +576,9 @@ class WorkerResultRelay:
                     skill_name.lower(),
                     skill_name.lower().replace("_", "-"),
                     skill_name.lower().replace("-", "_"),
-                    str(Path(str(skill_obj.get("skill_dir") or "")).name).strip().lower(),
+                    str(Path(str(skill_obj.get("skill_dir") or "")).name)
+                    .strip()
+                    .lower(),
                 }
                 aliases = {token for token in aliases if token}
                 if path_hint and path_hint in aliases:
@@ -605,8 +626,10 @@ class WorkerResultRelay:
             for item in list(progress.get("failed_tools") or [])
             if str(item or "").strip()
         ]
-        if bool(result.get("ok")) and failed_tools and any(
-            marker in blob for marker in _FALLBACK_MARKERS
+        if (
+            bool(result.get("ok"))
+            and failed_tools
+            and any(marker in blob for marker in _FALLBACK_MARKERS)
         ):
             return True
         return False
@@ -617,22 +640,33 @@ class WorkerResultRelay:
         if not safe_skill:
             return False
         try:
-            from manager.dev.task_store import dev_task_store
+            from manager.dev.session_paths import codex_session_path
+            import json
 
-            rows = await dev_task_store.list_recent(limit=40)
+            root = codex_session_path("placeholder").parent
+            paths = sorted(
+                root.glob("*.json"),
+                key=lambda item: item.stat().st_mtime,
+                reverse=True,
+            )[:40]
         except Exception:
             return False
 
         now_ts = time.time()
-        for row in rows:
+        for path in paths:
+            try:
+                row = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
             if not isinstance(row, dict):
                 continue
-            template = dict(row.get("template") or {})
-            if str(template.get("skill_name") or "").strip() != safe_skill:
+            if str(row.get("skill_name") or "").strip() != safe_skill:
                 continue
-            if str(template.get("source") or "").strip() != "worker_skill_auto_repair":
+            if str(row.get("source") or "").strip() != "worker_skill_auto_repair":
                 continue
-            updated_ts = WorkerResultRelay._parse_iso_ts(str(row.get("updated_at") or ""))
+            updated_ts = WorkerResultRelay._parse_iso_ts(
+                str(row.get("updated_at") or "")
+            )
             if updated_ts and now_ts - updated_ts <= 900:
                 return True
         return False
@@ -672,18 +706,16 @@ class WorkerResultRelay:
         ).strip()
 
         try:
-            from manager.dev.service import manager_dev_service
+            from manager.dev.codex_session_service import codex_session_service
 
-            repair = await manager_dev_service.software_delivery(
-                action="skill_modify",
-                skill_name=skill_name,
-                instruction=instruction,
+            repair = await codex_session_service.start(
                 cwd=skill_dir,
-                backend=str(os.getenv("CODING_BACKEND_DEFAULT", "codex") or "codex").strip(),
+                instruction=instruction,
+                backend=str(
+                    os.getenv("CODING_BACKEND_DEFAULT", "codex") or "codex"
+                ).strip(),
                 source="worker_skill_auto_repair",
-                notify_platform=platform,
-                notify_chat_id=chat_id,
-                notify_user_id=user_id,
+                skill_name=skill_name,
             )
         except Exception:
             logger.debug(
@@ -696,7 +728,15 @@ class WorkerResultRelay:
 
         if not bool(repair.get("ok")):
             return ""
-        return str(repair.get("task_id") or "").strip()
+        data = (
+            dict(repair.get("data") or {})
+            if isinstance(repair.get("data"), dict)
+            else {}
+        )
+        session_id = str(data.get("session_id") or "").strip()
+        if not session_id:
+            return ""
+        return session_id
 
     async def start(self) -> None:
         if not self.enabled:
@@ -760,7 +800,9 @@ class WorkerResultRelay:
                 retry_state = await delivery_store.get(task.task_id)
                 await self._sync_session_delivery_state(
                     task=task,
-                    delivery_state=str(getattr(retry_state, "status", "retrying") or "retrying"),
+                    delivery_state=str(
+                        getattr(retry_state, "status", "retrying") or "retrying"
+                    ),
                 )
                 continue
 
@@ -818,7 +860,9 @@ class WorkerResultRelay:
                 retry_state = await delivery_store.get(task.task_id)
                 await self._sync_session_delivery_state(
                     task=task,
-                    delivery_state=str(getattr(retry_state, "status", "retrying") or "retrying"),
+                    delivery_state=str(
+                        getattr(retry_state, "status", "retrying") or "retrying"
+                    ),
                 )
 
     async def _process_running_progress(self) -> None:
@@ -852,9 +896,7 @@ class WorkerResultRelay:
         metadata = dict(task.metadata or {})
         raw_events = metadata.get("progress_events")
         progress_events = [
-            dict(item)
-            for item in list(raw_events or [])
-            if isinstance(item, dict)
+            dict(item) for item in list(raw_events or []) if isinstance(item, dict)
         ]
         if not progress_events:
             return
@@ -933,7 +975,9 @@ class WorkerResultRelay:
         task: TaskEnvelope,
         existing_job: DeliveryJob | None,
     ) -> bool:
-        if existing_job is not None and str(existing_job.status or "").strip().lower() in {
+        if existing_job is not None and str(
+            existing_job.status or ""
+        ).strip().lower() in {
             "delivered",
             "suppressed",
         }:
@@ -1000,13 +1044,12 @@ class WorkerResultRelay:
                 session_task = await task_inbox.get(task_inbox_id)
                 if session_task is not None:
                     merged_metadata = dict(session_task.metadata or {})
-                    if (
-                        str(merged_metadata.get("delivery_state") or "").strip().lower()
-                        != safe_state
-                        or (
-                            safe_summary
-                            and merged_metadata.get("last_user_visible_summary") != safe_summary
-                        )
+                    if str(
+                        merged_metadata.get("delivery_state") or ""
+                    ).strip().lower() != safe_state or (
+                        safe_summary
+                        and merged_metadata.get("last_user_visible_summary")
+                        != safe_summary
                     ):
                         merged_metadata["delivery_state"] = safe_state
                         if safe_summary:
@@ -1044,9 +1087,15 @@ class WorkerResultRelay:
             if active_session and task_session and active_session != task_session:
                 return
             fields: Dict[str, Any] = {}
-            if str(active_task.get("delivery_state") or "").strip().lower() != safe_state:
+            if (
+                str(active_task.get("delivery_state") or "").strip().lower()
+                != safe_state
+            ):
                 fields["delivery_state"] = safe_state
-            if safe_summary and active_task.get("last_user_visible_summary") != safe_summary:
+            if (
+                safe_summary
+                and active_task.get("last_user_visible_summary") != safe_summary
+            ):
                 fields["last_user_visible_summary"] = safe_summary
             if fields:
                 await heartbeat_store.update_session_active_task(user_id, **fields)
@@ -1108,14 +1157,12 @@ class WorkerResultRelay:
             chat_id=chat_id,
         )
         closure_kind = str(closure.get("kind") or "").strip().lower()
-        job_priority = (
-            str(getattr(delivery_job, "priority", "") or "").strip().lower()
-            or self._delivery_priority(task)
-        )
-        body_mode = (
-            str(getattr(delivery_job, "body_mode", "") or "").strip().lower()
-            or self._delivery_body_mode(task)
-        )
+        job_priority = str(
+            getattr(delivery_job, "priority", "") or ""
+        ).strip().lower() or self._delivery_priority(task)
+        body_mode = str(
+            getattr(delivery_job, "body_mode", "") or ""
+        ).strip().lower() or self._delivery_body_mode(task)
         if closure_kind == "legacy":
             text, ui, files = await self._build_delivery_text(
                 task,
@@ -1364,9 +1411,7 @@ class WorkerResultRelay:
                 metadata = dict(task.metadata or {})
                 raw_thread_id = metadata.get("message_thread_id")
                 message_thread_id = (
-                    int(raw_thread_id)
-                    if str(raw_thread_id or "").strip()
-                    else None
+                    int(raw_thread_id) if str(raw_thread_id or "").strip() else None
                 )
                 draft_seed = (
                     str(metadata.get("user_visible_task_id") or "").strip()

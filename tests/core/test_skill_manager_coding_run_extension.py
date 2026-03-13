@@ -46,7 +46,7 @@ def _ctx():
 
 
 @pytest.mark.asyncio
-async def test_run_extension_skill_manager_create_routes_to_software_delivery(
+async def test_run_extension_skill_manager_create_routes_to_codex_session(
     monkeypatch, tmp_path
 ):
     skill_manager_module = _load_skill_manager_module()
@@ -112,25 +112,20 @@ async def test_run_extension_skill_manager_create_routes_to_software_delivery(
 
     calls: list[dict] = []
 
-    class FakeManagerDevService:
-        async def software_delivery(self, **kwargs):
-            calls.append(dict(kwargs))
-            return {
-                "ok": True,
-                "summary": "template execution completed",
-                "data": {
-                    "backend": "codex",
-                    "template_result": {
-                        "ok": True,
-                        "summary": "created",
-                    },
-                },
-            }
+    async def fake_create_with_codex_session(**kwargs):
+        calls.append(dict(kwargs))
+        return {
+            "ok": True,
+            "summary": "template execution completed",
+            "backend": "codex",
+            "resolved_skill_name": "demo_skill",
+            "skill_md": "---\nname: demo_skill\n---\n",
+        }
 
     monkeypatch.setattr(
         skill_manager_module,
-        "manager_dev_service",
-        FakeManagerDevService(),
+        "_create_with_codex_session",
+        fake_create_with_codex_session,
     )
 
     result = await extension_tools.run_extension(
@@ -145,13 +140,12 @@ async def test_run_extension_skill_manager_create_routes_to_software_delivery(
     )
 
     assert calls
-    assert calls[0].get("action") == "skill_create"
     assert calls[0].get("skill_name") == "demo_skill"
-    assert "通过 `software_delivery`" in str(result.get("text") or "")
+    assert "通过 `codex_session`" in str(result.get("text") or "")
 
 
 @pytest.mark.asyncio
-async def test_run_extension_skill_manager_modify_failure_from_software_delivery(
+async def test_run_extension_skill_manager_modify_failure_from_codex_session(
     monkeypatch, tmp_path
 ):
     skill_manager_module = _load_skill_manager_module()
@@ -208,21 +202,19 @@ async def test_run_extension_skill_manager_modify_failure_from_software_delivery
 
     calls: list[dict] = []
 
-    class FakeManagerDevService:
-        async def software_delivery(self, **kwargs):
-            calls.append(dict(kwargs))
-            return {
-                "ok": False,
-                "error_code": "skill_template_failed",
-                "summary": "backend failed",
-                "message": "backend failed",
-                "data": {"backend": "codex"},
-            }
+    async def fake_modify_with_codex_session(**kwargs):
+        calls.append(dict(kwargs))
+        return {
+            "ok": False,
+            "error": "coding_session_failed",
+            "summary": "backend failed",
+            "backend": "codex",
+        }
 
     monkeypatch.setattr(
         skill_manager_module,
-        "manager_dev_service",
-        FakeManagerDevService(),
+        "_modify_with_codex_session",
+        fake_modify_with_codex_session,
     )
 
     result = await extension_tools.run_extension(
@@ -237,5 +229,5 @@ async def test_run_extension_skill_manager_modify_failure_from_software_delivery
     )
 
     assert calls
-    assert calls[0].get("action") == "skill_modify"
-    assert "模板任务失败" in str(result.get("text") or "")
+    assert calls[0].get("skill_name") == "demo_skill"
+    assert "技能修改流程失败" in str(result.get("text") or "")

@@ -25,7 +25,7 @@ Manager 负责：
 - 提示词、SOUL、上下文、工具面组装
 - 按权限注入原语工具与 skill direct tool
 - 普通异步任务派发给 worker
-- software delivery 与本地 rollout
+- manager 侧编码会话、仓库工作区、git/gh 发布与本地 rollout
 - manager 自身执行过程和 worker 结果回传
 - heartbeat、记忆、治理和权限控制
 
@@ -39,15 +39,17 @@ Manager 当前可以直接使用这些基础原语：
 
 另外，声明了 `tool_exports` 且权限允许的 skill tool 会被动态注入。例如当前的：
 
-- `software_delivery`
+- `repo_workspace`
+- `codex_session`
+- `git_ops`
+- `gh_cli`
 - `list_workers`
 - `dispatch_worker`
 - `worker_status`
 
 约束：
 
-- 仓库代码路径上的直接修改不应再通过普通 `write/edit` 完成
-- 代码类变更应统一走 `software_delivery`
+- 仓库代码路径上的正式开发优先通过 `repo_workspace` + `codex_session` + `git_ops` + `gh_cli`
 - 运行态数据文件仍可用原语直接维护，例如 `data/` 下的用户状态和系统状态
 
 ### 2.2 Worker Kernel
@@ -85,7 +87,7 @@ src/
 ├── api/          # FastAPI + SPA
 ├── core/         # 提示词、工具注入、状态访问、运行时策略
 ├── handlers/     # 用户命令与消息入口
-├── manager/      # dispatch、relay、software delivery
+├── manager/      # dispatch、relay、workspace/codex/git/gh 工具
 ├── platforms/    # Telegram / Discord / DingTalk 适配
 ├── services/     # LLM、下载、搜索等外部服务
 ├── shared/       # queue contract / jsonl queue / shared models
@@ -101,7 +103,9 @@ src/
 - `src/core/orchestrator_runtime_tools.py`：工具装配与执行策略
 - `src/manager/dispatch/service.py`：worker 选择与派发
 - `src/manager/relay/result_relay.py`：worker 结果和进度回传
-- `src/manager/dev/service.py`：software delivery 总控
+- `src/manager/dev/workspace_session_service.py`：repo workspace / worktree 管理
+- `src/manager/dev/codex_session_service.py`：manager 编码会话
+- `src/manager/dev/git_ops_service.py`：git 状态/提交/push/fork
 - `src/worker/kernel/daemon.py`：worker queue loop
 
 ## 4. 调度模型
@@ -218,27 +222,29 @@ Skill 是运行时扩展，放在：
 - Worker 负责执行
 - Skill direct tool 是否暴露，既受 skill 元数据控制，也受 runtime policy 过滤
 
-## 7. Software Delivery
+## 7. Manager Coding Toolchain
 
-`software_delivery` 现在已经是 skill 驱动的 direct tool，不再建议在核心里单独写一套特殊路径。
+当前的正式开发链路不再使用 `software_delivery`。Manager 应直接组合以下工具：
 
-实现入口：
+- `repo_workspace`
+- `codex_session`
+- `git_ops`
+- `gh_cli`
 
-- `src/manager/dev/service.py`
+对应实现入口：
+
+- `src/manager/dev/workspace_session_service.py`
+- `src/manager/dev/codex_session_service.py`
+- `src/manager/dev/git_ops_service.py`
 - `src/manager/dev/publisher.py`
-- `src/manager/dev/delivery_policy.py`
-- `src/manager/dev/deployment_targets.py`
+- `src/manager/integrations/gh_cli_service.py`
 - `config/deployment_targets.yaml`
-
-当前支持的关键参数：
-
-- `target_service`: `manager | worker | api`
-- `rollout`: `none | local`
-- `validate_only`: `true | false`
 
 约束：
 
-- 对仓库代码的正式修改应通过 `software_delivery`
+- 仓库开发优先使用独立 worktree，不要在脏工作区里直接切分支
+- Codex 提问时应进入 `waiting_user`，由 Manager 向用户转问并继续同一 coding session
+- push 默认先尝试 origin，403 时自动 fallback 到 fork
 - local rollout 目前基于 `docker compose build` + `docker compose up -d`
 - rollout target 不再硬编码在发布器里，而是从 `config/deployment_targets.yaml` 读取
 
@@ -248,9 +254,10 @@ X-Bot 仍然是 file-system-first 设计。重要状态包括：
 
 - `data/WORKERS.json`：worker 注册表
 - `data/system/dispatch/`：任务与结果队列
-- `data/system/dev_tasks/`：software delivery 任务与日志
-- `data/users/<user_id>/`：用户状态、对话、记忆、提醒、订阅等
-- `data/runtime_tasks/<user_id>/`：heartbeat 运行态
+- `data/system/dev_workspaces/` / `data/system/dev_worktrees/`：manager 开发工作区
+- `data/system/codex_sessions/`：编码会话与日志
+- `data/user/`：用户状态、对话、记忆、提醒、订阅等
+- `data/runtime_tasks/`：heartbeat 运行态
 
 状态访问应优先通过：
 
@@ -276,7 +283,6 @@ Manager 启动时会注册通用命令：
 - `/chatlog`
 - `/skills`
 - `/reload_skills`
-- `/translate`
 - `/stop`
 - `/heartbeat`
 - `/worker`
@@ -315,7 +321,7 @@ Telegram 还保留：
 ### 11.1 应该做的
 
 - 用 skill metadata 驱动 tool 暴露和权限分组
-- 让 Manager 对代码类变更走 `software_delivery`
+- 让 Manager 对代码类变更优先走 `repo_workspace` + `codex_session` + `git_ops` + `gh_cli`
 - 保持 manager/worker/api 角色边界清晰
 - 用测试保护 orchestrator、dispatch、relay、skill contract
 
@@ -350,7 +356,9 @@ docker compose logs -f x-bot-api
 - `tests/core/test_orchestrator_runtime_tools.py`
 - `tests/core/test_worker_result_relay.py`
 - `tests/core/test_orchestrator_delivery_closure.py`
-- `tests/manager/test_dev_service.py`
+- `tests/manager/test_workspace_session_service.py`
+- `tests/manager/test_codex_session_service.py`
+- `tests/manager/test_git_ops_service.py`
 - `tests/manager/test_deployment_targets.py`
 - `tests/shared/test_dispatch_queue.py`
 

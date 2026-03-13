@@ -30,7 +30,7 @@ from core.skill_cli import (
 prepare_default_env(REPO_ROOT)
 
 from core.skill_loader import skill_loader
-from manager.dev.service import manager_dev_service
+from manager.dev.codex_session_service import codex_session_service
 
 project_root = str(REPO_ROOT)
 
@@ -151,7 +151,7 @@ def _extract_backend_from_delivery_result(result: Dict[str, Any], fallback: str)
     return _normalize_backend(fallback)
 
 
-async def _run_software_delivery_template_task(
+async def _run_local_skill_coding_task(
     *,
     _ctx: UnifiedContext,
     _runtime: Any,
@@ -162,70 +162,66 @@ async def _run_software_delivery_template_task(
     skill_name: str = "",
     source: str = "",
 ) -> Dict[str, Any]:
+    _ = (_ctx, _runtime)
     source_label = str(source or f"skill_manager_{action}").strip()
-    safe_action = str(action or "").strip().lower()
-    result = await manager_dev_service.software_delivery(
-        action=safe_action,
-        instruction=str(instruction or "").strip(),
+    result = await codex_session_service.start(
         cwd=str(cwd or "").strip(),
+        instruction=str(instruction or "").strip(),
         backend=_normalize_backend(backend),
-        skill_name=str(skill_name or "").strip(),
-        source=source_label,
         timeout_sec=_to_int(os.getenv("CODING_BACKEND_TIMEOUT_SEC", "900"), 900),
-        auto_publish=False,
-        auto_push=False,
-        auto_pr=False,
     )
+    data = (
+        dict(result.get("data") or {}) if isinstance(result.get("data"), dict) else {}
+    )
+    session_id = str(data.get("session_id") or "").strip()
+    session_status = str(data.get("status") or "").strip().lower()
 
-    if not bool(result.get("ok")):
+    if session_status == "waiting_user":
+        question = str(
+            data.get("question") or result.get("text") or result.get("summary") or ""
+        ).strip()
+        return {
+            "ok": True,
+            "waiting_user": True,
+            "session_id": session_id,
+            "question": question,
+            "summary": question or "coding session is waiting for user input",
+            "backend": _extract_backend_from_delivery_result(result, backend),
+            "source": source_label,
+            "tool_result": result,
+        }
+
+    if not bool(result.get("ok")) or session_status == "failed":
         message = str(
             result.get("summary")
             or result.get("message")
             or result.get("text")
-            or "software_delivery failed"
+            or "coding session failed"
         )
         return {
             "ok": False,
-            "error": str(result.get("error_code") or "software_delivery_failed"),
+            "error": str(result.get("error_code") or "coding_session_failed"),
             "summary": message,
             "backend": _extract_backend_from_delivery_result(result, backend),
             "source": source_label,
             "tool_result": result,
         }
 
-    if bool(result.get("async_dispatch")):
-        queued_task_id = str(result.get("task_id") or "").strip()
-        return {
-            "ok": True,
-            "queued": True,
-            "task_id": queued_task_id,
-            "summary": str(result.get("summary") or "software_delivery queued").strip(),
-            "backend": _extract_backend_from_delivery_result(result, backend),
-            "source": source_label,
-            "tool_result": result,
-        }
-
-    payload = (
-        dict(result.get("data") or {}) if isinstance(result.get("data"), dict) else {}
-    )
-    raw_template_result = payload.get("template_result")
-    template_result: Dict[str, Any] = (
-        dict(raw_template_result) if isinstance(raw_template_result, dict) else {}
-    )
     summary = str(result.get("summary") or "").strip()
     if not summary:
-        summary = str(template_result.get("summary") or "software_delivery completed")
+        summary = "coding session completed"
 
     return {
         "ok": True,
         "summary": summary,
         "backend": _extract_backend_from_delivery_result(result, backend),
         "source": source_label,
-        "tool_result": template_result or result,
+        "session_id": session_id,
+        "tool_result": result,
     }
 
 
-async def _create_with_software_delivery(
+async def _create_with_codex_session(
     *,
     ctx: UnifiedContext,
     runtime: Any,
@@ -262,7 +258,7 @@ async def _create_with_software_delivery(
         "5. 完成后在回复末尾追加一行: CREATED_SKILL=<skill_name>。\n"
     )
 
-    result = await _run_software_delivery_template_task(
+    result = await _run_local_skill_coding_task(
         _ctx=ctx,
         _runtime=runtime,
         action="skill_create",
@@ -274,7 +270,7 @@ async def _create_with_software_delivery(
     )
     if not result.get("ok"):
         return result
-    if bool(result.get("queued")):
+    if bool(result.get("waiting_user")):
         return result
 
     skill_loader.reload_skills()
@@ -321,7 +317,7 @@ async def _create_with_software_delivery(
     return result
 
 
-async def _modify_with_software_delivery(
+async def _modify_with_codex_session(
     *,
     ctx: UnifiedContext,
     runtime: Any,
@@ -357,7 +353,7 @@ async def _modify_with_software_delivery(
         "2. 不要改动 src/ 与其它技能目录。\n"
         "3. 保持技能可加载（SKILL.md frontmatter 完整）。\n"
     )
-    result = await _run_software_delivery_template_task(
+    result = await _run_local_skill_coding_task(
         _ctx=ctx,
         _runtime=runtime,
         action="skill_modify",
@@ -367,7 +363,7 @@ async def _modify_with_software_delivery(
         skill_name=skill_name,
         source="skill_manager_modify",
     )
-    if bool(result.get("queued")):
+    if bool(result.get("waiting_user")):
         return result
     if result.get("ok"):
         skill_loader.reload_skills()
@@ -514,29 +510,33 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
             return {"text": "🔇🔇🔇❌ 需要提供 skill_name 和 instruction", "ui": {}}
 
         backend = _resolve_coding_backend(params)
-        cli_result = await _modify_with_software_delivery(
+        cli_result = await _modify_with_codex_session(
             ctx=ctx,
             runtime=runtime,
             skill_name=str(skill_name),
             instruction=str(instruction),
             backend=backend,
         )
-        if cli_result.get("queued"):
-            queued_task_id = str(cli_result.get("task_id") or "").strip()
+        if cli_result.get("waiting_user"):
+            session_id = str(cli_result.get("session_id") or "").strip()
+            question = str(
+                cli_result.get("question") or cli_result.get("summary") or ""
+            ).strip()
             return {
                 "text": (
-                    f"🔇🔇🔇🚀 Skill 修改任务已异步提交（task_id=`{queued_task_id}`）。"
-                    "请稍后通过 software_delivery status 查询进度。"
+                    f"🔇🔇🔇⏸ Skill `{skill_name}` 修改需要进一步确认（session_id=`{session_id}`）。\n\n"
+                    f"{question}\n\n"
+                    "请直接继续回答这个问题，我会用 `codex_session` 接着完成技能修改。"
                 ),
                 "ui": {},
-                "task_id": queued_task_id,
+                "session_id": session_id,
             }
         if cli_result.get("ok"):
             used_backend = str(cli_result.get("backend") or backend)
             return {
                 "text": (
-                    f"🔇🔇🔇✅ Skill '{skill_name}' 已通过 `software_delivery` "
-                    f"模板任务（backend=`{used_backend}`）修改并生效。"
+                    f"🔇🔇🔇✅ Skill '{skill_name}' 已通过 `codex_session` "
+                    f"（backend=`{used_backend}`）修改并生效。"
                 ),
                 "ui": {},
             }
@@ -546,7 +546,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
         )
         return {
             "text": (
-                f"🔇🔇🔇❌ manager 调用 `software_delivery` 模板任务失败 "
+                f"🔇🔇🔇❌ manager 调用 `codex_session` 技能修改流程失败 "
                 f"(backend=`{backend}`): {summary}"
             ),
             "ui": {},
@@ -567,22 +567,26 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
             return {"text": "🔇🔇🔇❌ 请提供技能需求描述 (requirement)", "ui": {}}
 
         backend = _resolve_coding_backend(params)
-        cli_result = await _create_with_software_delivery(
+        cli_result = await _create_with_codex_session(
             ctx=ctx,
             runtime=runtime,
             requirement=str(requirement),
             skill_name=str(params.get("skill_name") or ""),
             backend=backend,
         )
-        if cli_result.get("queued"):
-            queued_task_id = str(cli_result.get("task_id") or "").strip()
+        if cli_result.get("waiting_user"):
+            session_id = str(cli_result.get("session_id") or "").strip()
+            question = str(
+                cli_result.get("question") or cli_result.get("summary") or ""
+            ).strip()
             return {
                 "text": (
-                    f"🔇🔇🔇🚀 Skill 创建任务已异步提交（task_id=`{queued_task_id}`）。"
-                    "请稍后通过 software_delivery status 查询进度。"
+                    f"🔇🔇🔇⏸ Skill 创建需要进一步确认（session_id=`{session_id}`）。\n\n"
+                    f"{question}\n\n"
+                    "请直接继续回答这个问题，我会用 `codex_session` 接着完成技能创建。"
                 ),
                 "ui": {},
-                "task_id": queued_task_id,
+                "session_id": session_id,
             }
         if cli_result.get("ok"):
             resolved_name = str(cli_result.get("resolved_skill_name") or "").strip()
@@ -593,8 +597,8 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
                 has_scripts = bool(skill_info.get("scripts"))
                 return {
                     "text": (
-                        f"🔇🔇🔇✅ 技能 `{resolved_name}` 已通过 `software_delivery` "
-                        f"模板任务（backend=`{used_backend}`）创建并生效。"
+                        f"🔇🔇🔇✅ 技能 `{resolved_name}` 已通过 `codex_session` "
+                        f"（backend=`{used_backend}`）创建并生效。"
                     ),
                     "ui": {},
                     "created_skill_name": resolved_name,
@@ -604,7 +608,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
                 }
             return {
                 "text": (
-                    f"🔇🔇🔇✅ manager 通过 `software_delivery` 模板任务 "
+                    f"🔇🔇🔇✅ manager 通过 `codex_session` 技能创建流程 "
                     f"(backend=`{used_backend}`) 完成技能创建，但未识别到技能名。"
                     "请执行 `list skills` 确认。"
                 ),
@@ -617,7 +621,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
         )
         return {
             "text": (
-                f"🔇🔇🔇❌ manager 调用 `software_delivery` 模板任务失败 "
+                f"🔇🔇🔇❌ manager 调用 `codex_session` 技能创建流程失败 "
                 f"(backend=`{backend}`): {summary}"
             ),
             "ui": {},

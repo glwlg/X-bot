@@ -132,7 +132,7 @@ def test_regular_user_runtime_uses_core_manager_policy(tmp_path):
     allowed_management, management_detail = store.is_tool_allowed(
         runtime_user_id="u-plain-user",
         platform="telegram",
-        tool_name="software_delivery",
+        tool_name="git_ops",
         kind="tool",
     )
     assert allowed_management is True
@@ -207,7 +207,7 @@ def test_worker_default_policy_denies_management_tools(tmp_path):
     denied_dev, denied_dev_detail = store.is_tool_allowed(
         runtime_user_id="worker::worker-main::u-1",
         platform="worker_kernel",
-        tool_name="software_delivery",
+        tool_name="git_ops",
         kind="tool",
     )
     assert denied_dev is False

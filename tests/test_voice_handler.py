@@ -96,27 +96,6 @@ async def test_transcribe_voice_skips_model_call_on_empty_audio(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_transcribe_and_translate_voice_parses_from_candidate_text(monkeypatch):
-    fake_client = _FakeClient(
-        [
-            _Response(
-                text=ValueError("no direct text"),
-                candidate_text="原文语言：中文\n原文：今天天气不错\n译文：The weather is nice today",
-            )
-        ]
-    )
-    monkeypatch.setattr(voice_handler, "openai_async_client", fake_client)
-
-    result = await voice_handler.transcribe_and_translate_voice(
-        b"audio-bytes", "audio/ogg"
-    )
-    assert result is not None
-    assert result["original_lang"] == "中文"
-    assert result["original"] == "今天天气不错"
-    assert result["translated"] == "The weather is nice today"
-
-
-@pytest.mark.asyncio
 async def test_transcribe_voice_strips_wrapping_quotes(monkeypatch):
     fake_client = _FakeClient([_Response(text=' "你好" ')])
     monkeypatch.setattr(voice_handler, "openai_async_client", fake_client)

@@ -86,7 +86,9 @@ class RuntimeToolAssembler:
         merged_tools: List[Any] = []
         merged_tools.extend(tool_registry.get_core_tools())
         merged_tools.append(tool_registry.get_load_skill_tool())
-        merged_tools.extend(tool_registry.get_skill_tools(runtime_role=self._runtime_role()))
+        merged_tools.extend(
+            tool_registry.get_skill_tools(runtime_role=self._runtime_role())
+        )
         return self._filter_by_policy(merged_tools)
 
 
@@ -257,21 +259,15 @@ class ToolCallDispatcher:
         if forced_chat_id:
             chat_id = forced_chat_id
         if runtime_user:
-            export_parts.append(
-                f"X_BOT_RUNTIME_USER_ID={shlex.quote(runtime_user)}"
-            )
+            export_parts.append(f"X_BOT_RUNTIME_USER_ID={shlex.quote(runtime_user)}")
         if source_user_id:
             export_parts.append(
                 f"X_BOT_RUNTIME_SOURCE_USER_ID={shlex.quote(source_user_id)}"
             )
         if platform:
-            export_parts.append(
-                f"X_BOT_RUNTIME_PLATFORM={shlex.quote(platform)}"
-            )
+            export_parts.append(f"X_BOT_RUNTIME_PLATFORM={shlex.quote(platform)}")
         if chat_id:
-            export_parts.append(
-                f"X_BOT_RUNTIME_CHAT_ID={shlex.quote(chat_id)}"
-            )
+            export_parts.append(f"X_BOT_RUNTIME_CHAT_ID={shlex.quote(chat_id)}")
         if not export_parts:
             return args
 
@@ -331,62 +327,6 @@ class ToolCallDispatcher:
         patched["cwd"] = skill_dir
         return patched
 
-    @staticmethod
-    def _is_software_delivery_intent(text: str) -> bool:
-        raw = str(text or "").strip().lower()
-        if not raw:
-            return False
-
-        direct_keywords = (
-            "software_delivery",
-            "software delivery",
-            "代码",
-            "编码",
-            "改代码",
-            "开发",
-            "修复",
-            "bug",
-            "调试",
-            "debug",
-            "重构",
-            "技能",
-            "skill",
-            "创建技能",
-            "修改技能",
-            "实现功能",
-            "写单测",
-            "测试修复",
-        )
-        if any(token in raw for token in direct_keywords):
-            return True
-
-        repo_hints = (
-            "github",
-            "仓库",
-            "repo",
-            "issue",
-            "pull request",
-            "pr",
-            "commit",
-        )
-        coding_actions = (
-            "修复",
-            "实现",
-            "开发",
-            "排查",
-            "review",
-            "提交",
-            "发布",
-            "publish",
-            "merge",
-            "合并",
-            "改",
-            "写",
-        )
-        return any(token in raw for token in repo_hints) and any(
-            token in raw for token in coding_actions
-        )
-
     def _is_loaded_skill_cli_bash_command(self, command: str) -> bool:
         raw = str(command or "").strip()
         if not raw:
@@ -429,90 +369,6 @@ class ToolCallDispatcher:
         ):
             return True
         return False
-
-    @staticmethod
-    def _infer_software_delivery_action(
-        *,
-        requested_action: str,
-        user_request: str,
-        args: Dict[str, Any],
-    ) -> str:
-        action = str(requested_action or "").strip().lower() or "run"
-
-        skill_name = str(args.get("skill_name") or "").strip()
-        template_kind = str(args.get("template_kind") or "").strip().lower()
-        requirement = str(args.get("requirement") or "").strip()
-        instruction = str(args.get("instruction") or "").strip()
-        text = " ".join(
-            [item for item in [user_request, requirement, instruction] if item]
-        ).lower()
-
-        is_skill_intent = (
-            bool(skill_name)
-            or template_kind in {"skill_create", "skill_modify"}
-            or "技能" in text
-            or "skill" in text
-        )
-
-        repo_path = str(args.get("repo_path") or "").strip()
-        repo_url = str(args.get("repo_url") or "").strip()
-        issue = str(args.get("issue") or "").strip()
-        owner = str(args.get("owner") or "").strip()
-        repo = str(args.get("repo") or "").strip()
-        has_repo_hint = (
-            bool(repo_url)
-            or bool(issue)
-            or bool(owner and repo)
-            or (repo_path not in {"", ".", "./"})
-        )
-        integration_tokens = (
-            "集成",
-            "安装",
-            "接入",
-            "给阿黑用",
-            "让阿黑用",
-            "adopt",
-            "install",
-            "integrate",
-        )
-        has_external_skill_integration_intent = (
-            is_skill_intent
-            and (
-                bool(repo_url)
-                or "github.com/" in text
-                or bool(owner and repo)
-            )
-            and any(token in text for token in integration_tokens)
-        )
-
-        if action in {"skill_create", "skill_modify", "skill_template"}:
-            return action
-        if action not in {"", "run", "plan"}:
-            return action
-        if has_external_skill_integration_intent:
-            return "skill_create"
-        if not is_skill_intent or has_repo_hint:
-            return action if action in {"plan", "run"} else "run"
-
-        modify_tokens = (
-            "修改",
-            "修复",
-            "排查",
-            "优化",
-            "fix",
-            "modify",
-            "update",
-            "debug",
-        )
-        create_tokens = ("创建", "新建", "新增", "create", "build", "开发", "实现")
-
-        if any(token in text for token in modify_tokens):
-            return "skill_modify"
-        if any(token in text for token in create_tokens):
-            return "skill_create"
-        if skill_name:
-            return "skill_modify"
-        return "skill_create"
 
     def _resolve_skill_tool_binding(self, tool_name: str) -> Dict[str, Any] | None:
         return tool_registry.get_skill_tool_binding(
@@ -621,44 +477,6 @@ class ToolCallDispatcher:
             user_data["called_tool_names"] = called_names[-50:]
 
         if tool_name in {"read", "write", "edit", "bash"}:
-            user_request = self._extract_user_request()
-            if (
-                tool_name == "bash"
-                and self._is_manager_runtime()
-                and "software_delivery" in self.available_tool_names
-                and self._is_software_delivery_intent(user_request)
-                and not self._is_loaded_skill_cli_bash_command(
-                    str(tool_args.get("command") or "")
-                )
-            ):
-                blocked = {
-                    "ok": False,
-                    "error_code": "software_delivery_required",
-                    "message": (
-                        "For code/skill troubleshooting in manager runtime, "
-                        "use software_delivery directly instead of bash probing."
-                    ),
-                    "failure_mode": "recoverable",
-                }
-                return blocked
-
-            if (
-                tool_name in {"write", "edit"}
-                and self._is_manager_runtime()
-                and "software_delivery" in self.available_tool_names
-                and self._is_repo_mutation_path(str(tool_args.get("path") or ""))
-            ):
-                blocked = {
-                    "ok": False,
-                    "error_code": "software_delivery_required",
-                    "message": (
-                        "Manager runtime cannot directly modify repository files; "
-                        "use software_delivery instead."
-                    ),
-                    "failure_mode": "recoverable",
-                }
-                return blocked
-
             if not self._policy_allows(tool_name, kind="tool"):
                 blocked = {
                     "ok": False,
@@ -676,9 +494,7 @@ class ToolCallDispatcher:
                 normalized_args["command"] = self._normalize_legacy_user_bash_command(
                     str(normalized_args.get("command") or "")
                 )
-                normalized_args = self._apply_loaded_skill_bash_context(
-                    normalized_args
-                )
+                normalized_args = self._apply_loaded_skill_bash_context(normalized_args)
                 normalized_args = self._inject_runtime_bash_env(normalized_args)
             result = await self.tool_broker.execute_core_tool(
                 name=tool_name,
@@ -812,7 +628,9 @@ class ToolCallDispatcher:
                 "entrypoint": entrypoint,
                 "absolute_entrypoint": absolute_entrypoint,
             }
-            self.todo_mark_step("act", "in_progress", f"Tool `load_skill` loaded '{skill_name}'.")
+            self.todo_mark_step(
+                "act", "in_progress", f"Tool `load_skill` loaded '{skill_name}'."
+            )
             return result
 
         binding_result = await self._execute_skill_tool_binding(

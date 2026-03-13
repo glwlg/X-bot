@@ -43,7 +43,6 @@ from handlers import (
     feature_command,
     handle_feature_input,
     save_feature_command,
-    toggle_translation_command,
     chatlog_command,
     stop_command,
     heartbeat_command,
@@ -130,9 +129,6 @@ async def init_services() -> None:
         logger.error(f"❌ Error in init_services: {e}", exc_info=True)
 
 
-
-
-
 async def log_update(update: Update, context):
     """记录所有收到的 Update，用于调试"""
     if update.callback_query:
@@ -215,9 +211,6 @@ async def main():
     adapter_manager.on_command("skills", skills_command, description="查看可用技能")
     adapter_manager.on_command(
         "reload_skills", reload_skills_command, description="重载技能"
-    )
-    adapter_manager.on_command(
-        "translate", toggle_translation_command, description="开启/关闭沉浸式翻译"
     )
     adapter_manager.on_command("stop", stop_command, description="停止当前任务")
     adapter_manager.on_command("heartbeat", heartbeat_command, description="管理心跳")

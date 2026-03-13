@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from core.config import DATA_DIR
 from core.prompts import (
     DEFAULT_SYSTEM_PROMPT,
     MANAGER_CORE_PROMPT,
@@ -55,9 +57,22 @@ class PromptComposer:
     """
     Build minimal runtime instruction:
     1) default system prompt
-    2) SOUL
-    3) tool inventory
+    2) manager AGENTS (manager only)
+    3) SOUL
+    4) tool inventory
     """
+
+    @staticmethod
+    def _read_markdown_file(path: Path) -> str:
+        try:
+            if path.exists():
+                return path.read_text(encoding="utf-8").strip()
+        except Exception:
+            return ""
+        return ""
+
+    def _load_manager_agents_doc(self) -> str:
+        return self._read_markdown_file((Path(DATA_DIR) / "AGENTS.md").resolve())
 
     def compose_base(
         self,
@@ -69,9 +84,16 @@ class PromptComposer:
         mode: str = "chat",
     ) -> str:
         soul_payload = soul_store.resolve_for_runtime_user(str(runtime_user_id or ""))
+        runtime_role = self._runtime_role(runtime_user_id, platform)
         parts: List[str] = []
         if not soul_payload:
             parts.append(DEFAULT_SYSTEM_PROMPT.strip())
+
+        if runtime_role == "manager":
+            agents_doc = self._load_manager_agents_doc()
+            if agents_doc:
+                parts.append("【AGENTS】\n" + agents_doc)
+
         parts.append("【SOUL】\n" + soul_payload.content.strip())
 
         # 如果是 manager 模式，添加 Manager 核心 Prompt

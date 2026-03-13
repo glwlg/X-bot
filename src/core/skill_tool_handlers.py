@@ -1,18 +1,17 @@
 from __future__ import annotations
 
-import re
+import shlex
 from typing import Any, Awaitable, Callable, Dict
 
 from core.task_inbox import task_inbox
-from core.tools.dev_tools import dev_tools
+from core.tools.codex_tools import codex_tools
 from core.tools.dispatch_tools import dispatch_tools
-from manager.integrations.github_client import parse_repo_slug
+from core.tools.git_tools import git_tools
+from core.tools.gh_tools import gh_tools
+from core.tools.repo_workspace_tools import repo_workspace_tools
 
 
 SkillToolHandler = Callable[[Any, Dict[str, Any]], Awaitable[Dict[str, Any]]]
-
-
-_GITHUB_URL_PATTERN = re.compile(r"https?://github\.com/[^\s)\"'>]+", re.IGNORECASE)
 
 
 class SkillToolHandlerRegistry:
@@ -71,12 +70,13 @@ def _dispatch_metadata_from_runtime(
     if "session_id" not in metadata_obj:
         metadata_obj["session_id"] = str(dispatcher.task_id or "")
     if "task_inbox_id" not in metadata_obj:
-        metadata_obj["task_inbox_id"] = str(getattr(dispatcher, "task_inbox_id", "") or "")
-    if "session_task_id" not in metadata_obj:
-        metadata_obj["session_task_id"] = (
-            str(metadata_obj.get("task_inbox_id") or "").strip()
-            or str(dispatcher.task_id or "")
+        metadata_obj["task_inbox_id"] = str(
+            getattr(dispatcher, "task_inbox_id", "") or ""
         )
+    if "session_task_id" not in metadata_obj:
+        metadata_obj["session_task_id"] = str(
+            metadata_obj.get("task_inbox_id") or ""
+        ).strip() or str(dispatcher.task_id or "")
     if "original_user_request" not in metadata_obj:
         extractor = getattr(dispatcher, "_extract_user_request", None)
         if callable(extractor):
@@ -90,66 +90,7 @@ def _dispatch_metadata_from_runtime(
     return metadata_obj
 
 
-def _extract_first_github_url(text: str) -> str:
-    match = _GITHUB_URL_PATTERN.search(str(text or "").strip())
-    if not match:
-        return ""
-    return str(match.group(0) or "").strip().rstrip(".,)")
-
-
-def _derive_skill_name(*, tool_args: Dict[str, Any], user_request: str) -> str:
-    explicit = str(tool_args.get("skill_name") or "").strip()
-    if explicit:
-        return explicit
-
-    repo_url = str(tool_args.get("repo_url") or "").strip() or _extract_first_github_url(
-        user_request
-    )
-    owner = str(tool_args.get("owner") or "").strip()
-    repo = str(tool_args.get("repo") or "").strip()
-    if owner and repo:
-        return repo
-    if repo_url:
-        _owner, resolved_repo = parse_repo_slug(repo_url)
-        if resolved_repo:
-            return resolved_repo
-    return ""
-
-
-def _looks_like_external_skill_integration(
-    *,
-    requested_action: str,
-    tool_args: Dict[str, Any],
-    user_request: str,
-) -> bool:
-    action = str(requested_action or "").strip().lower()
-    if action not in {"", "run", "plan", "skill_create", "skill_template"}:
-        return False
-    if str(tool_args.get("source") or "").strip() == "manual_install_after_coding":
-        return False
-
-    repo_url = str(tool_args.get("repo_url") or "").strip() or _extract_first_github_url(
-        user_request
-    )
-    owner = str(tool_args.get("owner") or "").strip()
-    repo = str(tool_args.get("repo") or "").strip()
-    raw = " ".join(
-        [
-            str(user_request or ""),
-            str(tool_args.get("requirement") or ""),
-            str(tool_args.get("instruction") or ""),
-        ]
-    ).lower()
-    skill_tokens = ("skill", "技能", "阿黑", "worker")
-    integration_tokens = ("集成", "安装", "接入", "给阿黑用", "让阿黑用", "adopt", "install", "integrate")
-
-    has_repo_ref = bool(repo_url) or bool(owner and repo)
-    return has_repo_ref and any(token in raw for token in skill_tokens) and any(
-        token in raw for token in integration_tokens
-    )
-
-
-def _software_delivery_notify_target(dispatcher: Any) -> Dict[str, str]:
+def _notify_target_from_dispatcher(dispatcher: Any) -> Dict[str, str]:
     ctx_user_data = getattr(dispatcher.ctx, "user_data", None)
     user_data = ctx_user_data if isinstance(ctx_user_data, dict) else {}
     msg = getattr(dispatcher.ctx, "message", None)
@@ -172,6 +113,19 @@ def _software_delivery_notify_target(dispatcher: Any) -> Dict[str, str]:
         "notify_chat_id": chat_id,
         "notify_user_id": user_id,
     }
+
+
+def _normalize_cli_argv(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        try:
+            return [
+                str(item).strip() for item in shlex.split(value) if str(item).strip()
+            ]
+        except Exception:
+            return [item.strip() for item in value.split() if item.strip()]
+    return []
 
 
 async def _list_workers_handler(
@@ -224,62 +178,79 @@ async def _worker_status_handler(
     )
 
 
-async def _software_delivery_handler(
+async def _gh_cli_handler(
+    dispatcher: Any,
+    tool_args: Dict[str, Any],
+) -> Dict[str, Any]:
+    notify_target = _notify_target_from_dispatcher(dispatcher)
+    return await gh_tools.gh_cli(
+        action=str(tool_args.get("action") or "auth_status"),
+        hostname=str(tool_args.get("hostname") or "github.com"),
+        scopes=tool_args.get("scopes"),
+        argv=_normalize_cli_argv(tool_args.get("argv") or tool_args.get("command")),
+        cwd=str(tool_args.get("cwd") or ""),
+        timeout_sec=tool_args.get("timeout_sec", 120),
+        notify_platform=notify_target["notify_platform"],
+        notify_chat_id=notify_target["notify_chat_id"],
+        notify_user_id=notify_target["notify_user_id"],
+    )
+
+
+async def _repo_workspace_handler(
+    dispatcher: Any,
+    tool_args: Dict[str, Any],
+) -> Dict[str, Any]:
+    _ = dispatcher
+    return await repo_workspace_tools.repo_workspace(
+        action=str(tool_args.get("action") or "prepare"),
+        workspace_id=str(tool_args.get("workspace_id") or ""),
+        repo_url=str(tool_args.get("repo_url") or ""),
+        repo_path=str(tool_args.get("repo_path") or ""),
+        repo_root=str(tool_args.get("repo_root") or tool_args.get("cwd") or ""),
+        base_branch=str(tool_args.get("base_branch") or ""),
+        branch_name=str(tool_args.get("branch_name") or ""),
+        mode=str(tool_args.get("mode") or "fresh_worktree"),
+        force=tool_args.get("force", True),
+    )
+
+
+async def _codex_session_handler(
     dispatcher: Any,
     tool_args: Dict[str, Any],
 ) -> Dict[str, Any]:
     user_request = dispatcher._extract_user_request()
-    repo_url = str(tool_args.get("repo_url") or "").strip() or _extract_first_github_url(
-        user_request
-    )
-    requested_action = dispatcher._infer_software_delivery_action(
-        requested_action=str(tool_args.get("action") or "run"),
-        user_request=user_request,
-        args={**dict(tool_args), "repo_url": repo_url},
-    )
-    requested_requirement = str(tool_args.get("requirement") or "")
-    requested_instruction = str(tool_args.get("instruction") or "")
-    resolved_skill_name = _derive_skill_name(tool_args=tool_args, user_request=user_request)
-    notify_target = _software_delivery_notify_target(dispatcher)
-
-    if _looks_like_external_skill_integration(
-        requested_action=requested_action,
-        tool_args=tool_args,
-        user_request=user_request,
-    ):
-        requested_action = "skill_create"
-
-    return await dev_tools.software_delivery(
-        action=requested_action,
-        task_id=str(tool_args.get("task_id") or ""),
-        requirement=requested_requirement or user_request,
-        instruction=requested_instruction or requested_requirement or user_request,
-        issue=str(tool_args.get("issue") or ""),
-        repo_path=str(tool_args.get("repo_path") or ""),
-        repo_url=repo_url,
+    return await codex_tools.codex_session(
+        action=str(tool_args.get("action") or "status"),
+        session_id=str(tool_args.get("session_id") or ""),
+        workspace_id=str(tool_args.get("workspace_id") or ""),
         cwd=str(tool_args.get("cwd") or ""),
-        skill_name=resolved_skill_name,
+        instruction=str(tool_args.get("instruction") or user_request),
+        user_reply=str(
+            tool_args.get("user_reply") or tool_args.get("instruction") or ""
+        ),
+        backend=str(tool_args.get("backend") or "codex"),
+        timeout_sec=tool_args.get("timeout_sec", 2400),
         source=str(tool_args.get("source") or ""),
-        template_kind=str(tool_args.get("template_kind") or ""),
+        skill_name=str(tool_args.get("skill_name") or ""),
+    )
+
+
+async def _git_ops_handler(
+    dispatcher: Any,
+    tool_args: Dict[str, Any],
+) -> Dict[str, Any]:
+    _ = dispatcher
+    return await git_tools.git_ops(
+        action=str(tool_args.get("action") or "status"),
+        workspace_id=str(tool_args.get("workspace_id") or ""),
+        repo_root=str(tool_args.get("repo_root") or tool_args.get("cwd") or ""),
+        mode=str(tool_args.get("mode") or "working"),
+        base_branch=str(tool_args.get("base_branch") or ""),
+        message=str(tool_args.get("message") or tool_args.get("commit_message") or ""),
+        strategy=str(tool_args.get("strategy") or "auto"),
+        branch_name=str(tool_args.get("branch_name") or ""),
         owner=str(tool_args.get("owner") or ""),
         repo=str(tool_args.get("repo") or ""),
-        backend=str(tool_args.get("backend") or ""),
-        branch_name=str(tool_args.get("branch_name") or ""),
-        base_branch=str(tool_args.get("base_branch") or ""),
-        commit_message=str(tool_args.get("commit_message") or ""),
-        pr_title=str(tool_args.get("pr_title") or ""),
-        pr_body=str(tool_args.get("pr_body") or ""),
-        timeout_sec=tool_args.get("timeout_sec", 1800),
-        validation_commands=tool_args.get("validation_commands"),
-        auto_publish=tool_args.get("auto_publish", True),
-        auto_push=tool_args.get("auto_push", True),
-        auto_pr=tool_args.get("auto_pr", True),
-        target_service=str(tool_args.get("target_service") or ""),
-        rollout=str(tool_args.get("rollout") or ""),
-        validate_only=tool_args.get("validate_only", False),
-        notify_platform=notify_target["notify_platform"],
-        notify_chat_id=notify_target["notify_chat_id"],
-        notify_user_id=notify_target["notify_user_id"],
     )
 
 
@@ -297,6 +268,18 @@ skill_tool_handler_registry.register(
     _worker_status_handler,
 )
 skill_tool_handler_registry.register(
-    "manager.software_delivery",
-    _software_delivery_handler,
+    "manager.gh_cli",
+    _gh_cli_handler,
+)
+skill_tool_handler_registry.register(
+    "manager.repo_workspace",
+    _repo_workspace_handler,
+)
+skill_tool_handler_registry.register(
+    "manager.codex_session",
+    _codex_session_handler,
+)
+skill_tool_handler_registry.register(
+    "manager.git_ops",
+    _git_ops_handler,
 )

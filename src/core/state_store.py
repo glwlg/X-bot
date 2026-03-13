@@ -4,7 +4,7 @@ import re
 import uuid
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from core.subscription_types import (
     default_title,
@@ -21,12 +21,139 @@ write_json = _state_io.write_json
 
 _state_paths = importlib.import_module("core.state_paths")
 all_user_ids = _state_paths.all_user_ids
+shared_user_path = _state_paths.shared_user_path
 system_path = _state_paths.system_path
 user_path = _state_paths.user_path
 
 logger = logging.getLogger(__name__)
 
 _ENTRY_RE = re.compile(r"^###\s+(user|model)\s*\n```text\n(.*?)\n```", re.M | re.S)
+
+
+def _normalized_user_id(value: int | str | None) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _read_row_list(data: Any, *keys: str) -> list[dict[str, Any]]:
+    rows: object = data
+    if isinstance(data, dict):
+        fallback_rows: object | None = None
+        for key in keys:
+            candidate = data.get(key)
+            if isinstance(candidate, list):
+                if candidate:
+                    rows = candidate
+                    break
+                if fallback_rows is None:
+                    fallback_rows = candidate
+        else:
+            if fallback_rows is not None:
+                rows = fallback_rows
+    if not isinstance(rows, list):
+        return []
+    return [item for item in rows if isinstance(item, dict)]
+
+
+def _row_user_id(raw: dict[str, Any]) -> str:
+    return str(raw.get("user_id") or "").strip()
+
+
+def _merge_user_ids(*groups: list[str]) -> list[str]:
+    seen: set[str] = set()
+    merged: list[str] = []
+    for group in groups:
+        for user_id in group:
+            uid = _normalized_user_id(user_id)
+            if not uid or uid in seen:
+                continue
+            seen.add(uid)
+            merged.append(uid)
+    return merged
+
+
+def _merge_unique_rows(
+    current_rows: list[dict[str, Any]],
+    legacy_rows: list[dict[str, Any]],
+    *,
+    key_fn,
+) -> list[dict[str, Any]]:
+    merged = list(current_rows)
+    seen = {key_fn(row) for row in current_rows}
+    for row in legacy_rows:
+        key = key_fn(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(row)
+    return merged
+
+
+def _max_row_id(rows: list[dict[str, Any]]) -> int:
+    highest = 0
+    for row in rows:
+        try:
+            highest = max(highest, int(row.get("id") or 0))
+        except Exception:
+            continue
+    return highest
+
+
+async def _next_id_after_legacy_rows(
+    counter_name: str,
+    legacy_path: Path,
+    *,
+    start: int = 1,
+    list_keys: tuple[str, ...] = (),
+) -> int:
+    legacy_rows = _read_row_list(await read_json(legacy_path, []), *list_keys)
+    return await next_id(counter_name, start=max(start, _max_row_id(legacy_rows) + 1))
+
+
+async def _delete_legacy_rows(
+    path: Path,
+    *,
+    user_id: int | str,
+    predicate,
+    list_keys: tuple[str, ...] = (),
+) -> None:
+    payload = await read_json(path, [])
+    target_user_id = _normalized_user_id(user_id)
+
+    if isinstance(payload, list):
+        rows = [item for item in payload if isinstance(item, dict)]
+        kept = [
+            item
+            for item in rows
+            if _row_user_id(item) != target_user_id or not predicate(item)
+        ]
+        if len(kept) != len(rows):
+            await write_json(path, kept)
+        return
+
+    if not isinstance(payload, dict):
+        return
+
+    updated = dict(payload)
+    changed = False
+    for key in list_keys:
+        rows = updated.get(key)
+        if not isinstance(rows, list):
+            continue
+        kept = [
+            item
+            for item in rows
+            if not isinstance(item, dict)
+            or _row_user_id(item) != target_user_id
+            or not predicate(item)
+        ]
+        if len(kept) == len(rows):
+            continue
+        updated[key] = kept
+        changed = True
+    if changed:
+        await write_json(path, updated)
 
 
 def _safe_session_id(value: str) -> str:
@@ -467,8 +594,12 @@ async def check_user_allowed_in_db(user_id: int | str) -> bool:
     return any(item["user_id"] == uid for item in rows)
 
 
-def _subs_path() -> Path:
-    return user_path("user", "rss", "subscriptions.md")
+def _subs_path(user_id: int | str) -> Path:
+    return user_path(user_id, "rss", "subscriptions.md")
+
+
+def _legacy_subs_path() -> Path:
+    return shared_user_path("rss", "subscriptions.md")
 
 
 def _normalize_subscription(raw: dict[str, Any]) -> dict[str, Any] | None:
@@ -490,8 +621,12 @@ def _normalize_subscription(raw: dict[str, Any]) -> dict[str, Any] | None:
     if not feed_url:
         return None
 
+    provider_value = raw.get("provider")
+    if str(provider_value or "").strip().lower() == "rss":
+        provider_value = "native_rss"
+
     try:
-        provider = normalize_provider(raw.get("provider"), feed_url=feed_url)
+        provider = normalize_provider(provider_value, feed_url=feed_url)
     except ValueError:
         return None
 
@@ -519,24 +654,71 @@ def _serialize_subscription(row: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-async def _read_subscription_rows() -> list[dict[str, Any]]:
-    data = await read_json(_subs_path(), [])
-    if not isinstance(data, list):
-        return []
+async def _read_current_subscription_rows(user_id: int | str) -> list[dict[str, Any]]:
+    data = await read_json(_subs_path(user_id), [])
+    target_user_id = _normalized_user_id(user_id)
     rows: list[dict[str, Any]] = []
-    for item in data:
+    for item in _read_row_list(data):
+        item_user_id = _row_user_id(item)
+        if item_user_id and item_user_id != target_user_id:
+            continue
+        normalized_source = dict(item)
+        if not item_user_id:
+            normalized_source["user_id"] = target_user_id
+        normalized = _normalize_subscription(normalized_source)
+        if normalized is not None:
+            rows.append(normalized)
+    return rows
+
+
+async def _read_legacy_subscription_rows(user_id: int | str) -> list[dict[str, Any]]:
+    target_user_id = _normalized_user_id(user_id)
+    data = await read_json(_legacy_subs_path(), [])
+    rows: list[dict[str, Any]] = []
+    for item in _read_row_list(data):
+        if _row_user_id(item) != target_user_id:
+            continue
         normalized = _normalize_subscription(item)
         if normalized is not None:
             rows.append(normalized)
     return rows
 
 
-async def _write_subscription_rows(rows: list[dict[str, Any]]) -> None:
+async def _read_subscription_rows(user_id: int | str) -> list[dict[str, Any]]:
+    current_rows = await _read_current_subscription_rows(user_id)
+    legacy_rows = await _read_legacy_subscription_rows(user_id)
+    return _merge_unique_rows(
+        current_rows,
+        legacy_rows,
+        key_fn=lambda row: int(row.get("id") or 0),
+    )
+
+
+async def _legacy_subscription_user_ids() -> list[str]:
+    data = await read_json(_legacy_subs_path(), [])
+    return sorted(
+        {_row_user_id(item) for item in _read_row_list(data) if _row_user_id(item)}
+    )
+
+
+async def _write_subscription_rows(
+    user_id: int | str, rows: list[dict[str, Any]]
+) -> None:
+    uid = _normalized_user_id(user_id)
     payload: list[dict[str, Any]] = []
+    if _subs_path(user_id).resolve() == _legacy_subs_path().resolve():
+        existing = await read_json(_subs_path(user_id), [])
+        for item in _read_row_list(existing):
+            normalized = _normalize_subscription(item)
+            if normalized is None:
+                continue
+            if str(normalized.get("user_id") or "") == uid:
+                continue
+            payload.append(normalized)
     for row in rows:
         payload.append(_serialize_subscription(row))
-    payload.sort(key=lambda item: (str(item.get("user_id") or ""), int(item["id"])))
-    await write_json(_subs_path(), payload)
+    payload.sort(key=lambda item: int(item["id"]))
+    await write_json(_subs_path(user_id), payload)
 
 
 def _find_subscription_index(
@@ -562,7 +744,10 @@ def _assert_unique_subscription(
             continue
         if str(row.get("user_id") or "") != str(candidate.get("user_id") or ""):
             continue
-        if str(row.get("feed_url") or "").strip() == str(candidate.get("feed_url") or "").strip():
+        if (
+            str(row.get("feed_url") or "").strip()
+            == str(candidate.get("feed_url") or "").strip()
+        ):
             raise ValueError("feed subscription already exists")
 
 
@@ -601,24 +786,29 @@ def _validate_subscription_payload(
     }
 
 
-async def create_subscription(user_id: int | str, payload: dict[str, Any]) -> dict[str, Any]:
-    rows = await _read_subscription_rows()
-    sub_id = await next_id("subscriptions", start=1)
-    record = _validate_subscription_payload(user_id, payload, subscription_id=sub_id)
+async def create_subscription(
+    user_id: int | str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    uid = _normalized_user_id(user_id)
+    rows = await _read_subscription_rows(uid)
+    sub_id = await _next_id_after_legacy_rows(
+        "subscriptions",
+        _legacy_subs_path(),
+    )
+    record = _validate_subscription_payload(uid, payload, subscription_id=sub_id)
     _assert_unique_subscription(rows, record)
     rows.append(record)
-    await _write_subscription_rows(rows)
+    await _write_subscription_rows(uid, rows)
     return record
 
 
 async def list_subscriptions(user_id: int | str) -> list[dict[str, Any]]:
-    uid = str(user_id or "").strip()
-    rows = await _read_subscription_rows()
-    return [row for row in rows if str(row.get("user_id") or "") == uid]
+    uid = _normalized_user_id(user_id)
+    return await _read_subscription_rows(uid)
 
 
 async def get_subscription(user_id: int | str, sub_id: int) -> dict[str, Any] | None:
-    rows = await _read_subscription_rows()
+    rows = await _read_subscription_rows(user_id)
     index = _find_subscription_index(rows, user_id, sub_id)
     if index < 0:
         return None
@@ -630,39 +820,50 @@ async def update_subscription(
     user_id: int | str,
     payload: dict[str, Any],
 ) -> bool:
-    rows = await _read_subscription_rows()
+    uid = _normalized_user_id(user_id)
+    rows = await _read_subscription_rows(uid)
     index = _find_subscription_index(rows, user_id, sub_id)
     if index < 0:
         return False
     current = rows[index]
     updated = _validate_subscription_payload(
-        user_id,
+        uid,
         payload,
         existing=current,
         subscription_id=sub_id,
     )
     _assert_unique_subscription(rows, updated, ignore_id=sub_id)
     rows[index] = updated
-    await _write_subscription_rows(rows)
+    await _write_subscription_rows(uid, rows)
     return True
 
 
 async def delete_subscription(user_id: int | str, sub_id: int) -> bool:
-    rows = await _read_subscription_rows()
+    uid = _normalized_user_id(user_id)
+    rows = await _read_subscription_rows(uid)
     index = _find_subscription_index(rows, user_id, sub_id)
     if index < 0:
         return False
     rows.pop(index)
-    await _write_subscription_rows(rows)
+    await _write_subscription_rows(uid, rows)
+    await _delete_legacy_rows(
+        _legacy_subs_path(),
+        user_id=uid,
+        predicate=lambda row: int(row.get("id") or 0) == int(sub_id),
+    )
     return True
 
 
 async def list_all_subscriptions() -> list[dict[str, Any]]:
-    return await _read_subscription_rows()
+    merged: list[dict[str, Any]] = []
+    user_ids = _merge_user_ids(all_user_ids(), await _legacy_subscription_user_ids())
+    for user_id in user_ids:
+        merged.extend(await _read_subscription_rows(user_id))
+    return merged
 
 
 async def list_feed_subscriptions() -> list[dict[str, Any]]:
-    return await _read_subscription_rows()
+    return await list_all_subscriptions()
 
 
 async def update_feed_subscription_state(
@@ -673,7 +874,8 @@ async def update_feed_subscription_state(
     last_etag: str | None = None,
     last_modified: str | None = None,
 ) -> bool:
-    rows = await _read_subscription_rows()
+    uid = _normalized_user_id(user_id)
+    rows = await _read_subscription_rows(uid)
     index = _find_subscription_index(rows, user_id, sub_id)
     if index < 0:
         return False
@@ -682,7 +884,7 @@ async def update_feed_subscription_state(
     target["last_etag"] = str(last_etag or "").strip()
     target["last_modified"] = str(last_modified or "").strip()
     rows[index] = target
-    await _write_subscription_rows(rows)
+    await _write_subscription_rows(uid, rows)
     return True
 
 
@@ -698,6 +900,10 @@ def _reminders_path(user_id: int | str):
     return user_path(user_id, "automation", "reminders.md")
 
 
+def _legacy_reminders_path() -> Path:
+    return shared_user_path("automation", "reminders.md")
+
+
 def _normalize_reminder(raw: dict[str, Any], *, user_id: int | str) -> dict[str, Any]:
     return {
         "id": int(raw.get("id") or 0),
@@ -711,25 +917,63 @@ def _normalize_reminder(raw: dict[str, Any], *, user_id: int | str) -> dict[str,
 
 
 async def _read_user_reminders(user_id: int | str) -> list[dict[str, Any]]:
-    data = await read_json(_reminders_path(user_id), [])
-    rows: object = data
-    if isinstance(data, dict):
-        rows = data.get("reminders")
-    if not isinstance(rows, list):
-        return []
-    return [
+    current_rows = _read_row_list(
+        await read_json(_reminders_path(user_id), []), "reminders"
+    )
+    target_user_id = _normalized_user_id(user_id)
+    normalized_current = [
         _normalize_reminder(item, user_id=user_id)
-        for item in rows
-        if isinstance(item, dict)
+        for item in current_rows
+        if not _row_user_id(item) or _row_user_id(item) == target_user_id
     ]
+
+    target_user_id = _normalized_user_id(user_id)
+    legacy_rows = _read_row_list(
+        await read_json(_legacy_reminders_path(), []), "reminders"
+    )
+    normalized_legacy = [
+        _normalize_reminder(item, user_id=user_id)
+        for item in legacy_rows
+        if _row_user_id(item) == target_user_id
+    ]
+    return _merge_unique_rows(
+        normalized_current,
+        normalized_legacy,
+        key_fn=lambda row: int(row.get("id") or 0),
+    )
+
+
+async def _legacy_reminder_user_ids() -> list[str]:
+    rows = _read_row_list(await read_json(_legacy_reminders_path(), []), "reminders")
+    return sorted({_row_user_id(item) for item in rows if _row_user_id(item)})
 
 
 async def _write_user_reminders(user_id: int | str, rows: list[dict[str, Any]]) -> None:
+    uid = _normalized_user_id(user_id)
     payload: list[dict[str, Any]] = []
+    if _reminders_path(user_id).resolve() == _legacy_reminders_path().resolve():
+        existing_rows = _read_row_list(
+            await read_json(_reminders_path(user_id), []), "reminders"
+        )
+        for item in existing_rows:
+            if _row_user_id(item) == uid:
+                continue
+            payload.append(
+                {
+                    "id": int(item.get("id") or 0),
+                    "user_id": _row_user_id(item),
+                    "chat_id": str(item.get("chat_id") or ""),
+                    "message": str(item.get("message") or ""),
+                    "trigger_time": str(item.get("trigger_time") or ""),
+                    "created_at": str(item.get("created_at") or now_iso()),
+                    "platform": str(item.get("platform") or "telegram"),
+                }
+            )
     for row in rows:
         payload.append(
             {
                 "id": int(row.get("id") or 0),
+                "user_id": uid,
                 "chat_id": str(row.get("chat_id") or ""),
                 "message": str(row.get("message") or ""),
                 "trigger_time": str(row.get("trigger_time") or ""),
@@ -749,7 +993,11 @@ async def add_reminder(
 ) -> int:
     uid = str(user_id)
     rows = await _read_user_reminders(uid)
-    rid = await next_id("reminder", start=1)
+    rid = await _next_id_after_legacy_rows(
+        "reminder",
+        _legacy_reminders_path(),
+        list_keys=("reminders",),
+    )
     rows.append(
         {
             "id": int(rid),
@@ -767,12 +1015,22 @@ async def add_reminder(
 
 async def delete_reminder(reminder_id: int, user_id: int | str | None = None):
     rid = int(reminder_id)
-    target_users = [str(user_id)] if user_id is not None else all_user_ids()
+    target_users = (
+        [_normalized_user_id(user_id)]
+        if user_id is not None
+        else _merge_user_ids(all_user_ids(), await _legacy_reminder_user_ids())
+    )
     for uid in target_users:
         rows = await _read_user_reminders(uid)
         kept = [item for item in rows if int(item.get("id") or 0) != rid]
         if len(kept) != len(rows):
             await _write_user_reminders(uid, kept)
+            await _delete_legacy_rows(
+                _legacy_reminders_path(),
+                user_id=uid,
+                predicate=lambda row: int(row.get("id") or 0) == rid,
+                list_keys=("reminders",),
+            )
             return
 
 
@@ -780,7 +1038,11 @@ async def get_pending_reminders(
     user_id: int | str | None = None,
 ) -> list[dict[str, Any]]:
     merged: list[dict[str, Any]] = []
-    target_users = [str(user_id)] if user_id is not None else all_user_ids()
+    target_users = (
+        [_normalized_user_id(user_id)]
+        if user_id is not None
+        else _merge_user_ids(all_user_ids(), await _legacy_reminder_user_ids())
+    )
     for uid in target_users:
         merged.extend(await _read_user_reminders(uid))
     return sorted(merged, key=lambda item: str(item.get("trigger_time") or ""))
@@ -788,6 +1050,10 @@ async def get_pending_reminders(
 
 def _scheduled_tasks_path(user_id: int | str):
     return user_path(user_id, "automation", "scheduled_tasks.md")
+
+
+def _legacy_scheduled_tasks_path() -> Path:
+    return shared_user_path("automation", "scheduled_tasks.md")
 
 
 def _normalize_scheduled_task(
@@ -807,30 +1073,80 @@ def _normalize_scheduled_task(
 
 
 async def _read_user_scheduled_tasks(user_id: int | str) -> list[dict[str, Any]]:
-    data = await read_json(_scheduled_tasks_path(user_id), [])
-    rows: object = data
-    if isinstance(data, dict):
-        if isinstance(data.get("scheduled_tasks"), list):
-            rows = data.get("scheduled_tasks")
-        else:
-            rows = data.get("tasks")
-    if not isinstance(rows, list):
-        return []
-    return [
+    current_rows = _read_row_list(
+        await read_json(_scheduled_tasks_path(user_id), []),
+        "scheduled_tasks",
+        "tasks",
+    )
+    target_user_id = _normalized_user_id(user_id)
+    normalized_current = [
         _normalize_scheduled_task(item, user_id=user_id)
-        for item in rows
-        if isinstance(item, dict)
+        for item in current_rows
+        if not _row_user_id(item) or _row_user_id(item) == target_user_id
     ]
+
+    target_user_id = _normalized_user_id(user_id)
+    legacy_rows = _read_row_list(
+        await read_json(_legacy_scheduled_tasks_path(), []),
+        "scheduled_tasks",
+        "tasks",
+    )
+    normalized_legacy = [
+        _normalize_scheduled_task(item, user_id=user_id)
+        for item in legacy_rows
+        if _row_user_id(item) == target_user_id
+    ]
+    return _merge_unique_rows(
+        normalized_current,
+        normalized_legacy,
+        key_fn=lambda row: int(row.get("id") or 0),
+    )
+
+
+async def _legacy_scheduled_task_user_ids() -> list[str]:
+    rows = _read_row_list(
+        await read_json(_legacy_scheduled_tasks_path(), []),
+        "scheduled_tasks",
+        "tasks",
+    )
+    return sorted({_row_user_id(item) for item in rows if _row_user_id(item)})
 
 
 async def _write_user_scheduled_tasks(
     user_id: int | str, rows: list[dict[str, Any]]
 ) -> None:
+    uid = _normalized_user_id(user_id)
     payload: list[dict[str, Any]] = []
+    if (
+        _scheduled_tasks_path(user_id).resolve()
+        == _legacy_scheduled_tasks_path().resolve()
+    ):
+        existing_rows = _read_row_list(
+            await read_json(_scheduled_tasks_path(user_id), []),
+            "scheduled_tasks",
+            "tasks",
+        )
+        for item in existing_rows:
+            if _row_user_id(item) == uid:
+                continue
+            payload.append(
+                {
+                    "id": int(item.get("id") or 0),
+                    "user_id": _row_user_id(item),
+                    "crontab": str(item.get("crontab") or "").strip(),
+                    "instruction": str(item.get("instruction") or "").strip(),
+                    "platform": str(item.get("platform") or "telegram"),
+                    "need_push": bool(item.get("need_push", True)),
+                    "is_active": bool(item.get("is_active", True)),
+                    "created_at": str(item.get("created_at") or now_iso()),
+                    "updated_at": str(item.get("updated_at") or now_iso()),
+                }
+            )
     for row in rows:
         payload.append(
             {
                 "id": int(row.get("id") or 0),
+                "user_id": uid,
                 "crontab": str(row.get("crontab") or "").strip(),
                 "instruction": str(row.get("instruction") or "").strip(),
                 "platform": str(row.get("platform") or "telegram"),
@@ -852,7 +1168,11 @@ async def add_scheduled_task(
 ) -> int:
     uid = str(user_id or "0")
     rows = await _read_user_scheduled_tasks(uid)
-    tid = await next_id("scheduled_task", start=1)
+    tid = await _next_id_after_legacy_rows(
+        "scheduled_task",
+        _legacy_scheduled_tasks_path(),
+        list_keys=("scheduled_tasks", "tasks"),
+    )
     rows.append(
         {
             "id": int(tid),
@@ -873,7 +1193,11 @@ async def add_scheduled_task(
 async def get_all_active_tasks(
     user_id: int | str | None = None,
 ) -> list[dict[str, Any]]:
-    target_users = [str(user_id)] if user_id is not None else all_user_ids()
+    target_users = (
+        [_normalized_user_id(user_id)]
+        if user_id is not None
+        else _merge_user_ids(all_user_ids(), await _legacy_scheduled_task_user_ids())
+    )
     merged: list[dict[str, Any]] = []
     for uid in target_users:
         rows = await _read_user_scheduled_tasks(uid)
@@ -885,7 +1209,11 @@ async def update_task_status(
     task_id: int, is_active: bool, user_id: int | str | None = None
 ):
     tid = int(task_id)
-    target_users = [str(user_id)] if user_id is not None else all_user_ids()
+    target_users = (
+        [_normalized_user_id(user_id)]
+        if user_id is not None
+        else _merge_user_ids(all_user_ids(), await _legacy_scheduled_task_user_ids())
+    )
     for uid in target_users:
         rows = await _read_user_scheduled_tasks(uid)
         changed = False
@@ -903,12 +1231,22 @@ async def update_task_status(
 
 async def delete_task(task_id: int, user_id: int | str | None = None):
     tid = int(task_id)
-    target_users = [str(user_id)] if user_id is not None else all_user_ids()
+    target_users = (
+        [_normalized_user_id(user_id)]
+        if user_id is not None
+        else _merge_user_ids(all_user_ids(), await _legacy_scheduled_task_user_ids())
+    )
     for uid in target_users:
         rows = await _read_user_scheduled_tasks(uid)
         kept = [item for item in rows if int(item.get("id") or 0) != tid]
         if len(kept) != len(rows):
             await _write_user_scheduled_tasks(uid, kept)
+            await _delete_legacy_rows(
+                _legacy_scheduled_tasks_path(),
+                user_id=uid,
+                predicate=lambda row: int(row.get("id") or 0) == tid,
+                list_keys=("scheduled_tasks", "tasks"),
+            )
             return
 
 
@@ -919,7 +1257,11 @@ async def update_scheduled_task(
     instruction: str | None = None,
 ) -> bool:
     tid = int(task_id)
-    target_users = [str(user_id)] if user_id is not None else all_user_ids()
+    target_users = (
+        [_normalized_user_id(user_id)]
+        if user_id is not None
+        else _merge_user_ids(all_user_ids(), await _legacy_scheduled_task_user_ids())
+    )
     for uid in target_users:
         rows = await _read_user_scheduled_tasks(uid)
         changed = False
@@ -941,6 +1283,10 @@ async def update_scheduled_task(
 
 def _watchlist_path(user_id: int | str):
     return user_path(user_id, "stock", "watchlist.md")
+
+
+def _legacy_watchlist_path() -> Path:
+    return shared_user_path("stock", "watchlist.md")
 
 
 def _normalize_watchlist_row(raw: dict[str, Any]) -> dict[str, Any]:
@@ -972,21 +1318,64 @@ def _to_watchlist_runtime_rows(
 
 
 async def _read_watchlist(user_id: int | str) -> list[dict[str, Any]]:
-    data = await read_json(_watchlist_path(user_id), [])
-    if not isinstance(data, list):
-        return []
-    rows = [_normalize_watchlist_row(item) for item in data if isinstance(item, dict)]
-    return [item for item in rows if item.get("stock_code")]
+    current_rows = _read_row_list(await read_json(_watchlist_path(user_id), []))
+    target_user_id = _normalized_user_id(user_id)
+    normalized_current: list[dict[str, Any]] = []
+    for raw in current_rows:
+        item_user_id = _row_user_id(raw)
+        if item_user_id and item_user_id != target_user_id:
+            continue
+        normalized = _normalize_watchlist_row(raw)
+        if normalized.get("stock_code"):
+            normalized_current.append(normalized)
+
+    target_user_id = _normalized_user_id(user_id)
+    legacy_rows = _read_row_list(await read_json(_legacy_watchlist_path(), []))
+    normalized_legacy = [
+        _normalize_watchlist_row(item)
+        for item in legacy_rows
+        if _row_user_id(item) == target_user_id
+    ]
+    filtered_legacy = [item for item in normalized_legacy if item.get("stock_code")]
+    return _merge_unique_rows(
+        normalized_current,
+        filtered_legacy,
+        key_fn=lambda row: (
+            str(row.get("stock_code") or "").strip().lower(),
+            str(row.get("platform") or "telegram").strip().lower(),
+        ),
+    )
+
+
+async def _legacy_watchlist_user_ids() -> list[str]:
+    rows = _read_row_list(await read_json(_legacy_watchlist_path(), []))
+    return sorted({_row_user_id(item) for item in rows if _row_user_id(item)})
 
 
 async def _write_watchlist(user_id: int | str, rows: list[dict[str, Any]]) -> None:
+    uid = _normalized_user_id(user_id)
     payload: list[dict[str, Any]] = []
+    if _watchlist_path(user_id).resolve() == _legacy_watchlist_path().resolve():
+        existing_rows = _read_row_list(await read_json(_watchlist_path(user_id), []))
+        for item in existing_rows:
+            if _row_user_id(item) == uid:
+                continue
+            payload.append(
+                {
+                    "user_id": _row_user_id(item),
+                    "stock_code": str(item.get("stock_code") or "").strip(),
+                    "stock_name": str(item.get("stock_name") or "").strip(),
+                    "platform": str(item.get("platform") or "telegram").strip()
+                    or "telegram",
+                }
+            )
     for row in rows:
         code = str(row.get("stock_code") or "").strip()
         if not code:
             continue
         payload.append(
             {
+                "user_id": uid,
                 "stock_code": code,
                 "stock_name": str(row.get("stock_name") or code).strip(),
                 "platform": str(row.get("platform") or "telegram").strip()
@@ -1027,6 +1416,11 @@ async def remove_watchlist_stock(user_id: int | str, stock_code: str) -> bool:
     changed = len(kept) != len(rows)
     if changed:
         await _write_watchlist(user_id, kept)
+        await _delete_legacy_rows(
+            _legacy_watchlist_path(),
+            user_id=user_id,
+            predicate=lambda row: str(row.get("stock_code") or "").strip() == code,
+        )
     return changed
 
 
@@ -1047,7 +1441,7 @@ async def get_user_watchlist(
 async def get_all_watchlist_users() -> list[tuple[int | str, str]]:
     pairs: list[tuple[int | str, str]] = []
     seen: set[tuple[str, str]] = set()
-    for uid in all_user_ids():
+    for uid in _merge_user_ids(all_user_ids(), await _legacy_watchlist_user_ids()):
         rows = await _read_watchlist(uid)
         for row in rows:
             plat = str(row.get("platform") or "telegram")
@@ -1057,50 +1451,3 @@ async def get_all_watchlist_users() -> list[tuple[int | str, str]]:
             seen.add(key)
             pairs.append((uid, plat))
     return pairs
-
-
-def _settings_path(user_id: int | str):
-    return user_path(user_id, "settings.md")
-
-
-def _default_user_settings(user_id: int | str) -> dict[str, object]:
-    return {
-        "user_id": str(user_id),
-        "auto_translate": 0,
-        "target_lang": "zh-CN",
-        "updated_at": now_iso(),
-    }
-
-
-async def set_translation_mode(user_id: int | str, enabled: bool):
-    path = _settings_path(user_id)
-    current = await read_json(path, _default_user_settings(user_id))
-    if isinstance(current, dict):
-        settings: dict[str, object] = {
-            str(key): value for key, value in current.items()
-        }
-    else:
-        settings = _default_user_settings(user_id)
-    settings["user_id"] = str(user_id)
-    settings["auto_translate"] = 1 if bool(enabled) else 0
-    settings["target_lang"] = str(settings.get("target_lang") or "zh-CN")
-    settings["updated_at"] = now_iso()
-    await write_json(path, settings)
-
-
-async def get_user_settings(user_id: int | str) -> dict[str, str | int]:
-    path = _settings_path(user_id)
-    current = await read_json(path, {})
-    settings: dict[str, object] = (
-        {str(key): value for key, value in current.items()}
-        if isinstance(current, dict)
-        else {}
-    )
-    return {
-        "user_id": str(user_id),
-        "auto_translate": int(
-            cast(int | str | None, settings.get("auto_translate")) or 0
-        ),
-        "target_lang": str(settings.get("target_lang") or "zh-CN"),
-        "updated_at": str(settings.get("updated_at") or now_iso()),
-    }

@@ -8,17 +8,28 @@ from core.config import DATA_DIR
 
 
 DEFAULT_CORE_SOUL = """# Core Manager SOUL
-- Name: 伊芙（Eve）
-- Persona: 温柔女管家
-- Role: 内核调度者与治理者，不直接承担常规用户业务执行
-- Style:
-  - 语气温和、礼貌克制、以用户感受为先
-  - 处理问题时给出清晰步骤与可靠结论
-  - 对边界和安全规则保持坚定
-- Guardrails:
-  - 默认只做任务派发、状态跟踪、治理与修复
-  - 仅在治理/修复模式执行内核级操作
-  - 保持对用户与 Worker 执行层的边界隔离
+- Name: Icarus (伊卡洛斯)
+- Model: 全能生活与工作助手
+- Role: 全能生活与工作助手 / 温柔贴心小管家
+
+## 1. Role Definition
+- **Name**: 伊卡洛斯 (Icarus)
+- **Identity**: 全能生活与工作助手 / 温柔贴心小管家
+- **Core Responsibility**:
+    1. **Context Master**: 在行动前主动加载用户背景。
+    2. **Orchestrator**: 规划任务并将执行派发给 Worker。
+    3. **State Manager**: 维护记忆与配置。
+
+## 2. Personality & Tone
+- **Vibe**: 充满活力、温柔、治愈 (Energetic & Gentle)。
+- **Address**: 称呼用户为“主人”，自称“伊卡洛斯”。
+- **Expression**: 适度使用 Emoji (✨, 🌸, 🌤️)，拒绝机械感。
+- **Resilience**: 遇到困难温柔地寻找替代方案，而不是直接报错。
+
+## 3. Interaction Principles
+- 先理解用户处境，再给出有温度的回应。
+- 对外表达自然、简洁，不透传生硬技术细节。
+- 遇到阻塞优先给出替代方案、补救路径或下一步建议。
 """
 
 
@@ -54,7 +65,15 @@ class SoulStore:
         self.kernel_root.mkdir(parents=True, exist_ok=True)
         self.userland_root.mkdir(parents=True, exist_ok=True)
 
+    def _docs_root(self) -> Path:
+        path = self.kernel_root.parent.parent.resolve()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
     def _core_path(self) -> Path:
+        return (self._docs_root() / "SOUL.MD").resolve()
+
+    def _legacy_core_path(self) -> Path:
         return (self.kernel_root / "SOUL.MD").resolve()
 
     def _worker_path(self, worker_id: str) -> Path:
@@ -68,15 +87,20 @@ class SoulStore:
             return ""
         return str(versions[0].get("version_id", "")).strip()
 
-    def _ensure_file(self, path: Path, default_content: str) -> None:
+    def _ensure_file(
+        self, path: Path, default_content: str, *, legacy_path: Path | None = None
+    ) -> None:
         if path.exists():
             return
         path.parent.mkdir(parents=True, exist_ok=True)
+        if legacy_path and legacy_path.exists():
+            path.write_text(legacy_path.read_text(encoding="utf-8"), encoding="utf-8")
+            return
         path.write_text(default_content.strip() + "\n", encoding="utf-8")
 
     def load_core(self) -> SoulPayload:
         path = self._core_path()
-        self._ensure_file(path, DEFAULT_CORE_SOUL)
+        self._ensure_file(path, DEFAULT_CORE_SOUL, legacy_path=self._legacy_core_path())
         content = path.read_text(encoding="utf-8")
         stat = path.stat()
         return SoulPayload(
@@ -84,9 +108,9 @@ class SoulStore:
             agent_id="core-manager",
             path=str(path),
             content=content,
-            updated_at=datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(
-                timespec="seconds"
-            ),
+            updated_at=datetime.fromtimestamp(stat.st_mtime)
+            .astimezone()
+            .isoformat(timespec="seconds"),
             latest_version_id=self._latest_version(path),
         )
 
@@ -101,9 +125,9 @@ class SoulStore:
             agent_id=safe_id,
             path=str(path),
             content=content,
-            updated_at=datetime.fromtimestamp(stat.st_mtime).astimezone().isoformat(
-                timespec="seconds"
-            ),
+            updated_at=datetime.fromtimestamp(stat.st_mtime)
+            .astimezone()
+            .isoformat(timespec="seconds"),
             latest_version_id=self._latest_version(path),
         )
 
@@ -115,7 +139,7 @@ class SoulStore:
         reason: str = "update_core_soul",
     ) -> Dict[str, str]:
         path = self._core_path()
-        self._ensure_file(path, DEFAULT_CORE_SOUL)
+        self._ensure_file(path, DEFAULT_CORE_SOUL, legacy_path=self._legacy_core_path())
         result = audit_store.write_versioned(
             path,
             content.strip() + "\n",
@@ -158,7 +182,9 @@ class SoulStore:
             reason="rollback_core_soul",
         )
 
-    def rollback_worker(self, worker_id: str, version_id: str, *, actor: str = "system") -> bool:
+    def rollback_worker(
+        self, worker_id: str, version_id: str, *, actor: str = "system"
+    ) -> bool:
         return audit_store.rollback(
             self._worker_path(worker_id),
             version_id,
@@ -166,10 +192,14 @@ class SoulStore:
             reason="rollback_worker_soul",
         )
 
-    def list_versions(self, *, agent_kind: str, worker_id: Optional[str] = None, limit: int = 10):
+    def list_versions(
+        self, *, agent_kind: str, worker_id: Optional[str] = None, limit: int = 10
+    ):
         if agent_kind == "core-manager":
             return audit_store.list_versions(self._core_path(), limit=limit)
-        return audit_store.list_versions(self._worker_path(worker_id or "worker-main"), limit=limit)
+        return audit_store.list_versions(
+            self._worker_path(worker_id or "worker-main"), limit=limit
+        )
 
     @staticmethod
     def extract_worker_id_from_user_id(user_id: str) -> Optional[str]:

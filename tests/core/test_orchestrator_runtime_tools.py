@@ -13,253 +13,9 @@ def test_runtime_tool_dispatcher_no_longer_uses_legacy_extension_executor():
 
 
 @pytest.mark.asyncio
-async def test_software_delivery_falls_back_to_user_request(monkeypatch):
-    captured = {}
-
-    async def fake_software_delivery(**kwargs):
-        captured.update(dict(kwargs))
-        return {"ok": True, "summary": "ok"}
-
-    monkeypatch.setattr(
-        "core.skill_tool_handlers.dev_tools.software_delivery",
-        fake_software_delivery,
-    )
-
-    async def append_event(_event: str):
-        return None
-
-    dispatcher = ToolCallDispatcher(
-        runtime_user_id="u-1",
-        platform_name="telegram",
-        task_id="task-2",
-        task_inbox_id="",
-        task_workspace_root="/tmp",
-        ctx=SimpleNamespace(
-            message=SimpleNamespace(text="帮我创建一个邮政编码查询的技能"),
-            user_data={},
-        ),
-        runtime=object(),
-        tool_broker=object(),
-        runtime_tool_allowed=lambda **_kwargs: True,
-        todo_mark_step=lambda *_args, **_kwargs: None,
-        append_session_event=append_event,
-    )
-    dispatcher.set_available_tool_names({"software_delivery"})
-
-    result = await dispatcher.execute(
-        name="software_delivery",
-        args={"action": "skill_create", "skill_name": "postal_code_lookup_cn"},
-        execution_policy=None,
-        started=time.perf_counter(),
-    )
-
-    assert result["ok"] is True
-    assert captured.get("action") == "skill_create"
-    assert captured.get("instruction") == "帮我创建一个邮政编码查询的技能"
-    assert captured.get("requirement") == "帮我创建一个邮政编码查询的技能"
-
-
-@pytest.mark.asyncio
-async def test_software_delivery_inferrs_skill_action_from_request(monkeypatch):
-    captured = {}
-
-    async def fake_software_delivery(**kwargs):
-        captured.update(dict(kwargs))
-        return {"ok": False, "summary": "workspace is not a git repository"}
-
-    monkeypatch.setattr(
-        "core.skill_tool_handlers.dev_tools.software_delivery",
-        fake_software_delivery,
-    )
-
-    async def append_event(_event: str):
-        return None
-
-    dispatcher = ToolCallDispatcher(
-        runtime_user_id="u-5",
-        platform_name="telegram",
-        task_id="task-5",
-        task_inbox_id="",
-        task_workspace_root="/tmp",
-        ctx=SimpleNamespace(
-            message=SimpleNamespace(text="帮我创建一个邮政编码查询的技能"),
-            user_data={},
-        ),
-        runtime=object(),
-        tool_broker=object(),
-        runtime_tool_allowed=lambda **_kwargs: True,
-        todo_mark_step=lambda *_args, **_kwargs: None,
-        append_session_event=append_event,
-    )
-    dispatcher.set_available_tool_names({"software_delivery"})
-
-    await dispatcher.execute(
-        name="software_delivery",
-        args={},
-        execution_policy=None,
-        started=time.perf_counter(),
-    )
-
-    assert captured.get("action") == "skill_create"
-
-
-@pytest.mark.asyncio
-async def test_software_delivery_rewrites_plan_to_skill_modify_without_repo_hints(
+async def test_manager_allows_bash_for_coding_requests_without_legacy_pipeline(
     monkeypatch,
 ):
-    captured = {}
-
-    async def fake_software_delivery(**kwargs):
-        captured.update(dict(kwargs))
-        return {"ok": True, "summary": "ok"}
-
-    monkeypatch.setattr(
-        "core.skill_tool_handlers.dev_tools.software_delivery",
-        fake_software_delivery,
-    )
-
-    async def append_event(_event: str):
-        return None
-
-    dispatcher = ToolCallDispatcher(
-        runtime_user_id="u-7",
-        platform_name="telegram",
-        task_id="task-7",
-        task_inbox_id="",
-        task_workspace_root="/tmp",
-        ctx=SimpleNamespace(
-            message=SimpleNamespace(text="请排查并修复这个技能"),
-            user_data={},
-        ),
-        runtime=object(),
-        tool_broker=object(),
-        runtime_tool_allowed=lambda **_kwargs: True,
-        todo_mark_step=lambda *_args, **_kwargs: None,
-        append_session_event=append_event,
-    )
-    dispatcher.set_available_tool_names({"software_delivery"})
-
-    await dispatcher.execute(
-        name="software_delivery",
-        args={
-            "action": "plan",
-            "repo_path": ".",
-            "requirement": "排查并修复 ext_postal_code_query 技能",
-        },
-        execution_policy=None,
-        started=time.perf_counter(),
-    )
-
-    assert captured.get("action") == "skill_modify"
-
-
-@pytest.mark.asyncio
-async def test_software_delivery_keeps_plan_when_repo_hint_present(monkeypatch):
-    captured = {}
-
-    async def fake_software_delivery(**kwargs):
-        captured.update(dict(kwargs))
-        return {"ok": True, "summary": "ok"}
-
-    monkeypatch.setattr(
-        "core.skill_tool_handlers.dev_tools.software_delivery",
-        fake_software_delivery,
-    )
-
-    async def append_event(_event: str):
-        return None
-
-    dispatcher = ToolCallDispatcher(
-        runtime_user_id="u-8",
-        platform_name="telegram",
-        task_id="task-8",
-        task_inbox_id="",
-        task_workspace_root="/tmp",
-        ctx=SimpleNamespace(
-            message=SimpleNamespace(text="请排查并修复这个技能"),
-            user_data={},
-        ),
-        runtime=object(),
-        tool_broker=object(),
-        runtime_tool_allowed=lambda **_kwargs: True,
-        todo_mark_step=lambda *_args, **_kwargs: None,
-        append_session_event=append_event,
-    )
-    dispatcher.set_available_tool_names({"software_delivery"})
-
-    await dispatcher.execute(
-        name="software_delivery",
-        args={
-            "action": "plan",
-            "repo_url": "https://github.com/acme/repo.git",
-            "requirement": "排查并修复 ext_postal_code_query 技能",
-        },
-        execution_policy=None,
-        started=time.perf_counter(),
-    )
-
-    assert captured.get("action") == "plan"
-
-
-@pytest.mark.asyncio
-async def test_software_delivery_external_skill_integration_routes_to_local_skill_create(
-    monkeypatch,
-):
-    captured = {}
-
-    async def fake_software_delivery(**kwargs):
-        captured.update(dict(kwargs))
-        return {"ok": True, "summary": "queued"}
-
-    monkeypatch.setattr(
-        "core.skill_tool_handlers.dev_tools.software_delivery",
-        fake_software_delivery,
-    )
-
-    async def append_event(_event: str):
-        return None
-
-    dispatcher = ToolCallDispatcher(
-        runtime_user_id="u-9",
-        platform_name="telegram",
-        task_id="task-9",
-        task_inbox_id="",
-        task_workspace_root="/tmp",
-        ctx=SimpleNamespace(
-            message=SimpleNamespace(
-                text="https://github.com/runningZ1/union-search-skill 研究一下这玩意，能不能集成一下给阿黑用",
-                platform="telegram",
-                chat=SimpleNamespace(id="chat-9"),
-                user=SimpleNamespace(id="user-9"),
-            ),
-            user_data={},
-        ),
-        runtime=object(),
-        tool_broker=object(),
-        runtime_tool_allowed=lambda **_kwargs: True,
-        todo_mark_step=lambda *_args, **_kwargs: None,
-        append_session_event=append_event,
-    )
-    dispatcher.set_available_tool_names({"software_delivery"})
-
-    result = await dispatcher.execute(
-        name="software_delivery",
-        args={},
-        execution_policy=None,
-        started=time.perf_counter(),
-    )
-
-    assert result["ok"] is True
-    assert captured.get("action") == "skill_create"
-    assert captured.get("repo_url") == "https://github.com/runningZ1/union-search-skill"
-    assert captured.get("skill_name") == "union-search-skill"
-    assert captured.get("notify_platform") == "telegram"
-    assert captured.get("notify_chat_id") == "chat-9"
-    assert captured.get("notify_user_id") == "user-9"
-
-
-@pytest.mark.asyncio
-async def test_manager_blocks_bash_when_software_delivery_intent(monkeypatch):
     async def append_event(_event: str):
         return None
 
@@ -283,7 +39,9 @@ async def test_manager_blocks_bash_when_software_delivery_intent(monkeypatch):
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
-    dispatcher.set_available_tool_names({"bash", "software_delivery"})
+    dispatcher.set_available_tool_names(
+        {"bash", "codex_session", "repo_workspace", "git_ops", "gh_cli"}
+    )
 
     result = await dispatcher.execute(
         name="bash",
@@ -292,23 +50,7 @@ async def test_manager_blocks_bash_when_software_delivery_intent(monkeypatch):
         started=time.perf_counter(),
     )
 
-    assert result["ok"] is False
-    assert result["error_code"] == "software_delivery_required"
-
-
-def test_software_delivery_intent_ignores_plain_github_research():
-    assert (
-        ToolCallDispatcher._is_software_delivery_intent(
-            "看一下github上glwlg/x-bot这个项目这两天更新了什么"
-        )
-        is False
-    )
-    assert (
-        ToolCallDispatcher._is_software_delivery_intent(
-            "帮我修复这个 GitHub issue 对应的代码问题"
-        )
-        is True
-    )
+    assert result["ok"] is True
 
 
 @pytest.mark.asyncio
@@ -342,7 +84,9 @@ async def test_manager_allows_loaded_skill_cli_bash_when_request_mentions_code()
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
-    dispatcher.set_available_tool_names({"bash", "software_delivery"})
+    dispatcher.set_available_tool_names(
+        {"bash", "codex_session", "repo_workspace", "git_ops", "gh_cli"}
+    )
 
     result = await dispatcher.execute(
         name="bash",
@@ -385,7 +129,9 @@ async def test_worker_allows_bash_even_when_request_mentions_code(monkeypatch):
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
-    dispatcher.set_available_tool_names({"bash", "software_delivery"})
+    dispatcher.set_available_tool_names(
+        {"bash", "codex_session", "repo_workspace", "git_ops", "gh_cli"}
+    )
 
     result = await dispatcher.execute(
         name="bash",
@@ -422,7 +168,9 @@ async def test_manager_allows_bash_for_non_coding_ops(monkeypatch):
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
-    dispatcher.set_available_tool_names({"bash", "software_delivery"})
+    dispatcher.set_available_tool_names(
+        {"bash", "codex_session", "repo_workspace", "git_ops", "gh_cli"}
+    )
 
     result = await dispatcher.execute(
         name="bash",
@@ -435,7 +183,7 @@ async def test_manager_allows_bash_for_non_coding_ops(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_manager_blocks_write_to_repo_code_path():
+async def test_manager_allows_write_to_repo_code_path_when_policy_allows():
     async def append_event(_event: str):
         return None
 
@@ -459,7 +207,9 @@ async def test_manager_blocks_write_to_repo_code_path():
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
-    dispatcher.set_available_tool_names({"write", "software_delivery"})
+    dispatcher.set_available_tool_names(
+        {"write", "codex_session", "repo_workspace", "git_ops"}
+    )
 
     result = await dispatcher.execute(
         name="write",
@@ -468,8 +218,7 @@ async def test_manager_blocks_write_to_repo_code_path():
         started=time.perf_counter(),
     )
 
-    assert result["ok"] is False
-    assert result["error_code"] == "software_delivery_required"
+    assert result["ok"] is True
 
 
 @pytest.mark.asyncio
@@ -500,7 +249,9 @@ async def test_manager_allows_write_to_runtime_data_path():
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
-    dispatcher.set_available_tool_names({"write", "software_delivery"})
+    dispatcher.set_available_tool_names(
+        {"write", "codex_session", "repo_workspace", "git_ops"}
+    )
 
     result = await dispatcher.execute(
         name="write",
@@ -632,7 +383,9 @@ async def test_bash_rewrites_legacy_user_path_to_single_user_root(monkeypatch):
 
     result = await dispatcher.execute(
         name="bash",
-        args={"command": "ls -la /app/data/users/257675041/ && cat data/users/user1/MEMORY.md"},
+        args={
+            "command": "ls -la /app/data/users/257675041/ && cat data/users/user1/MEMORY.md"
+        },
         execution_policy=None,
         started=time.perf_counter(),
     )

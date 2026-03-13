@@ -55,6 +55,23 @@ async def test_telegram_adapter_send_message_renders_markdown_link():
 
 
 @pytest.mark.asyncio
+async def test_telegram_adapter_send_message_allows_disable_web_page_preview_override():
+    fake_bot = _FakeBot()
+    app = SimpleNamespace(bot=fake_bot)
+    adapter = TelegramAdapter(app)
+
+    await adapter.send_message(
+        chat_id=100,
+        text="hello",
+        disable_web_page_preview=False,
+    )
+
+    assert fake_bot.calls
+    payload = fake_bot.calls[-1]
+    assert payload["disable_web_page_preview"] is False
+
+
+@pytest.mark.asyncio
 async def test_telegram_adapter_send_message_retries_timeout(monkeypatch):
     class _FlakyBot:
         def __init__(self):
@@ -150,7 +167,9 @@ async def test_telegram_adapter_send_photo_uses_bot_photo_api():
     app = SimpleNamespace(bot=fake_bot)
     adapter = TelegramAdapter(app)
 
-    result = await adapter.send_photo(chat_id="100", photo="/tmp/demo.png", caption="完成")
+    result = await adapter.send_photo(
+        chat_id="100", photo="/tmp/demo.png", caption="完成"
+    )
 
     assert result.id == "tg-photo"
     assert fake_bot.photo_calls

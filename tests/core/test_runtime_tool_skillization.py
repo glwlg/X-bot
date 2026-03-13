@@ -65,15 +65,18 @@ async def test_runtime_tool_assembler_injects_manager_skill_tools():
 
     assert names[:5] == ["read", "write", "edit", "bash", "load_skill"]
     assert set(names[5:]) == {
+        "codex_session",
         "dispatch_worker",
+        "git_ops",
+        "gh_cli",
         "list_workers",
-        "software_delivery",
+        "repo_workspace",
         "worker_status",
     }
 
 
 @pytest.mark.asyncio
-async def test_runtime_tool_assembler_keeps_worker_surface_without_software_delivery():
+async def test_runtime_tool_assembler_keeps_worker_surface_without_manager_coding_tools():
     assembler = RuntimeToolAssembler(
         runtime_user_id="worker::worker-main::u-1",
         platform_name="worker_kernel",
@@ -92,13 +95,13 @@ async def test_dispatcher_accepts_manager_runtime_only_tools_after_skill_load(
 ):
     captured = {}
 
-    async def fake_software_delivery(**kwargs):
+    async def fake_codex_session(**kwargs):
         captured.update(dict(kwargs))
         return {"ok": True, "summary": "ok"}
 
     monkeypatch.setattr(
-        "core.skill_tool_handlers.dev_tools.software_delivery",
-        fake_software_delivery,
+        "core.skill_tool_handlers.codex_tools.codex_session",
+        fake_codex_session,
     )
 
     async def append_event(_event: str):
@@ -126,7 +129,10 @@ async def test_dispatcher_accepts_manager_runtime_only_tools_after_skill_load(
             "list_workers",
             "dispatch_worker",
             "worker_status",
-            "software_delivery",
+            "repo_workspace",
+            "codex_session",
+            "git_ops",
+            "gh_cli",
         },
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
@@ -134,15 +140,15 @@ async def test_dispatcher_accepts_manager_runtime_only_tools_after_skill_load(
     dispatcher.set_available_tool_names({"read", "write", "edit", "bash", "load_skill"})
 
     result = await dispatcher.execute(
-        name="software_delivery",
-        args={"action": "status", "task_id": "dev-1"},
+        name="codex_session",
+        args={"action": "status", "session_id": "cx-1"},
         execution_policy=None,
         started=time.perf_counter(),
     )
 
     assert result["ok"] is True
     assert captured["action"] == "status"
-    assert captured["task_id"] == "dev-1"
+    assert captured["session_id"] == "cx-1"
 
 
 @pytest.mark.asyncio
@@ -170,7 +176,7 @@ async def test_dispatcher_keeps_runtime_only_management_tools_blocked_for_worker
     dispatcher.set_available_tool_names({"read", "write", "edit", "bash", "load_skill"})
 
     result = await dispatcher.execute(
-        name="software_delivery",
+        name="codex_session",
         args={"action": "status"},
         execution_policy=None,
         started=time.perf_counter(),
@@ -434,6 +440,7 @@ async def test_bash_env_export_wraps_chained_commands(monkeypatch):
     assert captured["name"] == "bash"
     assert captured["args"]["command"].startswith("export ")
     assert "X_BOT_RUNTIME_CHAT_ID=chat-chain-1" in captured["args"]["command"]
-    assert "&& cd skills/builtin/worker_management && python scripts/execute.py dispatch hi" in captured[
-        "args"
-    ]["command"]
+    assert (
+        "&& cd skills/builtin/worker_management && python scripts/execute.py dispatch hi"
+        in captured["args"]["command"]
+    )

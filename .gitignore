@@ -56,3 +56,5 @@ src/api/static/dist
 记账app截图/
 scripts/init_balances.py
 skills/builtin/deep_research/.playwright-cli
+skills/builtin/web_extractor/.playwright-cli
+skills/learned/deep_research/.playwright-cli

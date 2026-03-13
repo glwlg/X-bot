@@ -42,6 +42,20 @@ def test_codex_output_failure_detection_from_readonly_message():
     assert patched["error_code"] == "command_failed"
 
 
+def test_subprocess_env_includes_persisted_gh_and_git_config(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    env = runtime_module._subprocess_env()
+
+    assert env["GH_CONFIG_DIR"] == str(
+        (tmp_path / "user" / "integrations" / "gh" / "config").resolve()
+    )
+    assert env["GIT_CONFIG_GLOBAL"] == str(
+        (tmp_path / "user" / "integrations" / "git" / ".gitconfig").resolve()
+    )
+    assert env["GH_NO_UPDATE_NOTIFIER"] == "1"
+
+
 @pytest.mark.asyncio
 async def test_run_coding_backend_turns_zero_exit_readonly_into_failure(monkeypatch):
     async def fake_run_exec(command, *, cwd, timeout_sec=1200, log_path=""):
