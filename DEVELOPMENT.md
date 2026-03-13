@@ -43,6 +43,7 @@ Manager 当前可以直接使用这些基础原语：
 - `codex_session`
 - `git_ops`
 - `gh_cli`
+- `task_tracker`
 - `list_workers`
 - `dispatch_worker`
 - `worker_status`
@@ -51,6 +52,17 @@ Manager 当前可以直接使用这些基础原语：
 
 - 仓库代码路径上的正式开发优先通过 `repo_workspace` + `codex_session` + `git_ops` + `gh_cli`
 - 运行态数据文件仍可用原语直接维护，例如 `data/` 下的用户状态和系统状态
+
+### 2.1.1 AI-Native 闭环原则
+
+Manager 的默认目标应是闭环交付，而不是“完成一轮回复就结束”。
+
+- `completed` 表示任务真正完成，不是某个中间动作（例如开了 PR）已经做完
+- 对外部世界仍有后续依赖的任务，应保持未完成状态，例如 `waiting_external`
+- heartbeat 更像 bot 的主动回顾机制：检查还有哪些未完成事项，再决定如何推进；不要优先把这类能力设计成场景专属 cron/runner
+- 核心应硬编码“状态语义、完成条件、复查时机”，不要硬编码一堆场景专属执行流程
+- manager 需要能直接查看和更新任务状态；具体怎么推进任务，优先交给 manager 结合上下文和工具自己判断
+- 若 heartbeat 准备自动推进一个未完成任务，必须先给用户发一条简短说明，不能默默修改
 
 ### 2.2 Worker Kernel
 
@@ -244,6 +256,7 @@ Skill 是运行时扩展，放在：
 
 - 仓库开发优先使用独立 worktree，不要在脏工作区里直接切分支
 - Codex 提问时应进入 `waiting_user`，由 Manager 向用户转问并继续同一 coding session
+- 若任务在编码、发布或外部系统交互后仍未真正闭环，Manager 应显式把任务留在未完成状态（例如 `waiting_external`），并记录完成条件与复查线索
 - push 默认先尝试 origin，403 时自动 fallback 到 fork
 - local rollout 目前基于 `docker compose build` + `docker compose up -d`
 - rollout target 不再硬编码在发布器里，而是从 `config/deployment_targets.yaml` 读取

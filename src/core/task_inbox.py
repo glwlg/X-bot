@@ -29,12 +29,27 @@ def _normalize_status(value: str) -> str:
         "planning",
         "running",
         "waiting_user",
+        "waiting_external",
         "completed",
         "failed",
         "cancelled",
     }:
         return token
     return "pending"
+
+
+def _merge_dict(base: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(base or {})
+    for key, value in dict(updates or {}).items():
+        safe_key = str(key)
+        if isinstance(merged.get(safe_key), dict) and isinstance(value, dict):
+            merged[safe_key] = _merge_dict(
+                dict(merged.get(safe_key) or {}),
+                dict(value),
+            )
+        else:
+            merged[safe_key] = value
+    return merged
 
 
 def _normalize_output_payload(
@@ -129,9 +144,7 @@ class TaskInbox:
     """
 
     def __init__(self) -> None:
-        self.persist = (
-            os.getenv("TASK_INBOX_PERSIST", "true").strip().lower() == "true"
-        )
+        self.persist = os.getenv("TASK_INBOX_PERSIST", "true").strip().lower() == "true"
         self.clean_on_start = (
             os.getenv("TASK_INBOX_CLEAN_ON_START", "false").strip().lower() == "true"
         )
@@ -312,6 +325,48 @@ class TaskInbox:
             for item in rows
         ]
 
+    async def list_open(
+        self,
+        *,
+        user_id: str | int | None = None,
+        source: str | None = None,
+        limit: int = 50,
+    ) -> List[TaskEnvelope]:
+        await self._ensure_loaded()
+        uid = str(user_id or "").strip() if user_id is not None else ""
+        source_norm = str(source or "").strip().lower() if source is not None else ""
+        open_states = {
+            "pending",
+            "planning",
+            "running",
+            "waiting_user",
+            "waiting_external",
+        }
+        async with self._lock:
+            rows = []
+            for task in self._tasks.values():
+                if task.status not in open_states:
+                    continue
+                if uid and task.user_id != uid:
+                    continue
+                if source_norm and task.source != source_norm:
+                    continue
+                rows.append(task)
+            rows.sort(key=lambda item: item.updated_at, reverse=True)
+            rows.sort(
+                key=lambda item: (
+                    0
+                    if item.priority == "high"
+                    else 1
+                    if item.priority == "normal"
+                    else 2
+                )
+            )
+            safe_limit = int(limit or 0)
+            if safe_limit <= 0:
+                return rows
+            return rows[:safe_limit]
+
     async def update_status(
         self,
         task_id: str,
@@ -332,7 +387,18 @@ class TaskInbox:
             task.status = _normalize_status(status)
             for name, value in fields.items():
                 if hasattr(task, name):
-                    setattr(task, name, value)
+                    if name in {"metadata", "result", "output"} and isinstance(
+                        value, dict
+                    ):
+                        current_value = getattr(task, name, {})
+                        current_obj = (
+                            dict(current_value)
+                            if isinstance(current_value, dict)
+                            else {}
+                        )
+                        setattr(task, name, _merge_dict(current_obj, dict(value)))
+                    else:
+                        setattr(task, name, value)
             task.output = _normalize_output_payload(
                 task.output,
                 final_output=task.final_output,

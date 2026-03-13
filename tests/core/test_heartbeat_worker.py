@@ -231,6 +231,17 @@ def test_heartbeat_prompt_preserves_tool_output_rule():
     assert "补充观察" in prompt
 
 
+def test_heartbeat_prompt_mentions_unfinished_task_review():
+    prompt = HeartbeatWorker._build_heartbeat_task_prompt(
+        task_id="hb-2",
+        goal="检查未完成的任务并完成他们",
+        readonly=True,
+    )
+
+    assert "未完成任务" in prompt
+    assert "task_tracker" in prompt
+
+
 @pytest.mark.asyncio
 async def test_heartbeat_push_prefers_adapter_send_message_for_telegram(monkeypatch):
     sent = []

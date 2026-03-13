@@ -96,9 +96,9 @@ class AiService:
             str: Text chunks of the final response.
         """
         try:
-            MAX_TURNS = max(1, int(os.getenv("AI_TOOL_MAX_TURNS", "20")))
+            MAX_TURNS = max(1, int(os.getenv("AI_TOOL_MAX_TURNS", "40")))
         except ValueError:
-            MAX_TURNS = 20
+            MAX_TURNS = 40
         try:
             TOOL_EXEC_TIMEOUT_SEC = max(
                 30, int(os.getenv("AI_TOOL_EXEC_TIMEOUT_SEC", "420"))

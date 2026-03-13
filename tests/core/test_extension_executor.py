@@ -173,7 +173,7 @@ def test_extension_executor_marks_error_text_as_failure():
 @pytest.mark.parametrize(
     "warning_text",
     [
-        "⚠️ 工具调用轮次已达上限（20），任务仍未完成。",
+        "⚠️ 工具调用轮次已达上限（40），任务仍未完成。",
         "⚠️ 已达到单工具调用上限，停止继续重复调用。",
         "⚠️ 检测到语义上重复的工具调用，已停止继续搜索。",
     ],

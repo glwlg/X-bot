@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import re
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict
 
@@ -329,11 +330,41 @@ class OrchestratorEventHandler:
         if self.manager_runtime:
             preview = self.sanitize_preview(preview)
 
+        auto_followup = self._maybe_pr_followup_metadata(preview)
+        if auto_followup and self.task_inbox_id:
+            await task_inbox.update_status(
+                self.task_inbox_id,
+                "waiting_external",
+                event="auto_followup_waiting",
+                detail=(auto_followup.get("detail") or preview)[:180],
+                metadata={"followup": auto_followup["followup"]},
+                result={
+                    "manager_mode": "final_response",
+                    "summary": preview[:500],
+                },
+                output={"text": preview},
+            )
+            if self.session_state_active:
+                await self.update_session_task(
+                    status="waiting_external",
+                    result_summary=preview,
+                    needs_confirmation=False,
+                    confirmation_deadline="",
+                )
+
         if self.session_state_active:
             current = await heartbeat_store.get_session_active_task(str(self.user_id))
             current_status = str((current or {}).get("status", "")).strip().lower()
-            if current_status not in {
+            if current_status == "waiting_external":
+                await self.update_session_task(
+                    status="waiting_external",
+                    result_summary=preview,
+                    needs_confirmation=False,
+                    confirmation_deadline="",
+                )
+            elif current_status not in {
                 "waiting_user",
+                "waiting_external",
                 "failed",
                 "cancelled",
                 "timed_out",
@@ -350,17 +381,52 @@ class OrchestratorEventHandler:
             )
 
         if self.task_inbox_id:
-            await task_inbox.complete(
-                self.task_inbox_id,
-                result={
-                    "manager_mode": "final_response",
-                    "summary": preview[:500],
-                },
-                final_output=preview,
+            current_task = await task_inbox.get(self.task_inbox_id)
+            current_task_status = (
+                str((current_task or {}).status if current_task else "").strip().lower()
             )
+            if current_task_status == "waiting_external":
+                await task_inbox.update_status(
+                    self.task_inbox_id,
+                    "waiting_external",
+                    event="final_response_kept_open",
+                    detail=preview[:180],
+                    result={
+                        "manager_mode": "final_response",
+                        "summary": preview[:500],
+                    },
+                    output={"text": preview},
+                )
+            else:
+                await task_inbox.complete(
+                    self.task_inbox_id,
+                    result={
+                        "manager_mode": "final_response",
+                        "summary": preview[:500],
+                    },
+                    final_output=preview,
+                )
 
         task_manager.heartbeat(self.user_id, "final_response")
         self.flags.completed = True
+
+    @staticmethod
+    def _maybe_pr_followup_metadata(preview: str) -> Dict[str, Any] | None:
+        text = str(preview or "").strip()
+        if not text:
+            return None
+        match = re.search(r"https://github\.com/[^\s)]+/pull/\d+", text)
+        if match is None:
+            return None
+        pr_url = match.group(0)
+        return {
+            "detail": f"waiting for pull request merge: {pr_url}",
+            "followup": {
+                "done_when": "GitHub pull request merged",
+                "refs": {"pr_url": pr_url},
+                "announce_before_action": True,
+            },
+        }
 
     async def _handle_max_turn_limit(self, payload: Dict[str, Any]) -> None:
         terminal_preview = str(payload.get("terminal_text_preview") or "").strip()

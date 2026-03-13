@@ -251,3 +251,34 @@ def test_prompt_composer_manager_prompt_emphasizes_direct_dev_toolchain(monkeypa
         in text
     )
     assert "`gh_cli auth_status` 成功只是内部预检" in text
+
+
+def test_prompt_composer_mentions_waiting_external_and_task_tracker(monkeypatch):
+    monkeypatch.setattr(prompt_composer, "_load_manager_agents_doc", lambda: "")
+    monkeypatch.setattr(
+        "core.prompt_composer.soul_store.resolve_for_runtime_user",
+        lambda _user_id: SoulPayload(
+            agent_kind="core-manager",
+            agent_id="core-manager",
+            path="/tmp/SOUL.MD",
+            content="# Core Manager SOUL\n- tone: warm",
+            updated_at="2026-03-13T00:00:00+08:00",
+            latest_version_id="",
+        ),
+    )
+    monkeypatch.setattr(prompt_composer, "_build_skill_catalog", lambda **_kwargs: "")
+    monkeypatch.setattr(
+        prompt_composer,
+        "_build_manager_tool_guidance",
+        lambda **_kwargs: "- 用 `task_tracker` 查看和更新未完成任务。",
+    )
+
+    text = prompt_composer.compose_base(
+        runtime_user_id="u-1",
+        platform="telegram",
+        mode="manager",
+    )
+
+    assert "waiting_external" in text
+    assert "task_tracker" in text
+    assert "events.jsonl" in text

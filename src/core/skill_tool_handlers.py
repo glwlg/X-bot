@@ -9,6 +9,7 @@ from core.tools.dispatch_tools import dispatch_tools
 from core.tools.git_tools import git_tools
 from core.tools.gh_tools import gh_tools
 from core.tools.repo_workspace_tools import repo_workspace_tools
+from core.tools.task_tracker_tools import task_tracker_tools
 
 
 SkillToolHandler = Callable[[Any, Dict[str, Any]], Awaitable[Dict[str, Any]]]
@@ -254,6 +255,42 @@ async def _git_ops_handler(
     )
 
 
+async def _task_tracker_handler(
+    dispatcher: Any,
+    tool_args: Dict[str, Any],
+) -> Dict[str, Any]:
+    notify_target = _notify_target_from_dispatcher(dispatcher)
+    msg = getattr(dispatcher.ctx, "message", None)
+    msg_user = getattr(msg, "user", None)
+    return await task_tracker_tools.task_tracker(
+        action=str(tool_args.get("action") or "list_open"),
+        user_id=str(tool_args.get("user_id") or getattr(msg_user, "id", "") or ""),
+        task_id=str(
+            tool_args.get("task_id") or getattr(dispatcher, "task_inbox_id", "") or ""
+        ),
+        limit=int(tool_args.get("limit", 20) or 20),
+        due_only=bool(tool_args.get("due_only", True)),
+        event_limit=int(tool_args.get("event_limit", 20) or 20),
+        status=str(tool_args.get("status") or ""),
+        result_summary=str(tool_args.get("result_summary") or ""),
+        done_when=str(tool_args.get("done_when") or ""),
+        next_review_after=str(tool_args.get("next_review_after") or ""),
+        refs=(
+            dict(tool_args.get("refs"))
+            if isinstance(tool_args.get("refs"), dict)
+            else {}
+        ),
+        notes=str(tool_args.get("notes") or ""),
+        announce_before_action=tool_args.get("announce_before_action"),
+        last_observation=str(tool_args.get("last_observation") or ""),
+        last_action_summary=str(tool_args.get("last_action_summary") or ""),
+        announce_text=str(tool_args.get("announce_text") or ""),
+        announce_key=str(tool_args.get("announce_key") or ""),
+        announce_platform=notify_target["notify_platform"],
+        announce_chat_id=notify_target["notify_chat_id"],
+    )
+
+
 skill_tool_handler_registry = SkillToolHandlerRegistry()
 skill_tool_handler_registry.register(
     "manager.worker_management.list",
@@ -282,4 +319,8 @@ skill_tool_handler_registry.register(
 skill_tool_handler_registry.register(
     "manager.git_ops",
     _git_ops_handler,
+)
+skill_tool_handler_registry.register(
+    "manager.task_tracker",
+    _task_tracker_handler,
 )

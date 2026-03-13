@@ -77,6 +77,70 @@ async def test_ai_service_emits_loop_guard_on_repeated_calls(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_ai_service_default_tool_turn_limit_is_40(monkeypatch):
+    service = AiService()
+    monkeypatch.delenv("AI_TOOL_MAX_TURNS", raising=False)
+    monkeypatch.setenv("AI_TOOL_REPEAT_GUARD", "999")
+    monkeypatch.setenv("AI_TOOL_SEMANTIC_REPEAT_GUARD", "999")
+    monkeypatch.setenv("AI_TOOL_MAX_CALLS_PER_TOOL", "999")
+
+    captured = []
+
+    async def event_callback(event, payload):
+        if event == "max_turn_limit":
+            captured.append(dict(payload))
+        return None
+
+    class LoopingModels:
+        async def create(self, **kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="",
+                            tool_calls=[
+                                SimpleNamespace(
+                                    id="call-1",
+                                    function=SimpleNamespace(
+                                        name="read",
+                                        arguments=json.dumps(
+                                            {"path": "a.txt"}, ensure_ascii=False
+                                        ),
+                                    ),
+                                )
+                            ],
+                        )
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(
+        ai_service_module,
+        "openai_async_client",
+        SimpleNamespace(chat=SimpleNamespace(completions=LoopingModels())),
+    )
+
+    captured = []
+
+    async def fake_tool_executor(_name, _args):
+        return {"ok": True}
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "loop"}]}],
+        tools=[{"name": "read", "description": "", "parameters": {"type": "object"}}],
+        tool_executor=fake_tool_executor,
+        system_instruction="test",
+        event_callback=event_callback,
+    ):
+        chunks.append(chunk)
+
+    assert captured
+    assert captured[-1]["max_turns"] == 40
+    assert f"工具调用轮次已达上限（40）" in chunks[-1]
+
+
+@pytest.mark.asyncio
 async def test_ai_service_keeps_full_terminal_text_without_truncation(monkeypatch):
     service = AiService()
     long_text = "✅DEPLOY_OK\n" + ("x" * 1200)

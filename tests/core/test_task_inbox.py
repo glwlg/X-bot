@@ -111,6 +111,78 @@ async def test_task_inbox_list_pending_by_priority(tmp_path):
     assert "output" in recent_outputs[0]
 
 
+@pytest.mark.asyncio
+async def test_task_inbox_keeps_waiting_external_open_and_merges_metadata(tmp_path):
+    inbox = _build_isolated_inbox(tmp_path)
+
+    task = await inbox.submit(
+        source="user_chat",
+        goal="跟进未合并的 PR",
+        user_id="u-open",
+        metadata={"session_task_id": "sess-1", "original_user_request": "跟进 PR"},
+    )
+
+    ok = await inbox.update_status(
+        task.task_id,
+        "waiting_external",
+        event="followup_waiting",
+        detail="等待外部变化",
+        metadata={
+            "followup": {
+                "done_when": "PR merged",
+                "next_review_after": "2026-03-13T15:00:00+08:00",
+            }
+        },
+    )
+
+    assert ok is True
+
+    stored = await inbox.get(task.task_id)
+    assert stored is not None
+    assert stored.status == "waiting_external"
+    assert stored.metadata["session_task_id"] == "sess-1"
+    assert stored.metadata["followup"]["done_when"] == "PR merged"
+
+    open_rows = await inbox.list_open(user_id="u-open", limit=10)
+    assert [row.task_id for row in open_rows] == [task.task_id]
+
+
+@pytest.mark.asyncio
+async def test_task_inbox_merges_result_and_output_dicts(tmp_path):
+    inbox = _build_isolated_inbox(tmp_path)
+
+    task = await inbox.submit(
+        source="user_chat",
+        goal="保留结构化结果",
+        user_id="u-merge",
+    )
+
+    ok = await inbox.update_status(
+        task.task_id,
+        "running",
+        result={"summary": "first", "payload": {"mode": "a"}},
+        output={"text": "first", "ui": {"actions": [[{"text": "A"}]]}},
+    )
+    assert ok is True
+
+    ok = await inbox.update_status(
+        task.task_id,
+        "waiting_external",
+        result={"payload": {"extra": "b"}},
+        output={"ui": {"notice": "kept"}},
+    )
+    assert ok is True
+
+    stored = await inbox.get(task.task_id)
+    assert stored is not None
+    assert stored.result["summary"] == "first"
+    assert stored.result["payload"]["mode"] == "a"
+    assert stored.result["payload"]["extra"] == "b"
+    assert stored.output["text"] == "first"
+    assert stored.output["ui"]["actions"][0][0]["text"] == "A"
+    assert stored.output["ui"]["notice"] == "kept"
+
+
 def test_task_inbox_defaults_to_persistent(monkeypatch, tmp_path):
     monkeypatch.setattr(task_inbox_module, "DATA_DIR", str(tmp_path))
     monkeypatch.delenv("TASK_INBOX_PERSIST", raising=False)

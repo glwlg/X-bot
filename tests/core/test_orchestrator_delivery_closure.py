@@ -7,6 +7,8 @@ import core.agent_orchestrator as orchestrator_module
 from core.agent_orchestrator import AgentOrchestrator
 from core.heartbeat_store import heartbeat_store
 from core.platform.models import Chat, MessageType, UnifiedMessage, User
+from core.task_inbox import task_inbox
+from core.task_tracker_service import task_tracker_service
 
 
 class DummyContext:
@@ -40,12 +42,27 @@ class DummyContext:
         return None
 
 
+def _reset_task_inbox(tmp_path):
+    root = (tmp_path / "task_inbox").resolve()
+    tasks_root = (root / "tasks").resolve()
+    events_path = (root / "events.jsonl").resolve()
+    tasks_root.mkdir(parents=True, exist_ok=True)
+    events_path.write_text("", encoding="utf-8")
+    task_inbox.persist = True
+    task_inbox.root = root
+    task_inbox.tasks_root = tasks_root
+    task_inbox.events_path = events_path
+    task_inbox._loaded = False
+    task_inbox._tasks = {}
+
+
 @pytest.mark.asyncio
 async def test_terminal_extension_short_circuit_marks_done(monkeypatch, tmp_path):
     orchestrator = AgentOrchestrator()
     orchestrator.direct_fastpath_enabled = False
     user_id = "u_terminal_done"
 
+    _reset_task_inbox(tmp_path)
     runtime_root = (tmp_path / "runtime_tasks").resolve()
     runtime_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(heartbeat_store, "root", runtime_root)
@@ -112,6 +129,7 @@ async def test_terminal_partial_sets_waiting_user(monkeypatch, tmp_path):
     orchestrator.direct_fastpath_enabled = False
     user_id = "u_terminal_partial"
 
+    _reset_task_inbox(tmp_path)
     runtime_root = (tmp_path / "runtime_tasks").resolve()
     runtime_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(heartbeat_store, "root", runtime_root)
@@ -175,6 +193,7 @@ async def test_terminal_extension_failure_short_circuits_without_loop(
     orchestrator.direct_fastpath_enabled = False
     user_id = "u_terminal_failed"
 
+    _reset_task_inbox(tmp_path)
     runtime_root = (tmp_path / "runtime_tasks").resolve()
     runtime_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(heartbeat_store, "root", runtime_root)
@@ -233,6 +252,7 @@ async def test_recoverable_terminal_failure_allows_auto_recovery(monkeypatch, tm
     orchestrator.direct_fastpath_enabled = False
     user_id = "u_terminal_recoverable"
 
+    _reset_task_inbox(tmp_path)
     runtime_root = (tmp_path / "runtime_tasks").resolve()
     runtime_root.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(heartbeat_store, "root", runtime_root)
@@ -499,7 +519,9 @@ async def test_manager_progress_callback_receives_tool_events(monkeypatch, tmp_p
 
 
 @pytest.mark.asyncio
-async def test_worker_progress_callback_receives_terminal_payload(monkeypatch, tmp_path):
+async def test_worker_progress_callback_receives_terminal_payload(
+    monkeypatch, tmp_path
+):
     orchestrator = AgentOrchestrator()
     user_id = "u_worker_progress_terminal_payload"
 
@@ -568,4 +590,139 @@ async def test_worker_progress_callback_receives_terminal_payload(monkeypatch, t
         and isinstance(event.get("terminal_payload"), dict)
         and event["terminal_payload"]["files"][0]["filename"] == "demo.png"
         for event in worker_events
+    )
+
+
+@pytest.mark.asyncio
+async def test_final_response_keeps_waiting_external_task_open(monkeypatch, tmp_path):
+    orchestrator = AgentOrchestrator()
+    orchestrator.direct_fastpath_enabled = False
+    user_id = "u_waiting_external"
+
+    _reset_task_inbox(tmp_path)
+    runtime_root = (tmp_path / "runtime_tasks").resolve()
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(heartbeat_store, "root", runtime_root)
+    heartbeat_store._locks.clear()
+
+    task = await task_inbox.submit(
+        source="user_chat",
+        goal="跟进这个 PR，直到合并",
+        user_id=user_id,
+    )
+
+    async def fake_stream(
+        message_history,
+        tools=None,
+        tool_executor=None,
+        system_instruction=None,
+        event_callback=None,
+    ):
+        updated = await task_tracker_service.update(
+            user_id=user_id,
+            task_id=task.task_id,
+            status="waiting_external",
+            result_summary="PR 已创建，等待合并。",
+            done_when="PR merged",
+            next_review_after="2026-03-13T15:00:00+08:00",
+        )
+        assert updated["ok"] is True
+        if event_callback:
+            await event_callback(
+                "final_response",
+                {
+                    "turn": 1,
+                    "text_preview": "PR 已创建，后续会继续跟进直到合并。",
+                },
+            )
+        yield "PR 已创建，后续会继续跟进直到合并。"
+
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
+    monkeypatch.setattr(
+        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
+    )
+
+    ctx = DummyContext(user_id=user_id)
+    ctx.user_data["task_inbox_id"] = task.task_id
+    ctx.user_data["runtime_task_id"] = "mgr-followup-1"
+    message_history = [{"role": "user", "parts": [{"text": "继续跟进这个 PR"}]}]
+
+    chunks = [
+        chunk async for chunk in orchestrator.handle_message(ctx, message_history)
+    ]
+
+    assert chunks == ["PR 已创建，后续会继续跟进直到合并。"]
+    stored = await task_inbox.get(task.task_id)
+    assert stored is not None
+    assert stored.status == "waiting_external"
+    state = await heartbeat_store.get_state(user_id)
+    active = state["status"]["session"]["active_task"]
+    assert active is not None
+    assert active["status"] == "waiting_external"
+
+
+@pytest.mark.asyncio
+async def test_final_response_auto_keeps_pr_creation_task_open(monkeypatch, tmp_path):
+    orchestrator = AgentOrchestrator()
+    orchestrator.direct_fastpath_enabled = False
+    user_id = "u_pr_followup_auto"
+
+    _reset_task_inbox(tmp_path)
+    runtime_root = (tmp_path / "runtime_tasks").resolve()
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(heartbeat_store, "root", runtime_root)
+    heartbeat_store._locks.clear()
+
+    task = await task_inbox.submit(
+        source="user_chat",
+        goal="提 PR 并持续跟进直到合并",
+        user_id=user_id,
+    )
+
+    async def fake_stream(
+        message_history,
+        tools=None,
+        tool_executor=None,
+        system_instruction=None,
+        event_callback=None,
+    ):
+        if event_callback:
+            await event_callback(
+                "final_response",
+                {
+                    "turn": 1,
+                    "text_preview": "PR 已创建： https://github.com/Scenx/fuck-skill/pull/22 ，后续继续跟进。",
+                },
+            )
+        yield "PR 已创建： https://github.com/Scenx/fuck-skill/pull/22 ，后续继续跟进。"
+
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
+    monkeypatch.setattr(
+        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
+    )
+
+    ctx = DummyContext(user_id=user_id)
+    ctx.user_data["task_inbox_id"] = task.task_id
+    ctx.user_data["runtime_task_id"] = "mgr-followup-pr-1"
+    message_history = [{"role": "user", "parts": [{"text": "继续提 PR"}]}]
+
+    chunks = [
+        chunk async for chunk in orchestrator.handle_message(ctx, message_history)
+    ]
+
+    assert chunks == [
+        "PR 已创建： https://github.com/Scenx/fuck-skill/pull/22 ，后续继续跟进。"
+    ]
+    stored = await task_inbox.get(task.task_id)
+    assert stored is not None
+    assert stored.status == "waiting_external"
+    followup = stored.metadata.get("followup") or {}
+    assert followup.get("done_when") == "GitHub pull request merged"
+    assert (
+        followup.get("refs", {}).get("pr_url")
+        == "https://github.com/Scenx/fuck-skill/pull/22"
     )

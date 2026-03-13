@@ -521,20 +521,65 @@ class AgentOrchestrator:
         if not event_handler.flags.blocked and not event_handler.flags.completed:
             todo_session.mark_completed("Conversation loop completed.")
             if runtime_ctx.session_state_active:
-                await update_session_task(
-                    status="done",
-                    result_summary="Conversation loop completed.",
-                    needs_confirmation=False,
-                    confirmation_deadline="",
-                    clear_active=True,
-                )
+                current = await heartbeat_store.get_session_active_task(str(user_id))
+                current_status = str((current or {}).get("status", "")).strip().lower()
+                if current_status == "waiting_external":
+                    await update_session_task(
+                        status="waiting_external",
+                        result_summary="Conversation loop completed.",
+                        needs_confirmation=False,
+                        confirmation_deadline="",
+                    )
+                else:
+                    await update_session_task(
+                        status="done",
+                        result_summary="Conversation loop completed.",
+                        needs_confirmation=False,
+                        confirmation_deadline="",
+                        clear_active=True,
+                    )
                 await append_session_event(f"conversation_completed:{task_id}")
             if task_inbox_id:
-                await task_inbox.complete(
-                    task_inbox_id,
-                    result={"manager_mode": "conversation_completed"},
-                    final_output="Conversation loop completed.",
+                current_task = await task_inbox.get(task_inbox_id)
+                current_task_status = (
+                    str((current_task or {}).status if current_task else "")
+                    .strip()
+                    .lower()
                 )
+                auto_followup = event_handler._maybe_pr_followup_metadata(
+                    "Conversation loop completed."
+                )
+                if auto_followup and current_task_status not in {
+                    "waiting_external",
+                    "completed",
+                }:
+                    await task_inbox.update_status(
+                        task_inbox_id,
+                        "waiting_external",
+                        event="conversation_auto_followup_waiting",
+                        detail=str(auto_followup.get("detail") or "")[:180],
+                        metadata={
+                            "followup": dict(auto_followup.get("followup") or {})
+                        },
+                        result={"manager_mode": "conversation_completed"},
+                        output={"text": "Conversation loop completed."},
+                    )
+                    current_task_status = "waiting_external"
+                if current_task_status == "waiting_external":
+                    await task_inbox.update_status(
+                        task_inbox_id,
+                        "waiting_external",
+                        event="conversation_kept_open",
+                        detail="Conversation loop completed.",
+                        result={"manager_mode": "conversation_completed"},
+                        output={"text": "Conversation loop completed."},
+                    )
+                else:
+                    await task_inbox.complete(
+                        task_inbox_id,
+                        result={"manager_mode": "conversation_completed"},
+                        final_output="Conversation loop completed.",
+                    )
 
     @staticmethod
     def _build_recovery_instruction(
