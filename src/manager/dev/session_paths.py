@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 from uuid import uuid4
 
 from core.config import DATA_DIR
@@ -11,6 +12,16 @@ from core.config import DATA_DIR
 def _system_root() -> Path:
     configured = str(os.getenv("DATA_DIR", DATA_DIR) or DATA_DIR).strip()
     return (Path(configured).resolve() / "system").resolve()
+
+
+def _safe_token(value: str, fallback: str) -> str:
+    raw = str(value or "").strip()
+    if not raw or raw in {".", ".."}:
+        return fallback
+    safe = quote(raw, safe="._-:")
+    if not safe or safe in {".", ".."}:
+        return fallback
+    return safe
 
 
 def repo_mirror_root(repo_slug: str) -> Path:
@@ -47,6 +58,34 @@ def codex_session_log_path(session_id: str) -> Path:
     root = (_system_root() / "codex_sessions" / "logs").resolve()
     root.mkdir(parents=True, exist_ok=True)
     return (root / f"{safe_id}.log").resolve()
+
+
+def coding_sessions_root() -> Path:
+    return (_system_root() / "coding_sessions").resolve()
+
+
+def _coding_session_root(session_id: str, *, create: bool) -> Path:
+    safe_id = _safe_token(session_id, "session")
+    root = (coding_sessions_root() / safe_id).resolve()
+    if create:
+        root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def coding_session_root(session_id: str) -> Path:
+    return _coding_session_root(session_id, create=False)
+
+
+def ensure_coding_session_root(session_id: str) -> Path:
+    return _coding_session_root(session_id, create=True)
+
+
+def coding_session_path(session_id: str) -> Path:
+    return (coding_session_root(session_id) / "session.json").resolve()
+
+
+def coding_session_events_path(session_id: str) -> Path:
+    return (coding_session_root(session_id) / "events.jsonl").resolve()
 
 
 def new_workspace_id() -> str:
