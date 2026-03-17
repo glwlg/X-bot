@@ -325,6 +325,7 @@ def test_builtin_command_skills_remain_opted_in_for_platform_handlers():
     loader = SkillLoader()
     indexed = loader.scan_skills()
 
+    assert indexed["download_video"]["platform_handlers"] is True
     assert indexed["rss_subscribe"]["platform_handlers"] is True
     assert indexed["stock_watch"]["platform_handlers"] is True
     assert indexed["scheduler_manager"]["platform_handlers"] is True

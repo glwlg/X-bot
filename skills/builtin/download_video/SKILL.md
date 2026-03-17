@@ -11,7 +11,7 @@ triggers:
 - get video
 policy_groups:
 - media
-platform_handlers: false
+platform_handlers: true
 input_schema:
   type: object
   properties: {}
