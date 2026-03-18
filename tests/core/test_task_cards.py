@@ -1,8 +1,5 @@
-from types import SimpleNamespace
-
 from core.task_cards import (
     build_session_brief_lines,
-    format_followup_context,
     format_waiting_user_card,
 )
 
@@ -33,22 +30,3 @@ def test_format_waiting_user_card_keeps_task_oriented_copy():
     assert "已完成：" in text
     assert "缺少必要输入" in text
     assert "回复“继续”" in text
-
-
-def test_format_followup_context_includes_stage_brief():
-    snapshot = SimpleNamespace(
-        session_task_id="tsk-3",
-        status="completed",
-        stage_index=3,
-        stage_total=3,
-        stage_title="整理交付",
-        original_user_request="帮我关闭 n8n",
-        last_user_visible_summary="n8n 已关闭。",
-    )
-
-    text = format_followup_context(snapshot)
-
-    assert "最近任务：`tsk-3`" in text
-    assert "阶段：3/3 - 整理交付" in text
-    assert "原始任务：帮我关闭 n8n" in text
-    assert "最近结果摘要：n8n 已关闭。" in text

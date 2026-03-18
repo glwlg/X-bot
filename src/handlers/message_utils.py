@@ -9,6 +9,7 @@ from core.state_store import get_video_cache
 from services.web_summary_service import fetch_webpage_content
 
 logger = logging.getLogger(__name__)
+CODE_BLOCK_FILE_MIN_LINES = 20
 
 
 async def process_reply_message(ctx: UnifiedContext) -> tuple[bool, str, bytes, str]:
@@ -173,7 +174,7 @@ async def process_reply_message(ctx: UnifiedContext) -> tuple[bool, str, bytes, 
 async def process_and_send_code_files(ctx: UnifiedContext, text: str) -> str:
     """
     1. Scan text for code blocks.
-    2. If blocks are significant (long), save as file and send to user.
+    2. If a code block is long enough, save as file and send to user.
     3. Replace the code block in the original text with a placeholder.
     4. Return the modified text for display.
     """
@@ -208,14 +209,8 @@ async def process_and_send_code_files(ctx: UnifiedContext, text: str) -> str:
         # 输出文件策略：除 html 外统一转为 markdown，便于 Telegram 直接预览。
         ext = "html" if language == "html" else "md"
 
-        # Criteria to send as file AND collapse
         lines = code_content.splitlines()
-        # If it's JSON -> always send (usually data)
-        # If > 10 lines -> send and collapse
-        # If > 300 chars -> send and collapse
-        should_process = (
-            (language == "json") or (len(lines) > 5) or (len(code_content) > 200)
-        )
+        should_process = len(lines) > CODE_BLOCK_FILE_MIN_LINES
 
         if not should_process:
             continue

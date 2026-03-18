@@ -13,12 +13,14 @@ from core.task_tracker_service import task_tracker_service
 def _reset_task_inbox(tmp_path: Path) -> None:
     root = (tmp_path / "task_inbox").resolve()
     tasks_root = (root / "tasks").resolve()
+    archive_root = (root / "archive").resolve()
     events_path = (root / "events.jsonl").resolve()
     tasks_root.mkdir(parents=True, exist_ok=True)
-    events_path.write_text("", encoding="utf-8")
+    archive_root.mkdir(parents=True, exist_ok=True)
     task_inbox.persist = True
     task_inbox.root = root
     task_inbox.tasks_root = tasks_root
+    task_inbox.archive_root = archive_root
     task_inbox.events_path = events_path
     task_inbox._loaded = False
     task_inbox._tasks = {}
@@ -250,7 +252,12 @@ async def test_task_tracker_announce_text_is_audited_and_deduped(
         goal="跟进待合并任务",
         user_id="u-3",
     )
-    await heartbeat_store.set_delivery_target("u-3", "telegram", "chat-3")
+    await heartbeat_store.set_delivery_target(
+        "u-3",
+        "telegram",
+        "chat-3",
+        session_id="sess-u3",
+    )
 
     sent = []
 
@@ -283,6 +290,9 @@ async def test_task_tracker_announce_text_is_audited_and_deduped(
     assert first["ok"] is True
     assert second["ok"] is True
     assert len(sent) == 1
+    assert sent[0]["record_history"] is True
+    assert sent[0]["history_user_id"] == "u-3"
+    assert sent[0]["history_session_id"] == "sess-u3"
 
     stored = await task_inbox.get(task.task_id)
     assert stored is not None

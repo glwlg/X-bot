@@ -219,6 +219,7 @@ async def test_send_feed_updates_passes_resource_metadata_to_target_resolution(
     monkeypatch,
 ):
     captured: dict[str, object] = {}
+    sent_calls: list[dict[str, object]] = []
 
     async def fake_resolve(user_id, platform, metadata=None):
         captured["user_id"] = user_id
@@ -227,7 +228,14 @@ async def test_send_feed_updates_passes_resource_metadata_to_target_resolution(
         return "telegram", "chat-1"
 
     async def fake_send_via_adapter(*, chat_id, text, platform, **kwargs):
-        _ = (chat_id, text, platform, kwargs)
+        sent_calls.append(
+            {
+                "chat_id": chat_id,
+                "text": text,
+                "platform": platform,
+                "kwargs": dict(kwargs),
+            }
+        )
 
     async def fake_remember(user_id, platform, chat_id):
         _ = (user_id, platform, chat_id)
@@ -289,6 +297,9 @@ async def test_send_feed_updates_passes_resource_metadata_to_target_resolution(
         "last_etag": "etag-1",
         "last_modified": "modified-1",
     }
+    assert sent_calls
+    assert sent_calls[0]["kwargs"]["user_id"] == "1001"
+    assert sent_calls[0]["kwargs"]["record_history"] is True
 
 
 @pytest.mark.asyncio
@@ -396,3 +407,85 @@ async def test_run_skill_cron_job_pushes_for_shared_user(monkeypatch):
     assert sent_messages[0]["chat_id"] == "257675041"
     assert sent_messages[0]["platform"] == "telegram"
     assert "定时任务执行报告" in sent_messages[0]["text"]
+    assert sent_messages[0]["kwargs"]["user_id"] == "user"
+    assert sent_messages[0]["kwargs"]["record_history"] is True
+
+
+@pytest.mark.asyncio
+async def test_stock_push_job_passes_history_metadata(monkeypatch):
+    sent_messages: list[dict[str, object]] = []
+
+    async def fake_get_all_watchlist_users():
+        return [("u-stock", "telegram")]
+
+    async def fake_get_user_watchlist(_user_id, platform=None):
+        _ = platform
+        return [{"stock_code": "sh600000"}]
+
+    async def fake_fetch_stock_quotes(_codes):
+        return [{"stock_code": "sh600000", "name": "浦发银行", "price": "10.00"}]
+
+    def fake_format_stock_message(_quotes):
+        return "📈 自选股行情"
+
+    async def fake_resolve(user_id, platform, metadata=None):
+        _ = metadata
+        assert user_id == "u-stock"
+        assert platform == "telegram"
+        return "telegram", "chat-stock"
+
+    async def fake_send_via_adapter(*, chat_id, text, platform, **kwargs):
+        sent_messages.append(
+            {
+                "chat_id": chat_id,
+                "text": text,
+                "platform": platform,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return True
+
+    async def fake_remember(user_id, platform, chat_id, session_id=""):
+        _ = (user_id, platform, chat_id, session_id)
+
+    monkeypatch.setattr(scheduler_module, "is_trading_time", lambda: True)
+    monkeypatch.setattr(
+        scheduler_module,
+        "get_all_watchlist_users",
+        fake_get_all_watchlist_users,
+    )
+    monkeypatch.setattr(
+        scheduler_module,
+        "get_user_watchlist",
+        fake_get_user_watchlist,
+    )
+    monkeypatch.setattr(
+        scheduler_module,
+        "_resolve_proactive_delivery_target",
+        fake_resolve,
+    )
+    monkeypatch.setattr(
+        scheduler_module,
+        "send_via_adapter",
+        fake_send_via_adapter,
+    )
+    monkeypatch.setattr(
+        scheduler_module,
+        "_remember_proactive_delivery_target",
+        fake_remember,
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "services.stock_service",
+        SimpleNamespace(
+            fetch_stock_quotes=fake_fetch_stock_quotes,
+            format_stock_message=fake_format_stock_message,
+        ),
+    )
+
+    await scheduler_module.stock_push_job()
+
+    assert sent_messages
+    assert sent_messages[0]["chat_id"] == "chat-stock"
+    assert sent_messages[0]["kwargs"]["user_id"] == "u-stock"
+    assert sent_messages[0]["kwargs"]["record_history"] is True

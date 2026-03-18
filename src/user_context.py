@@ -7,11 +7,13 @@ import uuid
 import logging
 from typing import Any, Literal, TYPE_CHECKING
 
+from core.heartbeat_store import heartbeat_store
 from core.state_store import (
     save_message,
     get_session_messages,
     get_session_entries,
     get_latest_session_id,
+    replace_session_entries,
 )
 from core.markdown_memory_store import markdown_memory_store
 from services.session_compaction_service import (
@@ -47,10 +49,29 @@ async def get_or_create_session_id(
     if SESSION_ID_KEY in store:
         return str(store[SESSION_ID_KEY])
 
-    # 从 DB 获取
-    session_id = await get_latest_session_id(user_id)
+    session_id = await _resolve_preferred_session_id(user_id)
     store[SESSION_ID_KEY] = session_id
     return session_id
+
+
+async def _resolve_preferred_session_id(user_id: int | str) -> str:
+    safe_user_id = str(user_id or "").strip()
+    if not safe_user_id:
+        return str(uuid.uuid4())
+
+    try:
+        target = await heartbeat_store.get_delivery_target(safe_user_id)
+        session_id = str(target.get("session_id") or "").strip()
+        if session_id:
+            return session_id
+    except Exception:
+        logger.debug(
+            "Failed to read delivery target while resolving session user=%s",
+            safe_user_id,
+            exc_info=True,
+        )
+
+    return await get_latest_session_id(safe_user_id)
 
 
 async def get_user_context(
@@ -70,6 +91,7 @@ async def get_user_context(
     session_id = await get_or_create_session_id(context, user_id)
     if include_hidden_system:
         await _ensure_session_memory_seed(context, user_id, session_id)
+    await _reconcile_sparse_session_history(str(user_id), session_id)
     if auto_compact:
         await session_compaction_service.compact_session(
             user_id=str(user_id),
@@ -97,6 +119,126 @@ async def add_message(
     """
     session_id = await get_or_create_session_id(context, user_id)
     await save_message(user_id, role, content, session_id)
+
+
+def _task_session_id(task: Any) -> str:
+    for source in (getattr(task, "metadata", {}), getattr(task, "payload", {})):
+        if not isinstance(source, dict):
+            continue
+        session_id = str(source.get("session_id") or "").strip()
+        if session_id:
+            return session_id
+    return ""
+
+
+def _task_visible_text(task: Any) -> str:
+    for candidate in (
+        getattr(task, "final_output", ""),
+        dict(getattr(task, "output", {}) or {}).get("text"),
+        dict(getattr(task, "result", {}) or {}).get("summary"),
+    ):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return ""
+
+
+async def _reconcile_sparse_session_history(user_id: str, session_id: str) -> None:
+    safe_user_id = str(user_id or "").strip()
+    safe_session_id = str(session_id or "").strip()
+    if not safe_user_id or not safe_session_id:
+        return
+
+    existing_rows = await get_session_entries(safe_user_id, safe_session_id)
+    visible_rows = [
+        row
+        for row in existing_rows
+        if str(row.get("role") or "").strip().lower() in {"user", "model"}
+        and str(row.get("content") or "").strip()
+    ]
+    if len(visible_rows) > 1:
+        return
+
+    try:
+        from core.task_inbox import task_inbox
+
+        recent_tasks = await task_inbox.list_recent(user_id=safe_user_id, limit=30)
+    except Exception:
+        logger.debug(
+            "Failed to load task inbox while reconciling session user=%s session=%s",
+            safe_user_id,
+            safe_session_id,
+            exc_info=True,
+        )
+        return
+
+    candidate_tasks = [
+        task
+        for task in recent_tasks
+        if str(getattr(task, "source", "") or "").strip().lower() == "user_chat"
+        and _task_session_id(task) == safe_session_id
+    ]
+    if not candidate_tasks:
+        return
+    candidate_tasks.sort(
+        key=lambda item: (
+            str(getattr(item, "created_at", "") or ""),
+            str(getattr(item, "updated_at", "") or ""),
+        )
+    )
+    merged_rows = [
+        row
+        for row in existing_rows
+        if str(row.get("role") or "").strip().lower() == "system"
+        and str(row.get("content") or "").strip()
+    ]
+    seen_pairs = {
+        (
+            str(item.get("role") or "").strip().lower(),
+            str(item.get("content") or "").strip(),
+        )
+        for item in merged_rows
+    }
+    for task in candidate_tasks:
+        user_text = str(getattr(task, "goal", "") or "").strip()
+        model_text = _task_visible_text(task)
+        for role, content in (("user", user_text), ("model", model_text)):
+            if not content or (role, content) in seen_pairs:
+                continue
+            merged_rows.append({"role": role, "content": content})
+            seen_pairs.add((role, content))
+    if merged_rows == existing_rows:
+        return
+    await replace_session_entries(safe_user_id, safe_session_id, merged_rows)
+
+
+async def bind_delivery_target(
+    context: TelegramContext | UnifiedContext,
+    user_id: int | str,
+) -> str:
+    """Bind the current visible chat/session so async pushes can rejoin this session."""
+    safe_user_id = str(user_id or "").strip()
+    if not safe_user_id:
+        return ""
+
+    session_id = await get_or_create_session_id(context, safe_user_id)
+    message = getattr(context, "message", None)
+    platform = str(getattr(message, "platform", "") or "").strip()
+    chat = getattr(message, "chat", None)
+    chat_id = str(getattr(chat, "id", "") or "").strip()
+    if not platform or not chat_id:
+        return session_id
+
+    try:
+        await heartbeat_store.set_delivery_target(
+            safe_user_id,
+            platform,
+            chat_id,
+            session_id=session_id,
+        )
+    except Exception:
+        logger.debug("Failed to bind delivery target for user=%s", safe_user_id, exc_info=True)
+    return session_id
 
 
 async def get_recent_dialog_messages(

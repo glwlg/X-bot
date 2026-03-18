@@ -13,12 +13,14 @@ from core.task_inbox import task_inbox
 def _reset_task_inbox(tmp_path: Path) -> None:
     root = (tmp_path / "task_inbox").resolve()
     tasks_root = (root / "tasks").resolve()
+    archive_root = (root / "archive").resolve()
     events_path = (root / "events.jsonl").resolve()
     tasks_root.mkdir(parents=True, exist_ok=True)
-    events_path.write_text("", encoding="utf-8")
+    archive_root.mkdir(parents=True, exist_ok=True)
     task_inbox.persist = True
     task_inbox.root = root
     task_inbox.tasks_root = tasks_root
+    task_inbox.archive_root = archive_root
     task_inbox.events_path = events_path
     task_inbox._loaded = False
     task_inbox._tasks = {}
@@ -36,52 +38,8 @@ def _isolated_state(tmp_path):
     _reset_task_inbox(tmp_path)
     _reset_heartbeat_store(tmp_path)
     return tmp_path
-
-
-def _future_iso(minutes: int = 15) -> str:
-    return (datetime.now().astimezone() + timedelta(minutes=minutes)).isoformat(
-        timespec="seconds"
-    )
-
-
 @pytest.mark.asyncio
-async def test_match_followup_binds_recent_completed_session(_isolated_state):
-    session = await task_inbox.submit(
-        source="user_chat",
-        goal="帮我关闭 n8n",
-        user_id="u-1",
-        metadata={
-            "session_task_id": "tsk-followup-1",
-            "original_user_request": "帮我关闭 n8n",
-        },
-    )
-    await task_inbox.update_status(
-        session.task_id,
-        "completed",
-        event="session_completed",
-        detail="done",
-        metadata={
-            "session_task_id": session.task_id,
-            "task_goal": "帮我关闭 n8n",
-            "original_user_request": "帮我关闭 n8n",
-            "delivery_state": "delivered",
-            "resume_window_until": _future_iso(),
-            "last_user_visible_summary": "n8n 已关闭，两个容器都已退出。",
-        },
-        final_output="n8n 已关闭，两个容器都已退出。",
-        output={"text": "n8n 已关闭，两个容器都已退出。"},
-    )
-
-    matched = await session_task_store.match_followup("u-1", "需要")
-
-    assert matched is not None
-    assert matched["session_task_id"] == session.task_id
-    assert "n8n 已关闭" in matched["context_text"]
-    assert "任务续接上下文" in matched["context_text"]
-
-
-@pytest.mark.asyncio
-async def test_match_followup_ignores_expired_completed_session(_isolated_state):
+async def test_list_recent_completed_ignores_expired_completed_session(_isolated_state):
     session = await task_inbox.submit(
         source="user_chat",
         goal="帮我总结部署结果",
@@ -103,9 +61,9 @@ async def test_match_followup_ignores_expired_completed_session(_isolated_state)
         },
     )
 
-    matched = await session_task_store.match_followup("u-2", "继续")
+    rows = await session_task_store.list_recent_completed("u-2", limit=1)
 
-    assert matched is None
+    assert rows == []
 
 
 @pytest.mark.asyncio

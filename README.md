@@ -195,6 +195,19 @@ uv run python src/worker_main.py
 uv run uvicorn api.main:app --host 0.0.0.0 --port 8764
 ```
 
+用 `systemd` 托管宿主机 manager：
+
+```bash
+chmod +x scripts/run_manager.sh scripts/install_systemd_service.sh
+./scripts/install_systemd_service.sh --system
+```
+
+如果你更想装成当前用户的 user service：
+
+```bash
+./scripts/install_systemd_service.sh --user
+```
+
 容器方式：
 
 ```bash

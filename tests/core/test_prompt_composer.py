@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from core.prompt_composer import prompt_composer
 from core.soul_store import SoulPayload
 
@@ -321,3 +323,13 @@ def test_prompt_composer_manager_contract_blocks_default_memory_file_reads(monke
     assert "【当前会话上下文约束】" in text
     assert "默认不要再调用 `read` 读取 `data/user/MEMORY.md`" in text
     assert "本块优先级高于旧文档里任何“先读 MEMORY.md”" in text
+
+
+def test_manager_agents_doc_does_not_expose_auto_loaded_core_files():
+    agents_path = Path(__file__).resolve().parents[2] / "data" / "AGENTS.md"
+    text = agents_path.read_text(encoding="utf-8")
+
+    assert "每轮对话必须全量加载" not in text
+    assert "`data/SOUL.MD`" not in text
+    assert "`data/AGENTS.md`" not in text
+    assert "系统上下文注入" in text

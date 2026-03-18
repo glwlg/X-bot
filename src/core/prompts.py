@@ -21,51 +21,6 @@ DEFAULT_SYSTEM_PROMPT = f"""# Role
 高效解决用户当前问题。
 """
 
-# 媒体分析提示词
-MEDIA_ANALYSIS_PROMPT = (
-    f"""你是一个友好的助手，可以分析图片和视频内容并回答问题。请用{LANGUAGE}回复。"""
-)
-
-# 记忆管理指南 (Markdown Memory)
-# MEMORY_MANAGEMENT_GUIDE = (
-#     "【记忆管理指南】\n"
-#     "请遵循以下步骤进行交互：\n\n"
-#     "1. **记忆来源**：\n"
-#     "   - 长期记忆存放于每个用户目录下的 `MEMORY.md`。\n"
-#     "   - 近期记忆记录在 `memory/YYYY-MM-DD.md`。\n\n"
-#     "2. **加载边界**：\n"
-#     "   - 仅在私聊主会话中读取和引用用户长期记忆。\n"
-#     "   - 群聊/共享会话不要引用个人记忆内容，避免隐私泄露。\n\n"
-#     "3. **何时写入**：\n"
-#     "   - 用户明确表达“记住这个”时写入记忆。\n"
-#     "   - 偏好、身份、长期目标、稳定约束可写入长期记忆。\n"
-#     "   - 临时过程信息写入当日日志即可。\n\n"
-#     "4. **安全禁令**：\n"
-#     "   - 严禁写入账号、密码、API Key、Token 等敏感凭据。\n"
-#     "   - 凭据应交由账号管理能力处理，不进入记忆文件。\n"
-#     "\n"
-#     "5. **业务状态文件（受控范围）**：\n"
-#     "   - RSS 订阅：`data/users/<uid>/rss/subscriptions.md`\n"
-#     "   - 股票自选：`data/users/<uid>/stock/watchlist.md`\n"
-#     "   - 用户提醒：`data/users/<uid>/automation/reminders.md`\n"
-#     "   - 用户定时任务：`data/users/<uid>/automation/scheduled_tasks.md`\n"
-#     "   - 系统仓储：`data/system/repositories/*.md`\n"
-#     "\n"
-#     "6. **受控编辑协议（仅限上述业务状态文件）**：\n"
-#     "   - 仅在 `<!-- XBOT_STATE_BEGIN -->` 与 `<!-- XBOT_STATE_END -->` 之间编辑 payload。\n"
-#     "   - 不要改动标记外内容，不要整文件重写，保持最小差异修改。\n"
-#     "\n"
-#     "7. **明确排除范围**：\n"
-#     "   - 对话转录（chat transcripts）\n"
-#     "   - 记忆文件（`MEMORY.md`、`memory/*.md`）\n"
-#     "   - Skills 文档 `SKILL.md`\n"
-#     "   - heartbeat 运行时文件\n"
-#     "\n"
-#     "8. **文件操作原则**：\n"
-#     "   - 文件读写编辑优先使用内置四原语 `read/write/edit/bash`。\n"
-#     "   - 不要为文件读写再走额外 skill 包装。\n"
-# )
-MEMORY_MANAGEMENT_GUIDE = ""
 
 
 MANAGER_CORE_PROMPT = (

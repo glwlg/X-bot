@@ -16,7 +16,7 @@ from core.config import is_user_allowed, get_client_for_model
 from core.model_config import get_voice_model
 from core.platform.exceptions import MediaProcessingError
 from services.openai_adapter import build_messages
-from user_context import add_message, get_user_context
+from user_context import add_message, bind_delivery_target, get_user_context
 from core.platform.models import MessageType, UnifiedContext
 from .ai_handlers import _acknowledge_received
 from .media_utils import extract_media_input
@@ -422,6 +422,7 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
             await ctx.edit_message(msg_id, "❌ 未能读取语音数据，请重试。")
             return
 
+        await bind_delivery_target(ctx, user_id)
         await process_as_voice_message(
             ctx=ctx,
             voice_bytes=voice_bytes,

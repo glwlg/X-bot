@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import shlex
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Set
@@ -193,43 +192,6 @@ class ToolCallDispatcher:
                     return candidate
         return runtime_user
 
-    def _normalize_legacy_user_path(
-        self,
-        *,
-        tool_name: str,
-        args: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        if tool_name not in {"read", "write", "edit"}:
-            return args
-
-        path = str(args.get("path") or "").strip()
-        if not path:
-            return args
-
-        normalized = path
-        replacements = (
-            ("data/users/", "data/user/"),
-            ("./data/users/", "./data/user/"),
-            ("/app/data/users/", "/app/data/user/"),
-        )
-
-        for prefix, target_prefix in replacements:
-            if not normalized.startswith(prefix):
-                continue
-            remainder = normalized[len(prefix) :]
-            if "/" not in remainder:
-                continue
-            _, tail = remainder.split("/", 1)
-            normalized = f"{target_prefix}{tail}"
-            break
-
-        if normalized == path:
-            return args
-
-        patched = dict(args or {})
-        patched["path"] = normalized
-        return patched
-
     def _is_manager_runtime(self) -> bool:
         uid = str(self.runtime_user_id or "").strip().lower()
         platform = str(self.platform_name or "").strip().lower()
@@ -312,27 +274,6 @@ class ToolCallDispatcher:
         patched = dict(args or {})
         patched["command"] = f"export {' '.join(export_parts)} && {command}"
         return patched
-
-    @staticmethod
-    def _normalize_legacy_user_bash_command(command: str) -> str:
-        raw = str(command or "")
-        if not raw:
-            return raw
-
-        patterns = (
-            (r"/app/data/users/[^/\s'\"`]+/", "/app/data/user/"),
-            (r"\./data/users/[^/\s'\"`]+/", "./data/user/"),
-            (r"data/users/[^/\s'\"`]+/", "data/user/"),
-        )
-
-        normalized = raw
-        for pattern, replacement in patterns:
-            normalized = re.sub(pattern, replacement, normalized)
-
-        normalized = normalized.replace("/app/data/users/", "/app/data/user/")
-        normalized = normalized.replace("./data/users/", "./data/user/")
-        normalized = normalized.replace("data/users/", "data/user/")
-        return normalized
 
     def _apply_loaded_skill_bash_context(self, args: Dict[str, Any]) -> Dict[str, Any]:
         command = str(args.get("command") or "").strip()
@@ -523,15 +464,9 @@ class ToolCallDispatcher:
                     "failure_mode": "recoverable",
                 }
                 return blocked
-            normalized_args = self._normalize_legacy_user_path(
-                tool_name=tool_name,
-                args=dict(args or {}),
-            )
+            normalized_args = dict(args or {})
             if tool_name == "bash":
                 normalized_args = dict(normalized_args)
-                normalized_args["command"] = self._normalize_legacy_user_bash_command(
-                    str(normalized_args.get("command") or "")
-                )
                 normalized_args = self._apply_loaded_skill_bash_context(normalized_args)
                 normalized_args = self._inject_runtime_bash_env(normalized_args)
             result = await self.tool_broker.execute_core_tool(

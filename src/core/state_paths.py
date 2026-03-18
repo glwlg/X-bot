@@ -25,12 +25,6 @@ def shared_user_path(*parts: str) -> Path:
     return _append_safe_parts(single_user_root(), parts)
 
 
-def users_root() -> Path:
-    root = (_runtime_data_dir() / "users").resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    return root
-
-
 def repo_root() -> Path:
     root = system_path("repositories")
     root.mkdir(parents=True, exist_ok=True)

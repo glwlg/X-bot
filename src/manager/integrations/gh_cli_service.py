@@ -298,6 +298,7 @@ class GhCliService:
             "platform": _safe_text(notify.get("platform"), limit=64),
             "chat_id": _safe_text(notify.get("chat_id"), limit=128),
             "user_id": _safe_text(notify.get("user_id"), limit=80),
+            "session_id": _safe_text(notify.get("session_id"), limit=120),
         }
         if payload["platform"] and payload["chat_id"]:
             return payload
@@ -308,6 +309,8 @@ class GhCliService:
             payload["platform"] = _safe_text(target.get("platform"), limit=64)
         if not payload["chat_id"]:
             payload["chat_id"] = _safe_text(target.get("chat_id"), limit=128)
+        if not payload["session_id"]:
+            payload["session_id"] = _safe_text(target.get("session_id"), limit=120)
         return payload
 
     async def _push_notify(self, notify: Dict[str, Any], text: str) -> None:
@@ -319,6 +322,9 @@ class GhCliService:
             chat_id=payload["chat_id"],
             text=text,
             filename_prefix="gh-auth",
+            record_history=bool(payload.get("user_id")),
+            history_user_id=payload.get("user_id", ""),
+            history_session_id=payload.get("session_id", ""),
         )
 
     async def _auth_status_command(self, hostname: str) -> Dict[str, Any]:

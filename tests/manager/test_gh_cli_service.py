@@ -159,6 +159,8 @@ async def test_auth_background_completion_updates_session_and_notifies(
     assert session["status"] == "authenticated"
     assert sent_messages
     assert "GitHub 登录已完成" in str(sent_messages[0]["text"])
+    assert sent_messages[0]["record_history"] is True
+    assert sent_messages[0]["history_user_id"] == "user-1"
 
 
 @pytest.mark.asyncio

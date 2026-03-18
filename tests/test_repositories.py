@@ -15,12 +15,11 @@ class TestRepositoryBase:
     async def test_init_db(self, mock_db):
         """测试仓储目录初始化"""
         from core.state_io import init_db
-        from core.state_paths import repo_root, users_root
+        from core.state_paths import repo_root
 
         await init_db()
 
         assert repo_root().exists()
-        assert users_root().exists()
 
     def test_user_path_uses_per_user_root(self, mock_db):
         from core.state_paths import shared_user_path, user_path

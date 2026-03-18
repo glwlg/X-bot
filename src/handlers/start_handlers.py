@@ -214,7 +214,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
             if data == "task_continue":
                 resume = await manager_closure_service.resume_waiting_task(
                     user_id=hb_user_id,
-                    user_message="continue",
+                    user_message="",
                     source="button",
                 )
                 if bool(resume.get("ok")):

@@ -28,6 +28,7 @@ class OrchestratorRuntimeContext:
     manager_runtime: bool
     task_id: str
     task_inbox_id: str
+    session_id: str = ""
     session_state_active: bool = False
     workspace_event_logged: bool = False
 
@@ -80,6 +81,7 @@ class OrchestratorRuntimeContext:
         if not task_id:
             task_id = f"{int(datetime.datetime.now().timestamp())}"
         task_inbox_id = str(user_data.get("task_inbox_id") or "").strip()
+        session_id = str(user_data.get("current_session_id") or "").strip()
 
         return cls(
             user_id=user_id,
@@ -94,6 +96,7 @@ class OrchestratorRuntimeContext:
             manager_runtime=manager_runtime,
             task_id=str(task_id),
             task_inbox_id=task_inbox_id,
+            session_id=session_id,
         )
 
     async def append_session_event(self, note: str) -> None:
@@ -119,20 +122,25 @@ class OrchestratorRuntimeContext:
             return ""
 
         try:
+            payload = {
+                "task_id": self.task_id,
+                "runtime_user_id": self.runtime_user_id,
+                "platform": self.platform_name,
+            }
+            metadata = {
+                "runtime_agent_kind": self.runtime_agent_kind,
+            }
+            if self.session_id:
+                payload["session_id"] = self.session_id
+                metadata["session_id"] = self.session_id
             envelope = await task_inbox.submit(
                 source=self._task_inbox_source(),
                 goal=goal,
                 user_id=self.user_id,
-                payload={
-                    "task_id": self.task_id,
-                    "runtime_user_id": self.runtime_user_id,
-                    "platform": self.platform_name,
-                },
+                payload=payload,
                 priority="normal",
                 requires_reply=bool(self.manager_runtime),
-                metadata={
-                    "runtime_agent_kind": self.runtime_agent_kind,
-                },
+                metadata=metadata,
             )
         except Exception as exc:
             logger.warning(

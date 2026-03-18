@@ -23,10 +23,9 @@ from core.platform.exceptions import MediaProcessingError, MessageSendError
 from core.runtime_callbacks import pop_runtime_callback, set_runtime_callback
 from services.openai_adapter import generate_text
 
-from user_context import get_user_context, add_message
+from user_context import add_message, bind_delivery_target, get_user_context
 from stats import increment_stat
 from core.prompt_composer import prompt_composer
-from handlers.chat_task_bridge import maybe_bind_recent_followup_context
 from .media_utils import extract_media_input
 from .message_utils import process_and_send_code_files
 
@@ -59,6 +58,11 @@ def _env_float(name: str, default: float, minimum: float) -> float:
     except Exception:
         value = default
     return max(minimum, value)
+
+
+def _env_flag(name: str, default: bool) -> bool:
+    raw_default = "true" if default else "false"
+    return str(os.getenv(name, raw_default)).strip().lower() == "true"
 
 
 def _stream_cut_index(text: str, max_chars: int) -> int:
@@ -355,9 +359,7 @@ def _build_manager_progress_text(snapshot: dict[str, Any]) -> str:
         lines.append("动作：检测到语义重复调用，已停止继续搜索")
     elif event == "tool_budget_guard":
         lines.append("动作：单工具调用达到预算上限")
-    elif event == "final_response":
-        lines.append("动作：正在整理最终回复")
-    else:
+    elif event != "final_response":
         lines.append("动作：处理中")
 
     if detail_label and detail_value:
@@ -652,12 +654,8 @@ async def _fetch_user_memory_snapshot(user_id: str) -> str:
 async def _try_handle_waiting_confirmation(
     ctx: UnifiedContext, user_message: str
 ) -> bool:
-    text = (user_message or "").strip().lower()
-    if not text:
+    if not str(user_message or "").strip():
         return False
-
-    stop_cues = {"停止", "取消", "停止任务", "stop", "cancel"}
-    intent_stop = text in stop_cues
 
     from core.heartbeat_store import heartbeat_store
     from manager.relay.closure_service import manager_closure_service
@@ -666,23 +664,6 @@ async def _try_handle_waiting_confirmation(
     active_task = await heartbeat_store.get_session_active_task(user_id)
     if not active_task or active_task.get("status") != "waiting_user":
         return False
-
-    task_id = str(active_task.get("id"))
-    if intent_stop:
-        await heartbeat_store.update_session_active_task(
-            user_id,
-            status="cancelled",
-            needs_confirmation=False,
-            confirmation_deadline="",
-            clear_active=True,
-            result_summary="Cancelled by user confirmation text.",
-        )
-        await heartbeat_store.release_lock(user_id)
-        await heartbeat_store.append_session_event(
-            user_id, f"user_stop_by_text:{task_id}"
-        )
-        await ctx.reply("🛑 已停止该任务。")
-        return True
 
     resume = await manager_closure_service.resume_waiting_task(
         user_id=user_id,
@@ -754,13 +735,6 @@ async def _try_handle_memory_commands(ctx: UnifiedContext, user_message: str) ->
     return False
 
 
-async def _maybe_bind_recent_followup_context(
-    ctx: UnifiedContext,
-    user_message: str,
-) -> str:
-    return await maybe_bind_recent_followup_context(ctx, user_message)
-
-
 async def handle_ai_chat(ctx: UnifiedContext) -> None:
     """
     处理普通文本消息，使用对话模型生成回复
@@ -784,15 +758,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
 
     await _acknowledge_received(ctx)
 
-    try:
-        from core.heartbeat_store import heartbeat_store
-
-        await heartbeat_store.set_delivery_target(
-            str(user_id), str(platform_name), str(chat_id)
-        )
-    except Exception:
-        logger.debug("Failed to update heartbeat delivery target.", exc_info=True)
-
+    await bind_delivery_target(ctx, user_id)
     await add_message(ctx, user_id, "user", user_message)
 
     if await _try_handle_waiting_confirmation(ctx, user_message):
@@ -850,7 +816,6 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         if is_media and not has_media:
             return
 
-    followup_context = await _maybe_bind_recent_followup_context(ctx, user_message)
     received_phrases, loading_phrases = _build_runtime_phrase_pools(str(user_id))
     default_thinking_text = (
         "🤔 让我看看引用具体内容..." if has_media else received_phrases[0]
@@ -860,11 +825,6 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
     final_user_message = user_message
     if extra_context:
         final_user_message = extra_context + "用户请求：" + user_message
-    if followup_context:
-        final_user_message = (
-            f"{followup_context}\n\n当前用户补充：{final_user_message}"
-        ).strip()
-
     await ctx.send_chat_action(action="typing")
 
     state = {
@@ -902,8 +862,12 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                 manager_progress_thread_id = int(thread_candidate)
 
     can_update = getattr(ctx._adapter, "can_update_message", True)
+    manager_progress_stream_enabled = _env_flag(
+        "AI_MANAGER_PROGRESS_STREAM_ENABLED",
+        False,
+    )
     stream_segment_enabled = (
-        os.getenv("AI_SEGMENT_STREAM_ENABLED", "true").lower() == "true"
+        _env_flag("AI_SEGMENT_STREAM_ENABLED", True)
         and str(platform_name or "").lower() in {"telegram", "discord"}
         and not has_media
     )
@@ -930,6 +894,8 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         return thinking_msg
 
     async def _push_manager_progress_update(*, force: bool) -> None:
+        if not manager_progress_stream_enabled:
+            return
         progress_text = str(state.get("manager_progress_text") or "").strip()
         if not progress_text:
             return
@@ -1062,7 +1028,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         state["manager_progress_text"] = _build_manager_progress_text(progress_snapshot)
         state["last_update_time"] = time.time()
 
-        if event_name in manager_progress_event_names:
+        if manager_progress_stream_enabled and event_name in manager_progress_event_names:
             await _push_manager_progress_update(force=True)
 
     async def loading_animation() -> None:
@@ -1078,7 +1044,11 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                 continue
 
             manager_progress_text = str(state.get("manager_progress_text") or "").strip()
-            if manager_progress_text and not state["final_text"]:
+            if (
+                manager_progress_stream_enabled
+                and manager_progress_text
+                and not state["final_text"]
+            ):
                 try:
                     await _push_manager_progress_update(force=False)
                 except Exception as exc:
@@ -1358,6 +1328,7 @@ async def handle_ai_photo(ctx: UnifiedContext) -> None:
 
     caption = media.caption or "请分析这张图片"
     history_text = f"【用户发送了一张图片】 {caption}"
+    await bind_delivery_target(ctx, user_id)
     await add_message(ctx, user_id, "user", history_text)
 
     thinking_msg = await ctx.reply("🔍 让我仔细看看这张图...")
@@ -1532,6 +1503,7 @@ async def handle_ai_video(ctx: UnifiedContext) -> None:
     caption = media.caption or "请分析这个视频的内容"
 
     # Save to history immediately
+    await bind_delivery_target(ctx, user_id)
     await add_message(ctx, user_id, "user", f"【用户发送了一个视频】 {caption}")
 
     if media.file_size and media.file_size > 20 * 1024 * 1024:  # 20MB 限制
@@ -1655,6 +1627,7 @@ async def handle_sticker_message(ctx: UnifiedContext) -> None:
     caption = "请描述这个表情包的情感和内容"
 
     # Save to history
+    await bind_delivery_target(ctx, user_id)
     await add_message(ctx, user_id, "user", "【用户发送了一个表情包】")
 
     thinking_msg = await ctx.reply("🤔 这个表情包有点意思...")

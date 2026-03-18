@@ -9,7 +9,7 @@ os.environ.setdefault("LLM_API_KEY", "test-key")
 from core.agent_orchestrator import AgentOrchestrator
 from core.extension_router import ExtensionCandidate
 from services.ai_service import AiService
-from services.skill_router import SkillRoutingDecision
+from services.intent_router import RoutingDecision
 import services.ai_service as ai_service_module
 
 
@@ -53,9 +53,18 @@ async def test_orchestrator_manager_tool_surface_matches_current_runtime(monkeyp
         ]
         yield "ok"
 
+    async def fake_route(**_kwargs):
+        return RoutingDecision(
+            request_mode="chat",
+            candidate_skills=[],
+            reason="chat",
+            confidence=0.9,
+        )
+
     monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
     monkeypatch.setattr(orchestrator, "_runtime_tool_allowed", lambda **_kwargs: True)
     monkeypatch.setattr(orchestrator.extension_router, "route", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr("core.agent_orchestrator.intent_router.route", fake_route)
 
     ctx = DummyContext()
     message_history = [{"role": "user", "parts": [{"text": "你好"}]}]
@@ -79,7 +88,7 @@ async def test_orchestrator_manager_tool_surface_matches_current_runtime(monkeyp
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_skill_router_narrows_prompt_and_load_skill(monkeypatch):
+async def test_orchestrator_intent_router_narrows_prompt_and_load_skill(monkeypatch):
     orchestrator = AgentOrchestrator()
     captured = {}
 
@@ -97,9 +106,9 @@ async def test_orchestrator_skill_router_narrows_prompt_and_load_skill(monkeypat
         ]
         yield "ok"
 
-    async def fake_skill_route(**_kwargs):
-        return SkillRoutingDecision(
-            ok=True,
+    async def fake_route(**_kwargs):
+        return RoutingDecision(
+            request_mode="task",
             candidate_skills=["web_search"],
             reason="match",
             confidence=0.9,
@@ -127,7 +136,7 @@ async def test_orchestrator_skill_router_narrows_prompt_and_load_skill(monkeypat
             ),
         ],
     )
-    monkeypatch.setattr("core.agent_orchestrator.skill_router.route", fake_skill_route)
+    monkeypatch.setattr("core.agent_orchestrator.intent_router.route", fake_route)
     monkeypatch.setattr("core.agent_orchestrator.prompt_composer.compose_base", fake_compose_base)
 
     ctx = DummyContext()
@@ -139,7 +148,7 @@ async def test_orchestrator_skill_router_narrows_prompt_and_load_skill(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_skill_router_empty_result_removes_load_skill(monkeypatch):
+async def test_orchestrator_intent_router_empty_result_removes_load_skill(monkeypatch):
     orchestrator = AgentOrchestrator()
     captured = {}
 
@@ -157,9 +166,9 @@ async def test_orchestrator_skill_router_empty_result_removes_load_skill(monkeyp
         ]
         yield "ok"
 
-    async def fake_skill_route(**_kwargs):
-        return SkillRoutingDecision(
-            ok=True,
+    async def fake_route(**_kwargs):
+        return RoutingDecision(
+            request_mode="chat",
             candidate_skills=[],
             reason="none",
             confidence=0.7,
@@ -182,7 +191,7 @@ async def test_orchestrator_skill_router_empty_result_removes_load_skill(monkeyp
             )
         ],
     )
-    monkeypatch.setattr("core.agent_orchestrator.skill_router.route", fake_skill_route)
+    monkeypatch.setattr("core.agent_orchestrator.intent_router.route", fake_route)
     monkeypatch.setattr("core.agent_orchestrator.prompt_composer.compose_base", fake_compose_base)
 
     ctx = DummyContext()
@@ -191,6 +200,57 @@ async def test_orchestrator_skill_router_empty_result_removes_load_skill(monkeyp
 
     assert captured["allowed_skill_names"] == []
     assert "load_skill" not in captured["tool_names"]
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_chat_mode_skips_task_tracking(monkeypatch):
+    orchestrator = AgentOrchestrator()
+    captured = {"task_submit": 0, "session_activate": 0}
+
+    async def fake_stream(
+        message_history,
+        tools=None,
+        tool_executor=None,
+        system_instruction=None,
+        event_callback=None,
+    ):
+        _ = (message_history, tools, tool_executor, system_instruction, event_callback)
+        yield "ok"
+
+    async def fake_route(**_kwargs):
+        return RoutingDecision(
+            request_mode="chat",
+            candidate_skills=[],
+            reason="chat",
+            confidence=0.9,
+        )
+
+    async def fake_submit(**_kwargs):
+        captured["task_submit"] += 1
+        return SimpleNamespace(task_id="inbox-1")
+
+    async def fake_activate_session(_self, **_kwargs):
+        captured["session_activate"] += 1
+        return None
+
+    monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
+    monkeypatch.setattr(orchestrator, "_runtime_tool_allowed", lambda **_kwargs: True)
+    monkeypatch.setattr(orchestrator.extension_router, "route", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr("core.agent_orchestrator.intent_router.route", fake_route)
+    monkeypatch.setattr("core.agent_orchestrator.task_inbox.submit", fake_submit)
+    monkeypatch.setattr(
+        "core.agent_orchestrator.OrchestratorRuntimeContext.activate_session",
+        fake_activate_session,
+    )
+
+    ctx = DummyContext()
+    message_history = [{"role": "user", "parts": [{"text": "我们来玩猜人物"}]}]
+
+    chunks = [chunk async for chunk in orchestrator.handle_message(ctx, message_history)]
+
+    assert chunks == ["ok"]
+    assert captured["task_submit"] == 0
+    assert captured["session_activate"] == 0
 
 
 @pytest.mark.asyncio
@@ -213,8 +273,17 @@ async def test_orchestrator_routes_with_recent_user_context(monkeypatch):
         _ = (message_history, tools, tool_executor, system_instruction, event_callback)
         yield "ok"
 
+    async def fake_intent_route(**_kwargs):
+        return RoutingDecision(
+            request_mode="task",
+            candidate_skills=[],
+            reason="task",
+            confidence=0.9,
+        )
+
     monkeypatch.setattr(orchestrator.extension_router, "route", fake_route)
     monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
+    monkeypatch.setattr("core.agent_orchestrator.intent_router.route", fake_intent_route)
 
     ctx = DummyContext()
     message_history = [
@@ -247,8 +316,17 @@ async def test_orchestrator_rejects_non_injected_tool_call(monkeypatch):
             await event_callback("final_response", {"text_preview": text})
         yield text
 
+    async def fake_route(**_kwargs):
+        return RoutingDecision(
+            request_mode="chat",
+            candidate_skills=[],
+            reason="chat",
+            confidence=0.9,
+        )
+
     monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
     monkeypatch.setattr(orchestrator.extension_router, "route", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr("core.agent_orchestrator.intent_router.route", fake_route)
 
     ctx = DummyContext()
     message_history = [{"role": "user", "parts": [{"text": "你好"}]}]

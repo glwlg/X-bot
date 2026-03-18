@@ -143,12 +143,13 @@ async def test_heartbeat_store_uses_single_canonical_files(tmp_path, monkeypatch
     store._locks.clear()
 
     await store.add_checklist_item("1001", "alpha heartbeat")
-    await store.set_delivery_target("1001", "telegram", "chat-1")
+    await store.set_delivery_target("1001", "telegram", "chat-1", session_id="sess-1001")
 
     state = await store.get_state("2002")
 
     assert state["checklist"] == ["alpha heartbeat"]
     assert state["status"]["delivery"]["last_chat_id"] == "chat-1"
+    assert state["status"]["delivery"]["last_session_id"] == "sess-1001"
     assert "user_id" not in state["spec"]
     assert "user_id" not in state["status"]
     assert store.heartbeat_path("1001") == tmp_path / "HEARTBEAT.md"

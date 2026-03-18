@@ -207,11 +207,21 @@ class SubagentSupervisor:
         )
         chat_id = str(chat_id_override or getattr(msg_chat, "id", "") or "").strip()
         user_id = str(user_id_override or getattr(msg_user, "id", "") or "").strip()
+        bound_session_id = ""
         if user_id and (not platform or not chat_id):
             with contextlib.suppress(Exception):
                 target = await heartbeat_store.get_delivery_target(user_id)
                 platform = platform or str(target.get("platform") or "").strip().lower()
                 chat_id = chat_id or str(target.get("chat_id") or "").strip()
+                bound_session_id = str(target.get("session_id") or "").strip()
+        elif user_id:
+            with contextlib.suppress(Exception):
+                target = await heartbeat_store.get_delivery_target(user_id)
+                bound_session_id = str(target.get("session_id") or "").strip()
+
+        task_metadata_payload = dict(task_metadata or {})
+        if bound_session_id and not str(task_metadata_payload.get("session_id") or "").strip():
+            task_metadata_payload["session_id"] = bound_session_id
 
         subagent_id = f"subagent-{uuid4().hex[:10]}"
         run = _SubagentRun(
@@ -228,7 +238,7 @@ class SubagentSupervisor:
             parent_task_inbox_id=str(parent_task_inbox_id or "").strip(),
             notify_platform=platform,
             notify_chat_id=chat_id,
-            task_metadata=dict(task_metadata or {}),
+            task_metadata=task_metadata_payload,
         )
 
         if safe_mode == "detached":
@@ -718,6 +728,11 @@ class SubagentSupervisor:
                 chat_id=run.notify_chat_id,
                 text=delivery_text,
                 filename_prefix="subagent",
+                record_history=bool(str(run.user_id or "").strip()),
+                history_user_id=run.user_id,
+                history_session_id=str(
+                    (run.task_metadata or {}).get("session_id") or ""
+                ).strip(),
             )
             if delivery_files:
                 delivered = (

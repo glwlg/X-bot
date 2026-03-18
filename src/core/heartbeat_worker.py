@@ -243,6 +243,7 @@ class HeartbeatWorker:
             target = delivery_target
             platform = target.get("platform", "").strip()
             chat_id = target.get("chat_id", "").strip()
+            session_id = str(target.get("session_id", "") or "").strip()
             if not platform or not chat_id:
                 logger.info(
                     "Heartbeat result skipped push: no delivery target for user=%s",
@@ -253,7 +254,11 @@ class HeartbeatWorker:
             level = str(heartbeat_meta.get("last_level", level)).upper()
             text_to_push = final_text
             pushed = await self._push_to_target(
-                platform=platform, chat_id=chat_id, text=text_to_push
+                platform=platform,
+                chat_id=chat_id,
+                text=text_to_push,
+                user_id=user_id,
+                session_id=session_id,
             )
             if not pushed:
                 logger.warning(
@@ -530,6 +535,8 @@ class HeartbeatWorker:
         platform: str,
         chat_id: str,
         text: str,
+        user_id: str = "",
+        session_id: str = "",
     ) -> bool:
         return await push_background_text(
             platform=platform,
@@ -540,9 +547,20 @@ class HeartbeatWorker:
             file_enabled=True,
             file_threshold=1,
             max_text_chunks=0,
+            record_history=bool(str(user_id or "").strip()),
+            history_user_id=user_id,
+            history_session_id=session_id,
         )
 
-    async def _push_to_target(self, platform: str, chat_id: str, text: str) -> bool:
+    async def _push_to_target(
+        self,
+        platform: str,
+        chat_id: str,
+        text: str,
+        *,
+        user_id: str = "",
+        session_id: str = "",
+    ) -> bool:
         try:
             return await push_background_text(
                 platform=platform,
@@ -552,6 +570,9 @@ class HeartbeatWorker:
                 file_enabled=self.push_file_enabled,
                 file_threshold=self.push_file_threshold,
                 max_text_chunks=self.push_max_text_chunks,
+                record_history=bool(str(user_id or "").strip()),
+                history_user_id=user_id,
+                history_session_id=session_id,
             )
         except Exception as exc:
             logger.error(

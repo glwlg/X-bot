@@ -283,7 +283,7 @@ async def test_button_callback_continue_resumes_waiting_task(monkeypatch):
     assert fake_service.calls == [
         {
             "user_id": "u-callback",
-            "user_message": "continue",
+            "user_message": "",
             "source": "button",
         }
     ]

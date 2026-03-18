@@ -6,62 +6,69 @@ import pytest
 
 
 class TestIntentRouter:
-    """测试意图路由"""
+    """测试统一请求路由"""
 
     @pytest.mark.asyncio
-    async def test_intent_router_classify_maps_route_to_task_or_chat(self, monkeypatch):
-        """测试路由结果映射为 task/chat"""
-        from services.intent_router import DispatchDecision, intent_router
+    async def test_intent_router_classify_returns_task_or_chat(self, monkeypatch):
+        from services.intent_router import RoutingDecision, intent_router
 
-        async def _fake_route_task(_message: str):
-            return DispatchDecision(route="manager_task", confidence=0.9, reason="task")
+        async def _fake_route_task(**_kwargs):
+            return RoutingDecision(
+                request_mode="task",
+                candidate_skills=[],
+                confidence=0.9,
+                reason="task",
+            )
 
         monkeypatch.setattr(intent_router, "route", _fake_route_task)
         task_decision = await intent_router.classify("请部署 n8n")
 
-        assert task_decision.intent == "task"
+        assert task_decision.request_mode == "task"
         assert task_decision.confidence == 0.9
         assert task_decision.reason == "task"
 
-        async def _fake_route_chat(_message: str):
-            return DispatchDecision(route="manager_chat", confidence=0.7, reason="chat")
+        async def _fake_route_chat(**_kwargs):
+            return RoutingDecision(
+                request_mode="chat",
+                candidate_skills=[],
+                confidence=0.7,
+                reason="chat",
+            )
 
         monkeypatch.setattr(intent_router, "route", _fake_route_chat)
         chat_decision = await intent_router.classify("你好")
 
-        assert chat_decision.intent == "chat"
+        assert chat_decision.request_mode == "chat"
         assert chat_decision.confidence == 0.7
         assert chat_decision.reason == "chat"
 
-
-class TestSkillRouter:
     @pytest.mark.asyncio
-    async def test_skill_router_filters_to_known_top5(self, monkeypatch):
+    async def test_intent_router_filters_to_known_top5(self, monkeypatch):
         from core.extension_router import ExtensionCandidate
-        from services.skill_router import skill_router
+        from services.intent_router import intent_router
 
         async def _fake_generate_text(**kwargs):
             _ = kwargs
             return (
-                '{"candidate_skills":["web_search","unknown","download_video",'
+                '{"request_mode":"task","candidate_skills":["web_search","unknown","download_video",'
                 '"rss_subscribe","web_search","news_digest","skill_manager"],'
                 '"reason":"matched","confidence":0.82}'
             )
 
         monkeypatch.setattr(
-            "services.skill_router.generate_text",
+            "services.intent_router.generate_text",
             _fake_generate_text,
         )
         monkeypatch.setattr(
-            "services.skill_router.get_client_for_model",
+            "services.intent_router.get_client_for_model",
             lambda *_args, **_kwargs: object(),
         )
         monkeypatch.setattr(
-            "services.skill_router.get_routing_model",
+            "services.intent_router.get_routing_model",
             lambda: "routing/test",
         )
 
-        decision = await skill_router.route(
+        decision = await intent_router.route(
             dialog_messages=[
                 {"role": "user", "content": "帮我查新闻并顺手看看这个视频"}
             ],
@@ -99,7 +106,7 @@ class TestSkillRouter:
             ],
         )
 
-        assert decision.ok is True
+        assert decision.request_mode == "task"
         assert decision.candidate_skills == [
             "web_search",
             "download_video",
@@ -110,28 +117,30 @@ class TestSkillRouter:
         assert decision.confidence == 0.82
 
     @pytest.mark.asyncio
-    async def test_skill_router_returns_failure_on_invalid_json(self, monkeypatch):
+    async def test_intent_router_returns_task_fallback_on_invalid_json(
+        self, monkeypatch
+    ):
         from core.extension_router import ExtensionCandidate
-        from services.skill_router import skill_router
+        from services.intent_router import intent_router
 
         async def _fake_generate_text(**kwargs):
             _ = kwargs
             return "not-json"
 
         monkeypatch.setattr(
-            "services.skill_router.generate_text",
+            "services.intent_router.generate_text",
             _fake_generate_text,
         )
         monkeypatch.setattr(
-            "services.skill_router.get_client_for_model",
+            "services.intent_router.get_client_for_model",
             lambda *_args, **_kwargs: object(),
         )
         monkeypatch.setattr(
-            "services.skill_router.get_routing_model",
+            "services.intent_router.get_routing_model",
             lambda: "routing/test",
         )
 
-        decision = await skill_router.route(
+        decision = await intent_router.route(
             dialog_messages=[{"role": "user", "content": "你好"}],
             candidates=[
                 ExtensionCandidate(
@@ -142,7 +151,7 @@ class TestSkillRouter:
             ],
         )
 
-        assert decision.ok is False
+        assert decision.request_mode == "task"
         assert decision.candidate_skills == []
 
 

@@ -9,6 +9,7 @@ from core.heartbeat_store import heartbeat_store
 from core.platform.models import Chat, MessageType, UnifiedMessage, User
 from core.task_inbox import task_inbox
 from core.task_tracker_service import task_tracker_service
+from services.intent_router import RoutingDecision
 
 
 class DummyContext:
@@ -45,15 +46,30 @@ class DummyContext:
 def _reset_task_inbox(tmp_path):
     root = (tmp_path / "task_inbox").resolve()
     tasks_root = (root / "tasks").resolve()
+    archive_root = (root / "archive").resolve()
     events_path = (root / "events.jsonl").resolve()
     tasks_root.mkdir(parents=True, exist_ok=True)
-    events_path.write_text("", encoding="utf-8")
+    archive_root.mkdir(parents=True, exist_ok=True)
     task_inbox.persist = True
     task_inbox.root = root
     task_inbox.tasks_root = tasks_root
+    task_inbox.archive_root = archive_root
     task_inbox.events_path = events_path
     task_inbox._loaded = False
     task_inbox._tasks = {}
+
+
+@pytest.fixture(autouse=True)
+def _stub_intent_router(monkeypatch):
+    async def fake_route(**_kwargs):
+        return RoutingDecision(
+            request_mode="task",
+            candidate_skills=[],
+            reason="task",
+            confidence=0.9,
+        )
+
+    monkeypatch.setattr(orchestrator_module.intent_router, "route", fake_route)
 
 
 @pytest.mark.asyncio

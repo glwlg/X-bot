@@ -55,6 +55,7 @@ async def _remember_proactive_delivery_target(
     user_id: int | str,
     platform: str,
     chat_id: str,
+    session_id: str = "",
 ) -> None:
     target_platform = normalize_proactive_platform(platform)
     target_chat_id = str(chat_id or "").strip()
@@ -65,6 +66,7 @@ async def _remember_proactive_delivery_target(
             str(user_id or "").strip(),
             target_platform,
             target_chat_id,
+            session_id=session_id,
         )
     except Exception:
         logger.debug("Failed to remember proactive delivery target.", exc_info=True)
@@ -167,15 +169,29 @@ async def send_via_adapter(
     text: str,
     platform: str = "telegram",
     parse_mode: str = "Markdown",
+    user_id: int | str = "",
+    session_id: str = "",
+    record_history: bool = False,
     **kwargs,
 ):
     """Helper to send message via available adapters"""
     _ = (parse_mode, kwargs)
+    push_kwargs = {
+        "platform": str(platform or "telegram"),
+        "chat_id": str(chat_id or ""),
+        "text": str(text or ""),
+        "filename_prefix": "background",
+    }
+    if record_history and str(user_id or "").strip():
+        push_kwargs.update(
+            {
+                "record_history": True,
+                "history_user_id": str(user_id or "").strip(),
+                "history_session_id": str(session_id or "").strip(),
+            }
+        )
     ok = await push_background_text(
-        platform=str(platform or "telegram"),
-        chat_id=str(chat_id),
-        text=str(text or ""),
-        filename_prefix="background",
+        **push_kwargs,
     )
     if not ok:
         logger.warning("Background push failed platform=%s chat=%s", platform, chat_id)
@@ -194,7 +210,11 @@ async def send_reminder_job(
 
     try:
         await send_via_adapter(
-            chat_id=chat_id, text=f"⏰ **提醒**\n\n{message}", platform=platform
+            chat_id=chat_id,
+            text=f"⏰ **提醒**\n\n{message}",
+            platform=platform,
+            user_id=user_id,
+            record_history=True,
         )
     except Exception as e:
         logger.error(f"Failed to send reminder {reminder_id}: {e}")
@@ -600,6 +620,8 @@ async def _send_feed_updates(
                     chat_id=target_chat_id,
                     text=header,
                     platform=target_platform,
+                    user_id=uid,
+                    record_history=True,
                 )
                 if not delivery_ok:
                     break
@@ -758,6 +780,8 @@ async def stock_push_job():
                     chat_id=target_chat_id,
                     text=message,
                     platform=target_platform,
+                    user_id=user_id,
+                    record_history=True,
                 )
                 await _remember_proactive_delivery_target(
                     user_id,
@@ -930,6 +954,8 @@ async def run_skill_cron_job(
                         chat_id=target_chat_id,
                         text=f"⏰ **定时任务执行报告 ({instruction})**\n\n{full_response}",
                         platform=target_platform,
+                        user_id=user_id_text,
+                        record_history=True,
                     )
                     await _remember_proactive_delivery_target(
                         user_id_text,

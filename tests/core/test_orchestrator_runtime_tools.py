@@ -222,7 +222,7 @@ async def test_manager_allows_write_to_repo_code_path_when_policy_allows():
 
 
 @pytest.mark.asyncio
-async def test_manager_allows_write_to_runtime_data_path():
+async def test_manager_passes_current_runtime_data_path_through_unchanged():
     captured = {}
 
     async def append_event(_event: str):
@@ -255,7 +255,7 @@ async def test_manager_allows_write_to_runtime_data_path():
 
     result = await dispatcher.execute(
         name="write",
-        args={"path": "data/users/u-11/profile.json", "content": "{}"},
+        args={"path": "data/user/profile.json", "content": "{}"},
         execution_policy=None,
         started=time.perf_counter(),
     )
@@ -266,7 +266,7 @@ async def test_manager_allows_write_to_runtime_data_path():
 
 
 @pytest.mark.asyncio
-async def test_manager_rewrites_legacy_user1_path_for_read_tool(monkeypatch):
+async def test_manager_keeps_current_memory_path_for_read_tool(monkeypatch):
     async def append_event(_event: str):
         return None
 
@@ -297,7 +297,7 @@ async def test_manager_rewrites_legacy_user1_path_for_read_tool(monkeypatch):
 
     result = await dispatcher.execute(
         name="read",
-        args={"path": "data/users/user1/MEMORY.md", "start_line": 1, "max_lines": 10},
+        args={"path": "data/user/MEMORY.md", "start_line": 1, "max_lines": 10},
         execution_policy=None,
         started=time.perf_counter(),
     )
@@ -307,7 +307,7 @@ async def test_manager_rewrites_legacy_user1_path_for_read_tool(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_subagent_rewrites_legacy_user1_path_to_single_user_root(monkeypatch):
+async def test_subagent_keeps_current_memory_path_unchanged(monkeypatch):
     async def append_event(_event: str):
         return None
 
@@ -338,7 +338,7 @@ async def test_subagent_rewrites_legacy_user1_path_to_single_user_root(monkeypat
 
     result = await dispatcher.execute(
         name="read",
-        args={"path": "data/users/user1/MEMORY.md", "start_line": 1, "max_lines": 10},
+        args={"path": "data/user/MEMORY.md", "start_line": 1, "max_lines": 10},
         execution_policy=None,
         started=time.perf_counter(),
     )
@@ -348,7 +348,7 @@ async def test_subagent_rewrites_legacy_user1_path_to_single_user_root(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_bash_rewrites_legacy_user_path_to_single_user_root(monkeypatch):
+async def test_bash_keeps_current_memory_path_unchanged(monkeypatch):
     async def append_event(_event: str):
         return None
 
@@ -384,7 +384,7 @@ async def test_bash_rewrites_legacy_user_path_to_single_user_root(monkeypatch):
     result = await dispatcher.execute(
         name="bash",
         args={
-            "command": "ls -la /app/data/users/257675041/ && cat data/users/user1/MEMORY.md"
+            "command": "ls -la /app/data/user/ && cat data/user/MEMORY.md"
         },
         execution_policy=None,
         started=time.perf_counter(),
@@ -392,5 +392,4 @@ async def test_bash_rewrites_legacy_user_path_to_single_user_root(monkeypatch):
 
     assert result["ok"] is True
     assert "/app/data/user/" in captured["args"]["command"]
-    assert "data/user/MEMORY.md" in captured["args"]["command"]
-    assert "data/users/" not in captured["args"]["command"]
+    assert "cat data/user/MEMORY.md" in captured["args"]["command"]

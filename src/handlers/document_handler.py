@@ -11,7 +11,7 @@ from core.config import is_user_allowed, get_client_for_model
 from core.model_config import get_current_model
 from core.platform.exceptions import MediaProcessingError
 from services.openai_adapter import generate_text
-from user_context import add_message
+from user_context import add_message, bind_delivery_target
 from core.platform.models import UnifiedContext, MessageType
 from .ai_handlers import _acknowledge_received
 from .media_utils import extract_media_input
@@ -128,6 +128,7 @@ async def handle_document(ctx: UnifiedContext) -> None:
     thinking_msg = await ctx.reply("📄 正在读取文档内容...")
 
     # 记录用户文档消息到上下文
+    await bind_delivery_target(ctx, user_id)
     await add_message(
         ctx,
         user_id,

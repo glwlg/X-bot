@@ -171,6 +171,7 @@ class HeartbeatStore:
             "delivery": {
                 "last_platform": "",
                 "last_chat_id": "",
+                "last_session_id": "",
             },
             "session": {
                 "active_task": None,
@@ -269,6 +270,10 @@ class HeartbeatStore:
         delivery.update(dict((data or {}).get("delivery") or {}))
         delivery["last_platform"] = _truncate(delivery.get("last_platform", ""), 64)
         delivery["last_chat_id"] = _truncate(delivery.get("last_chat_id", ""), 128)
+        delivery["last_session_id"] = _truncate(
+            delivery.get("last_session_id", ""),
+            120,
+        )
 
         session = dict(default["session"])
         session.update(dict((data or {}).get("session") or {}))
@@ -741,10 +746,15 @@ class HeartbeatStore:
         return {
             "platform": str(delivery.get("last_platform", "")).strip(),
             "chat_id": str(delivery.get("last_chat_id", "")).strip(),
+            "session_id": str(delivery.get("last_session_id", "")).strip(),
         }
 
     async def set_delivery_target(
-        self, user_id: str, platform: str, chat_id: str
+        self,
+        user_id: str,
+        platform: str,
+        chat_id: str,
+        session_id: str = "",
     ) -> None:
         _ = user_id
         async with self._scope_lock():
@@ -752,6 +762,14 @@ class HeartbeatStore:
             delivery = dict(status.get("delivery") or {})
             delivery["last_platform"] = _truncate(platform, 64)
             delivery["last_chat_id"] = _truncate(chat_id, 128)
+            bound_session_id = _truncate(session_id, 120)
+            if bound_session_id:
+                delivery["last_session_id"] = bound_session_id
+            else:
+                delivery["last_session_id"] = _truncate(
+                    delivery.get("last_session_id", ""),
+                    120,
+                )
             status["delivery"] = delivery
             status["last_update"] = _now_iso()
             self._write_status_unlocked(status)

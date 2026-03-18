@@ -36,7 +36,7 @@ async def test_heartbeat_store_shares_state_across_runtime_user_ids(tmp_path):
     store._locks.clear()
 
     await store.add_checklist_item("u1", "alpha item")
-    await store.set_delivery_target("u1", "telegram", "111")
+    await store.set_delivery_target("u1", "telegram", "111", session_id="sess-u1")
 
     state_u1 = await store.get_state("u1")
     state_u2 = await store.get_state("u2")
@@ -45,6 +45,8 @@ async def test_heartbeat_store_shares_state_across_runtime_user_ids(tmp_path):
     assert state_u2["checklist"] == ["alpha item"]
     assert state_u1["status"]["delivery"]["last_chat_id"] == "111"
     assert state_u2["status"]["delivery"]["last_chat_id"] == "111"
+    assert state_u1["status"]["delivery"]["last_session_id"] == "sess-u1"
+    assert state_u2["status"]["delivery"]["last_session_id"] == "sess-u1"
     assert store.heartbeat_path("u1") == store.heartbeat_path("u2")
 
 
@@ -163,10 +165,11 @@ async def test_heartbeat_store_delivery_and_session_state(tmp_path):
     store.root.mkdir(parents=True, exist_ok=True)
     store._locks.clear()
 
-    await store.set_delivery_target("u4", "telegram", "12345")
+    await store.set_delivery_target("u4", "telegram", "12345", session_id="sess-4")
     delivery = await store.get_delivery_target("u4")
     assert delivery["platform"] == "telegram"
     assert delivery["chat_id"] == "12345"
+    assert delivery["session_id"] == "sess-4"
 
     await store.set_session_active_task(
         "u4",

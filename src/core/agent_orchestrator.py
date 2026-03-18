@@ -24,7 +24,7 @@ from core.task_manager import task_manager
 from core.tool_access_store import tool_access_store
 from core.tool_broker import ToolBroker
 from services.ai_service import AiService
-from services.skill_router import skill_router
+from services.intent_router import intent_router
 
 logger = logging.getLogger(__name__)
 
@@ -138,15 +138,6 @@ class AgentOrchestrator:
         task_id = runtime_ctx.task_id
         todo_session = _NoopTodoSession(str(user_id))
 
-        append_session_event = runtime_ctx.append_session_event
-        update_session_task = runtime_ctx.update_session_task
-        update_task_inbox_status = runtime_ctx.update_task_inbox_status
-
-        await runtime_ctx.ensure_task_inbox(task_goal=task_goal)
-        task_inbox_id = runtime_ctx.task_inbox_id
-
-        await runtime_ctx.mark_manager_loop_started(task_goal)
-
         logger.info(
             "Extension routing text (trimmed): %s",
             routing_text.replace("\n", " | ")[:300],
@@ -154,7 +145,7 @@ class AgentOrchestrator:
         (
             raw_extension_candidates,
             extension_candidates,
-            skill_route,
+            routing_decision,
         ) = await self._resolve_extension_candidates(
             message_history=message_history,
             routing_text=routing_text,
@@ -169,13 +160,13 @@ class AgentOrchestrator:
             else {candidate.name for candidate in extension_candidates}
         )
         logger.info(
-            "Extension candidates selected: raw=%s filtered=%s routed=%s route_ok=%s confidence=%.2f reason=%s",
+            "Extension candidates selected: raw=%s filtered=%s request_mode=%s routed=%s confidence=%.2f reason=%s",
             [candidate.name for candidate in raw_extension_candidates] or "none",
             [candidate.name for candidate in extension_candidates] or "none",
-            skill_route.candidate_skills or "none",
-            skill_route.ok,
-            float(skill_route.confidence),
-            skill_route.reason,
+            routing_decision.request_mode,
+            routing_decision.candidate_skills or "none",
+            float(routing_decision.confidence),
+            routing_decision.reason,
         )
         if extension_candidates:
             candidate_text = ", ".join(
@@ -187,14 +178,55 @@ class AgentOrchestrator:
                 "plan", "done", "No extension matched; primitives only."
             )
 
+        async def _noop_append_session_event(_note: str) -> None:
+            return None
+
+        async def _noop_update_session_task(**_kwargs: Any) -> None:
+            return None
+
+        async def _noop_update_task_inbox_status(**_kwargs: Any) -> None:
+            return None
+
+        task_tracking_enabled = (
+            runtime_ctx.session_state_enabled
+            and str(routing_decision.request_mode or "").strip().lower() == "task"
+        )
+        append_session_event = (
+            runtime_ctx.append_session_event
+            if task_tracking_enabled
+            else _noop_append_session_event
+        )
+        update_session_task = (
+            runtime_ctx.update_session_task
+            if task_tracking_enabled
+            else _noop_update_session_task
+        )
+        update_task_inbox_status = (
+            runtime_ctx.update_task_inbox_status
+            if task_tracking_enabled
+            else _noop_update_task_inbox_status
+        )
+        task_inbox_id = ""
+        if task_tracking_enabled:
+            await runtime_ctx.ensure_task_inbox(task_goal=task_goal)
+            task_inbox_id = runtime_ctx.task_inbox_id
+            await runtime_ctx.mark_manager_loop_started(task_goal)
+        logger.info(
+            "Task tracking decision: enabled=%s mode=%s task_inbox_id=%s",
+            task_tracking_enabled,
+            routing_decision.request_mode,
+            task_inbox_id or "none",
+        )
+
         task_workspace_root = self._resolve_task_workspace_root(
             extension_candidates=extension_candidates,
             intent_text=routing_text or last_user_text,
         )
-        await runtime_ctx.activate_session(
-            task_goal=task_goal,
-            task_workspace_root=task_workspace_root,
-        )
+        if task_tracking_enabled:
+            await runtime_ctx.activate_session(
+                task_goal=task_goal,
+                task_workspace_root=task_workspace_root,
+            )
 
         tooling_assembler = RuntimeToolAssembler(
             runtime_user_id=user_id_str,
@@ -476,7 +508,7 @@ class AgentOrchestrator:
                 (
                     reroute_candidates,
                     extension_candidates,
-                    skill_route,
+                    routing_decision,
                 ) = await self._resolve_extension_candidates(
                     message_history=message_history,
                     routing_text=routing_text,
@@ -491,13 +523,13 @@ class AgentOrchestrator:
                 if explicit_allowed_skill_names:
                     allowed_skill_names = set(explicit_allowed_skill_names)
                 logger.info(
-                    "Extension candidates after evolution: raw=%s filtered=%s routed=%s route_ok=%s confidence=%.2f reason=%s",
+                    "Extension candidates after evolution: raw=%s filtered=%s request_mode=%s routed=%s confidence=%.2f reason=%s",
                     [candidate.name for candidate in reroute_candidates] or "none",
                     [candidate.name for candidate in extension_candidates] or "none",
-                    skill_route.candidate_skills or "none",
-                    skill_route.ok,
-                    float(skill_route.confidence),
-                    skill_route.reason,
+                    routing_decision.request_mode,
+                    routing_decision.candidate_skills or "none",
+                    float(routing_decision.confidence),
+                    routing_decision.reason,
                 )
                 tooling_assembler.allowed_skill_names = set(allowed_skill_names)
                 tool_dispatcher.allowed_skill_names = set(allowed_skill_names)
@@ -774,7 +806,7 @@ class AgentOrchestrator:
                 if candidate.name in explicit_allowed_skill_names
             ]
 
-        skill_route = await skill_router.route(
+        routing_decision = await intent_router.route(
             dialog_messages=self._extract_recent_dialog_messages(
                 message_history,
                 max_messages=10,
@@ -782,20 +814,17 @@ class AgentOrchestrator:
             candidates=extension_candidates,
             max_candidates=5,
         )
-        if skill_route.ok:
-            selected = set(skill_route.candidate_skills)
-            extension_candidates = [
-                candidate
-                for candidate in extension_candidates
-                if candidate.name in selected
-            ]
+        selected = set(routing_decision.candidate_skills)
+        extension_candidates = [
+            candidate for candidate in extension_candidates if candidate.name in selected
+        ]
         if explicit_allowed_skill_names:
             extension_candidates = [
                 candidate
                 for candidate in extension_candidates
                 if candidate.name in explicit_allowed_skill_names
             ]
-        return raw_extension_candidates, extension_candidates, skill_route
+        return raw_extension_candidates, extension_candidates, routing_decision
 
     def _runtime_tool_allowed(
         self,

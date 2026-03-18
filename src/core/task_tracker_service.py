@@ -375,16 +375,21 @@ class TaskTrackerService:
 
                 platform = str(announce_platform or "").strip()
                 chat_id = str(announce_chat_id or "").strip()
+                session_id = ""
                 if not platform or not chat_id:
                     target = await heartbeat_store.get_delivery_target(safe_user_id)
                     platform = platform or str(target.get("platform") or "").strip()
                     chat_id = chat_id or str(target.get("chat_id") or "").strip()
+                    session_id = str(target.get("session_id") or "").strip()
                 if platform and chat_id:
                     announcement_sent = bool(
                         await push_background_text(
                             platform=platform,
                             chat_id=chat_id,
                             text=safe_announce_text,
+                            record_history=True,
+                            history_user_id=safe_user_id,
+                            history_session_id=session_id,
                         )
                     )
                 if announcement_sent:

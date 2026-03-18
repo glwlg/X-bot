@@ -1,14 +1,5 @@
 from __future__ import annotations
 
-from typing import Any
-
-
-def _compact_followup_summary(text: str, *, limit: int = 260) -> str:
-    raw = " ".join(str(text or "").split())
-    if len(raw) <= limit:
-        return raw
-    return raw[:limit].rstrip() + "..."
-
 
 def build_session_brief_lines(
     *,
@@ -89,36 +80,3 @@ def format_waiting_user_card(
         ]
     )
     return "\n".join(lines).strip()
-
-
-def format_followup_context(snapshot: Any) -> str:
-    session_task_id = str(getattr(snapshot, "session_task_id", "") or "").strip()
-    status = str(getattr(snapshot, "status", "") or "").strip() or "completed"
-    original_request = str(getattr(snapshot, "original_user_request", "") or "").strip()
-    summary = _compact_followup_summary(
-        str(getattr(snapshot, "last_user_visible_summary", "") or "").strip()
-    )
-    stage_index = max(0, int(getattr(snapshot, "stage_index", 0) or 0))
-    stage_total = max(0, int(getattr(snapshot, "stage_total", 0) or 0))
-    stage_title = str(getattr(snapshot, "stage_title", "") or "").strip()
-
-    context_lines = [
-        "【任务续接上下文】",
-        f"- 最近任务：`{session_task_id}`",
-        f"- 状态：{status}",
-    ]
-    for line in build_session_brief_lines(
-        session_task_id="",
-        stage_index=stage_index,
-        stage_total=stage_total,
-        stage_title=stage_title,
-    ):
-        context_lines.append(f"- {line}")
-    if original_request:
-        context_lines.append(f"- 原始任务：{original_request}")
-    if summary:
-        context_lines.append(f"- 最近结果摘要：{summary}")
-    context_lines.append(
-        "这句短回复是在承接上一条已完成任务，请优先理解为继续协助，而不是重复解释上一条结果。"
-    )
-    return "\n".join(context_lines).strip()

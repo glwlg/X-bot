@@ -3,12 +3,85 @@ from __future__ import annotations
 import contextlib
 import inspect
 import io
+import logging
 import os
 from datetime import datetime
 from typing import Any
 
+from core.heartbeat_store import heartbeat_store
 from core.platform.registry import adapter_manager
+from core.state_store import get_latest_session_id, get_session_entries, save_message
 from services.md_converter import adapt_md_file_for_platform
+
+logger = logging.getLogger(__name__)
+
+
+def _normalize_history_user_id(value: Any) -> str:
+    user_id = str(value or "").strip()
+    if user_id in {"", "0", "system"}:
+        return ""
+    return user_id
+
+
+async def _resolve_history_session_id(
+    *,
+    user_id: str,
+    preferred_session_id: str = "",
+) -> str:
+    session_id = str(preferred_session_id or "").strip()
+    if session_id:
+        return session_id
+
+    try:
+        target = await heartbeat_store.get_delivery_target(user_id)
+        session_id = str(target.get("session_id") or "").strip()
+    except Exception:
+        session_id = ""
+    if session_id:
+        return session_id
+
+    try:
+        return await get_latest_session_id(user_id)
+    except Exception:
+        logger.debug("Failed to resolve latest session for user=%s", user_id, exc_info=True)
+        return ""
+
+
+async def _record_background_history(
+    *,
+    user_id: str,
+    text: str,
+    preferred_session_id: str = "",
+) -> None:
+    safe_user_id = _normalize_history_user_id(user_id)
+    payload = str(text or "").strip()
+    if not safe_user_id or not payload:
+        return
+
+    session_id = await _resolve_history_session_id(
+        user_id=safe_user_id,
+        preferred_session_id=preferred_session_id,
+    )
+    if not session_id:
+        return
+
+    try:
+        rows = await get_session_entries(safe_user_id, session_id)
+        if rows:
+            last = rows[-1]
+            if (
+                str(last.get("role") or "").strip().lower() == "model"
+                and str(last.get("content") or "").strip() == payload
+            ):
+                return
+        await save_message(safe_user_id, "model", payload, session_id)
+    except Exception:
+        logger.debug(
+            "Failed to record background history user=%s session=%s",
+            safe_user_id,
+            session_id,
+            exc_info=True,
+        )
 
 
 def split_background_chunks(text: str, *, limit: int = 3500) -> list[str]:
@@ -141,6 +214,9 @@ async def push_background_text(
     file_threshold: int | None = None,
     max_text_chunks: int | None = None,
     disable_web_page_preview: bool = True,
+    record_history: bool = False,
+    history_user_id: str | int = "",
+    history_session_id: str = "",
 ) -> bool:
     safe_platform = str(platform or "").strip().lower()
     safe_chat_id = str(chat_id or "").strip()
@@ -190,6 +266,12 @@ async def push_background_text(
             caption=file_caption,
         )
     ):
+        if record_history:
+            await _record_background_history(
+                user_id=str(history_user_id or ""),
+                text=payload,
+                preferred_session_id=history_session_id,
+            )
         return True
 
     total = len(chunks)
@@ -206,4 +288,10 @@ async def push_background_text(
         )
         if not sent:
             return False
+    if record_history:
+        await _record_background_history(
+            user_id=str(history_user_id or ""),
+            text=payload,
+            preferred_session_id=history_session_id,
+        )
     return True

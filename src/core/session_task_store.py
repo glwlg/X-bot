@@ -5,22 +5,7 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from core.heartbeat_store import heartbeat_store
-from core.task_cards import format_followup_context
 from core.task_inbox import TaskEnvelope, task_inbox
-
-_FOLLOWUP_CUES = {
-    "继续",
-    "继续吧",
-    "继续执行",
-    "继续处理",
-    "继续下去",
-    "那继续",
-    "好",
-    "好的",
-    "需要",
-    "需要的",
-    "可以",
-}
 
 
 def _safe_text(value: Any, *, limit: int = 4000) -> str:
@@ -240,30 +225,6 @@ class SessionTaskStore:
             if len(rows) >= max(1, int(limit or 1)):
                 break
         return rows
-
-    async def match_followup(
-        self,
-        user_id: str,
-        user_message: str,
-    ) -> Dict[str, Any] | None:
-        safe_user_id = _safe_text(user_id, limit=80)
-        raw_message = _safe_text(user_message, limit=200)
-        normalized = raw_message.lower().strip().strip("。.!！?？")
-        if not safe_user_id or not normalized:
-            return None
-        if normalized not in _FOLLOWUP_CUES and not normalized.startswith("继续"):
-            return None
-
-        recent = await self.list_recent_completed(safe_user_id, limit=1)
-        if not recent:
-            return None
-        snapshot = recent[0]
-        return {
-            "session_task_id": snapshot.session_task_id,
-            "task_inbox_id": snapshot.task_inbox_id,
-            "context_text": format_followup_context(snapshot),
-            "snapshot": snapshot,
-        }
 
 
 session_task_store = SessionTaskStore()

@@ -14,12 +14,14 @@ from shared.contracts.dispatch import TaskEnvelope
 def _reset_task_inbox(tmp_path: Path) -> None:
     root = (tmp_path / "task_inbox").resolve()
     tasks_root = (root / "tasks").resolve()
+    archive_root = (root / "archive").resolve()
     events_path = (root / "events.jsonl").resolve()
     tasks_root.mkdir(parents=True, exist_ok=True)
-    events_path.write_text("", encoding="utf-8")
+    archive_root.mkdir(parents=True, exist_ok=True)
     task_inbox.persist = True
     task_inbox.root = root
     task_inbox.tasks_root = tasks_root
+    task_inbox.archive_root = archive_root
     task_inbox.events_path = events_path
     task_inbox._loaded = False
     task_inbox._tasks = {}
@@ -509,7 +511,7 @@ async def test_resume_waiting_task_treats_text_as_adjustment(monkeypatch, _isola
     )
 
     assert resume["ok"] is True
-    assert "已记录你的补充说明" in resume["message"]
+    assert "已收到你的回复" in resume["message"]
     assert len(calls) == 1
     metadata = dict(calls[0].get("task_metadata") or {})
     stage_plan = dict(metadata.get("stage_plan") or {})

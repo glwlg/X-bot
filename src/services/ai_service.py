@@ -105,8 +105,10 @@ class AiService:
             )
         except ValueError:
             TOOL_EXEC_TIMEOUT_SEC = 420
+        # Tool-final text is synthesized after execution; deliver it in one shot
+        # unless streaming is explicitly re-enabled.
         tool_final_stream_enabled = (
-            os.getenv("AI_TOOL_FINAL_STREAM_ENABLED", "true").lower() == "true"
+            os.getenv("AI_TOOL_FINAL_STREAM_ENABLED", "false").lower() == "true"
         )
         try:
             tool_final_stream_chunk_chars = max(

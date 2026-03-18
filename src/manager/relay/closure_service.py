@@ -26,8 +26,6 @@ from shared.contracts.dispatch import TaskEnvelope
 
 logger = logging.getLogger(__name__)
 
-_CONTINUE_CUES = {"继续", "继续执行", "继续重部署", "resume", "continue"}
-_STOP_CUES = {"停止", "取消", "停止任务", "stop", "cancel"}
 _FINAL_DELIVERY_BLOCK_MARKERS = (
     "不具备直接向用户交付",
     "不能直接交付给最终用户",
@@ -249,17 +247,6 @@ def _cached_decision(cached: Dict[str, Any]) -> Dict[str, Any]:
         "auto_repair_allowed": _safe_text(cached.get("kind"), limit=40)
         == "waiting_user",
     }
-
-
-def _control_intent(text: str) -> str:
-    normalized = _safe_text(text, limit=200).lower()
-    if normalized in _CONTINUE_CUES:
-        return "continue"
-    if normalized in _STOP_CUES:
-        return "stop"
-    return "adjust"
-
-
 def _resolve_tool_scope(*metadata_sources: Dict[str, Any]) -> tuple[list[str], list[str]]:
     allowed_tools: list[str] = []
     allowed_skills: list[str] = []
@@ -970,16 +957,11 @@ class ManagerClosureService:
             else None,
             original_request=task_goal,
         )
-        intent = _control_intent(user_message)
-        if intent == "stop":
-            return {
-                "ok": False,
-                "message": "该接口不处理 stop，请由上层走停止逻辑。",
-            }
-        if intent == "adjust":
+        safe_user_message = _safe_text(user_message, limit=2000)
+        if safe_user_message:
             stage_plan = add_adjustment(
                 stage_plan,
-                message=user_message,
+                message=safe_user_message,
                 source=source,
             )
 
@@ -1036,11 +1018,7 @@ class ManagerClosureService:
 
         await heartbeat_store.append_session_event(
             safe_user_id,
-            (
-                f"user_adjust_resume:{task_inbox_id}:{stage_id}"
-                if intent == "adjust"
-                else f"user_continue_resume:{task_inbox_id}:{stage_id}"
-            ),
+            f"user_resume:{task_inbox_id}:{stage_id}",
         )
         stage_index = max(0, int(start_result.get("stage_index") or 0))
         stage_total = max(0, int(start_result.get("stage_total") or 0))
@@ -1049,8 +1027,8 @@ class ManagerClosureService:
             if stage_index > 0 and stage_total > 0
             else (stage_title or "当前阶段")
         )
-        if intent == "adjust":
-            message = f"✅ 已记录你的补充说明，正在继续推进 {stage_hint}。"
+        if safe_user_message:
+            message = f"✅ 已收到你的回复，正在继续推进 {stage_hint}。"
         else:
             message = f"✅ 已恢复执行，正在继续推进 {stage_hint}。"
         return {

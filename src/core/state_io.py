@@ -12,7 +12,6 @@ _state_paths = importlib.import_module("core.state_paths")
 repo_root = _state_paths.repo_root
 single_user_root = _state_paths.single_user_root
 system_path = _state_paths.system_path
-users_root = _state_paths.users_root
 _state_file = importlib.import_module("core.state_file")
 parse_state_payload = _state_file.parse_state_payload
 render_state_markdown = _state_file.render_state_markdown
@@ -108,5 +107,4 @@ async def init_db() -> None:
     logger.info("Initializing repository filesystem store under %s", repo_root())
     repo_root()
     single_user_root()
-    users_root()
     logger.info("Repository filesystem store initialized")

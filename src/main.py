@@ -113,6 +113,11 @@ async def init_services() -> None:
         logger.info(f"Loaded {len(skill_loader.get_skill_index())} skills")
 
         from core.kernel_config_store import kernel_config_store
+        from core.audit_store import audit_store
+        from core.task_inbox import task_inbox
+
+        await task_inbox.compact_storage()
+        audit_store.maintain()
 
         kernel_config_store.snapshot(
             {

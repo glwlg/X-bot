@@ -107,6 +107,59 @@ async def test_heartbeat_worker_manual_run_pushes_non_ok(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_worker_push_records_history_metadata(monkeypatch, tmp_path):
+    runtime_root = (tmp_path / "runtime_tasks").resolve()
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(heartbeat_store, "root", runtime_root)
+    heartbeat_store._locks.clear()
+
+    await heartbeat_store.set_heartbeat_spec(
+        "worker_u2h",
+        every="30m",
+        active_start="00:00",
+        active_end="23:59",
+        paused=False,
+    )
+    await heartbeat_store.set_delivery_target(
+        "worker_u2h",
+        "telegram",
+        "99",
+        session_id="sess-hb-99",
+    )
+
+    async def fake_handle_message(ctx, message_history):
+        yield "请检查收件箱中 1 封紧急邮件。"
+
+    async def fake_push_background_text(**kwargs):
+        calls.append(dict(kwargs))
+        return True
+
+    monkeypatch.setattr(
+        heartbeat_worker_module,
+        "agent_orchestrator",
+        type("FakeOrchestrator", (), {"handle_message": fake_handle_message})(),
+    )
+    calls: list[dict] = []
+    monkeypatch.setattr(
+        heartbeat_worker_module,
+        "push_background_text",
+        fake_push_background_text,
+    )
+
+    worker = HeartbeatWorker()
+    worker.enabled = True
+    worker.suppress_ok = True
+
+    result = await worker.run_user_now("worker_u2h")
+
+    assert "紧急邮件" in result
+    assert calls
+    assert calls[0]["record_history"] is True
+    assert calls[0]["history_user_id"] == "worker_u2h"
+    assert calls[0]["history_session_id"] == "sess-hb-99"
+
+
+@pytest.mark.asyncio
 async def test_heartbeat_worker_readonly_action_does_not_dispatch_to_worker(
     monkeypatch, tmp_path
 ):
