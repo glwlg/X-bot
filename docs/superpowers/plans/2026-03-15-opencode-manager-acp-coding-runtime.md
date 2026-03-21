@@ -1,5 +1,7 @@
 # OpenCode Manager ACP Coding Runtime Implementation Plan
 
+> 历史计划文档：其中涉及 `worker` 的约束与测试项基于旧架构，现仅保留作实现记录。
+
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a manager-only OpenCode ACP coding runtime with Manager-owned ledger state, workspace-scoped sidecars, checkpoint-based recovery, and limited CLI fallback.

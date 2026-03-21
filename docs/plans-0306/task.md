@@ -1,5 +1,7 @@
 # 任务清单：第二阶段 Agent 架构重构
 
+> 历史计划文档：其中涉及的 `worker_management` / `worker` 运行面设计基于旧架构，现已失效。
+
 ## 1. 🔧 技能目录按角色权限过滤
 - [x] 修改 `prompt_composer._build_skill_catalog()` 接受 runtime_user_id/platform 参数
 - [x] 对每个 skill 用 `tool_access_store.is_tool_allowed()` 做权限检查

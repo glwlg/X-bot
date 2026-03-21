@@ -11,7 +11,12 @@ from typing import Any, Iterable
 
 from core.extension_router import ExtensionCandidate
 from core.config import get_client_for_model
-from core.model_config import get_routing_model
+from core.model_config import (
+    get_model_candidates_for_input,
+    get_routing_model,
+    mark_model_failed,
+    mark_model_success,
+)
 from services.openai_adapter import generate_text
 
 logger = logging.getLogger(__name__)
@@ -118,48 +123,111 @@ class IntentRouter:
         )
 
         try:
-            model_name = get_routing_model()
-            client = get_client_for_model(model_name, is_async=True)
-            if client is None:
-                raise RuntimeError("OpenAI async client is not initialized")
-            payload = await asyncio.wait_for(
-                generate_text(
-                    async_client=client,
-                    model=model_name,
-                    contents=prompt,
-                    config={
-                        "system_instruction": (
-                            "你只负责本轮请求路由。"
-                            "不要回答用户问题，不要补充额外文本。"
+            preferred_model = get_routing_model()
+            candidate_models = get_model_candidates_for_input(
+                input_type="text",
+                pool_type="routing",
+                preferred_model=preferred_model,
+            )
+            if not candidate_models and preferred_model:
+                candidate_models = [preferred_model]
+            if not candidate_models:
+                raise RuntimeError("No candidate routing model available")
+
+            first_attempt_model = candidate_models[0]
+            last_error: Exception | None = None
+            for index, model_name in enumerate(candidate_models):
+                client = get_client_for_model(model_name, is_async=True)
+                if client is None:
+                    last_error = RuntimeError(
+                        f"No async client available for routing model: {model_name}"
+                    )
+                    mark_model_failed(model_name)
+                    next_model = (
+                        candidate_models[index + 1]
+                        if index + 1 < len(candidate_models)
+                        else ""
+                    )
+                    if next_model:
+                        logger.warning(
+                            "[IntentRouter] Client unavailable for %s; trying %s",
+                            model_name,
+                            next_model,
+                        )
+                        continue
+                    raise last_error
+
+                try:
+                    payload = await asyncio.wait_for(
+                        generate_text(
+                            async_client=client,
+                            model=model_name,
+                            contents=prompt,
+                            config={
+                                "system_instruction": (
+                                    "你只负责本轮请求路由。"
+                                    "不要回答用户问题，不要补充额外文本。"
+                                ),
+                                "temperature": 0,
+                                "response_mime_type": "application/json",
+                            },
                         ),
-                        "temperature": 0,
-                        "response_mime_type": "application/json",
-                    },
-                ),
-                timeout=INTENT_ROUTER_TIMEOUT_SEC,
-            )
-            raw = str(payload or "").strip()
-            parsed = self._parse_json(raw)
-            mode = str(parsed.get("request_mode") or "").strip().lower()
-            if mode not in {"task", "chat"}:
-                mode = "task"
-            reason = str(parsed.get("reason") or "").strip()[:240]
-            try:
-                confidence = max(0.0, min(1.0, float(parsed.get("confidence") or 0.0)))
-            except Exception:
-                confidence = 0.0
-            selected = self._resolve_skills(
-                parsed.get("candidate_skills"),
-                candidate_rows,
-                max_candidates=max_candidates,
-            )
-            return RoutingDecision(
-                request_mode=mode,
-                candidate_skills=selected,
-                confidence=confidence,
-                reason=reason or "ok",
-                raw=raw[:800],
-            )
+                        timeout=INTENT_ROUTER_TIMEOUT_SEC,
+                    )
+                    raw = str(payload or "").strip()
+                    parsed = self._parse_json(raw)
+                    mode = str(parsed.get("request_mode") or "").strip().lower()
+                    if mode not in {"task", "chat"}:
+                        mode = "task"
+                    reason = str(parsed.get("reason") or "").strip()[:240]
+                    try:
+                        confidence = max(
+                            0.0, min(1.0, float(parsed.get("confidence") or 0.0))
+                        )
+                    except Exception:
+                        confidence = 0.0
+                    selected = self._resolve_skills(
+                        parsed.get("candidate_skills"),
+                        candidate_rows,
+                        max_candidates=max_candidates,
+                    )
+                    mark_model_success(model_name)
+                    if model_name != first_attempt_model:
+                        logger.warning(
+                            "[IntentRouter] Routing failover succeeded: %s -> %s",
+                            first_attempt_model,
+                            model_name,
+                        )
+                    return RoutingDecision(
+                        request_mode=mode,
+                        candidate_skills=selected,
+                        confidence=confidence,
+                        reason=reason or "ok",
+                        raw=raw[:800],
+                    )
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    last_error = exc
+                    mark_model_failed(model_name)
+                    next_model = (
+                        candidate_models[index + 1]
+                        if index + 1 < len(candidate_models)
+                        else ""
+                    )
+                    if next_model:
+                        logger.warning(
+                            "[IntentRouter] Routing request failed via %s: %s; trying %s",
+                            model_name,
+                            exc,
+                            next_model,
+                        )
+                        continue
+                    raise
+
+            if last_error is not None:
+                raise last_error
+            raise RuntimeError("No candidate routing model available")
         except Exception as exc:
             logger.debug("Intent router failed: %s", exc, exc_info=True)
             return RoutingDecision(

@@ -154,6 +154,62 @@ class TestIntentRouter:
         assert decision.request_mode == "task"
         assert decision.candidate_skills == []
 
+    @pytest.mark.asyncio
+    async def test_intent_router_fails_over_to_backup_routing_model(
+        self, monkeypatch
+    ):
+        from services.intent_router import intent_router
+
+        attempts = []
+        failed_models = []
+        succeeded_models = []
+
+        async def _fake_generate_text(**kwargs):
+            attempts.append(kwargs.get("model"))
+            if kwargs.get("model") == "routing/primary":
+                raise RuntimeError("auth_unavailable: no auth available")
+            return (
+                '{"request_mode":"task","candidate_skills":[],"reason":"backup",'
+                '"confidence":0.75}'
+            )
+
+        monkeypatch.setattr(
+            "services.intent_router.generate_text",
+            _fake_generate_text,
+        )
+        monkeypatch.setattr(
+            "services.intent_router.get_client_for_model",
+            lambda *_args, **_kwargs: object(),
+        )
+        monkeypatch.setattr(
+            "services.intent_router.get_routing_model",
+            lambda: "routing/primary",
+        )
+        monkeypatch.setattr(
+            "services.intent_router.get_model_candidates_for_input",
+            lambda *args, **kwargs: ["routing/primary", "routing/backup"],
+        )
+        monkeypatch.setattr(
+            "services.intent_router.mark_model_failed",
+            lambda model_key: failed_models.append(model_key),
+        )
+        monkeypatch.setattr(
+            "services.intent_router.mark_model_success",
+            lambda model_key: succeeded_models.append(model_key),
+        )
+
+        decision = await intent_router.route(
+            dialog_messages=[{"role": "user", "content": "帮我查一下日志"}],
+            candidates=[],
+        )
+
+        assert attempts == ["routing/primary", "routing/backup"]
+        assert failed_models == ["routing/primary"]
+        assert succeeded_models == ["routing/backup"]
+        assert decision.request_mode == "task"
+        assert decision.reason == "backup"
+        assert decision.confidence == 0.75
+
 
 class TestWebSummaryService:
     """测试网页摘要服务"""
@@ -238,3 +294,112 @@ class TestWebSummaryService:
         assert content is not None
         assert "HTTP 原始页面内容" in content
         assert "fallback" in content
+
+
+class TestImageInputService:
+    @pytest.mark.asyncio
+    async def test_fetch_image_from_url_accepts_image_payload(self, monkeypatch):
+        import httpx
+        from services import image_input_service
+
+        class _FakeResponse:
+            def __init__(self, *, headers, chunks, status_code=200):
+                self.headers = headers
+                self._chunks = list(chunks)
+                self.status_code = status_code
+                self.request = httpx.Request("GET", "https://example.com/cam.jpg")
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                _ = (exc_type, exc, tb)
+                return False
+
+            def raise_for_status(self):
+                if self.status_code >= 400:
+                    raise httpx.HTTPStatusError(
+                        "boom",
+                        request=self.request,
+                        response=self,
+                    )
+
+            async def aiter_bytes(self):
+                for chunk in self._chunks:
+                    yield chunk
+
+        class _FakeClient:
+            def __init__(self, response):
+                self._response = response
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                _ = (exc_type, exc, tb)
+                return False
+
+            def stream(self, method, url, headers=None):
+                _ = (method, url, headers)
+                return self._response
+
+        response = _FakeResponse(
+            headers={"Content-Type": "image/png"},
+            chunks=[b"\x89PNG\r\n\x1a\npayload"],
+        )
+        monkeypatch.setattr(
+            image_input_service.httpx,
+            "AsyncClient",
+            lambda **kwargs: _FakeClient(response),
+        )
+
+        payload, mime_type = await image_input_service.fetch_image_from_url(
+            "https://example.com/cam.jpg"
+        )
+
+        assert payload.startswith(b"\x89PNG")
+        assert mime_type == "image/png"
+
+    @pytest.mark.asyncio
+    async def test_fetch_image_from_url_rejects_non_image_payload(self, monkeypatch):
+        from services import image_input_service
+
+        class _FakeResponse:
+            def __init__(self):
+                self.headers = {"Content-Type": "text/html"}
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                _ = (exc_type, exc, tb)
+                return False
+
+            def raise_for_status(self):
+                return None
+
+            async def aiter_bytes(self):
+                yield b"<html>hello</html>"
+
+        class _FakeClient:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                _ = (exc_type, exc, tb)
+                return False
+
+            def stream(self, method, url, headers=None):
+                _ = (method, url, headers)
+                return _FakeResponse()
+
+        monkeypatch.setattr(
+            image_input_service.httpx,
+            "AsyncClient",
+            lambda **kwargs: _FakeClient(),
+        )
+
+        with pytest.raises(image_input_service.ImageInputDownloadError):
+            await image_input_service.fetch_image_from_url(
+                "https://example.com/not-image"
+            )

@@ -1,0 +1,10 @@
+{
+  "provider": "file",
+  "providers": {
+    "file": {},
+    "mem0": {
+      "kwargs": {},
+      "config": {}
+    }
+  }
+}

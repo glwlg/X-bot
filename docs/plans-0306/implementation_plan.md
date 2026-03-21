@@ -1,5 +1,7 @@
 # 第二阶段重构计划：权限过滤 + Skill 恢复 + 管理工具 Skill 化
 
+> 历史计划文档：其中关于 `worker` 权限面与 `worker_management` 的内容基于旧架构，现已失效。
+
 ## 背景
 
 第一阶段已完成 Skill 与 Tool 的基础解耦（[load_skill](file:///home/luwei/workspace/x-bot/src/core/skill_loader.py#229-235) 原子工具 + SOP Markdown），但存在以下遗留问题：

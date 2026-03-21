@@ -27,6 +27,7 @@ from core.config import (
     HEARTBEAT_MODE,
 )
 from core.heartbeat_worker import heartbeat_worker
+from core.long_term_memory import long_term_memory
 from core.subagent_supervisor import subagent_supervisor
 from handlers import (
     start,
@@ -118,18 +119,21 @@ async def init_services() -> None:
 
         await task_inbox.compact_storage()
         audit_store.maintain()
+        await long_term_memory.initialize()
 
         kernel_config_store.snapshot(
             {
                 "core_chat_execution_mode": CORE_CHAT_EXECUTION_MODE,
                 "heartbeat_enabled": HEARTBEAT_ENABLED,
                 "heartbeat_mode": HEARTBEAT_MODE,
+                "memory_provider": long_term_memory.get_provider_name(),
             },
             actor="bootstrap",
             reason="init_services_snapshot",
         )
     except Exception as e:
         logger.error(f"❌ Error in init_services: {e}", exc_info=True)
+        raise
 
 
 async def log_update(update: Update, context):

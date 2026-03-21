@@ -7,6 +7,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import Any
 
+from core.agent_input import MAX_INLINE_IMAGE_INPUTS, build_agent_message_history
 from core.agent_orchestrator import agent_orchestrator
 from core.background_delivery import push_background_text, split_background_chunks
 from core.heartbeat_store import heartbeat_store
@@ -224,9 +225,9 @@ class HeartbeatWorker:
                 user_id, final_text
             )
             with contextlib.suppress(Exception):
-                from core.markdown_memory_store import markdown_memory_store
+                from core.long_term_memory import long_term_memory
 
-                rollup_result = await markdown_memory_store.rollup_today_sessions(
+                rollup_result = await long_term_memory.rollup_today_sessions(
                     user_id
                 )
                 logger.info(
@@ -361,7 +362,31 @@ class HeartbeatWorker:
                 goal=goal,
                 readonly=self.mode == "readonly",
             )
-            message_history = [{"role": "user", "parts": [{"text": prompt}]}]
+            prepared_input = await build_agent_message_history(
+                ctx,
+                user_message=prompt,
+                inline_input_source_texts=[goal],
+                strip_refs_from_user_message=False,
+            )
+            if prepared_input.detected_refs and not prepared_input.has_inline_inputs:
+                sections.append(
+                    "❌ 检测到图片链接或本地图片路径，但没有成功加载任何图片。请检查链接或路径后重试。"
+                )
+                continue
+
+            notice_parts: list[str] = []
+            if prepared_input.truncated_inline_count:
+                notice_parts.append(
+                    f"⚠️ 检测到超过 {MAX_INLINE_IMAGE_INPUTS} 张图片，本次仅使用前 {MAX_INLINE_IMAGE_INPUTS} 张。"
+                )
+            if prepared_input.errors and prepared_input.has_inline_inputs:
+                notice_parts.append(
+                    f"⚠️ 有 {len(prepared_input.errors)} 张图片加载失败，先按成功加载的图片继续分析。"
+                )
+            if notice_parts:
+                sections.append("\n".join(notice_parts))
+
+            message_history = list(prepared_input.message_history)
 
             chunks: list[str] = []
             stream = self._create_orchestrator_stream(ctx, message_history)

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import core.agent_input as agent_input_module
 import core.scheduler as scheduler_module
 from core.scheduler import _resolve_entry_link
 
@@ -409,6 +410,43 @@ async def test_run_skill_cron_job_pushes_for_shared_user(monkeypatch):
     assert "定时任务执行报告" in sent_messages[0]["text"]
     assert sent_messages[0]["kwargs"]["user_id"] == "user"
     assert sent_messages[0]["kwargs"]["record_history"] is True
+
+
+@pytest.mark.asyncio
+async def test_run_skill_cron_job_injects_inline_image_inputs(monkeypatch):
+    captured: dict[str, object] = {}
+    image_url = "https://example.com/cam.jpg"
+
+    class _FakeOrchestrator:
+        async def handle_message(self, ctx, message_history):
+            _ = ctx
+            captured["message_history"] = message_history
+            yield "执行完成"
+
+    async def _fake_fetch(url: str, *, max_bytes=0):
+        _ = max_bytes
+        assert url == image_url
+        return b"\x89PNG\r\n\x1a\npayload", "image/png"
+
+    monkeypatch.setattr(agent_input_module, "fetch_image_from_url", _fake_fetch)
+    monkeypatch.setitem(
+        sys.modules,
+        "core.agent_orchestrator",
+        SimpleNamespace(agent_orchestrator=_FakeOrchestrator()),
+    )
+
+    await scheduler_module.run_skill_cron_job(
+        f"获取 {image_url} 这张图并描述",
+        user_id="user",
+        platform="telegram",
+        need_push=False,
+    )
+
+    message_history = captured["message_history"]
+    parts = message_history[-1]["parts"]
+    assert parts[0]["text"]
+    assert parts[1]["inline_data"]["mime_type"] == "image/png"
+    assert parts[1]["inline_data"]["data"]
 
 
 @pytest.mark.asyncio

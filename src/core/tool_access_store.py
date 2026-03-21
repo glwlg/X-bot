@@ -197,7 +197,7 @@ class ToolAccessStore:
             "group:finance": "金融行情类：stock_watch",
             "group:media": "多媒体类：download_video",
             "group:account": "账号凭据类：account_manager",
-            "group:memory": "记忆类：用户 MEMORY.md",
+            "group:memory": "记忆类：用户长期记忆",
             "group:skill-admin": "技能治理类：skill_manager",
             "group:skills": "扩展技能总开关：ext_*",
             "group:management": "管理调度类：subagent、repo workspace、git/gh/codex 与任务治理直连工具",

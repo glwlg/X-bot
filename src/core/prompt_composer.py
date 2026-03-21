@@ -9,7 +9,7 @@ from core.prompts import (
     MANAGER_CORE_PROMPT,
     SUBAGENT_CORE_PROMPT,
 )
-from core.markdown_memory_store import markdown_memory_store
+from core.long_term_memory import long_term_memory
 from core.soul_store import soul_store
 from core.tool_registry import tool_registry
 import logging
@@ -92,22 +92,20 @@ class PromptComposer:
         return self._read_cached_text_file((Path(DATA_DIR) / "AGENTS.md").resolve())
 
     def _load_manager_memory_snapshot(self, *, max_chars: int = 1200) -> str:
-        content = self._read_cached_text_file(markdown_memory_store.manager_memory_path())
-        if not content:
+        try:
+            return long_term_memory.load_manager_snapshot(max_chars=max_chars)
+        except Exception:
             return ""
-        if len(content) <= max_chars:
-            return content
-        return content[-max_chars:]
 
     @staticmethod
     def _build_manager_session_context_contract() -> str:
         return (
             "【当前会话上下文约束】\n"
             "- 私聊会话中的用户长期记忆会在新会话开始时通过隐藏 system 消息 `【会话记忆种子】` 注入；长会话还可能携带 `【会话压缩摘要】`。\n"
-            "- 正常对话、首轮补参、天气/出行/偏好等常见场景，先使用这些会话内上下文；默认不要再调用 `read` 读取 `data/user/MEMORY.md` 或 `data/user/memory/*.md`。\n"
-            "- 只有在以下情况才补充读取记忆文件：用户明确要求查看/修正记忆；当前会话没有相关记忆种子或摘要且任务确实依赖稳定个人事实；执行专门的记忆维护任务。\n"
+            "- 正常对话、首轮补参、天气/出行/偏好等常见场景，先使用这些会话内上下文；默认不要再调用 `read` 直接读取长期记忆存储或近期记忆 trace 文件。\n"
+            "- 只有在以下情况才补充读取记忆：用户明确要求查看/修正记忆；当前会话没有相关记忆种子或摘要且任务确实依赖稳定个人事实；执行专门的记忆维护任务。\n"
             "- 若当前用户消息与会话记忆种子冲突，以当前用户最新明确表达为准；不要为了旧记忆而压过用户当前输入。\n"
-            "- 本块优先级高于旧文档里任何“先读 MEMORY.md”之类的历史说明。"
+            "- 本块优先级高于旧文档里任何“先读长期记忆文件”之类的历史说明。"
         )
 
     def compose_base(

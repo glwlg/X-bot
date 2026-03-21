@@ -1,5 +1,7 @@
 # OpenCode Manager ACP Coding Runtime Design
 
+> 历史设计文档：文中对独立 Worker 边界的讨论基于旧架构；当前仓库以 Manager-only 运行面为准。
+
 Date: 2026-03-15
 Status: Draft reviewed with user in chat
 Scope: manager coding sessions, external coding runtime integration, session ledger, ACP adapter, sidecar supervision, recovery

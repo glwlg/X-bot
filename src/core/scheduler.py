@@ -870,6 +870,7 @@ async def run_skill_cron_job(
     )
 
     try:
+        from core.agent_input import MAX_INLINE_IMAGE_INPUTS, build_agent_message_history
         from core.platform.models import UnifiedMessage, User, Chat, MessageType
         from core.agent_orchestrator import agent_orchestrator
 
@@ -905,31 +906,45 @@ async def run_skill_cron_job(
 
         final_output = []
 
-        message_history = [
-            {
-                "role": "user",
-                "parts": [
-                    {
-                        "text": (
-                            f"[CRON TASK id={cron_task_id}]\n"
-                            f"source=cron\n"
-                            f"【系统级别最高指令】：你当前正在“执行”一个已被触发的系统定时任务！\n"
-                            f"请从以下目标描述中提取需要真实执行的查询、分析等动作并**立刻执行它**。\n"
-                            f"如果目标描述里带有“每天/每小时/定时”等字眼，请直接忽略这些时间修饰词，只执行里面提到的查天气、看新闻等实际动作！\n"
-                            f"**绝对禁止**调用 scheduler_manager 去再次添加、创建新的定时任务（那会导致无限套娃循环）！\n\n"
-                            f"目标任务描述：{instruction}"
-                        )
-                    }
-                ],
-            }
-        ]
+        prompt_text = (
+            f"[CRON TASK id={cron_task_id}]\n"
+            f"source=cron\n"
+            f"【系统级别最高指令】：你当前正在“执行”一个已被触发的系统定时任务！\n"
+            f"请从以下目标描述中提取需要真实执行的查询、分析等动作并**立刻执行它**。\n"
+            f"如果目标描述里带有“每天/每小时/定时”等字眼，请直接忽略这些时间修饰词，只执行里面提到的查天气、看新闻等实际动作！\n"
+            f"**绝对禁止**调用 scheduler_manager 去再次添加、创建新的定时任务（那会导致无限套娃循环）！\n\n"
+            f"目标任务描述：{instruction}"
+        )
+        prepared_input = await build_agent_message_history(
+            ctx,
+            user_message=prompt_text,
+            inline_input_source_texts=[instruction],
+            strip_refs_from_user_message=False,
+            max_inline_inputs=MAX_INLINE_IMAGE_INPUTS,
+        )
 
-        # Execute via Agent Brain
-        async for chunk in agent_orchestrator.handle_message(ctx, message_history):
-            if chunk and chunk.strip():
-                final_output.append(chunk)
+        if prepared_input.detected_refs and not prepared_input.has_inline_inputs:
+            full_response = (
+                "❌ 检测到图片链接或本地图片路径，但没有成功加载任何图片。请检查链接或路径后重试。"
+            )
+        else:
+            message_history = list(prepared_input.message_history)
 
-        full_response = "".join(final_output).strip()
+            if prepared_input.truncated_inline_count:
+                final_output.append(
+                    f"⚠️ 检测到超过 {MAX_INLINE_IMAGE_INPUTS} 张图片，本次仅使用前 {MAX_INLINE_IMAGE_INPUTS} 张。\n\n"
+                )
+            if prepared_input.errors and prepared_input.has_inline_inputs:
+                final_output.append(
+                    f"⚠️ 有 {len(prepared_input.errors)} 张图片加载失败，先按成功加载的图片继续分析。\n\n"
+                )
+
+            # Execute via Agent Brain
+            async for chunk in agent_orchestrator.handle_message(ctx, message_history):
+                if chunk and chunk.strip():
+                    final_output.append(chunk)
+
+            full_response = "".join(final_output).strip()
         # Push Notification Logic
         if need_push and user_id_text not in {"", "0"}:
             if full_response:

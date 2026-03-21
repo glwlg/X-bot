@@ -35,6 +35,9 @@ async def test_init_services_starts_rss_stock_and_dynamic_schedulers(monkeypatch
     def fake_snapshot(*_args, **_kwargs):
         calls.append("snapshot")
 
+    async def fake_memory_initialize():
+        calls.append("long_term_memory.initialize")
+
     async def fake_compact_storage():
         calls.append("task_inbox.compact_storage")
 
@@ -84,6 +87,16 @@ async def test_init_services_starts_rss_stock_and_dynamic_schedulers(monkeypatch
         "core.audit_store",
         types.SimpleNamespace(audit_store=types.SimpleNamespace(maintain=fake_audit_maintain)),
     )
+    monkeypatch.setattr(
+        main.long_term_memory,
+        "initialize",
+        fake_memory_initialize,
+    )
+    monkeypatch.setattr(
+        main.long_term_memory,
+        "get_provider_name",
+        lambda: "file",
+    )
 
     await main.init_services()
 
@@ -94,6 +107,7 @@ async def test_init_services_starts_rss_stock_and_dynamic_schedulers(monkeypatch
     assert "start_stock_scheduler" in calls
     assert "start_dynamic_skill_scheduler" in calls
     assert "scan_skills" in calls
+    assert "long_term_memory.initialize" in calls
     assert "task_inbox.compact_storage" in calls
     assert "audit_store.maintain" in calls
     assert "snapshot" in calls

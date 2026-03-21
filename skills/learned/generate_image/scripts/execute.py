@@ -32,9 +32,9 @@ from core.platform.models import UnifiedContext
 logger = logging.getLogger(__name__)
 
 _ASPECT_RATIO_TO_SIZE = {
-    "1:1": "1024x1024",
-    "16:9": "1792x1024",
-    "9:16": "1024x1792",
+    "1:1": "2048x2048",
+    "16:9": "3584x2048",
+    "9:16": "2048x3584",
     "4:3": "1536x1024",
     "3:4": "1024x1536",
 }
@@ -131,6 +131,9 @@ async def _generate_via_images_api(
             prompt=prompt,
             size=_ASPECT_RATIO_TO_SIZE[aspect_ratio],
             response_format="b64_json",
+            extra_body={
+                "watermark": False,  # 如果代理支持，可以关闭水印以获得纯净的图片数据
+            }
         ),
         timeout=180,
     )

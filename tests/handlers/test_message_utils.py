@@ -2,13 +2,37 @@ from types import SimpleNamespace
 
 import pytest
 
+import core.agent_input as agent_input_module
 from handlers import message_utils
+from core.platform.models import MessageType
 
 
 class _DummyContext:
     def __init__(self):
-        self.message = SimpleNamespace(id="msg-1", platform="telegram")
+        self.message = SimpleNamespace(
+            id="msg-1",
+            platform="telegram",
+            reply_to_message=None,
+        )
         self.documents: list[dict[str, object]] = []
+        self.replies: list[object] = []
+        self.actions: list[tuple[str, dict]] = []
+
+    async def reply(self, payload, **kwargs):
+        _ = kwargs
+        self.replies.append(payload)
+        return SimpleNamespace(delete=self._delete_status)
+
+    async def _delete_status(self):
+        return True
+
+    async def send_chat_action(self, action, **kwargs):
+        self.actions.append((action, dict(kwargs)))
+        return True
+
+    async def download_file(self, file_id, **kwargs):
+        _ = (file_id, kwargs)
+        return b"downloaded"
 
     async def reply_document(self, document, filename=None, caption=None, **kwargs):
         self.documents.append(
@@ -50,3 +74,87 @@ async def test_process_and_send_code_files_converts_21_line_block_to_file(monkey
     assert ctx.documents[0]["filename"] == "code_snippet_1.html"
     assert ctx.documents[0]["caption"] == "📝 HTML 代码片段"
 
+
+@pytest.mark.asyncio
+async def test_resolve_inline_inputs_from_text_reads_local_image_path(tmp_path):
+    image_path = (tmp_path / "camera.png").resolve()
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\npayload")
+
+    resolution = await message_utils.resolve_inline_inputs_from_text(
+        f"看看这张图 {image_path}"
+    )
+
+    assert resolution.detected_refs == [str(image_path)]
+    assert len(resolution.inputs) == 1
+    assert resolution.inputs[0].source_kind == "local_path"
+    assert resolution.inputs[0].mime_type == "image/png"
+
+
+@pytest.mark.asyncio
+async def test_resolve_inline_inputs_from_text_fetches_url_images(monkeypatch):
+    async def _fake_fetch(url: str, *, max_bytes=0):
+        _ = max_bytes
+        return b"jpeg-bytes", "image/jpeg"
+
+    monkeypatch.setattr(agent_input_module, "fetch_image_from_url", _fake_fetch)
+    url = "https://example.com/cam.jpg"
+
+    resolution = await message_utils.resolve_inline_inputs_from_text(f"看这个 {url}")
+
+    assert resolution.detected_refs == [url]
+    assert resolution.errors == []
+    assert len(resolution.inputs) == 1
+    assert resolution.inputs[0].source_kind == "url"
+    assert resolution.inputs[0].mime_type == "image/jpeg"
+
+
+@pytest.mark.asyncio
+async def test_process_reply_message_prefers_inline_image_inputs_over_web_content(
+    monkeypatch,
+):
+    url = "https://example.com/cam.jpg"
+
+    async def _fake_resolve_inline_inputs_from_text(_text: str, *, limit=5):
+        _ = limit
+        return message_utils.InlineInputResolution(
+            inputs=[
+                message_utils.ResolvedInlineInput(
+                    mime_type="image/jpeg",
+                    content=b"reply-image",
+                    source_kind="url",
+                    source_ref=url,
+                )
+            ],
+            detected_refs=[url],
+            errors=[],
+        )
+
+    async def _forbidden_fetch_webpage_content(_url: str):
+        raise AssertionError("reply image URL should not fall back to webpage fetch")
+
+    monkeypatch.setattr(
+        agent_input_module,
+        "resolve_inline_inputs_from_text",
+        _fake_resolve_inline_inputs_from_text,
+    )
+    monkeypatch.setattr(
+        agent_input_module,
+        "fetch_webpage_content",
+        _forbidden_fetch_webpage_content,
+    )
+
+    ctx = _DummyContext()
+    ctx.message.reply_to_message = SimpleNamespace(
+        id="reply-1",
+        text=url,
+        caption="",
+        type=MessageType.TEXT,
+        entities=[],
+        caption_entities=[],
+    )
+
+    result = await message_utils.process_reply_message(ctx)
+
+    assert len(result.inputs) == 1
+    assert result.extra_context == ""
+    assert result.inputs[0].source_ref == url
