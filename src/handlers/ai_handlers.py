@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 from core.platform.models import UnifiedContext, MessageType
-from core.markdown_memory_store import markdown_memory_store
+from core.long_term_memory import long_term_memory
 
 from core.config import get_client_for_model
 from core.file_artifacts import (
@@ -95,6 +95,41 @@ def _stream_cut_index(text: str, max_chars: int) -> int:
 
 def _message_id_of(message: Any) -> Any:
     return getattr(message, "message_id", getattr(message, "id", None))
+
+
+def _strip_inline_input_refs(text: str, refs: list[str]) -> str:
+    rendered = str(text or "")
+    if not rendered:
+        return ""
+
+    cleaned = rendered
+    for ref in list(refs or []):
+        safe_ref = str(ref or "").strip()
+        if not safe_ref:
+            continue
+        cleaned = cleaned.replace(safe_ref, " ")
+
+    cleaned = re.sub(r"[\s,;:!?.`'\"(){}\[\]<>|/\\]+", " ", cleaned).strip()
+    return cleaned
+
+
+def _default_inline_input_prompt(image_count: int) -> str:
+    return "请结合这些图片回答" if int(image_count or 0) > 1 else "请分析这张图片"
+
+
+def _dedupe_inline_inputs(items: list[Any]) -> list[Any]:
+    deduped: list[Any] = []
+    seen: set[tuple[str, str]] = set()
+    for item in list(items or []):
+        key = (
+            str(getattr(item, "source_kind", "") or "").strip(),
+            str(getattr(item, "source_ref", "") or "").strip(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
 
 
 async def _acknowledge_received(ctx: UnifiedContext, emoji: str = ACK_REACTION_EMOJI) -> None:
@@ -642,7 +677,7 @@ async def _send_response_as_markdown_file(
 
 async def _fetch_user_memory_snapshot(user_id: str) -> str:
     try:
-        return markdown_memory_store.load_snapshot(
+        return await long_term_memory.load_user_snapshot(
             str(user_id),
             include_daily=True,
             max_chars=2400,
@@ -696,7 +731,7 @@ async def _try_handle_memory_commands(ctx: UnifiedContext, user_message: str) ->
     )
 
     async def _write_user_memory(content: str) -> tuple[bool, str]:
-        return markdown_memory_store.remember(
+        return await long_term_memory.remember_user(
             user_id,
             content,
             source="user_explicit",
@@ -704,13 +739,13 @@ async def _try_handle_memory_commands(ctx: UnifiedContext, user_message: str) ->
 
     if text.lower() in {"memory list", "memory user", "查看记忆", "我的记忆"}:
         if not private_session:
-            await ctx.reply("⚠️ 群聊场景不展示个人 MEMORY.md。请在私聊中使用。")
+            await ctx.reply("⚠️ 群聊场景不展示个人长期记忆。请在私聊中使用。")
             return True
         try:
             rendered = (await _fetch_user_memory_snapshot(user_id)).strip()
             if not rendered:
-                rendered = "暂未检索到用户记忆。"
-            await ctx.reply(f"🧠 用户记忆\n\n{rendered}")
+                rendered = "暂未检索到用户长期记忆。"
+            await ctx.reply(f"🧠 用户长期记忆\n\n{rendered}")
         except Exception as exc:
             await ctx.reply(f"⚠️ 读取记忆失败：{exc}")
         return True
@@ -720,14 +755,14 @@ async def _try_handle_memory_commands(ctx: UnifiedContext, user_message: str) ->
         if not match:
             continue
         if not private_session:
-            await ctx.reply("⚠️ 仅支持在私聊中写入个人 MEMORY.md。")
+            await ctx.reply("⚠️ 仅支持在私聊中写入个人长期记忆。")
             return True
         content = str(match.group(1) or "").strip()
         if not content:
             break
         ok, detail = await _write_user_memory(content)
         if ok:
-            await ctx.reply(f"🧠 已写入 MEMORY.md。\n- 提取到：{detail}")
+            await ctx.reply(f"🧠 已写入长期记忆。\n- 提取到：{detail}")
         else:
             await ctx.reply(f"⚠️ 写入记忆失败：{detail}")
         return True
@@ -796,15 +831,48 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
         )
         return
 
+    from core.agent_input import MAX_INLINE_IMAGE_INPUTS, build_agent_message_history
     from core.agent_orchestrator import agent_orchestrator
-    from .message_utils import process_reply_message
 
-    extra_context = ""
-    has_media, reply_extra_context, media_data, mime_type = await process_reply_message(
-        ctx
+    prepared_input = await build_agent_message_history(
+        ctx,
+        user_message=user_message,
+        include_reply=True,
+        strip_refs_from_user_message=True,
+        max_inline_inputs=MAX_INLINE_IMAGE_INPUTS,
     )
-    if reply_extra_context:
-        extra_context += reply_extra_context
+    current_inline_resolution = prepared_input.current_resolution
+    reply_resolution = prepared_input.reply_resolution
+    combined_inline_inputs = list(prepared_input.inline_inputs or [])
+    truncated_inline_count = int(prepared_input.truncated_inline_count or 0)
+    image_ref_failures = {
+        str(item or "").strip()
+        for item in list(prepared_input.errors or [])
+        if str(item or "").strip()
+    }
+    image_refs_detected = {
+        str(item or "").strip()
+        for item in list(prepared_input.detected_refs or [])
+        if str(item or "").strip()
+    }
+    has_inline_inputs = bool(prepared_input.has_inline_inputs)
+    has_reply_media = bool(prepared_input.has_reply_media)
+
+    if image_refs_detected and not has_inline_inputs:
+        await ctx.reply(
+            "❌ 检测到图片链接或本地图片路径，但没有成功加载任何图片。请检查链接或路径后重试。"
+        )
+        return
+
+    if truncated_inline_count:
+        await ctx.reply(
+            f"⚠️ 检测到超过 {MAX_INLINE_IMAGE_INPUTS} 张图片，本次仅使用前 {MAX_INLINE_IMAGE_INPUTS} 张。"
+        )
+
+    if image_ref_failures and has_inline_inputs:
+        await ctx.reply(
+            f"⚠️ 有 {len(image_ref_failures)} 张图片加载失败，先按成功加载的图片继续分析。"
+        )
 
     if ctx.message.reply_to_message:
         replied = ctx.message.reply_to_message
@@ -813,18 +881,16 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
             MessageType.AUDIO,
             MessageType.VOICE,
         ]
-        if is_media and not has_media:
+        if is_media and not has_reply_media:
             return
 
     received_phrases, loading_phrases = _build_runtime_phrase_pools(str(user_id))
     default_thinking_text = (
-        "🤔 让我看看引用具体内容..." if has_media else received_phrases[0]
+        "🤔 让我看看引用具体内容..." if has_inline_inputs else received_phrases[0]
     )
     thinking_msg = None
 
-    final_user_message = user_message
-    if extra_context:
-        final_user_message = extra_context + "用户请求：" + user_message
+    final_user_message = prepared_input.final_user_message
     await ctx.send_chat_action(action="typing")
 
     state = {
@@ -869,7 +935,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
     stream_segment_enabled = (
         _env_flag("AI_SEGMENT_STREAM_ENABLED", True)
         and str(platform_name or "").lower() in {"telegram", "discord"}
-        and not has_media
+        and not has_inline_inputs
     )
     stream_min_chars = _env_int("AI_SEGMENT_STREAM_MIN_CHARS", 220, 40)
     stream_max_chars = _env_int("AI_SEGMENT_STREAM_MAX_CHARS", 1200, 160)
@@ -1108,16 +1174,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
 
     try:
         message_history = []
-        current_msg_parts = [{"text": final_user_message}]
-        if has_media and media_data:
-            current_msg_parts.append(
-                {
-                    "inline_data": {
-                        "mime_type": mime_type,
-                        "data": base64.b64encode(bytes(media_data)).decode("utf-8"),
-                    }
-                }
-            )
+        current_msg_parts = list(prepared_input.user_parts or [{"text": final_user_message}])
 
         history = await get_user_context(ctx, user_id)
         if history and history[-1]["role"] == "user":

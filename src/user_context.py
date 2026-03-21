@@ -15,7 +15,7 @@ from core.state_store import (
     get_latest_session_id,
     replace_session_entries,
 )
-from core.markdown_memory_store import markdown_memory_store
+from core.long_term_memory import long_term_memory
 from services.session_compaction_service import (
     SESSION_MEMORY_PREFIX,
     SESSION_SUMMARY_PREFIX,
@@ -320,7 +320,7 @@ async def _ensure_session_memory_seed(
     ):
         return
     try:
-        memory_snapshot = markdown_memory_store.load_snapshot(
+        memory_snapshot = await long_term_memory.load_user_snapshot(
             str(user_id),
             include_daily=True,
             max_chars=2400,

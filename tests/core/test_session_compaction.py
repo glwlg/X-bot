@@ -98,9 +98,12 @@ async def test_get_user_context_keeps_hidden_system_rows_but_search_skips_them(
     await save_message("u-1", "user", "请继续秘密项目", session_id)
     await save_message("u-1", "model", "好的，继续推进。", session_id)
 
+    async def _fake_load_snapshot(*_args, **_kwargs):
+        return ""
+
     monkeypatch.setattr(
-        "user_context.markdown_memory_store.load_snapshot",
-        lambda *_args, **_kwargs: "",
+        "user_context.long_term_memory.load_user_snapshot",
+        _fake_load_snapshot,
     )
 
     ctx = _DummyContext(session_id)

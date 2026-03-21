@@ -9,13 +9,13 @@ from handlers import ai_handlers
 
 @pytest.mark.asyncio
 async def test_fetch_user_memory_snapshot_reads_markdown_store(monkeypatch):
-    def _fake_load_snapshot(_uid: str, **kwargs):
+    async def _fake_load_snapshot(_uid: str, **kwargs):
         del kwargs
-        return "【长期记忆（MEMORY.md）】\n- 居住地：江苏无锡"
+        return "【长期记忆】\n- 居住地：江苏无锡"
 
     monkeypatch.setattr(
-        ai_handlers.markdown_memory_store,
-        "load_snapshot",
+        ai_handlers.long_term_memory,
+        "load_user_snapshot",
         _fake_load_snapshot,
     )
     rendered = await ai_handlers._fetch_user_memory_snapshot("u-1")
@@ -477,7 +477,7 @@ async def test_handle_ai_chat_does_not_attach_plain_path_from_final_text(
         return []
 
     async def _fake_process_reply_message(_ctx):
-        return False, "", None, ""
+        return message_utils.ReplyMessageResolution()
 
     async def _identity_process_code_files(_ctx, text):
         return text
@@ -541,7 +541,7 @@ async def test_handle_ai_chat_slow_manager_path_does_not_send_dot_placeholder(
         return []
 
     async def _fake_process_reply_message(_ctx):
-        return False, "", None, ""
+        return message_utils.ReplyMessageResolution()
 
     async def _identity_process_code_files(_ctx, text):
         return text
@@ -619,7 +619,7 @@ async def test_handle_ai_chat_reacts_and_skips_immediate_placeholder(monkeypatch
         return []
 
     async def _fake_process_reply_message(_ctx):
-        return False, "", None, ""
+        return message_utils.ReplyMessageResolution()
 
     async def _identity_process_code_files(_ctx, text):
         return text
@@ -657,3 +657,290 @@ async def test_handle_ai_chat_reacts_and_skips_immediate_placeholder(monkeypatch
     assert ctx.replies
     assert ctx.replies[0][0] != "..."
     assert [payload for payload, _kwargs in ctx.replies] == [{"text": "好的，已处理。"}]
+
+
+@pytest.mark.asyncio
+async def test_handle_ai_chat_injects_inline_image_inputs_from_text(monkeypatch):
+    import core.agent_input as agent_input_module
+    import core.config as config_module
+    import core.heartbeat_store as heartbeat_module
+    import core.task_manager as task_manager_module
+    from core.agent_orchestrator import agent_orchestrator
+    from handlers import message_utils
+
+    async def _allow_user(_user_id):
+        return True
+
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    async def _false(*_args, **_kwargs):
+        return False
+
+    async def _empty_history(*_args, **_kwargs):
+        return []
+
+    captured_history: list[dict] = []
+    image_url = "https://example.com/cam.jpg"
+    resolved_input = message_utils.ResolvedInlineInput(
+        mime_type="image/jpeg",
+        content=b"fake-jpeg-bytes",
+        source_kind="url",
+        source_ref=image_url,
+    )
+
+    async def _fake_build_agent_message_history(_ctx, **kwargs):
+        _ = kwargs
+        user_parts = [
+            {"text": "请分析这张图片"},
+            agent_input_module.inline_input_to_part(resolved_input),
+        ]
+        return agent_input_module.PreparedAgentInput(
+            message_history=[{"role": "user", "parts": user_parts}],
+            user_parts=user_parts,
+            final_user_message="请分析这张图片",
+            inline_inputs=[resolved_input],
+            current_resolution=message_utils.InlineInputResolution(
+                inputs=[resolved_input],
+                detected_refs=[image_url],
+                errors=[],
+            ),
+            reply_resolution=message_utils.ReplyMessageResolution(),
+            detected_refs=[image_url],
+            errors=[],
+            has_inline_inputs=True,
+        )
+
+    async def _identity_process_code_files(_ctx, text):
+        return text
+
+    async def _fake_handle_message(_ctx, message_history):
+        captured_history.extend(message_history)
+        yield "已分析"
+
+    monkeypatch.setattr(config_module, "is_user_allowed", _allow_user)
+    monkeypatch.setattr(
+        heartbeat_module.heartbeat_store,
+        "set_delivery_target",
+        _noop,
+    )
+    monkeypatch.setattr(ai_handlers, "add_message", _noop)
+    monkeypatch.setattr(ai_handlers, "increment_stat", _noop)
+    monkeypatch.setattr(ai_handlers, "_try_handle_waiting_confirmation", _false)
+    monkeypatch.setattr(ai_handlers, "_try_handle_memory_commands", _false)
+    monkeypatch.setattr(ai_handlers, "get_user_context", _empty_history)
+    monkeypatch.setattr(
+        ai_handlers, "process_and_send_code_files", _identity_process_code_files
+    )
+    monkeypatch.setattr(
+        agent_input_module,
+        "build_agent_message_history",
+        _fake_build_agent_message_history,
+    )
+    monkeypatch.setattr(agent_orchestrator, "handle_message", _fake_handle_message)
+    monkeypatch.setattr(task_manager_module.task_manager, "register_task", _noop)
+    monkeypatch.setattr(
+        task_manager_module.task_manager, "is_cancelled", lambda _uid: False
+    )
+    monkeypatch.setattr(
+        task_manager_module.task_manager, "unregister_task", lambda _uid: None
+    )
+
+    ctx = _DummyChatContext()
+    ctx.message.text = image_url
+
+    await ai_handlers.handle_ai_chat(ctx)
+
+    user_message = captured_history[-1]
+    parts = user_message["parts"]
+    assert parts[0]["text"] == "请分析这张图片"
+    assert parts[1]["inline_data"]["mime_type"] == "image/jpeg"
+    assert parts[1]["inline_data"]["data"]
+
+
+@pytest.mark.asyncio
+async def test_handle_ai_chat_limits_inline_inputs_to_five(monkeypatch):
+    import core.agent_input as agent_input_module
+    import core.config as config_module
+    import core.heartbeat_store as heartbeat_module
+    import core.task_manager as task_manager_module
+    from core.agent_orchestrator import agent_orchestrator
+    from handlers import message_utils
+
+    async def _allow_user(_user_id):
+        return True
+
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    async def _false(*_args, **_kwargs):
+        return False
+
+    async def _empty_history(*_args, **_kwargs):
+        return []
+
+    captured_history: list[dict] = []
+    refs = [f"https://example.com/{idx}.jpg" for idx in range(6)]
+    resolved_inputs = [
+        message_utils.ResolvedInlineInput(
+            mime_type="image/jpeg",
+            content=f"image-{idx}".encode("utf-8"),
+            source_kind="url",
+            source_ref=ref,
+        )
+        for idx, ref in enumerate(refs[:5])
+    ]
+
+    async def _fake_build_agent_message_history(_ctx, **kwargs):
+        _ = kwargs
+        user_parts = [{"text": "请结合这些图片回答"}]
+        for item in resolved_inputs:
+            user_parts.append(agent_input_module.inline_input_to_part(item))
+        return agent_input_module.PreparedAgentInput(
+            message_history=[{"role": "user", "parts": user_parts}],
+            user_parts=user_parts,
+            final_user_message="请结合这些图片回答",
+            inline_inputs=list(resolved_inputs),
+            current_resolution=message_utils.InlineInputResolution(
+                inputs=list(resolved_inputs),
+                detected_refs=list(refs),
+                errors=[],
+            ),
+            reply_resolution=message_utils.ReplyMessageResolution(),
+            detected_refs=list(refs),
+            errors=[],
+            truncated_inline_count=1,
+            has_inline_inputs=True,
+        )
+
+    async def _identity_process_code_files(_ctx, text):
+        return text
+
+    async def _fake_handle_message(_ctx, message_history):
+        captured_history.extend(message_history)
+        yield "已分析"
+
+    monkeypatch.setattr(config_module, "is_user_allowed", _allow_user)
+    monkeypatch.setattr(
+        heartbeat_module.heartbeat_store,
+        "set_delivery_target",
+        _noop,
+    )
+    monkeypatch.setattr(ai_handlers, "add_message", _noop)
+    monkeypatch.setattr(ai_handlers, "increment_stat", _noop)
+    monkeypatch.setattr(ai_handlers, "_try_handle_waiting_confirmation", _false)
+    monkeypatch.setattr(ai_handlers, "_try_handle_memory_commands", _false)
+    monkeypatch.setattr(ai_handlers, "get_user_context", _empty_history)
+    monkeypatch.setattr(
+        ai_handlers, "process_and_send_code_files", _identity_process_code_files
+    )
+    monkeypatch.setattr(
+        agent_input_module,
+        "build_agent_message_history",
+        _fake_build_agent_message_history,
+    )
+    monkeypatch.setattr(agent_orchestrator, "handle_message", _fake_handle_message)
+    monkeypatch.setattr(task_manager_module.task_manager, "register_task", _noop)
+    monkeypatch.setattr(
+        task_manager_module.task_manager, "is_cancelled", lambda _uid: False
+    )
+    monkeypatch.setattr(
+        task_manager_module.task_manager, "unregister_task", lambda _uid: None
+    )
+
+    ctx = _DummyChatContext()
+    ctx.message.text = " ".join(refs)
+
+    await ai_handlers.handle_ai_chat(ctx)
+
+    user_message = captured_history[-1]
+    assert len(user_message["parts"]) == 6
+    assert any(
+        "本次仅使用前 5 张" in str(payload)
+        for payload, _kwargs in ctx.replies
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_ai_chat_fails_fast_when_image_refs_cannot_be_loaded(monkeypatch):
+    import core.agent_input as agent_input_module
+    import core.config as config_module
+    import core.heartbeat_store as heartbeat_module
+    import core.task_manager as task_manager_module
+    from core.agent_orchestrator import agent_orchestrator
+    from handlers import message_utils
+
+    async def _allow_user(_user_id):
+        return True
+
+    async def _noop(*_args, **_kwargs):
+        return None
+
+    async def _false(*_args, **_kwargs):
+        return False
+
+    async def _empty_history(*_args, **_kwargs):
+        return []
+
+    async def _fake_build_agent_message_history(_ctx, **kwargs):
+        _ = kwargs
+        return agent_input_module.PreparedAgentInput(
+            message_history=[{"role": "user", "parts": [{"text": "broken"}]}],
+            user_parts=[{"text": "broken"}],
+            final_user_message="broken",
+            inline_inputs=[],
+            current_resolution=message_utils.InlineInputResolution(
+                inputs=[],
+                detected_refs=["https://example.com/broken.jpg"],
+                errors=["https://example.com/broken.jpg"],
+            ),
+            reply_resolution=message_utils.ReplyMessageResolution(),
+            detected_refs=["https://example.com/broken.jpg"],
+            errors=["https://example.com/broken.jpg"],
+            has_inline_inputs=False,
+        )
+
+    async def _identity_process_code_files(_ctx, text):
+        return text
+
+    async def _forbidden_handle_message(_ctx, _message_history):
+        raise AssertionError("orchestrator should not run when no image input resolved")
+        yield ""
+
+    monkeypatch.setattr(config_module, "is_user_allowed", _allow_user)
+    monkeypatch.setattr(
+        heartbeat_module.heartbeat_store,
+        "set_delivery_target",
+        _noop,
+    )
+    monkeypatch.setattr(ai_handlers, "add_message", _noop)
+    monkeypatch.setattr(ai_handlers, "increment_stat", _noop)
+    monkeypatch.setattr(ai_handlers, "_try_handle_waiting_confirmation", _false)
+    monkeypatch.setattr(ai_handlers, "_try_handle_memory_commands", _false)
+    monkeypatch.setattr(ai_handlers, "get_user_context", _empty_history)
+    monkeypatch.setattr(
+        ai_handlers, "process_and_send_code_files", _identity_process_code_files
+    )
+    monkeypatch.setattr(
+        agent_input_module,
+        "build_agent_message_history",
+        _fake_build_agent_message_history,
+    )
+    monkeypatch.setattr(agent_orchestrator, "handle_message", _forbidden_handle_message)
+    monkeypatch.setattr(task_manager_module.task_manager, "register_task", _noop)
+    monkeypatch.setattr(
+        task_manager_module.task_manager, "is_cancelled", lambda _uid: False
+    )
+    monkeypatch.setattr(
+        task_manager_module.task_manager, "unregister_task", lambda _uid: None
+    )
+
+    ctx = _DummyChatContext()
+    ctx.message.text = "https://example.com/broken.jpg"
+
+    await ai_handlers.handle_ai_chat(ctx)
+
+    assert any(
+        "没有成功加载任何图片" in str(payload)
+        for payload, _kwargs in ctx.replies
+    )

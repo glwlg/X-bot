@@ -1,5 +1,7 @@
 # 任务清单：Manager 受控演进与发布治理
 
+> 历史计划文档：其中涉及的独立 `worker` 调度与发布能力已不再适用于当前仓库。
+
 ## 1. 🔧 受控编码入口收敛
 - [x] Manager runtime 直接注入 `software_delivery`，不再只靠 skill + bash 间接进入
 - [x] 阻止 Manager 直接用 `write/edit` 修改仓库代码与技能文件

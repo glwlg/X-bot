@@ -1,5 +1,7 @@
 # Manager/Worker Final Split Plan (One-Shot)
 
+> 历史方案文档：基于已删除的独立 Worker 架构，仅保留作演进记录，不代表当前仓库实现。
+
 ## Goal
 
 Implement a full control-plane/data-plane split with no legacy compatibility path:

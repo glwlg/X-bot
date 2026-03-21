@@ -77,7 +77,7 @@ Enable Manager to execute end-to-end software delivery from user intent or GitHu
 
 - Policy mapping
   - `software_delivery` mapped to management group in `src/core/tool_access_store.py`
-  - Available to manager runtime, denied for worker runtime by default policy
+  - Available to manager runtime only; historical worker-runtime policy notes are no longer part of the current architecture
 
 ## Five Phases
 

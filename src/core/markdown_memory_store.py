@@ -7,8 +7,7 @@ from pathlib import Path
 from typing import Any, List
 
 from core.audit_store import audit_store
-from core.config import DATA_DIR
-from core.state_paths import user_path
+from core.state_paths import system_path, user_path
 
 
 def _now_iso() -> str:
@@ -43,9 +42,7 @@ class MarkdownMemoryStore:
         return user_path(user_id).resolve()
 
     def _system_root(self) -> Path:
-        root = (Path(DATA_DIR) / "system").resolve()
-        root.mkdir(parents=True, exist_ok=True)
-        return root
+        return system_path()
 
     def memory_path(self, user_id: str) -> Path:
         return (self._user_root(user_id) / "MEMORY.md").resolve()
@@ -116,6 +113,121 @@ class MarkdownMemoryStore:
             )
         except Exception:
             return
+
+    async def initialize(self) -> None:
+        self._ensure_manager_memory_file()
+
+    def list_user_items_sync(self, user_id: str) -> List[dict[str, Any]]:
+        self.ensure_migrated(user_id)
+        items: List[dict[str, Any]] = []
+        for line in self._read_text(self.memory_path(user_id)).splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("- "):
+                continue
+            text = stripped[2:].strip()
+            if not text:
+                continue
+            items.append({"text": text, "metadata": {}, "created_at": ""})
+        return items
+
+    async def list_user_items(self, user_id: str) -> List[dict[str, Any]]:
+        return self.list_user_items_sync(user_id)
+
+    async def add_user_items(
+        self, user_id: str, items: List[dict[str, Any]]
+    ) -> List[dict[str, Any]]:
+        self.ensure_migrated(user_id)
+        memory_path = self.memory_path(user_id)
+        current_memory = self._read_text(memory_path)
+        cleaned = [
+            str(item.get("text") or "").strip()
+            for item in items
+            if isinstance(item, dict) and str(item.get("text") or "").strip()
+        ]
+        if not cleaned:
+            return []
+
+        if not current_memory.strip():
+            current_memory = "# MEMORY\n\n## 用户长期记忆\n\n"
+        elif "## 用户长期记忆" not in current_memory:
+            current_memory = current_memory.rstrip() + "\n\n## 用户长期记忆\n\n"
+        elif not current_memory.endswith("\n"):
+            current_memory += "\n"
+
+        merged = current_memory.rstrip() + "\n"
+        for text in cleaned:
+            merged += f"- {text}\n"
+        self._write_text(
+            memory_path,
+            merged,
+            actor="system",
+            reason="provider_add_user_memory",
+        )
+        return [{"text": text, "metadata": {}, "created_at": ""} for text in cleaned]
+
+    def list_manager_items_sync(self) -> List[dict[str, Any]]:
+        self._ensure_manager_memory_file()
+        items: List[dict[str, Any]] = []
+        for line in self._read_text(self.manager_memory_path()).splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("- "):
+                continue
+            payload = stripped[2:].strip()
+            if not payload:
+                continue
+            metadata: dict[str, Any] = {}
+            text = payload
+            matched = re.match(r"^\[(\d{4}-\d{2}-\d{2})\]\s*(.+)$", payload)
+            if matched:
+                metadata["day"] = matched.group(1)
+                text = matched.group(2).strip()
+            items.append({"text": text, "metadata": metadata, "created_at": ""})
+        return items
+
+    async def list_manager_items(self) -> List[dict[str, Any]]:
+        return self.list_manager_items_sync()
+
+    async def add_manager_items(
+        self, items: List[dict[str, Any]]
+    ) -> List[dict[str, Any]]:
+        self._ensure_manager_memory_file()
+        path = self.manager_memory_path()
+        current = self._read_text(path)
+        cleaned: List[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            cleaned.append(
+                {
+                    "text": text,
+                    "metadata": dict(metadata),
+                    "created_at": str(item.get("created_at") or "").strip(),
+                }
+            )
+        if not cleaned:
+            return []
+
+        if "## 经验记忆" not in current:
+            current = current.rstrip() + "\n\n## 经验记忆\n\n"
+        merged = current.rstrip() + "\n"
+        for item in cleaned:
+            day = str(item.get("metadata", {}).get("day") or "").strip()
+            text = str(item.get("text") or "").strip()
+            if day:
+                merged += f"- [{day}] {text}\n"
+            else:
+                merged += f"- {text}\n"
+        self._write_text(
+            path,
+            merged,
+            actor="system",
+            reason="provider_add_manager_memory",
+        )
+        return cleaned
 
     def _parse_legacy_memory_json(self, path: Path) -> List[str]:
         lines: List[str] = []

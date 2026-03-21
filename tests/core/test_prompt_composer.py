@@ -321,8 +321,8 @@ def test_prompt_composer_manager_contract_blocks_default_memory_file_reads(monke
     )
 
     assert "【当前会话上下文约束】" in text
-    assert "默认不要再调用 `read` 读取 `data/user/MEMORY.md`" in text
-    assert "本块优先级高于旧文档里任何“先读 MEMORY.md”" in text
+    assert "默认不要再调用 `read` 直接读取长期记忆存储或近期记忆 trace 文件" in text
+    assert "本块优先级高于旧文档里任何“先读长期记忆文件”" in text
 
 
 def test_manager_agents_doc_does_not_expose_auto_loaded_core_files():

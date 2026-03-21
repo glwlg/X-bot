@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+import core.agent_input as agent_input_module
 import core.heartbeat_worker as heartbeat_worker_module
 from core.heartbeat_store import heartbeat_store
 from core.heartbeat_worker import HeartbeatWorker
@@ -655,3 +656,43 @@ async def test_heartbeat_suppresses_rss_busy_message(monkeypatch, tmp_path):
 
     assert captured["kwargs"] == {"suppress_busy_message": True}
     assert result == "HEARTBEAT_OK"
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_task_batch_injects_inline_image_inputs(monkeypatch):
+    captured: dict[str, object] = {}
+    image_url = "https://example.com/cam.jpg"
+
+    async def _fake_fetch(url: str, *, max_bytes=0):
+        _ = max_bytes
+        assert url == image_url
+        return b"\xff\xd8\xffpayload", "image/jpeg"
+
+    async def _fake_refresh_lock(*_args, **_kwargs):
+        return True
+
+    async def _fake_handle_message(_ctx, message_history):
+        captured["message_history"] = message_history
+        yield "看到了床边区域"
+
+    monkeypatch.setattr(agent_input_module, "fetch_image_from_url", _fake_fetch)
+    monkeypatch.setattr(heartbeat_store, "refresh_lock", _fake_refresh_lock)
+    monkeypatch.setattr(
+        heartbeat_worker_module,
+        "agent_orchestrator",
+        type("FakeOrchestrator", (), {"handle_message": _fake_handle_message})(),
+    )
+
+    worker = HeartbeatWorker()
+    result = await worker._run_heartbeat_task_batch(
+        user_id="hb-img",
+        checklist=[f"获取 {image_url} 这张图并告诉我看到了什么"],
+        owner="test-owner",
+    )
+
+    assert "床边区域" in result
+    message_history = captured["message_history"]
+    parts = message_history[-1]["parts"]
+    assert parts[0]["text"]
+    assert parts[1]["inline_data"]["mime_type"] == "image/jpeg"
+    assert parts[1]["inline_data"]["data"]
