@@ -2,6 +2,8 @@ import importlib.util
 from pathlib import Path
 
 from handlers.heartbeat_handlers import _parse_subcommand as parse_heartbeat_subcommand
+from handlers.model_handlers import _parse_subcommand as parse_model_subcommand
+from handlers.usage_handlers import _parse_subcommand as parse_usage_subcommand
 
 
 def _load_module(relative_path: str, module_name: str):
@@ -35,6 +37,20 @@ class _FakeAdapterManager:
 def test_heartbeat_default_subcommands():
     assert parse_heartbeat_subcommand("/heartbeat") == ("list", "")
     assert parse_heartbeat_subcommand("/heartbeat help") == ("help", "")
+    assert parse_model_subcommand("/model") == ("show", "")
+    assert parse_model_subcommand("/model help") == ("help", "")
+    assert parse_model_subcommand("/model use demo/fallback") == (
+        "use",
+        "demo/fallback",
+    )
+    assert parse_model_subcommand("/model use primary demo/fallback") == (
+        "use",
+        "primary demo/fallback",
+    )
+    assert parse_usage_subcommand("/usage") == ("show", "")
+    assert parse_usage_subcommand("/usage help") == ("help", "")
+    assert parse_usage_subcommand("/usage today") == ("today", "")
+    assert parse_usage_subcommand("/usage reset") == ("reset", "")
 
 
 def test_stock_rss_schedule_deploy_subcommand_parsers():

@@ -18,10 +18,59 @@ _MODEL_POOL_ALIASES: dict[str, tuple[str, ...]] = {
     "image_generation": ("image_generation", "image_gen"),
 }
 
+_MODEL_ROLE_ALIASES: dict[str, tuple[str, ...]] = {
+    "primary": ("primary", "main"),
+    "routing": ("routing", "route", "router"),
+    "vision": ("vision", "image"),
+    "image_generation": ("image_generation", "image_gen", "draw", "drawing"),
+    "voice": ("voice", "audio"),
+}
+
+_MODEL_ROLE_STORAGE_KEYS: dict[str, tuple[str, ...]] = {
+    "primary": ("primary",),
+    "routing": ("routing",),
+    "vision": ("vision", "image"),
+    "image_generation": ("image_generation", "image_gen"),
+    "voice": ("voice",),
+}
+
 
 def _pool_aliases(pool_type: str) -> tuple[str, ...]:
     normalized = str(pool_type or "primary").strip().lower() or "primary"
     return _MODEL_POOL_ALIASES.get(normalized, (normalized,))
+
+
+def normalize_model_role(role: str) -> str:
+    """将模型角色别名归一化为统一名称。"""
+    normalized = str(role or "").strip().lower()
+    if not normalized:
+        return ""
+    for canonical, aliases in _MODEL_ROLE_ALIASES.items():
+        if normalized == canonical or normalized in aliases:
+            return canonical
+    return ""
+
+
+def resolve_models_config_path(config_path: Optional[str] = None) -> Path:
+    """解析 models.json 路径。"""
+    raw_path = str(
+        config_path or os.getenv("MODELS_CONFIG_PATH", "config/models.json")
+    ).strip() or "config/models.json"
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = path.resolve()
+    return path
+
+
+def _resolve_model_storage_key(role: str, model_section: dict[str, Any]) -> str:
+    normalized_role = normalize_model_role(role)
+    if not normalized_role:
+        raise ValueError(f"Unsupported model role: {role}")
+    candidates = _MODEL_ROLE_STORAGE_KEYS.get(normalized_role, (normalized_role,))
+    for key in candidates:
+        if key in model_section:
+            return key
+    return candidates[0]
 
 
 @dataclass
@@ -293,6 +342,44 @@ _model_manager: Optional[ModelManager] = None
 _primary_model: str = ""
 
 
+def _parse_models_config_data(data: dict[str, Any]) -> ModelsConfig:
+    """将原始 JSON 数据解析为 ModelsConfig。"""
+    providers = {}
+    for provider_name, provider_data in data.get("providers", {}).items():
+        models = []
+        for model_data in provider_data.get("models", []):
+            cost_data = model_data.get("cost", {})
+            model = ModelConfig(
+                id=model_data["id"],
+                name=model_data.get("name", model_data["id"]),
+                reasoning=model_data.get("reasoning", False),
+                input=model_data.get("input", ["text"]),
+                cost=ModelCost(
+                    input=cost_data.get("input", 0),
+                    output=cost_data.get("output", 0),
+                    cacheRead=cost_data.get("cacheRead", 0),
+                    cacheWrite=cost_data.get("cacheWrite", 0),
+                ),
+                contextWindow=model_data.get("contextWindow", 1000000),
+                maxTokens=model_data.get("maxTokens", 65536),
+            )
+            models.append(model)
+
+        providers[provider_name] = ProviderConfig(
+            baseUrl=provider_data["baseUrl"],
+            apiKey=provider_data.get("apiKey", ""),
+            api=provider_data.get("api", "openai-completions"),
+            models=models,
+        )
+
+    return ModelsConfig(
+        mode=data.get("mode", "merge"),
+        model=data.get("model", {}),
+        models=data.get("models", {}),
+        providers=providers,
+    )
+
+
 def _ensure_models_loaded() -> Optional[ModelsConfig]:
     global _models_config
     if _models_config is None:
@@ -300,20 +387,23 @@ def _ensure_models_loaded() -> Optional[ModelsConfig]:
     return _models_config
 
 
-def load_models_config(config_path: Optional[str] = None) -> ModelsConfig:
+def load_models_config(
+    config_path: Optional[str] = None,
+    *,
+    force_reload: bool = False,
+) -> ModelsConfig:
     """加载模型配置并自动初始化ModelManager"""
     global _models_config, _model_manager, _primary_model
 
-    if _models_config is not None:
+    if _models_config is not None and not force_reload:
         return _models_config
 
-    # 默认配置路径
-    if config_path is None:
-        config_path = os.getenv("MODELS_CONFIG_PATH", "config/models.json")
+    config_file = resolve_models_config_path(config_path)
+    _model_manager = None
+    _primary_model = ""
 
-    config_file = Path(config_path)
     if not config_file.exists():
-        logger.warning(f"[ModelManager] Config file not found: {config_path}")
+        logger.warning(f"[ModelManager] Config file not found: {config_file}")
         _models_config = ModelsConfig()
         return _models_config
 
@@ -321,44 +411,10 @@ def load_models_config(config_path: Optional[str] = None) -> ModelsConfig:
         with open(config_file, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        # 解析providers
-        providers = {}
-        for provider_name, provider_data in data.get("providers", {}).items():
-            models = []
-            for model_data in provider_data.get("models", []):
-                cost_data = model_data.get("cost", {})
-                model = ModelConfig(
-                    id=model_data["id"],
-                    name=model_data.get("name", model_data["id"]),
-                    reasoning=model_data.get("reasoning", False),
-                    input=model_data.get("input", ["text"]),
-                    cost=ModelCost(
-                        input=cost_data.get("input", 0),
-                        output=cost_data.get("output", 0),
-                        cacheRead=cost_data.get("cacheRead", 0),
-                        cacheWrite=cost_data.get("cacheWrite", 0),
-                    ),
-                    contextWindow=model_data.get("contextWindow", 1000000),
-                    maxTokens=model_data.get("maxTokens", 65536),
-                )
-                models.append(model)
-
-            providers[provider_name] = ProviderConfig(
-                baseUrl=provider_data["baseUrl"],
-                apiKey=provider_data.get("apiKey", ""),
-                api=provider_data.get("api", "openai-completions"),
-                models=models,
-            )
-
-        _models_config = ModelsConfig(
-            mode=data.get("mode", "merge"),
-            model=data.get("model", {}),
-            models=data.get("models", {}),
-            providers=providers,
-        )
+        _models_config = _parse_models_config_data(data)
 
         logger.info(
-            f"[ModelManager] Loaded {len(_models_config.list_models())} models from {config_path}"
+            f"[ModelManager] Loaded {len(_models_config.list_models())} models from {config_file}"
         )
 
         # 自动初始化ModelManager（使用配置中的primary模型）
@@ -376,6 +432,11 @@ def load_models_config(config_path: Optional[str] = None) -> ModelsConfig:
         logger.error(f"[ModelManager] Failed to load config: {e}")
         _models_config = ModelsConfig()
         return _models_config
+
+
+def reload_models_config(config_path: Optional[str] = None) -> ModelsConfig:
+    """强制重载模型配置。"""
+    return load_models_config(config_path=config_path, force_reload=True)
 
 
 def init_model_manager(
@@ -400,6 +461,81 @@ def get_model_manager() -> Optional[ModelManager]:
 def get_models_config() -> Optional[ModelsConfig]:
     """获取模型配置实例"""
     return _models_config
+
+
+def get_configured_model(role: str) -> str:
+    """获取指定角色当前配置的模型。"""
+    normalized_role = normalize_model_role(role)
+    if not normalized_role:
+        return ""
+    _ensure_models_loaded()
+    if _models_config is None:
+        return ""
+    if normalized_role == "primary":
+        return _models_config.get_primary_model()
+    if normalized_role == "routing":
+        return _models_config.get_routing_model()
+    if normalized_role == "vision":
+        return _models_config.get_vision_model()
+    if normalized_role == "image_generation":
+        return _models_config.get_image_generation_model()
+    if normalized_role == "voice":
+        return _models_config.get_voice_model()
+    return ""
+
+
+def update_configured_model(
+    role: str,
+    model_key: str,
+    *,
+    config_path: Optional[str] = None,
+) -> dict[str, str]:
+    """更新指定角色的模型配置并写回 models.json。"""
+    normalized_role = normalize_model_role(role)
+    if not normalized_role:
+        raise ValueError(f"Unsupported model role: {role}")
+
+    normalized_model_key = str(model_key or "").strip()
+    if not normalized_model_key:
+        raise ValueError("Model key is required")
+
+    config_file = resolve_models_config_path(config_path)
+    if not config_file.exists():
+        raise FileNotFoundError(f"Config file not found: {config_file}")
+
+    with open(config_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if not isinstance(data, dict):
+        raise ValueError("Invalid models config root")
+
+    parsed = _parse_models_config_data(data)
+    if not parsed.get_model(normalized_model_key):
+        raise ValueError(f"Unknown model key: {normalized_model_key}")
+
+    raw_model_section = data.get("model", {})
+    if raw_model_section is None:
+        raw_model_section = {}
+    if not isinstance(raw_model_section, dict):
+        raise ValueError("Invalid models config: model must be an object")
+
+    storage_key = _resolve_model_storage_key(normalized_role, raw_model_section)
+    previous = str(raw_model_section.get(storage_key, "") or "")
+    raw_model_section[storage_key] = normalized_model_key
+    data["model"] = raw_model_section
+
+    with open(config_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+    reload_models_config(str(config_file))
+    return {
+        "role": normalized_role,
+        "storage_key": storage_key,
+        "previous": previous,
+        "current": normalized_model_key,
+        "config_path": str(config_file),
+    }
 
 
 def get_primary_model() -> str:

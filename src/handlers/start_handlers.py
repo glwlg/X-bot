@@ -181,7 +181,7 @@ async def help_command(ctx: UnifiedContext) -> None:
         "• **手动教学**：/teach - 强制触发学习模式\n"
         "• /skills - 查看已安装技能\n\n"
         "**常用命令：**\n"
-        "/start 主菜单 | /new 新对话 | /compact 压缩 | /chatlog 检索 | /heartbeat 心跳 | /task 任务"
+        "/start 主菜单 | /new 新对话 | /compact 压缩 | /chatlog 检索 | /heartbeat 心跳 | /task 任务 | /model 模型 | /usage 用量"
     )
 
 

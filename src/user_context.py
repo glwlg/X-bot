@@ -16,6 +16,7 @@ from core.state_store import (
     replace_session_entries,
 )
 from core.long_term_memory import long_term_memory
+from core.llm_usage_store import set_current_llm_usage_session_id
 from services.session_compaction_service import (
     SESSION_MEMORY_PREFIX,
     SESSION_SUMMARY_PREFIX,
@@ -47,10 +48,13 @@ async def get_or_create_session_id(
         store = getattr(context, "user_data", {})
 
     if SESSION_ID_KEY in store:
-        return str(store[SESSION_ID_KEY])
+        session_id = str(store[SESSION_ID_KEY])
+        set_current_llm_usage_session_id(session_id)
+        return session_id
 
     session_id = await _resolve_preferred_session_id(user_id)
     store[SESSION_ID_KEY] = session_id
+    set_current_llm_usage_session_id(session_id)
     return session_id
 
 

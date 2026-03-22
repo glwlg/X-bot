@@ -39,6 +39,7 @@ MODELS_CONFIG_PATH = os.getenv("MODELS_CONFIG_PATH", "config/models.json")
 # ============================================================================
 
 _clients_cache = {}
+_wrapped_clients_cache = {}
 
 
 def get_client_for_model(model_key: str | None = None, is_async: bool = True):
@@ -52,6 +53,7 @@ def get_client_for_model(model_key: str | None = None, is_async: bool = True):
         get_base_url_for_model,
         get_current_model,
     )
+    from core.llm_usage_store import wrap_openai_client
 
     key = model_key or get_current_model()
     api_key = get_api_key_for_model(key)
@@ -67,7 +69,14 @@ def get_client_for_model(model_key: str | None = None, is_async: bool = True):
         else:
             _clients_cache[cache_key] = OpenAI(api_key=api_key, base_url=base_url)
 
-    return _clients_cache[cache_key]
+    wrapper_key = f"{cache_key}:{str(key or '').strip() or '__default__'}"
+    if wrapper_key not in _wrapped_clients_cache:
+        _wrapped_clients_cache[wrapper_key] = wrap_openai_client(
+            _clients_cache[cache_key],
+            default_model_key=str(key or "").strip(),
+        )
+
+    return _wrapped_clients_cache[wrapper_key]
 
 
 # 为了兼容尚未迁移的旧代码，提供一个代理客户端

@@ -4,6 +4,7 @@ import logging
 from typing import Any
 
 from core.config import get_client_for_model
+from core.llm_usage_store import llm_usage_session
 from core.model_config import get_current_model
 from core.state_store import get_session_entries, replace_session_entries
 from services.openai_adapter import generate_text
@@ -119,6 +120,8 @@ class SessionCompactionService:
             }
 
         summary_text = await self._summarize_history(
+            user_id=user_id,
+            session_id=session_id,
             previous_summary=previous_summary,
             older_rows=older_rows,
         )
@@ -152,6 +155,8 @@ class SessionCompactionService:
     async def _summarize_history(
         self,
         *,
+        user_id: str,
+        session_id: str,
         previous_summary: str,
         older_rows: list[dict[str, str]],
     ) -> str:
@@ -183,17 +188,18 @@ class SessionCompactionService:
             client = get_client_for_model(model_name, is_async=True)
             if client is None:
                 raise RuntimeError("OpenAI async client is not initialized")
-            summary = await generate_text(
-                async_client=client,
-                model=model_name,
-                contents=prompt,
-                config={
-                    "system_instruction": (
-                        "你是会话压缩助手。"
-                        "只输出可直接作为后续对话上下文的摘要，不要附加说明。"
-                    ),
-                },
-            )
+            with llm_usage_session(session_id or user_id):
+                summary = await generate_text(
+                    async_client=client,
+                    model=model_name,
+                    contents=prompt,
+                    config={
+                        "system_instruction": (
+                            "你是会话压缩助手。"
+                            "只输出可直接作为后续对话上下文的摘要，不要附加说明。"
+                        ),
+                    },
+                )
             return str(summary or "").strip()
         except Exception as exc:
             logger.warning("Session compaction summarization failed: %s", exc)

@@ -22,3 +22,5 @@ from .ai_handlers import (
 from .heartbeat_handlers import heartbeat_command
 from .task_handlers import task_command
 from .accounting_handlers import accounting_command
+from .model_handlers import model_command, handle_model_callback
+from .usage_handlers import usage_command
