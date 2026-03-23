@@ -18,6 +18,16 @@ logger = logging.getLogger(__name__)
 CODE_BLOCK_FILE_MIN_LINES = 20
 
 
+def _platform_code_block_file_extension(platform: str, language: str) -> str:
+    safe_platform = str(platform or "").strip().lower()
+    safe_language = str(language or "").strip().lower()
+
+    # Weixin cannot open HTML attachments reliably. Keep code snippets as text.
+    if safe_platform == "weixin":
+        return "md"
+    return "html" if safe_language == "html" else "md"
+
+
 async def process_and_send_code_files(ctx: UnifiedContext, text: str) -> str:
     """
     1. Scan text for code blocks.
@@ -53,8 +63,8 @@ async def process_and_send_code_files(ctx: UnifiedContext, text: str) -> str:
         if not code_content:
             continue
 
-        # 输出文件策略：除 html 外统一转为 markdown，便于 Telegram 直接预览。
-        ext = "html" if language == "html" else "md"
+        platform = getattr(ctx.message, "platform", "") or ""
+        ext = _platform_code_block_file_extension(platform, language)
 
         lines = code_content.splitlines()
         should_process = len(lines) > CODE_BLOCK_FILE_MIN_LINES
@@ -91,7 +101,6 @@ async def process_and_send_code_files(ctx: UnifiedContext, text: str) -> str:
             try:
                 from services.md_converter import adapt_md_file_for_platform
 
-                platform = getattr(ctx.message, "platform", "") or ""
                 file_bytes, filename = adapt_md_file_for_platform(
                     file_bytes=file_bytes,
                     filename=filename,

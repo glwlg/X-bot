@@ -101,7 +101,7 @@ def adapt_md_file_for_platform(
     """Return (content_bytes, adapted_filename) for the target platform.
 
     - Telegram / DingTalk → converts .md to self-contained .html
-    - Discord / others    → keeps .md as-is
+    - Discord / Weixin    → keeps .md as-is
     """
     lower_name = str(filename or "").strip().lower()
     lower_platform = str(platform or "").strip().lower()
@@ -110,7 +110,7 @@ def adapt_md_file_for_platform(
         return file_bytes, filename
 
     # Platforms that natively preview .md
-    md_native_platforms = {"discord"}
+    md_native_platforms = {"discord", "weixin"}
     if lower_platform in md_native_platforms:
         return file_bytes, filename
 

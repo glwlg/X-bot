@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Set
 
+from core.local_file_delivery import send_local_file
 from core.skill_tool_handlers import skill_tool_handler_registry
 from core.tool_registry import tool_registry
 
@@ -41,12 +42,20 @@ class RuntimeToolAssembler:
         self.platform_name = str(platform_name or "")
         self.runtime_tool_allowed = runtime_tool_allowed
         self.allowed_skill_names = (
-            {str(item or "").strip() for item in list(allowed_skill_names or []) if str(item or "").strip()}
+            {
+                str(item or "").strip()
+                for item in list(allowed_skill_names or [])
+                if str(item or "").strip()
+            }
             if allowed_skill_names is not None
             else None
         )
         self.allowed_tool_names = (
-            {str(item or "").strip() for item in list(allowed_tool_names or []) if str(item or "").strip()}
+            {
+                str(item or "").strip()
+                for item in list(allowed_tool_names or [])
+                if str(item or "").strip()
+            }
             if allowed_tool_names is not None
             else None
         )
@@ -109,7 +118,9 @@ class RuntimeToolAssembler:
 
     async def assemble(self) -> List[Any]:
         merged_tools: List[Any] = []
-        merged_tools.extend(tool_registry.get_core_tools(runtime_role=self._runtime_role()))
+        merged_tools.extend(
+            tool_registry.get_core_tools(runtime_role=self._runtime_role())
+        )
         if self.allowed_skill_names is None or self.allowed_skill_names:
             merged_tools.append(tool_registry.get_load_skill_tool())
         merged_tools.extend(
@@ -478,6 +489,38 @@ class ToolCallDispatcher:
             self.todo_mark_step("act", "in_progress", f"Tool `{tool_name}` finished.")
             return result
 
+        if tool_name == "send_local_file":
+            if self._runtime_role() != "manager":
+                return {
+                    "ok": False,
+                    "error_code": "policy_blocked",
+                    "message": "Tool policy blocked: send_local_file",
+                    "failure_mode": "fatal",
+                    "terminal": True,
+                    "text": "❌ 当前执行上下文不允许直接向用户发送服务器文件。",
+                }
+            if not self._policy_allows(tool_name, kind="tool"):
+                return {
+                    "ok": False,
+                    "error_code": "policy_blocked",
+                    "message": f"Tool policy blocked: {tool_name}",
+                    "failure_mode": "fatal",
+                    "terminal": True,
+                    "text": "❌ 当前策略不允许直接向用户发送服务器文件。",
+                }
+            result = await send_local_file(
+                self.ctx,
+                path=str(tool_args.get("path") or ""),
+                caption=str(tool_args.get("caption") or ""),
+                filename=str(tool_args.get("filename") or ""),
+                kind=str(tool_args.get("kind") or "auto"),
+                task_workspace_root=self.task_workspace_root,
+            )
+            self.todo_mark_step(
+                "act", "in_progress", "Tool `send_local_file` finished."
+            )
+            return result
+
         if tool_name in {"spawn_subagent", "await_subagents"}:
             if self._runtime_role() != "manager":
                 return {
@@ -517,7 +560,10 @@ class ToolCallDispatcher:
 
             skill_info = skill_loader.get_skill(skill_name) or {}
             resolved_skill_name = str(skill_info.get("name") or skill_name).strip()
-            if self.allowed_skill_names is not None and resolved_skill_name not in self.allowed_skill_names:
+            if (
+                self.allowed_skill_names is not None
+                and resolved_skill_name not in self.allowed_skill_names
+            ):
                 return {
                     "ok": False,
                     "error_code": "skill_not_in_scope",

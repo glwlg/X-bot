@@ -12,6 +12,27 @@ def test_runtime_tool_dispatcher_no_longer_uses_legacy_extension_executor():
     assert not hasattr(runtime_tools_module, "skill_arg_planner")
 
 
+class _FakeDeliveryCtx:
+    def __init__(self, *, platform: str = "telegram"):
+        self.message = SimpleNamespace(
+            text="把文件发给我",
+            platform=platform,
+        )
+        self.user_data = {}
+        self.documents: list[dict[str, object]] = []
+
+    async def reply_document(self, document, filename=None, caption=None, **kwargs):
+        self.documents.append(
+            {
+                "document": document,
+                "filename": filename,
+                "caption": caption,
+                "kwargs": dict(kwargs),
+            }
+        )
+        return SimpleNamespace(id="doc")
+
+
 @pytest.mark.asyncio
 async def test_manager_allows_bash_for_coding_requests_without_legacy_pipeline(
     monkeypatch,
@@ -51,6 +72,43 @@ async def test_manager_allows_bash_for_coding_requests_without_legacy_pipeline(
     )
 
     assert result["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_manager_can_send_local_file_via_dispatcher(tmp_path, monkeypatch):
+    monkeypatch.setenv("LOCAL_FILE_DELIVERY_ALLOWED_ROOTS", str(tmp_path))
+    target = (tmp_path / "README.md").resolve()
+    target.write_text("# demo\n", encoding="utf-8")
+
+    async def append_event(_event: str):
+        return None
+
+    ctx = _FakeDeliveryCtx(platform="telegram")
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="u-send-1",
+        platform_name="telegram",
+        task_id="task-send-1",
+        task_inbox_id="",
+        task_workspace_root=str(tmp_path),
+        ctx=ctx,
+        runtime=object(),
+        tool_broker=object(),
+        runtime_tool_allowed=lambda **_kwargs: True,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"send_local_file"})
+
+    result = await dispatcher.execute(
+        name="send_local_file",
+        args={"path": "README.md", "caption": "请查收"},
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert result["ok"] is True
+    assert result["terminal"] is True
+    assert ctx.documents
 
 
 @pytest.mark.asyncio
@@ -383,9 +441,7 @@ async def test_bash_keeps_current_memory_path_unchanged(monkeypatch):
 
     result = await dispatcher.execute(
         name="bash",
-        args={
-            "command": "ls -la /app/data/user/ && cat data/user/MEMORY.md"
-        },
+        args={"command": "ls -la /app/data/user/ && cat data/user/MEMORY.md"},
         execution_policy=None,
         started=time.perf_counter(),
     )

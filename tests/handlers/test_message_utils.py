@@ -8,10 +8,10 @@ from core.platform.models import MessageType
 
 
 class _DummyContext:
-    def __init__(self):
+    def __init__(self, *, platform: str = "telegram"):
         self.message = SimpleNamespace(
             id="msg-1",
-            platform="telegram",
+            platform=platform,
             reply_to_message=None,
         )
         self.documents: list[dict[str, object]] = []
@@ -73,6 +73,24 @@ async def test_process_and_send_code_files_converts_21_line_block_to_file(monkey
     assert len(ctx.documents) == 1
     assert ctx.documents[0]["filename"] == "code_snippet_1.html"
     assert ctx.documents[0]["caption"] == "📝 HTML 代码片段"
+
+
+@pytest.mark.asyncio
+async def test_process_and_send_code_files_keeps_html_snippet_as_md_for_weixin(
+    monkeypatch, tmp_path
+):
+    monkeypatch.chdir(tmp_path)
+    ctx = _DummyContext(platform="weixin")
+    code = "\n".join(f"<div>{idx}</div>" for idx in range(21))
+    text = f"前文\n```html\n{code}\n```\n后文"
+
+    rendered = await message_utils.process_and_send_code_files(ctx, text)
+
+    assert "code_snippet_1.md" in rendered
+    assert "内容已保存为文件" in rendered
+    assert len(ctx.documents) == 1
+    assert ctx.documents[0]["filename"] == "code_snippet_1.md"
+    assert ctx.documents[0]["caption"] == "📝 Markdown 文本片段（原始语言: html）"
 
 
 @pytest.mark.asyncio

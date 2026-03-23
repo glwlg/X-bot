@@ -121,6 +121,37 @@ CORE_TOOLS: List[Dict[str, Any]] = [
 
 MANAGER_INTERNAL_TOOLS: List[Dict[str, Any]] = [
     {
+        "name": "send_local_file",
+        "description": (
+            "Send an existing safe server-side file to the current user as an attachment. "
+            "Use this when the user explicitly asks to receive a file, not just its contents."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "Absolute or workspace-relative file path on the server",
+                },
+                "caption": {
+                    "type": "string",
+                    "description": "Optional short caption shown with the attachment",
+                },
+                "filename": {
+                    "type": "string",
+                    "description": "Optional override filename shown to the user",
+                },
+                "kind": {
+                    "type": "string",
+                    "enum": ["auto", "document", "photo", "video", "audio"],
+                    "default": "auto",
+                    "description": "Preferred delivery type. Use auto unless you need to force document delivery.",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+    {
         "name": "spawn_subagent",
         "description": (
             "Start an internal subagent for a bounded subtask with an explicit tool scope."
@@ -241,7 +272,8 @@ class ToolRegistry:
                     "name": name,
                     "description": str(exported.get("description") or "").strip(),
                     "parameters": deepcopy(
-                        exported.get("parameters") or {"type": "object", "properties": {}}
+                        exported.get("parameters")
+                        or {"type": "object", "properties": {}}
                     ),
                 }
             )
@@ -254,7 +286,9 @@ class ToolRegistry:
         )
 
     def get_manager_tool_names(self) -> List[str]:
-        return [str(item.get("name") or "").strip() for item in self.get_manager_tools()]
+        return [
+            str(item.get("name") or "").strip() for item in self.get_manager_tools()
+        ]
 
     def get_skill_tool_binding(
         self,
