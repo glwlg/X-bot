@@ -61,14 +61,20 @@ async def test_orchestrator_manager_tool_surface_matches_current_runtime(monkeyp
             confidence=0.9,
         )
 
-    monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
     monkeypatch.setattr(orchestrator, "_runtime_tool_allowed", lambda **_kwargs: True)
-    monkeypatch.setattr(orchestrator.extension_router, "route", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
+    )
     monkeypatch.setattr("core.agent_orchestrator.intent_router.route", fake_route)
 
     ctx = DummyContext()
     message_history = [{"role": "user", "parts": [{"text": "你好"}]}]
-    chunks = [chunk async for chunk in orchestrator.handle_message(ctx, message_history)]
+    chunks = [
+        chunk async for chunk in orchestrator.handle_message(ctx, message_history)
+    ]
 
     assert chunks == ["ok"]
     assert set(captured["tool_names"]) == {
@@ -81,6 +87,7 @@ async def test_orchestrator_manager_tool_surface_matches_current_runtime(monkeyp
         "git_ops",
         "gh_cli",
         "repo_workspace",
+        "send_local_file",
         "spawn_subagent",
         "task_tracker",
     }
@@ -118,7 +125,9 @@ async def test_orchestrator_intent_router_narrows_prompt_and_load_skill(monkeypa
         captured["allowed_skill_names"] = list(kwargs.get("allowed_skill_names") or [])
         return "system"
 
-    monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
     monkeypatch.setattr(orchestrator, "_runtime_tool_allowed", lambda **_kwargs: True)
     monkeypatch.setattr(
         orchestrator.extension_router,
@@ -137,7 +146,9 @@ async def test_orchestrator_intent_router_narrows_prompt_and_load_skill(monkeypa
         ],
     )
     monkeypatch.setattr("core.agent_orchestrator.intent_router.route", fake_route)
-    monkeypatch.setattr("core.agent_orchestrator.prompt_composer.compose_base", fake_compose_base)
+    monkeypatch.setattr(
+        "core.agent_orchestrator.prompt_composer.compose_base", fake_compose_base
+    )
 
     ctx = DummyContext()
     message_history = [{"role": "user", "parts": [{"text": "查一下这个网页"}]}]
@@ -178,7 +189,9 @@ async def test_orchestrator_intent_router_empty_result_removes_load_skill(monkey
         captured["allowed_skill_names"] = list(kwargs.get("allowed_skill_names") or [])
         return "system"
 
-    monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
     monkeypatch.setattr(orchestrator, "_runtime_tool_allowed", lambda **_kwargs: True)
     monkeypatch.setattr(
         orchestrator.extension_router,
@@ -192,7 +205,9 @@ async def test_orchestrator_intent_router_empty_result_removes_load_skill(monkey
         ],
     )
     monkeypatch.setattr("core.agent_orchestrator.intent_router.route", fake_route)
-    monkeypatch.setattr("core.agent_orchestrator.prompt_composer.compose_base", fake_compose_base)
+    monkeypatch.setattr(
+        "core.agent_orchestrator.prompt_composer.compose_base", fake_compose_base
+    )
 
     ctx = DummyContext()
     message_history = [{"role": "user", "parts": [{"text": "你好"}]}]
@@ -233,9 +248,13 @@ async def test_orchestrator_chat_mode_skips_task_tracking(monkeypatch):
         captured["session_activate"] += 1
         return None
 
-    monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
     monkeypatch.setattr(orchestrator, "_runtime_tool_allowed", lambda **_kwargs: True)
-    monkeypatch.setattr(orchestrator.extension_router, "route", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
+    )
     monkeypatch.setattr("core.agent_orchestrator.intent_router.route", fake_route)
     monkeypatch.setattr("core.agent_orchestrator.task_inbox.submit", fake_submit)
     monkeypatch.setattr(
@@ -246,7 +265,9 @@ async def test_orchestrator_chat_mode_skips_task_tracking(monkeypatch):
     ctx = DummyContext()
     message_history = [{"role": "user", "parts": [{"text": "我们来玩猜人物"}]}]
 
-    chunks = [chunk async for chunk in orchestrator.handle_message(ctx, message_history)]
+    chunks = [
+        chunk async for chunk in orchestrator.handle_message(ctx, message_history)
+    ]
 
     assert chunks == ["ok"]
     assert captured["task_submit"] == 0
@@ -282,8 +303,12 @@ async def test_orchestrator_routes_with_recent_user_context(monkeypatch):
         )
 
     monkeypatch.setattr(orchestrator.extension_router, "route", fake_route)
-    monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
-    monkeypatch.setattr("core.agent_orchestrator.intent_router.route", fake_intent_route)
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
+    monkeypatch.setattr(
+        "core.agent_orchestrator.intent_router.route", fake_intent_route
+    )
 
     ctx = DummyContext()
     message_history = [
@@ -324,13 +349,19 @@ async def test_orchestrator_rejects_non_injected_tool_call(monkeypatch):
             confidence=0.9,
         )
 
-    monkeypatch.setattr(orchestrator.ai_service, "generate_response_stream", fake_stream)
-    monkeypatch.setattr(orchestrator.extension_router, "route", lambda *_args, **_kwargs: [])
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
+    monkeypatch.setattr(
+        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
+    )
     monkeypatch.setattr("core.agent_orchestrator.intent_router.route", fake_route)
 
     ctx = DummyContext()
     message_history = [{"role": "user", "parts": [{"text": "你好"}]}]
-    chunks = [chunk async for chunk in orchestrator.handle_message(ctx, message_history)]
+    chunks = [
+        chunk async for chunk in orchestrator.handle_message(ctx, message_history)
+    ]
 
     assert chunks
     assert "Tool not available" in chunks[0]

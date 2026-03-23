@@ -11,6 +11,10 @@ def test_tool_access_groups_and_defaults(tmp_path):
     assert "group:fs" in groups
     assert "group:primitives" in groups
 
+    delivery_groups = store.groups_for_tool("send_local_file", kind="tool")
+    assert "group:delivery" in delivery_groups
+    assert "group:fs" in delivery_groups
+
     bash_groups = store.groups_for_tool("bash", kind="tool")
     assert "group:execution" in bash_groups
 
@@ -42,12 +46,14 @@ def test_tool_access_dynamic_skill_export_inherits_parent_skill_groups(
 
     monkeypatch.setattr(
         "core.skill_loader.skill_loader.get_tool_export",
-        lambda name: {
-            "name": "queue_status",
-            "skill_name": "skill_manager",
-        }
-        if name == "queue_status"
-        else None,
+        lambda name: (
+            {
+                "name": "queue_status",
+                "skill_name": "skill_manager",
+            }
+            if name == "queue_status"
+            else None
+        ),
     )
 
     groups = store.groups_for_tool("queue_status", kind="tool")
@@ -64,9 +70,9 @@ def test_tool_access_ext_skill_prefers_frontmatter_policy_groups(tmp_path, monke
 
     monkeypatch.setattr(
         "core.skill_loader.skill_loader.get_skill",
-        lambda name: {"policy_groups": ["group:media"]}
-        if name == "download_video"
-        else {},
+        lambda name: (
+            {"policy_groups": ["group:media"]} if name == "download_video" else {}
+        ),
     )
 
     groups = store.groups_for_tool("ext_download_video", kind="tool")

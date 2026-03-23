@@ -24,6 +24,9 @@ TOKEN_ALIASES = {
     "automation": "group:automation",
     "finance": "group:finance",
     "account": "group:account",
+    "delivery": "group:delivery",
+    "file-delivery": "group:delivery",
+    "file_delivery": "group:delivery",
     "memory": "group:memory",
     "skill-admin": "group:skill-admin",
     "skill_admin": "group:skill-admin",
@@ -254,6 +257,9 @@ class ToolAccessStore:
         if name in {"read", "write", "edit", "load_skill"}:
             groups.add("group:fs")
             groups.add("group:primitives")
+        if name in {"send_local_file"}:
+            groups.add("group:fs")
+            groups.add("group:delivery")
         if name in {"coding_backend", "coding-backend"}:
             groups.add("group:coding")
             groups.add("group:execution")
@@ -426,5 +432,6 @@ class ToolAccessStore:
             "reason": reason,
         }
         return allowed, detail
+
 
 tool_access_store = ToolAccessStore()

@@ -70,6 +70,7 @@ async def test_runtime_tool_assembler_injects_manager_skill_tools():
         "git_ops",
         "gh_cli",
         "repo_workspace",
+        "send_local_file",
         "spawn_subagent",
         "task_tracker",
     } <= set(names)
@@ -298,11 +299,13 @@ async def test_load_skill_blocks_manager_only_skill_for_subagent(monkeypatch):
         runtime=object(),
         tool_broker=object(),
         runtime_tool_allowed=lambda **kwargs: (
-            False,
-            {"reason": "matched_deny_list"},
-        )
-        if kwargs.get("tool_name") == "ext_skill_manager"
-        else True,
+            (
+                False,
+                {"reason": "matched_deny_list"},
+            )
+            if kwargs.get("tool_name") == "ext_skill_manager"
+            else True
+        ),
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
