@@ -818,6 +818,7 @@ class HeartbeatStore:
         result: str,
         *,
         run_at: str | None = None,
+        level: str | None = None,
     ) -> dict[str, Any]:
         _ = user_id
         stamp = run_at or _now_iso()
@@ -832,37 +833,47 @@ class HeartbeatStore:
             heartbeat["last_run_at"] = stamp
             heartbeat["last_result"] = _truncate(result, 4000)
             heartbeat["next_due_at"] = next_due
-            heartbeat["last_level"] = self.classify_result(result)
+            resolved_level = str(level or "").strip().upper() or self.classify_result(
+                result
+            )
+            if resolved_level not in {"OK", "NOTICE", "ACTION"}:
+                resolved_level = "NOTICE"
+            heartbeat["last_level"] = resolved_level
             status["heartbeat"] = heartbeat
             status["last_update"] = _now_iso()
             self._write_status_unlocked(status)
             return dict(heartbeat)
 
     @staticmethod
-    def classify_result(result: str) -> str:
+    def normalize_result_payload(result: str) -> tuple[str, str]:
         text = str(result or "").strip()
-        if not text or text.upper() == "HEARTBEAT_OK":
-            return "OK"
-        lowered = text.lower()
-        action_tokens = (
-            "需要",
-            "请",
-            "修复",
-            "异常",
-            "失败",
-            "error",
-            "action",
-            "todo",
-            "risk",
-            "告警",
-            "建议立即",
-        )
-        notice_tokens = ("提醒", "notice", "建议", "info", "提示", "建议关注")
-        if any(token in lowered for token in action_tokens):
-            return "ACTION"
-        if any(token in lowered for token in notice_tokens):
-            return "NOTICE"
-        return "NOTICE"
+        if not text:
+            return "OK", ""
+
+        upper = text.upper()
+        if upper == "HEARTBEAT_OK":
+            return "OK", ""
+        if upper.startswith("HEARTBEAT_ACTION:"):
+            return "ACTION", text[len("HEARTBEAT_ACTION:") :].strip()
+        if upper.startswith("HEARTBEAT_NOTICE:"):
+            return "NOTICE", text[len("HEARTBEAT_NOTICE:") :].strip()
+
+        try:
+            payload = json.loads(text)
+        except Exception:
+            payload = None
+        if isinstance(payload, dict):
+            status = str(payload.get("status") or payload.get("level") or "").strip().lower()
+            body = str(payload.get("text") or payload.get("message") or "").strip()
+            if status in {"ok", "notice", "action"}:
+                return status.upper(), ("" if status == "ok" else body)
+
+        return "NOTICE", text
+
+    @classmethod
+    def classify_result(cls, result: str) -> str:
+        level, _normalized_text = cls.normalize_result_payload(result)
+        return level
 
     async def normalize_runtime_tree(self) -> int:
         async with self._scope_lock():

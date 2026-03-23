@@ -6,7 +6,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
 
-from core.file_artifacts import extract_saved_file_rows, strip_saved_file_markers
+from core.file_artifacts import (
+    extract_saved_file_rows,
+    extract_tool_result_payload,
+    strip_saved_file_markers,
+    strip_tool_result_markers,
+)
 
 
 DEFAULT_BASH_TIMEOUT_SEC = 60
@@ -384,8 +389,9 @@ class PrimitiveRuntime:
 
         out_text = (stdout or b"").decode("utf-8", errors="replace")
         err_text = (stderr or b"").decode("utf-8", errors="replace")
+        tool_result = extract_tool_result_payload(out_text)
         saved_files = extract_saved_file_rows(out_text)
-        cleaned_out_text = strip_saved_file_markers(out_text)
+        cleaned_out_text = strip_tool_result_markers(strip_saved_file_markers(out_text))
         combined = cleaned_out_text
         if err_text:
             combined = (
@@ -405,6 +411,19 @@ class PrimitiveRuntime:
         }
         if saved_files:
             data["files"] = list(saved_files)
+        if tool_result is not None:
+            existing_data = tool_result.get("data")
+            merged_data = dict(existing_data) if isinstance(existing_data, dict) else {}
+            merged_data.setdefault("command", command)
+            merged_data.setdefault("cwd", workdir or self.workspace_root)
+            merged_data.setdefault("exit_code", process.returncode)
+            merged_data.setdefault("output", combined)
+            if saved_files and "files" not in merged_data:
+                merged_data["files"] = list(saved_files)
+            tool_result["data"] = merged_data
+            if saved_files and "files" not in tool_result:
+                tool_result["files"] = list(saved_files)
+            return tool_result
         if process.returncode != 0:
             failure_summary = self._summarize_command_failure_output(combined)
             failure_mode = self._classify_command_failure_mode(combined)
@@ -422,9 +441,10 @@ class PrimitiveRuntime:
             }
         result = self._ok(data, f"Command exited with code {process.returncode}")
         payload: Dict[str, Any] = {}
-        if cleaned_out_text.strip():
-            payload["text"] = cleaned_out_text.strip()
-            result["text"] = cleaned_out_text.strip()
+        rendered_text = combined.strip()
+        if rendered_text:
+            payload["text"] = rendered_text
+            result["text"] = rendered_text
         if saved_files:
             payload["files"] = list(saved_files)
             result["files"] = list(saved_files)

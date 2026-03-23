@@ -160,11 +160,18 @@ class AgentOrchestrator:
             if explicit_allowed_skill_names
             else {candidate.name for candidate in extension_candidates}
         )
+        request_mode = str(routing_decision.request_mode or "").strip().lower() or "chat"
+        task_tracking_requested = (
+            bool(routing_decision.task_tracking)
+            if routing_decision.task_tracking is not None
+            else request_mode == "task"
+        )
         logger.info(
-            "Extension candidates selected: raw=%s filtered=%s request_mode=%s routed=%s confidence=%.2f reason=%s",
+            "Extension candidates selected: raw=%s filtered=%s request_mode=%s task_tracking=%s routed=%s confidence=%.2f reason=%s",
             [candidate.name for candidate in raw_extension_candidates] or "none",
             [candidate.name for candidate in extension_candidates] or "none",
-            routing_decision.request_mode,
+            request_mode,
+            task_tracking_requested,
             routing_decision.candidate_skills or "none",
             float(routing_decision.confidence),
             routing_decision.reason,
@@ -190,7 +197,7 @@ class AgentOrchestrator:
 
         task_tracking_enabled = (
             runtime_ctx.session_state_enabled
-            and str(routing_decision.request_mode or "").strip().lower() == "task"
+            and task_tracking_requested
         )
         append_session_event = (
             runtime_ctx.append_session_event
@@ -213,15 +220,15 @@ class AgentOrchestrator:
             task_inbox_id = runtime_ctx.task_inbox_id
             await runtime_ctx.mark_manager_loop_started(task_goal)
         logger.info(
-            "Task tracking decision: enabled=%s mode=%s task_inbox_id=%s",
+            "Task tracking decision: enabled=%s mode=%s requested=%s task_inbox_id=%s",
             task_tracking_enabled,
-            routing_decision.request_mode,
+            request_mode,
+            task_tracking_requested,
             task_inbox_id or "none",
         )
 
         task_workspace_root = self._resolve_task_workspace_root(
             extension_candidates=extension_candidates,
-            intent_text=routing_text or last_user_text,
         )
         if task_tracking_enabled:
             await runtime_ctx.activate_session(
@@ -525,10 +532,11 @@ class AgentOrchestrator:
                 if explicit_allowed_skill_names:
                     allowed_skill_names = set(explicit_allowed_skill_names)
                 logger.info(
-                    "Extension candidates after evolution: raw=%s filtered=%s request_mode=%s routed=%s confidence=%.2f reason=%s",
+                    "Extension candidates after evolution: raw=%s filtered=%s request_mode=%s task_tracking=%s routed=%s confidence=%.2f reason=%s",
                     [candidate.name for candidate in reroute_candidates] or "none",
                     [candidate.name for candidate in extension_candidates] or "none",
                     routing_decision.request_mode,
+                    routing_decision.task_tracking,
                     routing_decision.candidate_skills or "none",
                     float(routing_decision.confidence),
                     routing_decision.reason,
@@ -732,14 +740,15 @@ class AgentOrchestrator:
     def _resolve_task_workspace_root(
         self,
         extension_candidates: list,
-        intent_text: str = "",
     ) -> str:
-        del extension_candidates
         staging_path = (X_DEPLOYMENT_STAGING_PATH or "").strip()
         if not staging_path:
             return ""
 
-        if not self._is_deployment_intent(intent_text):
+        if not self._extension_candidates_include_group(
+            extension_candidates,
+            "group:ops",
+        ):
             return ""
 
         resolved = os.path.abspath(os.path.expanduser(staging_path))
@@ -749,28 +758,29 @@ class AgentOrchestrator:
             pass
         return resolved
 
-    def _is_deployment_intent(self, text: str) -> bool:
-        lowered = (text or "").lower()
-        if not lowered.strip():
+    def _extension_candidates_include_group(
+        self,
+        extension_candidates: list,
+        group_name: str,
+    ) -> bool:
+        normalized_group = str(group_name or "").strip().lower()
+        if not normalized_group:
             return False
-        keywords = (
-            "部署",
-            "deploy",
-            "docker compose",
-            "compose",
-            "k8s",
-            "上线",
-            "发布",
-            "install service",
-        )
-        return any(keyword in lowered for keyword in keywords)
+        for candidate in extension_candidates or []:
+            skill_name = str(getattr(candidate, "name", "") or "").strip()
+            if not skill_name:
+                continue
+            groups = tool_access_store.groups_for_tool(skill_name, kind="tool")
+            if normalized_group in {
+                str(item or "").strip().lower() for item in groups
+            }:
+                return True
+        return False
 
     def _apply_extension_candidate_policy(
         self,
         extension_candidates: list,
-        intent_text: str = "",
     ) -> list:
-        del intent_text
         deduped: List[ExtensionCandidate] = []
         seen_names: set[str] = set()
         for candidate in extension_candidates or []:
@@ -796,7 +806,6 @@ class AgentOrchestrator:
         )
         extension_candidates = self._apply_extension_candidate_policy(
             raw_extension_candidates,
-            intent_text=routing_text or last_user_text,
         )
         extension_candidates = [
             candidate
@@ -867,13 +876,13 @@ class AgentOrchestrator:
         intent_text: str,
         extension_candidates: list,
     ) -> bool:
+        del intent_text
         if not self.auto_evolve_enabled:
             return False
-        if self._is_skill_management_intent(intent_text):
-            return True
-        if self._has_evolution_confirmation(intent_text):
-            return True
-        return False
+        return self._extension_candidates_include_group(
+            extension_candidates,
+            "group:skill-admin",
+        )
 
     async def _attempt_auto_skill_evolution(
         self,
@@ -884,39 +893,6 @@ class AgentOrchestrator:
         # Temporarily disabled as extension executor is removed
         # Can be re-implemented natively with prompts/SOPs in the future
         return False, "Evolution temporarily disabled."
-
-    def _has_evolution_confirmation(self, text: str) -> bool:
-        lowered = (text or "").lower()
-        cues = (
-            "允许创建技能",
-            "同意创建技能",
-            "确认创建技能",
-            "继续进化",
-            "allow evolve",
-            "allow skill creation",
-            "create new skill",
-        )
-        return any(cue in lowered for cue in cues)
-
-    def _is_skill_management_intent(self, text: str) -> bool:
-        lowered = (text or "").lower()
-        if not lowered.strip():
-            return False
-
-        keywords = (
-            "skill_manager",
-            "技能",
-            "skill",
-            "teach",
-            "教我",
-            "创建技能",
-            "新技能",
-            "learned skill",
-            "删除技能",
-            "修改技能",
-            "重载技能",
-        )
-        return any(keyword in lowered for keyword in keywords)
 
     def _sanitize_skill_text(self, text: str) -> str:
         if text.startswith("🔇🔇🔇"):

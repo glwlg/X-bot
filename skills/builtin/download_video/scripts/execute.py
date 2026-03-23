@@ -496,7 +496,8 @@ async def handle_large_file_action(ctx: UnifiedContext) -> None:
             await ctx.edit_message(
                 ctx.message.id, "📝 音频处理完成，正在通过 AI 生成摘要..."
             )
-            from core.config import GEMINI_MODEL, openai_async_client
+            from core.config import get_client_for_model
+            from core.model_config import get_voice_model
             from services.openai_adapter import generate_text
 
             contents = [
@@ -516,11 +517,15 @@ async def handle_large_file_action(ctx: UnifiedContext) -> None:
             ]
 
             try:
-                if openai_async_client is None:
+                voice_model = get_voice_model()
+                if not voice_model:
+                    raise RuntimeError("No voice model configured in config/models.json")
+                async_client = get_client_for_model(voice_model, is_async=True)
+                if async_client is None:
                     raise RuntimeError("OpenAI async client is not initialized")
                 summary_body = await generate_text(
-                    async_client=openai_async_client,
-                    model=GEMINI_MODEL,
+                    async_client=async_client,
+                    model=voice_model,
                     contents=contents,
                 )
                 if summary_body:

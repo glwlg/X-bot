@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -51,6 +52,7 @@ _PATH_EXTENSIONS = tuple(
     )
 )
 _SAVED_FILE_RE = re.compile(r"(?im)^\s*saved_file=(?P<path>.+?)\s*$")
+_TOOL_RESULT_RE = re.compile(r"(?im)^\s*tool_result=(?P<payload>.+?)\s*$")
 _LABELED_PATH_RE = re.compile(
     r"(?im)^\s*(?:保存路径|文件路径|图片路径|输出路径|附件路径|图片已保存至|save(?:d)?[_ ]file|saved to|output file|file path)\s*[:：=]?\s*`?(?P<path>/[^`\n]+?)`?\s*$"
 )
@@ -167,6 +169,26 @@ def extract_saved_file_rows(
     )
 
 
+def extract_tool_result_payload(text: str) -> dict[str, Any] | None:
+    raw = str(text or "")
+    if not raw:
+        return None
+    matches = list(_TOOL_RESULT_RE.finditer(raw))
+    if not matches:
+        return None
+
+    payload_text = str(matches[-1].group("payload") or "").strip()
+    if not payload_text:
+        return None
+    try:
+        loaded = json.loads(payload_text)
+    except Exception:
+        return None
+    if not isinstance(loaded, dict):
+        return None
+    return loaded
+
+
 def extract_file_rows_from_text(
     text: str,
     *,
@@ -198,6 +220,19 @@ def strip_saved_file_markers(text: str) -> str:
     if not raw:
         return ""
     cleaned = _SAVED_FILE_RE.sub("", raw)
+    cleaned_lines = [line.rstrip() for line in cleaned.splitlines()]
+    while cleaned_lines and not cleaned_lines[0].strip():
+        cleaned_lines.pop(0)
+    while cleaned_lines and not cleaned_lines[-1].strip():
+        cleaned_lines.pop()
+    return "\n".join(cleaned_lines).strip()
+
+
+def strip_tool_result_markers(text: str) -> str:
+    raw = str(text or "")
+    if not raw:
+        return ""
+    cleaned = _TOOL_RESULT_RE.sub("", raw)
     cleaned_lines = [line.rstrip() for line in cleaned.splitlines()]
     while cleaned_lines and not cleaned_lines[0].strip():
         cleaned_lines.pop(0)

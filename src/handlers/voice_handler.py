@@ -145,6 +145,34 @@ def _extract_model_text(response) -> str:
     return ""
 
 
+def _parse_audio_response_payload(raw_text: str) -> tuple[str, str]:
+    text = str(raw_text or "").strip()
+    if not text:
+        return "empty", ""
+
+    candidates = [text]
+    candidates.extend(re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.I))
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        status = str(payload.get("status") or "").strip().lower() or "transcribed"
+        transcript = _normalize_transcribed_text(
+            str(
+                payload.get("transcript")
+                or payload.get("text")
+                or payload.get("content")
+                or ""
+            )
+        )
+        return status, transcript
+
+    return "unstructured", _normalize_transcribed_text(text)
+
+
 def _audio_mime_candidates(mime_type: str) -> list[str]:
     raw = str(mime_type or "").strip()
     base = raw.split(";", 1)[0].strip().lower() if raw else ""
@@ -326,34 +354,46 @@ async def _run_audio_prompt(prompt: str, voice_bytes: bytes, mime_type: str) -> 
                         prompt, candidate_bytes, candidate_mime
                     ),
                 ),
+                response_format={"type": "json_object"},
             )
         except Exception as exc:
-            last_error = exc
-            logger.warning(
-                "Voice model call failed with model=%s mime=%s source=%s err=%s",
-                voice_model,
-                candidate_mime,
-                source,
-                exc,
-            )
-            continue
+            try:
+                response = await cast(Any, client).chat.completions.create(
+                    model=voice_model,
+                    messages=build_messages(
+                        contents=_build_audio_contents(
+                            prompt, candidate_bytes, candidate_mime
+                        ),
+                    ),
+                )
+            except Exception as inner_exc:
+                last_error = inner_exc
+                logger.warning(
+                    "Voice model call failed with model=%s mime=%s source=%s err=%s",
+                    voice_model,
+                    candidate_mime,
+                    source,
+                    inner_exc,
+                )
+                continue
 
         text = _extract_model_text(response)
-        if text and _looks_like_audio_missing_reply(text):
+        status, transcript = _parse_audio_response_payload(text)
+        if status in {"no_audio", "unintelligible", "empty"}:
             logger.info(
-                "Voice model could not consume audio: model=%s mime=%s",
+                "Voice model returned non-transcribable status=%s model=%s mime=%s",
+                status,
                 voice_model,
                 candidate_mime,
             )
             continue
 
-        normalized = _normalize_transcribed_text(text)
-        if text and not normalized:
+        if text and not transcript:
             logger.info("Voice model returned only quotes, retrying...")
             continue
 
-        if text:
-            return text
+        if transcript:
+            return transcript
 
     if last_error is not None:
         logger.error("Voice model call failed after mime retries: %s", last_error)
@@ -378,12 +418,12 @@ async def transcribe_voice(voice_bytes: bytes, mime_type: str) -> str | None:
     try:
         prompt = (
             "请将这段语音转写为文字。"
-            "只输出语音中说的原话，不要添加任何解释或回复。"
-            "如果无法识别，返回空字符串。"
+            "返回 JSON，格式为 "
+            '{"status":"transcribed|no_audio|unintelligible","transcript":"..."}。'
+            "如果成功识别，status=transcribed，transcript 只保留语音原话，不要添加解释。"
+            "如果没有收到可用音频或无法识别，transcript 置空。"
         )
-        text = _normalize_transcribed_text(
-            await _run_audio_prompt(prompt, voice_bytes, mime_type)
-        )
+        text = _normalize_transcribed_text(await _run_audio_prompt(prompt, voice_bytes, mime_type))
         if text:
             return text
         return None
@@ -479,33 +519,6 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
             )
         except BadRequest:
             pass
-
-
-def _looks_like_audio_missing_reply(text: str) -> bool:
-    lowered = str(text or "").strip().lower()
-    if not lowered:
-        return False
-    if ("没有收到" in lowered or "未收到" in lowered) and (
-        "语音" in lowered or "音频" in lowered
-    ):
-        return True
-    cues = (
-        "没有附上语音",
-        "没有附上音频",
-        "语音内容/音频文件",
-        "音频文件",
-        "无法听到",
-        "请上传语音",
-        "语音文件/语音链接",
-        "no audio",
-        "no voice",
-        "voice file",
-        "audio file",
-        "upload audio",
-        "attach audio",
-    )
-    return any(cue in lowered for cue in cues)
-
 
 async def process_as_voice_message(
     ctx: UnifiedContext,

@@ -20,6 +20,7 @@ from services.openai_adapter import build_messages
 load_models_config()
 
 logger = logging.getLogger(__name__)
+MAX_TOOL_HISTORY_STRING = 64_000
 
 # Backward-compatible async client injection for tests/legacy callers.
 openai_async_client: Any = None
@@ -1194,6 +1195,13 @@ class AiService:
                 return [_sanitize(item) for item in list(value)[:50]]
             if isinstance(value, (bytes, bytearray)):
                 return f"<binary:{len(value)} bytes>"
+            if isinstance(value, str):
+                if len(value) > MAX_TOOL_HISTORY_STRING:
+                    return (
+                        value[:MAX_TOOL_HISTORY_STRING].rstrip()
+                        + "\n...[truncated]"
+                    )
+                return value
             return value
 
         return _sanitize(tool_result)

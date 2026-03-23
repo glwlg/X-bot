@@ -275,6 +275,130 @@ async def test_orchestrator_chat_mode_skips_task_tracking(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_task_mode_without_tracking_skips_task_tracking(monkeypatch):
+    orchestrator = AgentOrchestrator()
+    captured = {"task_submit": 0, "session_activate": 0}
+
+    async def fake_stream(
+        message_history,
+        tools=None,
+        tool_executor=None,
+        system_instruction=None,
+        event_callback=None,
+    ):
+        _ = (message_history, tools, tool_executor, system_instruction, event_callback)
+        yield "ok"
+
+    async def fake_route(**_kwargs):
+        return RoutingDecision(
+            request_mode="task",
+            task_tracking=False,
+            candidate_skills=["web_search"],
+            reason="one_shot_lookup",
+            confidence=0.88,
+        )
+
+    async def fake_submit(**_kwargs):
+        captured["task_submit"] += 1
+        return SimpleNamespace(task_id="inbox-1")
+
+    async def fake_activate_session(_self, **_kwargs):
+        captured["session_activate"] += 1
+        return None
+
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
+    monkeypatch.setattr(orchestrator, "_runtime_tool_allowed", lambda **_kwargs: True)
+    monkeypatch.setattr(
+        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
+    )
+    monkeypatch.setattr("core.agent_orchestrator.intent_router.route", fake_route)
+    monkeypatch.setattr("core.agent_orchestrator.task_inbox.submit", fake_submit)
+    monkeypatch.setattr(
+        "core.agent_orchestrator.OrchestratorRuntimeContext.activate_session",
+        fake_activate_session,
+    )
+
+    ctx = DummyContext()
+    message_history = [{"role": "user", "parts": [{"text": "帮我总结这个仓库"}]}]
+
+    chunks = [
+        chunk async for chunk in orchestrator.handle_message(ctx, message_history)
+    ]
+
+    assert chunks == ["ok"]
+    assert captured["task_submit"] == 0
+    assert captured["session_activate"] == 0
+
+
+def test_resolve_task_workspace_root_uses_selected_ops_candidate(tmp_path, monkeypatch):
+    orchestrator = AgentOrchestrator()
+    monkeypatch.setattr("core.agent_orchestrator.X_DEPLOYMENT_STAGING_PATH", str(tmp_path))
+
+    resolved = orchestrator._resolve_task_workspace_root(
+        [
+            ExtensionCandidate(
+                name="deployment_manager",
+                description="部署管理",
+                tool_name="ext_deployment_manager",
+            )
+        ]
+    )
+
+    assert resolved == str(tmp_path.resolve())
+
+
+def test_resolve_task_workspace_root_skips_non_ops_candidate(tmp_path, monkeypatch):
+    orchestrator = AgentOrchestrator()
+    monkeypatch.setattr("core.agent_orchestrator.X_DEPLOYMENT_STAGING_PATH", str(tmp_path))
+
+    resolved = orchestrator._resolve_task_workspace_root(
+        [
+            ExtensionCandidate(
+                name="web_search",
+                description="网页搜索",
+                tool_name="ext_web_search",
+            )
+        ]
+    )
+
+    assert resolved == ""
+
+
+def test_should_auto_evolve_uses_selected_skill_groups():
+    orchestrator = AgentOrchestrator()
+    orchestrator.auto_evolve_enabled = True
+
+    assert (
+        orchestrator._should_auto_evolve(
+            intent_text="随便写点什么",
+            extension_candidates=[
+                ExtensionCandidate(
+                    name="skill_manager",
+                    description="技能治理",
+                    tool_name="ext_skill_manager",
+                )
+            ],
+        )
+        is True
+    )
+    assert (
+        orchestrator._should_auto_evolve(
+            intent_text="继续",
+            extension_candidates=[
+                ExtensionCandidate(
+                    name="web_search",
+                    description="网页搜索",
+                    tool_name="ext_web_search",
+                )
+            ],
+        )
+        is False
+    )
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_routes_with_recent_user_context(monkeypatch):
     orchestrator = AgentOrchestrator()
     captured = {}

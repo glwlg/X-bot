@@ -56,6 +56,7 @@ Runtime state lives under `data/`: most state remains file-backed, while bounded
 - Runtime is file-system first; state access is centralized via `core.state_store` and `core.state_paths/state_io`, while aggregate/query-heavy data may use bounded SQLite tables in `data/bot_data.db`.
 - `DEVELOPMENT.md` defines boundaries: Core Manager is the only user-facing runtime; image URL/local path inputs are normalized before the LLM call.
 - Model/provider selection is owned by `config/models.json`; runtime switching should go through `model_config` or `/model`, not ad-hoc env vars.
+- Content-semantic decisions must stay AI-native. Intent routing, task-vs-chat classification, follow-up/task-tracking decisions, and similar meaning-based judgments must be made by model-driven logic, not by hardcoded regex/keyword/heuristic shortcuts.
 - LLM usage accounting is aggregated by `day + session + model`; do not reintroduce append-only `events.jsonl` for this path.
 - Async-first test style: `pytest` with `asyncio_mode=auto`; most core/manager tests are `@pytest.mark.asyncio`.
 - Project packaging uses `pyproject.toml` + `hatchling`; no `package.json` or JS build pipeline.
@@ -66,6 +67,7 @@ Runtime state lives under `data/`: most state remains file-backed, while bounded
 - Do not reintroduce a separate manager/worker execution split, shared queue, or stale `worker_*` runtime assumptions.
 - Do not move new aggregate runtime data back to unbounded JSONL logs when SQLite tables already fit the workload.
 - Do not make the model fetch image URLs itself when deterministic preprocessing can resolve them at the handler layer.
+- Do not add hardcoded content classifiers or shortcut branches for semantic user intent, such as greeting detection, task routing, or whether a request deserves task tracking. If the decision depends on meaning, it must go through AI-native routing/policy logic.
 - Do not upgrade to heavy coding tools when read/write/bash/browser primitives already solve the task (`DEVELOPMENT.md`).
 
 ## UNIQUE STYLES

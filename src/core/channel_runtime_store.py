@@ -63,7 +63,12 @@ class ChannelRuntimeStore:
         aliases = merged.get("aliases")
         states = merged.get("states")
         merged["aliases"] = dict(aliases) if isinstance(aliases, dict) else {}
-        merged["states"] = dict(states) if isinstance(states, dict) else {}
+        raw_states = dict(states) if isinstance(states, dict) else {}
+        merged["states"] = {
+            self._safe_text(key): self._sanitize_state(value)
+            for key, value in raw_states.items()
+            if self._safe_text(key) and isinstance(value, dict)
+        }
         return merged
 
     def _write_unlocked(self, payload: Dict[str, Any]) -> None:
@@ -163,9 +168,8 @@ class ChannelRuntimeStore:
             states = {}
             payload["states"] = states
         state = states.get(key)
-        if not isinstance(state, dict):
-            state = {}
-            states[key] = state
+        state = self._sanitize_state(state if isinstance(state, dict) else {})
+        states[key] = state
         safe_platform = self._safe_text(platform).lower()
         safe_user_id = self._safe_text(platform_user_id)
         if safe_platform:
@@ -180,13 +184,20 @@ class ChannelRuntimeStore:
             aliases = payload.setdefault("aliases", {})
             if isinstance(aliases, dict):
                 aliases[safe_user_id] = key
-        state.setdefault("delivery_target", {})
-        state.setdefault("active_task", None)
-        state.setdefault("last_chat_target", {})
-        state.setdefault("session_events", [])
-        state.setdefault("last_event", "")
+        state["active_task"] = self._normalize_active_task(state.get("active_task"))
         state["updated_at"] = _now_iso()
         return key, state
+
+    def _sanitize_state(self, state: Dict[str, Any] | None) -> Dict[str, Any]:
+        raw = dict(state or {})
+        sanitized = {
+            "platform": self._safe_text(raw.get("platform"), 64).lower(),
+            "platform_user_id": self._safe_text(raw.get("platform_user_id"), 128),
+            "session_id": self._safe_text(raw.get("session_id"), 120),
+            "active_task": self._normalize_active_task(raw.get("active_task")),
+            "updated_at": self._safe_text(raw.get("updated_at"), 64) or _now_iso(),
+        }
+        return sanitized
 
     def resolve_runtime_key(
         self,
@@ -219,11 +230,7 @@ class ChannelRuntimeStore:
                 platform_user_id=platform_user_id,
                 runtime_key=runtime_key,
             )
-            state = dict((payload.get("states") or {}).get(key) or {})
-            active_task = self._normalize_active_task(state.get("active_task"))
-            if active_task is not None:
-                state["active_task"] = active_task
-            return state
+            return self._sanitize_state((payload.get("states") or {}).get(key) or {})
 
     def get_session_id(
         self,
@@ -256,63 +263,6 @@ class ChannelRuntimeStore:
                 runtime_key=runtime_key,
             )
             state["session_id"] = self._safe_text(session_id, 120)
-            delivery = dict(state.get("delivery_target") or {})
-            if state["session_id"]:
-                delivery["session_id"] = state["session_id"]
-                state["delivery_target"] = delivery
-            self._write_unlocked(payload)
-            return key
-
-    def get_delivery_target(
-        self,
-        *,
-        platform: str = "",
-        platform_user_id: str = "",
-        runtime_key: str = "",
-    ) -> Dict[str, str]:
-        state = self.get_state(
-            platform=platform,
-            platform_user_id=platform_user_id,
-            runtime_key=runtime_key,
-        )
-        delivery = dict(state.get("delivery_target") or {})
-        return {
-            "platform": self._safe_text(delivery.get("platform"), 64),
-            "chat_id": self._safe_text(delivery.get("chat_id"), 128),
-            "session_id": self._safe_text(delivery.get("session_id"), 120),
-        }
-
-    def set_delivery_target(
-        self,
-        *,
-        platform: str,
-        platform_user_id: str,
-        chat_id: str,
-        session_id: str = "",
-        runtime_key: str = "",
-    ) -> str:
-        with self._lock:
-            payload = self._read_unlocked()
-            key, state = self._state_for_update_unlocked(
-                payload,
-                platform=platform,
-                platform_user_id=platform_user_id,
-                runtime_key=runtime_key,
-            )
-            delivery = dict(state.get("delivery_target") or {})
-            delivery["platform"] = self._safe_text(platform, 64).lower()
-            delivery["chat_id"] = self._safe_text(chat_id, 128)
-            resolved_session_id = self._safe_text(
-                session_id or state.get("session_id"), 120
-            )
-            if resolved_session_id:
-                delivery["session_id"] = resolved_session_id
-                state["session_id"] = resolved_session_id
-            state["delivery_target"] = delivery
-            state["last_chat_target"] = {
-                "platform": delivery["platform"],
-                "chat_id": delivery["chat_id"],
-            }
             self._write_unlocked(payload)
             return key
 
@@ -418,34 +368,6 @@ class ChannelRuntimeStore:
                 runtime_key=runtime_key,
             )
             state["active_task"] = None
-            self._write_unlocked(payload)
-
-    def append_session_event(
-        self,
-        message: str,
-        *,
-        platform: str = "",
-        platform_user_id: str = "",
-        runtime_key: str = "",
-    ) -> None:
-        note = self._safe_text(message, 800).replace("\r", " ").replace("\n", " ").strip()
-        if not note:
-            return
-        stamped = f"{_now_iso()} | {note}"
-        with self._lock:
-            payload = self._read_unlocked()
-            _key, state = self._state_for_update_unlocked(
-                payload,
-                platform=platform,
-                platform_user_id=platform_user_id,
-                runtime_key=runtime_key,
-            )
-            events = state.get("session_events")
-            if not isinstance(events, list):
-                events = []
-            events.append(stamped)
-            state["session_events"] = events[-40:]
-            state["last_event"] = stamped
             self._write_unlocked(payload)
 
 

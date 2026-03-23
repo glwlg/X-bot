@@ -500,52 +500,8 @@ async def _send_result_files(
 async def _should_include_memory_summary_for_task(
     user_message: str, dialog_context: str
 ) -> bool:
-    request = str(user_message or "").strip()
-    if not request:
-        return False
-    if len(request) <= 6:
-        return True
-    joined = f"{request}\n{str(dialog_context or '').strip()}".lower()
-    memory_cues = (
-        "我",
-        "我的",
-        "住",
-        "城市",
-        "地址",
-        "偏好",
-        "习惯",
-        "喜欢",
-        "不喜欢",
-        "生日",
-        "身份",
-        "timezone",
-        "time zone",
-        "where i",
-        "my ",
-        "preference",
-        "profile",
-        "remember",
-        "记住",
-        "记忆",
-    )
-    task_cues = (
-        "部署",
-        "deploy",
-        "echo ",
-        "bash",
-        "shell",
-        "docker",
-        "git ",
-        "代码",
-        "脚本",
-        "测试",
-        "test ",
-    )
-    if any(token in joined for token in memory_cues):
-        return True
-    if any(token in joined for token in task_cues):
-        return False
-    return len(request) <= 18
+    del dialog_context
+    return bool(str(user_message or "").strip())
 
 
 def _is_private_memory_session(ctx: UnifiedContext) -> bool:
@@ -1120,12 +1076,35 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
 
             manager_progress_text = str(state.get("manager_progress_text") or "").strip()
             if (
-                manager_progress_stream_enabled
-                and manager_progress_text
+                manager_progress_text
                 and not state["final_text"]
             ):
                 try:
-                    await _push_manager_progress_update(force=False)
+                    if manager_progress_stream_enabled:
+                        await _push_manager_progress_update(force=False)
+                    else:
+                        target = await _ensure_thinking_message(manager_progress_text)
+                        msg_id = _message_id_of(target)
+                        if (
+                            can_update
+                            and msg_id is not None
+                            and (
+                                manager_progress_text
+                                != str(
+                                    state.get("manager_progress_last_rendered") or ""
+                                )
+                                or now
+                                - float(
+                                    state.get("manager_progress_last_sent_at") or 0.0
+                                )
+                                >= 3.0
+                            )
+                        ):
+                            await ctx.edit_message(msg_id, manager_progress_text)
+                            state["manager_progress_last_rendered"] = (
+                                manager_progress_text
+                            )
+                            state["manager_progress_last_sent_at"] = now
                 except Exception as exc:
                     logger.debug("Manager progress update failed: %s", exc)
                 continue
@@ -1134,6 +1113,7 @@ async def handle_ai_chat(ctx: UnifiedContext) -> None:
                 continue
 
             try:
+                await _ensure_thinking_message(default_thinking_text)
                 await ctx.send_chat_action(action="typing")
             except Exception as exc:
                 logger.debug("Typing refresh failed: %s", exc)

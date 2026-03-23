@@ -10,6 +10,8 @@ from typing import Any
 
 from core.platform.models import Chat, MessageType, UnifiedContext, UnifiedMessage, User
 
+TOOL_RESULT_PREFIX = "tool_result="
+
 
 def prepare_default_env(repo_root: Path) -> None:
     data_dir = (repo_root / "data").resolve()
@@ -83,7 +85,7 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--raw-json",
         action="store_true",
-        help="Print raw structured output instead of a rendered text view.",
+        help="Print machine-readable tool_result JSON instead of the default rendered view.",
     )
 
 
@@ -148,8 +150,12 @@ async def run_execute_cli(
     rendered = await _collect_result(result)
     output_dir = _resolve_output_dir(args, execute_fn=execute_fn)
     if bool(getattr(args, "raw_json", False)):
-        print(json.dumps(rendered, ensure_ascii=False, indent=2, default=_json_default))
-        return _exit_code_from_rendered(rendered)
+        normalized = _normalize_raw_tool_result(rendered)
+        print(
+            f"{TOOL_RESULT_PREFIX}"
+            + json.dumps(normalized, ensure_ascii=False, default=_json_default)
+        )
+        return _exit_code_from_item(normalized)
     return _render_default(rendered, output_dir=output_dir)
 
 
@@ -268,7 +274,42 @@ def _exit_code_from_item(item: Any) -> int:
     return 0
 
 
+def _normalize_raw_tool_result(rendered: Any) -> dict[str, Any]:
+    if isinstance(rendered, dict):
+        return dict(rendered)
+
+    if isinstance(rendered, list):
+        final_dict: dict[str, Any] | None = None
+        progress_messages: list[str] = []
+        for item in rendered:
+            if isinstance(item, dict):
+                final_dict = dict(item)
+                continue
+            text = str(item or "").strip()
+            if text:
+                progress_messages.append(text)
+
+        if final_dict is None:
+            if progress_messages:
+                return {"ok": True, "text": progress_messages[-1]}
+            return {"ok": True}
+
+        if progress_messages and "progress_messages" not in final_dict:
+            final_dict["progress_messages"] = progress_messages[-20:]
+        return final_dict
+
+    if rendered is None:
+        return {"ok": True}
+
+    text = str(rendered or "").strip()
+    if not text:
+        return {"ok": True}
+    return {"ok": True, "text": text}
+
+
 def _json_default(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
+    if isinstance(value, (bytes, bytearray)):
+        return f"<binary:{len(value)} bytes>"
     return str(value)

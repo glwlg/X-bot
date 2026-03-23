@@ -337,7 +337,7 @@ class LongTermMemoryService:
             _norm_text(str(item.get("text") or "").strip()) for item in existing_items
         }
 
-        facts = markdown_memory_store._extract_memory_facts(text)
+        facts = await markdown_memory_store.extract_user_facts_ai(text)
         if not facts:
             facts = [text]
         new_facts = [item for item in facts if _norm_text(item) not in existing_norms]
@@ -495,33 +495,20 @@ class LongTermMemoryService:
             max_chars_per_session=5000,
         )
 
-        user_facts: list[str] = []
-        for bundle in transcripts:
-            messages = bundle.get("messages") if isinstance(bundle, dict) else None
-            if not isinstance(messages, list):
-                continue
-            for item in messages:
-                if not isinstance(item, dict):
-                    continue
-                role = str(item.get("role") or "").strip().lower()
-                if role != "user":
-                    continue
-                extracted = markdown_memory_store._extract_memory_facts(
-                    str(item.get("content") or "")
-                )
-                for fact in extracted:
-                    if markdown_memory_store._is_high_value_user_fact(fact):
-                        user_facts.append(fact)
-
-        user_facts = markdown_memory_store._dedupe(user_facts, limit=6)
+        extracted = await markdown_memory_store.extract_daily_rollup_ai(transcripts)
+        user_facts = markdown_memory_store._dedupe(
+            extracted.get("user_facts") or [],
+            limit=6,
+        )
         added_user_count = await self.remember_user_facts(
             str(user_id),
             user_facts,
             source="daily_session_rollup",
         )
 
-        manager_experiences = markdown_memory_store._extract_manager_experiences(
-            transcripts
+        manager_experiences = markdown_memory_store._dedupe(
+            extracted.get("manager_experiences") or [],
+            limit=5,
         )
         added_manager_count = await self.add_manager_experiences(
             manager_experiences,

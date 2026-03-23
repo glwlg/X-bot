@@ -33,6 +33,45 @@ class _FakeDeliveryCtx:
         return SimpleNamespace(id="doc")
 
 
+def test_runtime_tool_retry_policy_uses_structured_error_codes_only():
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="u-struct-1",
+        platform_name="telegram",
+        task_id="task-struct-1",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(message=SimpleNamespace(text="test"), user_data={}),
+        runtime=object(),
+        tool_broker=object(),
+        runtime_tool_allowed=lambda **_kwargs: True,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=lambda *_args, **_kwargs: None,
+    )
+
+    assert (
+        dispatcher._should_retry_extension(
+            {
+                "ok": False,
+                "failure_mode": "recoverable",
+                "error_code": "invalid_args",
+                "message": "缺少参数",
+            }
+        )
+        is True
+    )
+    assert (
+        dispatcher._should_retry_extension(
+            {
+                "ok": False,
+                "failure_mode": "recoverable",
+                "error_code": "",
+                "message": "缺少参数",
+            }
+        )
+        is False
+    )
+
+
 @pytest.mark.asyncio
 async def test_manager_allows_bash_for_coding_requests_without_legacy_pipeline(
     monkeypatch,

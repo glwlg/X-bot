@@ -810,7 +810,7 @@ async def test_heartbeat_specs_skip_auto_stock_when_checklist_is_rss(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_rss_goal_prefers_direct_scheduler_refresh(
+async def test_heartbeat_rss_goal_routes_through_orchestrator(
     monkeypatch, tmp_path
 ):
     runtime_root = (tmp_path / "runtime_tasks").resolve()
@@ -842,7 +842,7 @@ async def test_heartbeat_rss_goal_prefers_direct_scheduler_refresh(
     )
 
     async def _fake_orchestrator(_ctx, _message_history):
-        yield "HEARTBEAT_OK"
+        yield "HEARTBEAT_NOTICE: 📢 RSS 订阅日报 (1 条更新)\n\n- AI 新闻更新"
 
     monkeypatch.setattr(
         heartbeat_worker_module,
@@ -872,7 +872,7 @@ async def test_heartbeat_rss_goal_prefers_direct_scheduler_refresh(
     worker.suppress_ok = True
 
     result = await worker.run_user_now(user_id)
-    assert refresh_calls["value"] == 1
+    assert refresh_calls["value"] == 0
     assert "RSS 订阅日报" in result
     assert pushed
     assert pushed[0][0] == "501"
@@ -905,6 +905,14 @@ async def test_heartbeat_multiple_rss_items_only_append_once(monkeypatch, tmp_pa
         "core.scheduler.trigger_manual_rss_check",
         _fake_trigger_manual_rss_check,
     )
+    async def _fake_orchestrator(_ctx, _message_history):
+        yield "HEARTBEAT_OK"
+
+    monkeypatch.setattr(
+        heartbeat_worker_module,
+        "agent_orchestrator",
+        type("FakeOrchestrator", (), {"handle_message": _fake_orchestrator})(),
+    )
 
     worker = HeartbeatWorker()
     result = await worker._run_heartbeat_task_batch(
@@ -912,8 +920,8 @@ async def test_heartbeat_multiple_rss_items_only_append_once(monkeypatch, tmp_pa
         checklist=["检查我的 RSS 订阅更新", "再检查一次 RSS 订阅更新"],
         owner="test-owner",
     )
-    assert call_count["value"] == 1
-    assert result.count("RSS 订阅日报") == 1
+    assert call_count["value"] == 0
+    assert result == "HEARTBEAT_OK"
 
 
 @pytest.mark.asyncio
@@ -942,6 +950,14 @@ async def test_heartbeat_suppresses_rss_busy_message(monkeypatch, tmp_path):
         "core.scheduler.trigger_manual_rss_check",
         _fake_trigger_manual_rss_check,
     )
+    async def _fake_orchestrator(_ctx, _message_history):
+        yield "HEARTBEAT_OK"
+
+    monkeypatch.setattr(
+        heartbeat_worker_module,
+        "agent_orchestrator",
+        type("FakeOrchestrator", (), {"handle_message": _fake_orchestrator})(),
+    )
 
     worker = HeartbeatWorker()
     result = await worker._run_heartbeat_task_batch(
@@ -950,7 +966,7 @@ async def test_heartbeat_suppresses_rss_busy_message(monkeypatch, tmp_path):
         owner="test-owner",
     )
 
-    assert captured["kwargs"] == {"suppress_busy_message": True}
+    assert captured == {}
     assert result == "HEARTBEAT_OK"
 
 

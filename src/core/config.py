@@ -118,9 +118,6 @@ class SyncOpenAIProxy:
 openai_client = SyncOpenAIProxy() if OpenAI else None
 openai_async_client = AsyncOpenAIProxy() if AsyncOpenAI else None
 
-# 兼容旧代码，提供模型名称常量
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gpt-4o-mini")
-
 
 # ============================================================================
 # 用户访问控制

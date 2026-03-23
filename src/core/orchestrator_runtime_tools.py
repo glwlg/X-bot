@@ -397,9 +397,7 @@ class ToolCallDispatcher:
         if error_code in {"invalid_args", "skill_failed", "workflow_failed"}:
             return True
 
-        text = str(result.get("message") or result.get("text") or "").lower().strip()
-        hints = ("missing", "required", "请提供", "缺少", "参数", "field")
-        return any(token in text for token in hints)
+        return False
 
     def _is_args_changed(
         self,

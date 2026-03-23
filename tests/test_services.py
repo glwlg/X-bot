@@ -18,6 +18,7 @@ class TestIntentRouter:
                 candidate_skills=[],
                 confidence=0.9,
                 reason="task",
+                task_tracking=True,
             )
 
         monkeypatch.setattr(intent_router, "route", _fake_route_task)
@@ -33,6 +34,7 @@ class TestIntentRouter:
                 candidate_skills=[],
                 confidence=0.7,
                 reason="chat",
+                task_tracking=False,
             )
 
         monkeypatch.setattr(intent_router, "route", _fake_route_chat)
@@ -50,7 +52,7 @@ class TestIntentRouter:
         async def _fake_generate_text(**kwargs):
             _ = kwargs
             return (
-                '{"request_mode":"task","candidate_skills":["web_search","unknown","download_video",'
+                '{"request_mode":"task","task_tracking":true,"candidate_skills":["web_search","unknown","download_video",'
                 '"rss_subscribe","web_search","news_digest","skill_manager"],'
                 '"reason":"matched","confidence":0.82}'
             )
@@ -115,6 +117,7 @@ class TestIntentRouter:
             "skill_manager",
         ]
         assert decision.confidence == 0.82
+        assert decision.task_tracking is True
 
     @pytest.mark.asyncio
     async def test_intent_router_returns_task_fallback_on_invalid_json(
@@ -151,8 +154,45 @@ class TestIntentRouter:
             ],
         )
 
-        assert decision.request_mode == "task"
+        assert decision.request_mode == "chat"
         assert decision.candidate_skills == []
+        assert decision.task_tracking is False
+
+    @pytest.mark.asyncio
+    async def test_intent_router_uses_model_for_chat_turn(self, monkeypatch):
+        from services.intent_router import intent_router
+
+        calls = []
+
+        async def _fake_generate_text(**kwargs):
+            calls.append(kwargs)
+            return (
+                '{"request_mode":"chat","task_tracking":false,'
+                '"candidate_skills":[],"reason":"greeting","confidence":0.93}'
+            )
+
+        monkeypatch.setattr(
+            "services.intent_router.generate_text",
+            _fake_generate_text,
+        )
+        monkeypatch.setattr(
+            "services.intent_router.get_client_for_model",
+            lambda *_args, **_kwargs: object(),
+        )
+        monkeypatch.setattr(
+            "services.intent_router.get_routing_model",
+            lambda: "routing/test",
+        )
+
+        decision = await intent_router.route(
+            dialog_messages=[{"role": "user", "content": "你好呀"}],
+            candidates=[],
+        )
+
+        assert len(calls) == 1
+        assert decision.request_mode == "chat"
+        assert decision.task_tracking is False
+        assert decision.reason == "greeting"
 
     @pytest.mark.asyncio
     async def test_intent_router_fails_over_to_backup_routing_model(
@@ -169,7 +209,7 @@ class TestIntentRouter:
             if kwargs.get("model") == "routing/primary":
                 raise RuntimeError("auth_unavailable: no auth available")
             return (
-                '{"request_mode":"task","candidate_skills":[],"reason":"backup",'
+                '{"request_mode":"task","task_tracking":true,"candidate_skills":[],"reason":"backup",'
                 '"confidence":0.75}'
             )
 
@@ -209,6 +249,7 @@ class TestIntentRouter:
         assert decision.request_mode == "task"
         assert decision.reason == "backup"
         assert decision.confidence == 0.75
+        assert decision.task_tracking is True
 
 
 class TestWebSummaryService:

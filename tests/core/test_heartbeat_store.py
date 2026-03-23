@@ -226,5 +226,6 @@ async def test_heartbeat_store_persists_per_item_delivery_targets(tmp_path):
 def test_heartbeat_result_level_classification():
     store = HeartbeatStore()
     assert store.classify_result("HEARTBEAT_OK") == "OK"
-    assert store.classify_result("请尽快修复配置异常。") == "ACTION"
-    assert store.classify_result("提醒：建议关注最近变更。") == "NOTICE"
+    assert store.classify_result("HEARTBEAT_ACTION: 请尽快修复配置异常。") == "ACTION"
+    assert store.classify_result("HEARTBEAT_NOTICE: 建议关注最近变更。") == "NOTICE"
+    assert store.classify_result("普通说明") == "NOTICE"

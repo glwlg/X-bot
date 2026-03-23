@@ -226,10 +226,14 @@ class HeartbeatWorker:
             if "已派发给" in final_text and "完成后会自动把结果发给你" in final_text:
                 final_text = "HEARTBEAT_OK"
 
-            level = heartbeat_store.classify_result(final_text)
+            level = str(batch_result.get("level") or "").strip().upper()
+            if level not in {"OK", "NOTICE", "ACTION"}:
+                level = heartbeat_store.classify_result(final_text)
 
             heartbeat_meta = await heartbeat_store.mark_heartbeat_run(
-                user_id, final_text
+                user_id,
+                final_text,
+                level=level,
             )
             with contextlib.suppress(Exception):
                 from core.long_term_memory import long_term_memory
@@ -335,7 +339,11 @@ class HeartbeatWorker:
                 "Heartbeat user run error: user=%s err=%s", user_id, exc, exc_info=True
             )
             await heartbeat_store.set_last_error(user_id, str(exc))
-            await heartbeat_store.mark_heartbeat_run(user_id, f"ERROR: {exc}")
+            await heartbeat_store.mark_heartbeat_run(
+                user_id,
+                f"ERROR: {exc}",
+                level="ACTION",
+            )
             return f"ERROR: {exc}"
         finally:
             await heartbeat_store.release_lock(user_id, owner=owner)
@@ -445,6 +453,8 @@ class HeartbeatWorker:
         rss_refresh_available = False
         rss_refresh_text = ""
         rss_refresh_appended = False
+        overall_level = "OK"
+        level_rank = {"OK": 0, "NOTICE": 1, "ACTION": 2}
         for idx, spec in enumerate(specs, start=1):
             await heartbeat_store.refresh_lock(user_id, owner=owner)
             title = str(spec.get("title") or f"任务 {idx}")
@@ -466,7 +476,7 @@ class HeartbeatWorker:
                 ctx.user_data.pop("subagent_delivery_chat_id", None)
 
             spec_type = str(spec.get("type") or "").strip().lower()
-            if spec_type == "rss_signal" or self._is_rss_related_goal(goal):
+            if spec_type == "rss_signal":
                 if not rss_refresh_attempted:
                     rss_refresh_attempted = True
                     try:
@@ -582,10 +592,11 @@ class HeartbeatWorker:
             if "已派发给" in text and "完成后会自动把结果发给你" in text:
                 text = "HEARTBEAT_OK"
 
+            item_level, normalized_text = heartbeat_store.normalize_result_payload(text)
             pending_spec_files = merge_file_rows(
                 pending_spec_files,
                 normalize_file_rows(ctx.user_data.pop("heartbeat_pending_files", [])),
-                extract_saved_file_rows(text),
+                extract_saved_file_rows(normalized_text or text),
             )
             if pending_spec_files:
                 logger.info(
@@ -602,19 +613,24 @@ class HeartbeatWorker:
                     pending_spec_files,
                 )
 
-            if text.strip() == "HEARTBEAT_OK":
+            if item_level == "OK" and not normalized_text:
                 continue
 
-            sections.append(text.strip())
-            self._append_delivery_section(routed_sections, spec_target, text.strip())
+            if level_rank.get(item_level, 0) > level_rank.get(overall_level, 0):
+                overall_level = item_level
+
+            rendered_text = normalized_text or text.strip()
+            sections.append(rendered_text)
+            self._append_delivery_section(routed_sections, spec_target, rendered_text)
 
         delivery_keys = list(
             dict.fromkeys([*routed_sections.keys(), *routed_files.keys()])
         )
         if not sections and not delivery_keys:
-            return {"text": "HEARTBEAT_OK", "deliveries": []}
+            return {"text": "HEARTBEAT_OK", "deliveries": [], "level": "OK"}
         return {
             "text": "\n\n".join(sections),
+            "level": overall_level,
             "deliveries": [
                 {
                     "platform": platform,
@@ -764,13 +780,6 @@ class HeartbeatWorker:
         return specs
 
     @staticmethod
-    def _is_rss_related_goal(goal: str) -> bool:
-        text = str(goal or "").strip().lower()
-        if not text:
-            return False
-        return any(token in text for token in ("rss", "订阅", "feed"))
-
-    @staticmethod
     def _build_heartbeat_task_prompt(*, task_id: str, goal: str, readonly: bool) -> str:
         readonly_line = (
             "当前为 readonly 模式：仅允许检查、查询、总结；允许执行用于订阅去重状态的轻量写入。"
@@ -789,8 +798,11 @@ class HeartbeatWorker:
             "若任务涉及外部事实查询（订阅更新/行情/检索/状态），请先调用至少一个可用工具，再基于工具结果作答。\n"
             "若工具返回可直接交付的结果（尤其链接/列表/命令/数字），请先完整保留工具原文，不要改写或删减。\n"
             "你可以在工具原文后追加『补充观察』，但必须与原文分段。\n"
-            "最终输出必须是可直接推送给用户的自然语言结果，不要输出系统模板前缀或固定说明。"
-            "若无事项只输出 HEARTBEAT_OK。"
+            "最终输出必须采用以下格式之一：\n"
+            "- `HEARTBEAT_OK`\n"
+            "- `HEARTBEAT_NOTICE: <可直接推送给用户的自然语言结果>`\n"
+            "- `HEARTBEAT_ACTION: <需要用户处理或尽快关注的自然语言结果>`\n"
+            "不要输出其他系统模板前缀。"
         )
 
     @staticmethod

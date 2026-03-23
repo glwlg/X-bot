@@ -70,7 +70,7 @@ def test_markdown_memory_store_remember_deduplicates(tmp_path, monkeypatch):
 
     memory_path = markdown_memory_store.memory_path("u2")
     memory_text = memory_path.read_text(encoding="utf-8")
-    assert memory_text.count("居住地：北京") == 1
+    assert memory_text.count("请记住我住在北京") == 1
 
     daily_path = markdown_memory_store.daily_path("u2")
     daily_text = daily_path.read_text(encoding="utf-8")

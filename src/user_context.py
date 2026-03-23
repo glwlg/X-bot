@@ -264,11 +264,10 @@ async def bind_delivery_target(
         return session_id
 
     try:
-        channel_runtime_store.set_delivery_target(
+        channel_runtime_store.set_session_id(
+            session_id=session_id,
             platform=platform,
             platform_user_id=safe_user_id,
-            chat_id=chat_id,
-            session_id=session_id,
         )
     except Exception:
         logger.debug("Failed to bind delivery target for user=%s", safe_user_id, exc_info=True)

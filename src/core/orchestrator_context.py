@@ -103,14 +103,6 @@ class OrchestratorRuntimeContext:
     async def append_session_event(self, note: str) -> None:
         if not self.session_state_enabled:
             return
-        if not self.heartbeat_runtime_user and not self.subagent_runtime_user:
-            channel_runtime_store.append_session_event(
-                note,
-                platform=self.platform_name,
-                platform_user_id=self.user_id,
-            )
-            await heartbeat_store.append_session_event(self.user_id, note)
-            return
         await heartbeat_store.append_session_event(self.user_id, note)
 
     def _task_inbox_source(self) -> str:

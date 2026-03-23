@@ -57,6 +57,15 @@ async def test_long_term_memory_file_provider_keeps_generic_snapshot(
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("MEMORY_CONFIG_PATH", str(config_path))
     _reset_long_term_memory_state()
+    async def _fake_extract_user_facts(text: str, *, max_facts: int = 8):
+        del text, max_facts
+        return ["居住地：北京"]
+
+    monkeypatch.setattr(
+        long_term_memory_module.markdown_memory_store,
+        "extract_user_facts_ai",
+        _fake_extract_user_facts,
+    )
 
     ok, detail = await long_term_memory_module.long_term_memory.remember_user(
         "u-file",
@@ -96,6 +105,15 @@ async def test_long_term_memory_mem0_provider_reads_and_writes_without_file_stor
     monkeypatch.setenv("DATA_DIR", str(data_dir))
     monkeypatch.setenv("MEMORY_CONFIG_PATH", str(config_path))
     _reset_long_term_memory_state()
+    async def _fake_extract_user_facts(text: str, *, max_facts: int = 8):
+        del text, max_facts
+        return ["偏好称呼：老王"]
+
+    monkeypatch.setattr(
+        long_term_memory_module.markdown_memory_store,
+        "extract_user_facts_ai",
+        _fake_extract_user_facts,
+    )
 
     class _FakeAsyncMemory:
         instances: list["_FakeAsyncMemory"] = []
@@ -162,6 +180,65 @@ async def test_long_term_memory_mem0_provider_reads_and_writes_without_file_stor
     assert not (data_dir / "system" / "MANAGER_MEMORY.md").exists()
     assert (data_dir / "user" / "memory").exists()
     assert (data_dir / "system" / "manager_memory" / "2026-03-19.md").exists()
+
+
+@pytest.mark.asyncio
+async def test_long_term_memory_rollup_uses_ai_structured_extraction(
+    tmp_path, monkeypatch
+):
+    _redirect_audit_paths(tmp_path)
+    data_dir = (tmp_path / "data").resolve()
+    config_path = (tmp_path / "memory.json").resolve()
+    _write_memory_config(
+        config_path,
+        {"provider": "file", "providers": {"file": {}, "mem0": {}}},
+    )
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    monkeypatch.setenv("MEMORY_CONFIG_PATH", str(config_path))
+    _reset_long_term_memory_state()
+
+    async def _fake_get_day_session_transcripts(**_kwargs):
+        return [
+            {
+                "messages": [
+                    {"role": "user", "content": "我住在北京"},
+                    {"role": "model", "content": "优先验证配置再部署"},
+                ]
+            }
+        ]
+
+    async def _fake_rollup(transcripts):
+        assert transcripts
+        return {
+            "user_facts": ["居住地：北京"],
+            "manager_experiences": ["优先验证配置再部署"],
+        }
+
+    monkeypatch.setattr(
+        "core.state_store.get_day_session_transcripts",
+        _fake_get_day_session_transcripts,
+    )
+    monkeypatch.setattr(
+        long_term_memory_module.markdown_memory_store,
+        "extract_daily_rollup_ai",
+        _fake_rollup,
+    )
+
+    result = await long_term_memory_module.long_term_memory.rollup_today_sessions(
+        "u-roll",
+        target_day=date(2026, 3, 23),
+    )
+
+    assert result["user_memory_added"] == 1
+    assert result["manager_experience_added"] == 1
+    memory_text = (
+        data_dir / "user" / "MEMORY.md"
+    ).read_text(encoding="utf-8")
+    manager_text = (
+        data_dir / "system" / "MANAGER_MEMORY.md"
+    ).read_text(encoding="utf-8")
+    assert "居住地：北京" in memory_text
+    assert "优先验证配置再部署" in manager_text
 
 
 @pytest.mark.asyncio

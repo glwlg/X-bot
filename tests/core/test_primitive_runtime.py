@@ -72,6 +72,18 @@ async def test_primitive_runtime_bash_extracts_saved_files(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_primitive_runtime_bash_payload_text_is_truncated(tmp_path):
+    runtime = PrimitiveRuntime(workspace_root=str(tmp_path))
+
+    result = await runtime.bash("python -c \"print('x' * 40000)\"")
+
+    assert result["ok"] is True
+    assert len(result["data"]["output"]) < 40000
+    assert result["payload"]["text"] == result["data"]["output"]
+    assert result["payload"]["text"].endswith("...[truncated]")
+
+
+@pytest.mark.asyncio
 async def test_primitive_runtime_bash_nonzero_exit_is_failure(tmp_path):
     runtime = PrimitiveRuntime(workspace_root=str(tmp_path))
 
@@ -80,6 +92,41 @@ async def test_primitive_runtime_bash_nonzero_exit_is_failure(tmp_path):
     assert result["ok"] is False
     assert result["error_code"] == "command_failed"
     assert result["data"]["exit_code"] == 7
+
+
+@pytest.mark.asyncio
+async def test_primitive_runtime_bash_tool_result_marker_preserves_terminal_failure(
+    tmp_path,
+):
+    runtime = PrimitiveRuntime(workspace_root=str(tmp_path))
+
+    result = await runtime.bash(
+        "python -c \"import json,sys; print('🔐 正在检查公众号发布权限与 IP 白名单...'); print('tool_result=' + json.dumps({'ok': False, 'failure_mode': 'fatal', 'text': '❌ 发布前检查失败：当前服务器出口 IP 不在微信公众号白名单中。', 'terminal': True, 'task_outcome': 'failed', 'ui': {}}, ensure_ascii=False)); sys.exit(1)\""
+    )
+
+    assert result["ok"] is False
+    assert result["failure_mode"] == "fatal"
+    assert result["terminal"] is True
+    assert result["task_outcome"] == "failed"
+    assert "发布前检查失败" in result["text"]
+    assert result["data"]["exit_code"] == 1
+
+
+@pytest.mark.asyncio
+async def test_primitive_runtime_bash_tool_result_marker_preserves_terminal_success(
+    tmp_path,
+):
+    runtime = PrimitiveRuntime(workspace_root=str(tmp_path))
+
+    result = await runtime.bash(
+        "python -c \"import json; print('🎨 正在并行绘制封面与插图...'); print('tool_result=' + json.dumps({'ok': True, 'text': '✅ 图片已生成。', 'terminal': True, 'task_outcome': 'done', 'ui': {}}, ensure_ascii=False))\""
+    )
+
+    assert result["ok"] is True
+    assert result["terminal"] is True
+    assert result["task_outcome"] == "done"
+    assert result["text"] == "✅ 图片已生成。"
+    assert result["data"]["exit_code"] == 0
 
 
 def test_primitive_runtime_classifies_fatal_config_failure_output():

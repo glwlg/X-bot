@@ -30,6 +30,7 @@ class RoutingDecision:
     candidate_skills: list[str]
     confidence: float
     reason: str
+    task_tracking: bool | None = None
     raw: str = ""
 
 
@@ -96,10 +97,11 @@ class IntentRouter:
         rendered_dialog = _render_dialog_window(dialog_messages)
         if not rendered_dialog:
             return RoutingDecision(
-                request_mode="task",
+                request_mode="chat",
                 candidate_skills=[],
                 confidence=0.0,
                 reason="empty_message",
+                task_tracking=False,
             )
 
         rendered_catalog = _render_skill_catalog(candidate_rows)
@@ -109,15 +111,21 @@ class IntentRouter:
         prompt = (
             "你是统一请求路由器。请根据最近对话做两个判断：\n"
             "1. request_mode:\n"
-            '- task: 多步执行、可能用工具/外部查询、可跟踪、可恢复、可能等待外部结果、需要 /task 或 follow-up/closure\n'
-            '- chat: 闲聊、轻问答、互动小游戏、连续猜题、普通陪聊、无需闭环\n'
-            "2. candidate_skills: 只从给定技能目录里选择本轮可能会用到的技能；如果没有明显相关技能，返回空数组。\n"
+            '- task: 本轮更像执行型请求，可能要用工具、检索、写代码、多步处理\n'
+            '- chat: 闲聊、轻问答、互动小游戏、普通陪聊、一次性直接回答即可\n'
+            "2. task_tracking:\n"
+            "- true: 这个请求值得进入 `/task` 列表，需要跨轮跟踪、恢复、等待外部结果、后续回看或明确闭环\n"
+            "- false: 一次性回答即可；即使会用工具/搜索，也不应进入 `/task`\n"
+            "3. candidate_skills: 只从给定技能目录里选择本轮可能会用到的技能；如果没有明显相关技能，返回空数组。\n"
             "要求：\n"
-            "- 如果不确定 request_mode，默认返回 task。\n"
+            "- `task_tracking=true` 时，`request_mode` 必须是 `task`。\n"
+            "- 普通寒暄、致谢、简短陪聊、一次性问答、一次性搜索、链接总结、仓库速览、普通解释，都应 `task_tracking=false`。\n"
+            "- 只有明显需要后续跟进、可恢复执行、等待外部状态、持续推进的请求，才返回 `task_tracking=true`。\n"
+            "- 如果不确定，默认返回 `request_mode=chat` 且 `task_tracking=false`。\n"
             "- candidate_skills 只能来自技能目录。\n"
             "- 倾向于宽松保留少量相关技能，但不要选明显无关的。\n"
             "- 只返回 JSON，不要输出解释文本。\n"
-            'JSON 格式：{"request_mode":"task"|"chat","candidate_skills":["skill_a"],"reason":"...","confidence":0-1}\n\n'
+            'JSON 格式：{"request_mode":"task"|"chat","task_tracking":true|false,"candidate_skills":["skill_a"],"reason":"...","confidence":0-1}\n\n'
             f"最近对话：\n{rendered_dialog}\n\n"
             f"技能目录：\n{rendered_catalog}\n"
         )
@@ -178,7 +186,7 @@ class IntentRouter:
                     parsed = self._parse_json(raw)
                     mode = str(parsed.get("request_mode") or "").strip().lower()
                     if mode not in {"task", "chat"}:
-                        mode = "task"
+                        mode = "chat"
                     reason = str(parsed.get("reason") or "").strip()[:240]
                     try:
                         confidence = max(
@@ -186,6 +194,9 @@ class IntentRouter:
                         )
                     except Exception:
                         confidence = 0.0
+                    task_tracking = bool(parsed.get("task_tracking"))
+                    if mode != "task":
+                        task_tracking = False
                     selected = self._resolve_skills(
                         parsed.get("candidate_skills"),
                         candidate_rows,
@@ -203,6 +214,7 @@ class IntentRouter:
                         candidate_skills=selected,
                         confidence=confidence,
                         reason=reason or "ok",
+                        task_tracking=task_tracking,
                         raw=raw[:800],
                     )
                 except asyncio.CancelledError:
@@ -231,10 +243,11 @@ class IntentRouter:
         except Exception as exc:
             logger.debug("Intent router failed: %s", exc, exc_info=True)
             return RoutingDecision(
-                request_mode="task",
+                request_mode="chat",
                 candidate_skills=[],
                 confidence=0.0,
                 reason=f"router_error:{exc}",
+                task_tracking=False,
             )
 
     @staticmethod

@@ -1,8 +1,10 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from core.channel_runtime_store import channel_runtime_store
 from core.task_inbox import task_inbox
 from core.heartbeat_store import heartbeat_store
 from user_context import SESSION_ID_KEY, get_or_create_session_id, get_user_context
@@ -89,3 +91,60 @@ async def test_get_or_create_session_id_prefers_bound_delivery_session(
 
     assert session_id == "sess-bound-1"
     assert ctx.user_data[SESSION_ID_KEY] == "sess-bound-1"
+
+
+def test_channel_runtime_store_strips_session_event_history_on_write(
+    tmp_path,
+    monkeypatch,
+):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    runtime_path = tmp_path / "system" / "channel_runtime.json"
+    runtime_path.parent.mkdir(parents=True, exist_ok=True)
+    runtime_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "aliases": {"wx-1": "weixin::wx-1"},
+                "states": {
+                    "weixin::wx-1": {
+                        "platform": "weixin",
+                        "platform_user_id": "wx-1",
+                        "session_id": "sess-old",
+                        "delivery_target": {
+                            "platform": "weixin",
+                            "chat_id": "wx-1",
+                            "session_id": "sess-old",
+                        },
+                        "last_chat_target": {
+                            "platform": "weixin",
+                            "chat_id": "wx-1",
+                        },
+                        "session_events": ["old-event"],
+                        "last_event": "old-event",
+                    }
+                },
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    channel_runtime_store.set_session_id(
+        session_id="sess-new",
+        platform="weixin",
+        platform_user_id="wx-1",
+    )
+
+    payload = json.loads(runtime_path.read_text(encoding="utf-8"))
+    state = payload["states"]["weixin::wx-1"]
+
+    assert state["session_id"] == "sess-new"
+    assert state["platform"] == "weixin"
+    assert state["platform_user_id"] == "wx-1"
+    assert state["active_task"] is None
+    assert "delivery_target" not in state
+    assert "last_chat_target" not in state
+    assert "session_events" not in state
+    assert "last_event" not in state

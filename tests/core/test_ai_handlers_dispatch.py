@@ -23,10 +23,9 @@ async def test_fetch_user_memory_snapshot_reads_markdown_store(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_should_include_memory_summary_for_task_short_request():
-    assert (
-        await ai_handlers._should_include_memory_summary_for_task("我住哪", "") is True
-    )
+async def test_should_include_memory_summary_for_task_requires_nonempty_request():
+    assert await ai_handlers._should_include_memory_summary_for_task("部署这个仓库", "") is True
+    assert await ai_handlers._should_include_memory_summary_for_task("", "上下文") is False
 
 
 @pytest.mark.asyncio
@@ -126,7 +125,7 @@ async def test_build_subagent_instruction_with_context_skips_memory_when_subagen
 
 
 @pytest.mark.asyncio
-async def test_build_subagent_instruction_with_context_skips_memory_when_not_needed(
+async def test_build_subagent_instruction_with_context_skips_memory_when_request_empty(
     monkeypatch,
 ):
     async def _fake_collect(
@@ -135,22 +134,16 @@ async def test_build_subagent_instruction_with_context_skips_memory_when_not_nee
         del user_id, current_user_message, max_messages, max_chars
         return "- 用户: 请部署仓库"
 
-    async def _fake_need_memory(_msg: str, _ctx: str) -> bool:
-        return False
-
     async def _fake_fetch(_uid: str):
         raise AssertionError("should not fetch memory when not needed")
 
     monkeypatch.setattr(ai_handlers, "_collect_recent_dialog_context", _fake_collect)
     monkeypatch.setattr(ai_handlers, "_fetch_user_memory_snapshot", _fake_fetch)
-    monkeypatch.setattr(
-        ai_handlers, "_should_include_memory_summary_for_task", _fake_need_memory
-    )
 
     instruction, meta = await ai_handlers._build_subagent_instruction_with_context(
         SimpleNamespace(),
         user_id="u-3",
-        user_message="部署这个仓库",
+        user_message="",
         subagent_has_memory=False,
     )
     assert "【近期对话上下文】" in instruction
