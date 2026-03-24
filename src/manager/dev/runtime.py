@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
+from core.state_paths import single_user_root
+
 
 MAX_OUTPUT_CHARS = 12000
 MAX_LOG_CHARS = 1_000_000
@@ -187,6 +189,15 @@ def _subprocess_env() -> Dict[str, str]:
     env.setdefault("CI", "true")
     env.setdefault("PAGER", "cat")
     env.setdefault("GIT_PAGER", "cat")
+    env.setdefault(
+        "GH_CONFIG_DIR",
+        str((single_user_root() / "integrations" / "gh" / "config").resolve()),
+    )
+    env.setdefault(
+        "GIT_CONFIG_GLOBAL",
+        str((single_user_root() / "integrations" / "git" / ".gitconfig").resolve()),
+    )
+    env.setdefault("GH_NO_UPDATE_NOTIFIER", "1")
     return env
 
 

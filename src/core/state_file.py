@@ -77,7 +77,7 @@ def render_state_markdown(payload: Any, *, title: str) -> str:
     ).strip()
     return (
         f"# {str(title or 'Data').strip()}\n\n"
-        "<!-- x-bot-state-file: edit via read/write/edit when needed -->\n"
+        "<!-- ikaros-state-file: edit via read/write/edit when needed -->\n"
         "<!-- payload format: fenced YAML block below -->\n\n"
         f"{STATE_BEGIN_MARKER}\n"
         "```yaml\n"

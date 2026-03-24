@@ -11,8 +11,10 @@ from core.config import is_user_allowed, get_client_for_model
 from core.model_config import get_current_model
 from core.platform.exceptions import MediaProcessingError
 from services.openai_adapter import generate_text
-from user_context import add_message
+from user_context import add_message, bind_delivery_target
 from core.platform.models import UnifiedContext, MessageType
+from .ai_handlers import _acknowledge_received
+from .base_handlers import require_feature_access
 from .media_utils import extract_media_input
 
 logger = logging.getLogger(__name__)
@@ -76,8 +78,11 @@ async def handle_document(ctx: UnifiedContext) -> None:
 
     # 检查用户权限
     if not await is_user_allowed(user_id):
-        await ctx.reply("⛔ 抱歉，您没有使用 AI 功能的权限。")
         return
+    if not await require_feature_access(ctx, "chat"):
+        return
+
+    await _acknowledge_received(ctx)
 
     # 检查消息类型
     if ctx.message.type != MessageType.DOCUMENT:
@@ -126,6 +131,7 @@ async def handle_document(ctx: UnifiedContext) -> None:
     thinking_msg = await ctx.reply("📄 正在读取文档内容...")
 
     # 记录用户文档消息到上下文
+    await bind_delivery_target(ctx, user_id)
     await add_message(
         ctx,
         user_id,

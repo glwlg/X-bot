@@ -25,6 +25,8 @@ RCLONE_DEST="onedrive:backup/XBot"
 KEEP_DAYS=14
 # ==========================================
 
+RCLONE_CONFIG="/home/luwei/.config/rclone/rclone.conf"
+
 # 确定 rclone 执行路径，优先使用系统命令，否则查找用户私有目录
 if command -v rclone >/dev/null 2>&1; then
     RCLONE_CMD="rclone"
@@ -45,7 +47,7 @@ tar -czf "$BACKUP_FILE" "${SOURCE_DIRS[@]}" > /dev/null 2>&1
 if [ $? -eq 0 ]; then
     echo "打包成功: $BACKUP_FILE, 开始上传至 OneDrive..."
     # 上传文件
-    "$RCLONE_CMD" copy "$BACKUP_FILE" "$RCLONE_DEST"
+    "$RCLONE_CMD" copy "$BACKUP_FILE" "$RCLONE_DEST" --config "$RCLONE_CONFIG"
     
     if [ $? -eq 0 ]; then
         echo "✅ 上传成功！"

@@ -4,7 +4,13 @@ import re
 import uuid
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
+
+from core.subscription_types import (
+    default_title,
+    normalize_platform,
+    normalize_provider,
+)
 
 _state_io = importlib.import_module("core.state_io")
 init_db = _state_io.init_db
@@ -14,13 +20,261 @@ read_json = _state_io.read_json
 write_json = _state_io.write_json
 
 _state_paths = importlib.import_module("core.state_paths")
+SINGLE_USER_SCOPE = _state_paths.SINGLE_USER_SCOPE
 all_user_ids = _state_paths.all_user_ids
+shared_user_path = _state_paths.shared_user_path
 system_path = _state_paths.system_path
 user_path = _state_paths.user_path
 
 logger = logging.getLogger(__name__)
 
-_ENTRY_RE = re.compile(r"^###\s+(user|model)\s*\n```text\n(.*?)\n```", re.M | re.S)
+_ENTRY_RE = re.compile(r"^###\s+(system|user|model)\s*\n```text\n(.*?)\n```", re.M | re.S)
+_VISIBLE_CHAT_ROLES = {"user", "model"}
+_SUPPORTED_CHAT_ROLES = _VISIBLE_CHAT_ROLES | {"system"}
+
+
+def _normalized_user_id(value: int | str | None) -> str:
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def _read_row_list(data: Any, *keys: str) -> list[dict[str, Any]]:
+    rows: object = data
+    if isinstance(data, dict):
+        fallback_rows: object | None = None
+        for key in keys:
+            candidate = data.get(key)
+            if isinstance(candidate, list):
+                if candidate:
+                    rows = candidate
+                    break
+                if fallback_rows is None:
+                    fallback_rows = candidate
+        else:
+            if fallback_rows is not None:
+                rows = fallback_rows
+    if not isinstance(rows, list):
+        return []
+    return [item for item in rows if isinstance(item, dict)]
+
+
+def _row_user_id(raw: dict[str, Any]) -> str:
+    return str(raw.get("user_id") or "").strip()
+
+
+def _merge_user_ids(*groups: list[str]) -> list[str]:
+    seen: set[str] = set()
+    merged: list[str] = []
+    for group in groups:
+        for user_id in group:
+            uid = _normalized_user_id(user_id)
+            if not uid or uid in seen:
+                continue
+            seen.add(uid)
+            merged.append(uid)
+    return merged
+
+
+def _merge_unique_rows(
+    current_rows: list[dict[str, Any]],
+    legacy_rows: list[dict[str, Any]],
+    *,
+    key_fn,
+) -> list[dict[str, Any]]:
+    merged = list(current_rows)
+    seen = {key_fn(row) for row in current_rows}
+    for row in legacy_rows:
+        key = key_fn(row)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(row)
+    return merged
+
+
+def _dedupe_rows(
+    rows: list[dict[str, Any]],
+    *,
+    key_fn,
+) -> list[dict[str, Any]]:
+    order: list[Any] = []
+    latest: dict[Any, dict[str, Any]] = {}
+    for row in rows:
+        key = key_fn(row)
+        if key not in latest:
+            order.append(key)
+        latest[key] = row
+    return [latest[key] for key in order]
+
+
+def _max_row_id(rows: list[dict[str, Any]]) -> int:
+    highest = 0
+    for row in rows:
+        try:
+            highest = max(highest, int(row.get("id") or 0))
+        except Exception:
+            continue
+    return highest
+
+
+_FEATURE_DELIVERY_NAMES = {"rss", "stock"}
+
+
+def _feature_delivery_targets_path(user_id: int | str):
+    _ = user_id
+    return user_path(user_id, "automation", "delivery_targets.md")
+
+
+def _normalize_delivery_target(raw: dict[str, Any] | None) -> dict[str, str]:
+    payload = dict(raw or {})
+    return {
+        "platform": normalize_platform(payload.get("platform")),
+        "chat_id": str(payload.get("chat_id") or "").strip(),
+        "updated_at": str(payload.get("updated_at") or now_iso()),
+    }
+
+
+def _normalize_feature_delivery_name(feature: str) -> str:
+    normalized = str(feature or "").strip().lower()
+    if normalized not in _FEATURE_DELIVERY_NAMES:
+        raise ValueError(f"unsupported feature delivery target: {feature}")
+    return normalized
+
+
+async def _read_feature_delivery_targets(user_id: int | str) -> dict[str, dict[str, str]]:
+    data = await read_json(_feature_delivery_targets_path(user_id), {})
+    if not isinstance(data, dict):
+        return {}
+
+    normalized: dict[str, dict[str, str]] = {}
+    for feature in _FEATURE_DELIVERY_NAMES:
+        raw_target = data.get(feature)
+        if not isinstance(raw_target, dict):
+            continue
+        target = _normalize_delivery_target(raw_target)
+        if target["platform"] and target["chat_id"]:
+            normalized[feature] = target
+    return normalized
+
+
+async def _write_feature_delivery_targets(
+    user_id: int | str,
+    targets: dict[str, dict[str, str]],
+) -> None:
+    payload: dict[str, dict[str, str]] = {}
+    for feature, target in dict(targets or {}).items():
+        if feature not in _FEATURE_DELIVERY_NAMES or not isinstance(target, dict):
+            continue
+        normalized = _normalize_delivery_target(target)
+        if not normalized["platform"] or not normalized["chat_id"]:
+            continue
+        payload[feature] = normalized
+    await write_json(_feature_delivery_targets_path(user_id), payload)
+
+
+async def list_feature_delivery_targets(
+    user_id: int | str,
+) -> dict[str, dict[str, str]]:
+    return await _read_feature_delivery_targets(user_id)
+
+
+async def get_feature_delivery_target(
+    user_id: int | str,
+    feature: str,
+) -> dict[str, str]:
+    feature_name = _normalize_feature_delivery_name(feature)
+    targets = await _read_feature_delivery_targets(user_id)
+    return dict(targets.get(feature_name) or {})
+
+
+async def set_feature_delivery_target(
+    user_id: int | str,
+    feature: str,
+    platform: str,
+    chat_id: str,
+) -> dict[str, str]:
+    feature_name = _normalize_feature_delivery_name(feature)
+    targets = await _read_feature_delivery_targets(user_id)
+    normalized = _normalize_delivery_target(
+        {
+            "platform": platform,
+            "chat_id": chat_id,
+            "updated_at": now_iso(),
+        }
+    )
+    if not normalized["platform"] or not normalized["chat_id"]:
+        raise ValueError("platform and chat_id are required")
+    targets[feature_name] = normalized
+    await _write_feature_delivery_targets(user_id, targets)
+    return normalized
+
+
+async def _next_id_after_legacy_rows(
+    counter_name: str,
+    legacy_path: Path,
+    *,
+    start: int = 1,
+    list_keys: tuple[str, ...] = (),
+) -> int:
+    legacy_rows = _read_row_list(await read_json(legacy_path, []), *list_keys)
+    return await next_id(counter_name, start=max(start, _max_row_id(legacy_rows) + 1))
+
+
+async def _next_id_after_store_rows(
+    counter_name: str,
+    path: Path,
+    *,
+    start: int = 1,
+    list_keys: tuple[str, ...] = (),
+) -> int:
+    rows = _read_row_list(await read_json(path, []), *list_keys)
+    return await next_id(counter_name, start=max(start, _max_row_id(rows) + 1))
+
+
+async def _delete_legacy_rows(
+    path: Path,
+    *,
+    user_id: int | str,
+    predicate,
+    list_keys: tuple[str, ...] = (),
+) -> None:
+    payload = await read_json(path, [])
+    target_user_id = _normalized_user_id(user_id)
+
+    if isinstance(payload, list):
+        rows = [item for item in payload if isinstance(item, dict)]
+        kept = [
+            item
+            for item in rows
+            if _row_user_id(item) != target_user_id or not predicate(item)
+        ]
+        if len(kept) != len(rows):
+            await write_json(path, kept)
+        return
+
+    if not isinstance(payload, dict):
+        return
+
+    updated = dict(payload)
+    changed = False
+    for key in list_keys:
+        rows = updated.get(key)
+        if not isinstance(rows, list):
+            continue
+        kept = [
+            item
+            for item in rows
+            if not isinstance(item, dict)
+            or _row_user_id(item) != target_user_id
+            or not predicate(item)
+        ]
+        if len(kept) == len(rows):
+            continue
+        updated[key] = kept
+        changed = True
+    if changed:
+        await write_json(path, updated)
 
 
 def _safe_session_id(value: str) -> str:
@@ -54,6 +308,13 @@ def _parse_entries(content: str) -> list[dict[str, str]]:
             continue
         rows.append({"role": role, "content": body})
     return rows
+
+
+def _normalize_chat_role(role: str) -> str:
+    safe_role = str(role or "").strip().lower()
+    if safe_role in _SUPPORTED_CHAT_ROLES:
+        return safe_role
+    return "user"
 
 
 def _render_session(day: str, session_id: str, rows: list[dict[str, str]]) -> str:
@@ -125,7 +386,7 @@ async def save_message(
         rows = _parse_entries(existing)
         rows.append(
             {
-                "role": str(role or "user").strip().lower() or "user",
+                "role": _normalize_chat_role(role),
                 "content": str(content or "").strip(),
             }
         )
@@ -140,6 +401,10 @@ async def get_session_messages(
     user_id: int | str,
     session_id: str,
     limit: int = 20,
+    *,
+    include_system: bool = False,
+    preserve_system_prefixes: tuple[str, ...] = (),
+    preserve_system_limit: int = 0,
 ) -> list[dict[str, Any]]:
     try:
         uid = str(user_id)
@@ -147,17 +412,91 @@ async def get_session_messages(
         if not path or not path.exists():
             return []
         rows = _parse_entries(path.read_text(encoding="utf-8"))
-        tail = rows[-max(1, int(limit)) :]
+        visible_rows = [
+            item
+            for item in rows
+            if str(item.get("role") or "").strip().lower() != "system"
+        ]
+        tail = visible_rows[-max(1, int(limit)) :]
+        selected_rows = list(tail)
+        if include_system:
+            system_rows = []
+            for item in rows:
+                if str(item.get("role") or "").strip().lower() != "system":
+                    continue
+                content = str(item.get("content") or "")
+                if preserve_system_prefixes and not any(
+                    content.startswith(prefix) for prefix in preserve_system_prefixes
+                ):
+                    continue
+                system_rows.append(item)
+            if preserve_system_limit > 0:
+                system_rows = system_rows[-preserve_system_limit:]
+            selected_rows = list(system_rows) + selected_rows
         return [
             {
-                "role": str(item.get("role") or "user"),
+                "role": _normalize_chat_role(str(item.get("role") or "user")),
                 "parts": [{"text": str(item.get("content") or "")}],
             }
-            for item in tail
+            for item in selected_rows
         ]
     except Exception as e:
         logger.error(f"Error getting session history: {e}")
         return []
+
+
+async def get_session_entries(
+    user_id: int | str,
+    session_id: str,
+) -> list[dict[str, str]]:
+    try:
+        uid = str(user_id)
+        path = await _resolve_session_file(uid, session_id)
+        if not path or not path.exists():
+            return []
+        rows = _parse_entries(path.read_text(encoding="utf-8"))
+        return [
+            {
+                "role": _normalize_chat_role(str(item.get("role") or "user")),
+                "content": str(item.get("content") or "").strip(),
+            }
+            for item in rows
+            if str(item.get("content") or "").strip()
+        ]
+    except Exception as e:
+        logger.error(f"Error reading session entries: {e}")
+        return []
+
+
+async def replace_session_entries(
+    user_id: int | str,
+    session_id: str,
+    rows: list[dict[str, str]],
+) -> bool:
+    try:
+        uid = str(user_id)
+        sid = _safe_session_id(session_id)
+        session_file = await _resolve_session_file(uid, sid)
+        if session_file is None:
+            session_file = _session_path(uid, date.today().isoformat(), sid)
+        session_file.parent.mkdir(parents=True, exist_ok=True)
+        day = _extract_day_from_path(session_file)
+        normalized_rows = [
+            {
+                "role": _normalize_chat_role(str(item.get("role") or "user")),
+                "content": str(item.get("content") or "").strip(),
+            }
+            for item in list(rows or [])
+            if str(item.get("content") or "").strip()
+        ]
+        session_file.write_text(
+            _render_session(day, sid, normalized_rows),
+            encoding="utf-8",
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Error replacing session entries: {e}")
+        return False
 
 
 async def get_latest_session_id(user_id: int | str) -> str:
@@ -196,6 +535,8 @@ async def search_messages(
             sid = _extract_session_from_path(path)
             rows = _parse_entries(path.read_text(encoding="utf-8"))
             for row in reversed(rows):
+                if str(row.get("role") or "").strip().lower() == "system":
+                    continue
                 content = str(row.get("content") or "")
                 if needle not in content.lower():
                     continue
@@ -229,6 +570,8 @@ async def get_recent_messages_for_user(
             sid = _extract_session_from_path(path)
             rows = _parse_entries(path.read_text(encoding="utf-8"))
             for row in reversed(rows):
+                if str(row.get("role") or "").strip().lower() == "system":
+                    continue
                 output.append(
                     {
                         "role": str(row.get("role") or "user"),
@@ -272,6 +615,8 @@ async def get_day_session_transcripts(
             rendered_lines: list[str] = []
             for row in rows:
                 role = str(row.get("role") or "user")
+                if role == "system":
+                    continue
                 content = str(row.get("content") or "").strip()
                 if content:
                     rendered_lines.append(f"{role}: {content}")
@@ -461,200 +806,261 @@ async def check_user_allowed_in_db(user_id: int | str) -> bool:
     return any(item["user_id"] == uid for item in rows)
 
 
-def _subs_path(user_id: int | str):
+def _subs_path(user_id: int | str) -> Path:
+    _ = user_id
     return user_path(user_id, "rss", "subscriptions.md")
 
 
-def _normalize_subscription(raw: dict[str, Any]) -> dict[str, Any]:
+def _normalize_subscription(raw: dict[str, Any]) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+
+    try:
+        sub_id = int(raw.get("id") or 0)
+    except Exception:
+        return None
+    if sub_id <= 0:
+        return None
+
+    feed_url = str(raw.get("feed_url") or "").strip()
+    if not feed_url:
+        return None
+
+    provider_value = raw.get("provider")
+    if str(provider_value or "").strip().lower() == "rss":
+        provider_value = "native_rss"
+
+    try:
+        provider = normalize_provider(provider_value, feed_url=feed_url)
+    except ValueError:
+        return None
+
+    title = str(raw.get("title") or "").strip()
+    if not title:
+        title = default_title(feed_url=feed_url)
+
     return {
-        "feed_url": str(raw.get("feed_url") or "").strip(),
-        "title": str(raw.get("title") or "").strip(),
-        "platform": str(raw.get("platform") or "telegram").strip() or "telegram",
+        "id": sub_id,
+        "provider": provider,
+        "title": title,
+        "platform": normalize_platform(raw.get("platform")),
+        "feed_url": feed_url,
         "last_etag": str(raw.get("last_etag") or "").strip(),
         "last_modified": str(raw.get("last_modified") or "").strip(),
         "last_entry_hash": str(raw.get("last_entry_hash") or "").strip(),
     }
 
 
-def _to_runtime_rows(
-    user_id: int | str, rows: list[dict[str, Any]]
-) -> list[dict[str, Any]]:
-    runtime: list[dict[str, Any]] = []
-    for index, item in enumerate(rows, start=1):
-        feed_url = str(item.get("feed_url") or "").strip()
-        if not feed_url:
-            continue
-        runtime.append(
-            {
-                "id": index,
-                "user_id": str(user_id),
-                "feed_url": feed_url,
-                "title": str(item.get("title") or feed_url),
-                "platform": str(item.get("platform") or "telegram"),
-                "last_etag": str(item.get("last_etag") or ""),
-                "last_modified": str(item.get("last_modified") or ""),
-                "last_entry_hash": str(item.get("last_entry_hash") or ""),
-            }
-        )
-    return runtime
+def _serialize_subscription(row: dict[str, Any]) -> dict[str, Any]:
+    normalized = _normalize_subscription(row)
+    if normalized is None:
+        raise ValueError("invalid subscription row")
+    return normalized
 
 
-async def _read_user_subscriptions(user_id: int | str) -> list[dict[str, Any]]:
-    path = _subs_path(user_id)
-    data = await read_json(path, [])
-    if not isinstance(data, list):
-        return []
-    normalized = [
-        _normalize_subscription(item) for item in data if isinstance(item, dict)
-    ]
-    return [item for item in normalized if item.get("feed_url")]
+async def _read_current_subscription_rows(user_id: int | str) -> list[dict[str, Any]]:
+    _ = user_id
+    data = await read_json(_subs_path(user_id), [])
+    rows: list[dict[str, Any]] = []
+    for item in _read_row_list(data):
+        normalized = _normalize_subscription(item)
+        if normalized is not None:
+            rows.append(normalized)
+    return rows
 
 
-async def _write_user_subscriptions(
+async def _read_legacy_subscription_rows(user_id: int | str) -> list[dict[str, Any]]:
+    _ = user_id
+    return []
+
+
+async def _read_subscription_rows(user_id: int | str) -> list[dict[str, Any]]:
+    return _dedupe_rows(
+        await _read_current_subscription_rows(user_id),
+        key_fn=lambda row: int(row.get("id") or 0),
+    )
+
+
+async def _legacy_subscription_user_ids() -> list[str]:
+    return []
+
+
+async def _write_subscription_rows(
     user_id: int | str, rows: list[dict[str, Any]]
 ) -> None:
+    _ = user_id
     payload: list[dict[str, Any]] = []
-    for row in rows:
-        feed_url = str(row.get("feed_url") or "").strip()
-        if not feed_url:
-            continue
-        payload.append(
-            {
-                "feed_url": feed_url,
-                "title": str(row.get("title") or feed_url),
-                "platform": str(row.get("platform") or "telegram"),
-                "last_etag": str(row.get("last_etag") or ""),
-                "last_modified": str(row.get("last_modified") or ""),
-                "last_entry_hash": str(row.get("last_entry_hash") or ""),
-            }
-        )
+    for row in _dedupe_rows(rows, key_fn=lambda item: int(item.get("id") or 0)):
+        payload.append(_serialize_subscription(row))
+    payload.sort(key=lambda item: int(item["id"]))
     await write_json(_subs_path(user_id), payload)
 
 
-async def add_subscription(
+def _find_subscription_index(
+    rows: list[dict[str, Any]], user_id: int | str, sub_id: int
+) -> int:
+    _ = user_id
+    for index, row in enumerate(rows):
+        if int(row.get("id") or 0) == int(sub_id):
+            return index
+    return -1
+
+
+def _assert_unique_subscription(
+    rows: list[dict[str, Any]],
+    candidate: dict[str, Any],
+    *,
+    ignore_id: int | None = None,
+) -> None:
+    for row in rows:
+        if ignore_id is not None and int(row.get("id") or 0) == int(ignore_id):
+            continue
+        if (
+            str(row.get("feed_url") or "").strip()
+            == str(candidate.get("feed_url") or "").strip()
+        ):
+            raise ValueError("feed subscription already exists")
+
+
+def _validate_subscription_payload(
     user_id: int | str,
-    feed_url: str,
-    title: str,
-    platform: str = "telegram",
-):
-    rows = await _read_user_subscriptions(user_id)
-    target_url = str(feed_url or "").strip()
-    if not target_url:
-        raise ValueError("feed_url is required")
-    if any(str(item.get("feed_url") or "").strip() == target_url for item in rows):
-        raise ValueError(
-            "UNIQUE constraint failed: subscriptions.user_id, subscriptions.feed_url"
-        )
+    payload: dict[str, Any],
+    *,
+    existing: dict[str, Any] | None = None,
+    subscription_id: int | None = None,
+) -> dict[str, Any]:
+    source = dict(existing or {})
+    source.update(dict(payload or {}))
+    platform = normalize_platform(source.get("platform"))
+    feed_url = str(source.get("feed_url") or "").strip()
+    if not feed_url:
+        raise ValueError("feed_url is required for RSS subscriptions")
+    for removed_field in ("kind", "query", "scope"):
+        if str(source.get(removed_field) or "").strip():
+            raise ValueError("关键词监控已下线，仅支持 RSS 订阅")
 
-    rows.append(
-        {
-            "feed_url": target_url,
-            "title": str(title or target_url),
-            "platform": str(platform or "telegram"),
-            "last_etag": "",
-            "last_modified": "",
-            "last_entry_hash": "",
-        }
+    provider = normalize_provider(source.get("provider"), feed_url=feed_url)
+    title = str(source.get("title") or "").strip()
+    if not title:
+        title = default_title(feed_url=feed_url)
+
+    return {
+        "id": int(subscription_id or source.get("id") or 0),
+        "provider": provider,
+        "title": title,
+        "platform": platform,
+        "feed_url": feed_url,
+        "last_etag": str(source.get("last_etag") or "").strip(),
+        "last_modified": str(source.get("last_modified") or "").strip(),
+        "last_entry_hash": str(source.get("last_entry_hash") or "").strip(),
+    }
+
+
+async def create_subscription(
+    user_id: int | str, payload: dict[str, Any]
+) -> dict[str, Any]:
+    rows = await _read_subscription_rows(user_id)
+    sub_id = await _next_id_after_store_rows(
+        "subscriptions",
+        _subs_path(""),
     )
-    await _write_user_subscriptions(user_id, rows)
+    record = _validate_subscription_payload(user_id, payload, subscription_id=sub_id)
+    _assert_unique_subscription(rows, record)
+    rows.append(record)
+    await _write_subscription_rows(user_id, rows)
+    return record
 
 
-async def delete_subscription(user_id: int | str, feed_url: str) -> bool:
-    rows = await _read_user_subscriptions(user_id)
-    target = str(feed_url or "").strip()
-    kept = [item for item in rows if str(item.get("feed_url") or "").strip() != target]
-    changed = len(kept) != len(rows)
-    if changed:
-        await _write_user_subscriptions(user_id, kept)
-    return changed
+async def list_subscriptions(user_id: int | str) -> list[dict[str, Any]]:
+    return await _read_subscription_rows(user_id)
 
 
-async def delete_subscription_by_id(sub_id: int, user_id: int | str) -> bool:
-    sid = int(sub_id)
-    rows = await _read_user_subscriptions(user_id)
-    runtime_rows = _to_runtime_rows(user_id, rows)
-    target = next(
-        (item for item in runtime_rows if int(item.get("id") or 0) == sid), None
-    )
-    if not target:
-        return False
-    return await delete_subscription(user_id, str(target.get("feed_url") or ""))
-
-
-async def get_user_subscriptions(user_id: int | str) -> list[dict[str, Any]]:
-    rows = await _read_user_subscriptions(user_id)
-    return _to_runtime_rows(user_id, rows)
+async def get_subscription(user_id: int | str, sub_id: int) -> dict[str, Any] | None:
+    rows = await _read_subscription_rows(user_id)
+    index = _find_subscription_index(rows, user_id, sub_id)
+    if index < 0:
+        return None
+    return rows[index]
 
 
 async def update_subscription(
     sub_id: int,
     user_id: int | str,
-    title: str | None = None,
-    feed_url: str | None = None,
+    payload: dict[str, Any],
 ) -> bool:
-    rows = await _read_user_subscriptions(user_id)
-    runtime_rows = _to_runtime_rows(user_id, rows)
-    target = next(
-        (item for item in runtime_rows if int(item.get("id") or 0) == int(sub_id)),
-        None,
+    rows = await _read_subscription_rows(user_id)
+    index = _find_subscription_index(rows, user_id, sub_id)
+    if index < 0:
+        return False
+    current = rows[index]
+    updated = _validate_subscription_payload(
+        user_id,
+        payload,
+        existing=current,
+        subscription_id=sub_id,
     )
-    if not target:
-        return False
-    idx = int(sub_id) - 1
-    if idx < 0 or idx >= len(rows):
-        return False
-    if title is not None:
-        rows[idx]["title"] = str(title).strip()
-    if feed_url is not None:
-        new_url = str(feed_url).strip()
-        if not new_url:
-            raise ValueError("feed_url cannot be empty")
-        rows[idx]["feed_url"] = new_url
-    await _write_user_subscriptions(user_id, rows)
+    _assert_unique_subscription(rows, updated, ignore_id=sub_id)
+    rows[index] = updated
+    await _write_subscription_rows(user_id, rows)
     return True
 
 
-async def get_all_subscriptions() -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    for uid in all_user_ids():
-        path = _subs_path(uid)
-        if not path.exists():
-            continue
-        rows = await _read_user_subscriptions(uid)
-        merged.extend(_to_runtime_rows(uid, rows))
-    return merged
+async def delete_subscription(user_id: int | str, sub_id: int) -> bool:
+    rows = await _read_subscription_rows(user_id)
+    index = _find_subscription_index(rows, user_id, sub_id)
+    if index < 0:
+        return False
+    rows.pop(index)
+    await _write_subscription_rows(user_id, rows)
+    return True
 
 
-async def update_subscription_status(
+async def list_all_subscriptions() -> list[dict[str, Any]]:
+    return await _read_subscription_rows("")
+
+
+async def list_feed_subscriptions() -> list[dict[str, Any]]:
+    return await list_all_subscriptions()
+
+
+async def update_feed_subscription_state(
     user_id: int | str,
-    feed_url: str,
+    sub_id: int,
+    *,
     last_entry_hash: str,
     last_etag: str | None = None,
     last_modified: str | None = None,
-):
-    rows = await _read_user_subscriptions(user_id)
-    target_url = str(feed_url or "").strip()
-    changed = False
-    for item in rows:
-        if str(item.get("feed_url") or "").strip() != target_url:
-            continue
-        item["last_entry_hash"] = str(last_entry_hash or "")
-        item["last_etag"] = str(last_etag or "")
-        item["last_modified"] = str(last_modified or "")
-        changed = True
-        break
-    if changed:
-        await _write_user_subscriptions(user_id, rows)
+) -> bool:
+    rows = await _read_subscription_rows(user_id)
+    index = _find_subscription_index(rows, user_id, sub_id)
+    if index < 0:
+        return False
+    target = rows[index]
+    target["last_entry_hash"] = str(last_entry_hash or "").strip()
+    target["last_etag"] = str(last_etag or "").strip()
+    target["last_modified"] = str(last_modified or "").strip()
+    rows[index] = target
+    await _write_subscription_rows(user_id, rows)
+    return True
+
+
+async def get_user_subscriptions(user_id: int | str) -> list[dict[str, Any]]:
+    return await list_subscriptions(user_id)
+
+
+async def get_all_subscriptions() -> list[dict[str, Any]]:
+    return await list_all_subscriptions()
 
 
 def _reminders_path(user_id: int | str):
+    _ = user_id
     return user_path(user_id, "automation", "reminders.md")
 
 
 def _normalize_reminder(raw: dict[str, Any], *, user_id: int | str) -> dict[str, Any]:
+    _ = user_id
     return {
         "id": int(raw.get("id") or 0),
-        "user_id": str(user_id),
         "chat_id": str(raw.get("chat_id") or ""),
         "message": str(raw.get("message") or ""),
         "trigger_time": str(raw.get("trigger_time") or ""),
@@ -664,22 +1070,24 @@ def _normalize_reminder(raw: dict[str, Any], *, user_id: int | str) -> dict[str,
 
 
 async def _read_user_reminders(user_id: int | str) -> list[dict[str, Any]]:
-    data = await read_json(_reminders_path(user_id), [])
-    rows: object = data
-    if isinstance(data, dict):
-        rows = data.get("reminders")
-    if not isinstance(rows, list):
-        return []
-    return [
-        _normalize_reminder(item, user_id=user_id)
-        for item in rows
-        if isinstance(item, dict)
-    ]
+    current_rows = _read_row_list(await read_json(_reminders_path(user_id), []), "reminders")
+    return _dedupe_rows(
+        [
+            _normalize_reminder(item, user_id=user_id)
+            for item in current_rows
+            if isinstance(item, dict)
+        ],
+        key_fn=lambda row: int(row.get("id") or 0),
+    )
+
+
+async def _legacy_reminder_user_ids() -> list[str]:
+    return []
 
 
 async def _write_user_reminders(user_id: int | str, rows: list[dict[str, Any]]) -> None:
     payload: list[dict[str, Any]] = []
-    for row in rows:
+    for row in _dedupe_rows(rows, key_fn=lambda item: int(item.get("id") or 0)):
         payload.append(
             {
                 "id": int(row.get("id") or 0),
@@ -700,13 +1108,15 @@ async def add_reminder(
     trigger_time: str,
     platform: str = "telegram",
 ) -> int:
-    uid = str(user_id)
-    rows = await _read_user_reminders(uid)
-    rid = await next_id("reminder", start=1)
+    rows = await _read_user_reminders(user_id)
+    rid = await _next_id_after_store_rows(
+        "reminder",
+        _reminders_path(""),
+        list_keys=("reminders",),
+    )
     rows.append(
         {
             "id": int(rid),
-            "user_id": uid,
             "chat_id": str(chat_id),
             "message": str(message or ""),
             "trigger_time": str(trigger_time or ""),
@@ -714,44 +1124,43 @@ async def add_reminder(
             "platform": str(platform or "telegram"),
         }
     )
-    await _write_user_reminders(uid, rows)
+    await _write_user_reminders(user_id, rows)
     return int(rid)
 
 
 async def delete_reminder(reminder_id: int, user_id: int | str | None = None):
     rid = int(reminder_id)
-    target_users = [str(user_id)] if user_id is not None else all_user_ids()
-    for uid in target_users:
-        rows = await _read_user_reminders(uid)
-        kept = [item for item in rows if int(item.get("id") or 0) != rid]
-        if len(kept) != len(rows):
-            await _write_user_reminders(uid, kept)
-            return
+    rows = await _read_user_reminders(user_id or "")
+    kept = [item for item in rows if int(item.get("id") or 0) != rid]
+    if len(kept) != len(rows):
+        await _write_user_reminders(user_id or "", kept)
 
 
 async def get_pending_reminders(
     user_id: int | str | None = None,
 ) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    target_users = [str(user_id)] if user_id is not None else all_user_ids()
-    for uid in target_users:
-        merged.extend(await _read_user_reminders(uid))
-    return sorted(merged, key=lambda item: str(item.get("trigger_time") or ""))
+    return sorted(
+        await _read_user_reminders(user_id or ""),
+        key=lambda item: str(item.get("trigger_time") or ""),
+    )
 
 
 def _scheduled_tasks_path(user_id: int | str):
+    _ = user_id
     return user_path(user_id, "automation", "scheduled_tasks.md")
 
 
 def _normalize_scheduled_task(
     raw: dict[str, Any], *, user_id: int | str
 ) -> dict[str, Any]:
+    _ = user_id
     return {
         "id": int(raw.get("id") or 0),
-        "user_id": str(user_id),
         "crontab": str(raw.get("crontab") or "").strip(),
         "instruction": str(raw.get("instruction") or "").strip(),
         "platform": str(raw.get("platform") or "telegram").strip() or "telegram",
+        "chat_id": str(raw.get("chat_id") or "").strip(),
+        "session_id": str(raw.get("session_id") or "").strip(),
         "need_push": bool(raw.get("need_push", True)),
         "is_active": bool(raw.get("is_active", True)),
         "created_at": str(raw.get("created_at") or now_iso()),
@@ -760,39 +1169,48 @@ def _normalize_scheduled_task(
 
 
 async def _read_user_scheduled_tasks(user_id: int | str) -> list[dict[str, Any]]:
-    data = await read_json(_scheduled_tasks_path(user_id), [])
-    rows: object = data
-    if isinstance(data, dict):
-        if isinstance(data.get("scheduled_tasks"), list):
-            rows = data.get("scheduled_tasks")
-        else:
-            rows = data.get("tasks")
-    if not isinstance(rows, list):
-        return []
-    return [
+    current_rows = _read_row_list(
+        await read_json(_scheduled_tasks_path(user_id), []),
+        "scheduled_tasks",
+        "tasks",
+    )
+    normalized_current = [
         _normalize_scheduled_task(item, user_id=user_id)
-        for item in rows
+        for item in current_rows
         if isinstance(item, dict)
     ]
+    return _dedupe_rows(
+        normalized_current,
+        key_fn=lambda row: int(row.get("id") or 0),
+    )
+
+
+async def _legacy_scheduled_task_user_ids() -> list[str]:
+    return []
 
 
 async def _write_user_scheduled_tasks(
     user_id: int | str, rows: list[dict[str, Any]]
 ) -> None:
     payload: list[dict[str, Any]] = []
-    for row in rows:
+    for row in _dedupe_rows(rows, key_fn=lambda item: int(item.get("id") or 0)):
         payload.append(
             {
                 "id": int(row.get("id") or 0),
                 "crontab": str(row.get("crontab") or "").strip(),
                 "instruction": str(row.get("instruction") or "").strip(),
                 "platform": str(row.get("platform") or "telegram"),
-                "need_push": bool(row.get("need_push", True)),
-                "is_active": bool(row.get("is_active", True)),
-                "created_at": str(row.get("created_at") or now_iso()),
-                "updated_at": str(row.get("updated_at") or now_iso()),
             }
         )
+        if str(row.get("chat_id") or "").strip():
+            payload[-1]["chat_id"] = str(row.get("chat_id") or "").strip()
+        if str(row.get("session_id") or "").strip():
+            payload[-1]["session_id"] = str(row.get("session_id") or "").strip()
+        payload[-1]["need_push"] = bool(row.get("need_push", True))
+        payload[-1]["is_active"] = bool(row.get("is_active", True))
+        payload[-1]["created_at"] = str(row.get("created_at") or now_iso())
+        payload[-1]["updated_at"] = str(row.get("updated_at") or now_iso())
+    payload.sort(key=lambda item: int(item.get("id") or 0))
     await write_json(_scheduled_tasks_path(user_id), payload)
 
 
@@ -801,68 +1219,90 @@ async def add_scheduled_task(
     instruction: str,
     user_id: int | str = 0,
     platform: str = "telegram",
+    chat_id: str = "",
+    session_id: str = "",
     need_push: bool = True,
 ) -> int:
-    uid = str(user_id or "0")
-    rows = await _read_user_scheduled_tasks(uid)
-    tid = await next_id("scheduled_task", start=1)
+    rows = await _read_user_scheduled_tasks(user_id or "")
+    tid = await _next_id_after_store_rows(
+        "scheduled_task",
+        _scheduled_tasks_path(""),
+        list_keys=("scheduled_tasks", "tasks"),
+    )
     rows.append(
         {
             "id": int(tid),
-            "user_id": uid,
             "crontab": str(crontab or "").strip(),
             "instruction": str(instruction or "").strip(),
             "platform": str(platform or "telegram"),
+            "chat_id": str(chat_id or "").strip(),
+            "session_id": str(session_id or "").strip(),
             "need_push": bool(need_push),
             "is_active": True,
             "created_at": now_iso(),
             "updated_at": now_iso(),
         }
     )
-    await _write_user_scheduled_tasks(uid, rows)
+    await _write_user_scheduled_tasks(user_id or "", rows)
     return int(tid)
 
 
 async def get_all_active_tasks(
     user_id: int | str | None = None,
 ) -> list[dict[str, Any]]:
-    target_users = [str(user_id)] if user_id is not None else all_user_ids()
-    merged: list[dict[str, Any]] = []
-    for uid in target_users:
-        rows = await _read_user_scheduled_tasks(uid)
-        merged.extend([item for item in rows if bool(item.get("is_active", True))])
-    return merged
+    rows = await _read_user_scheduled_tasks(user_id or "")
+    return [item for item in rows if bool(item.get("is_active", True))]
 
 
 async def update_task_status(
     task_id: int, is_active: bool, user_id: int | str | None = None
 ):
     tid = int(task_id)
-    target_users = [str(user_id)] if user_id is not None else all_user_ids()
-    for uid in target_users:
-        rows = await _read_user_scheduled_tasks(uid)
-        changed = False
-        for item in rows:
-            if int(item.get("id") or 0) != tid:
-                continue
-            item["is_active"] = bool(is_active)
-            item["updated_at"] = now_iso()
-            changed = True
-            break
-        if changed:
-            await _write_user_scheduled_tasks(uid, rows)
-            return
+    rows = await _read_user_scheduled_tasks(user_id or "")
+    changed = False
+    for item in rows:
+        if int(item.get("id") or 0) != tid:
+            continue
+        item["is_active"] = bool(is_active)
+        item["updated_at"] = now_iso()
+        changed = True
+        break
+    if changed:
+        await _write_user_scheduled_tasks(user_id or "", rows)
+
+
+async def update_task_delivery_target(
+    task_id: int,
+    user_id: int | str | None = None,
+    *,
+    platform: str,
+    chat_id: str,
+    session_id: str = "",
+) -> bool:
+    tid = int(task_id)
+    rows = await _read_user_scheduled_tasks(user_id or "")
+    changed = False
+    for item in rows:
+        if int(item.get("id") or 0) != tid:
+            continue
+        item["platform"] = str(platform or "telegram").strip() or "telegram"
+        item["chat_id"] = str(chat_id or "").strip()
+        item["session_id"] = str(session_id or "").strip()
+        item["updated_at"] = now_iso()
+        changed = True
+        break
+    if changed:
+        await _write_user_scheduled_tasks(user_id or "", rows)
+        return True
+    return False
 
 
 async def delete_task(task_id: int, user_id: int | str | None = None):
     tid = int(task_id)
-    target_users = [str(user_id)] if user_id is not None else all_user_ids()
-    for uid in target_users:
-        rows = await _read_user_scheduled_tasks(uid)
-        kept = [item for item in rows if int(item.get("id") or 0) != tid]
-        if len(kept) != len(rows):
-            await _write_user_scheduled_tasks(uid, kept)
-            return
+    rows = await _read_user_scheduled_tasks(user_id or "")
+    kept = [item for item in rows if int(item.get("id") or 0) != tid]
+    if len(kept) != len(rows):
+        await _write_user_scheduled_tasks(user_id or "", kept)
 
 
 async def update_scheduled_task(
@@ -872,27 +1312,26 @@ async def update_scheduled_task(
     instruction: str | None = None,
 ) -> bool:
     tid = int(task_id)
-    target_users = [str(user_id)] if user_id is not None else all_user_ids()
-    for uid in target_users:
-        rows = await _read_user_scheduled_tasks(uid)
-        changed = False
-        for item in rows:
-            if int(item.get("id") or 0) != tid:
-                continue
-            if crontab is not None:
-                item["crontab"] = str(crontab).strip()
-            if instruction is not None:
-                item["instruction"] = str(instruction).strip()
-            item["updated_at"] = now_iso()
-            changed = True
-            break
-        if changed:
-            await _write_user_scheduled_tasks(uid, rows)
-            return True
+    rows = await _read_user_scheduled_tasks(user_id or "")
+    changed = False
+    for item in rows:
+        if int(item.get("id") or 0) != tid:
+            continue
+        if crontab is not None:
+            item["crontab"] = str(crontab).strip()
+        if instruction is not None:
+            item["instruction"] = str(instruction).strip()
+        item["updated_at"] = now_iso()
+        changed = True
+        break
+    if changed:
+        await _write_user_scheduled_tasks(user_id or "", rows)
+        return True
     return False
 
 
 def _watchlist_path(user_id: int | str):
+    _ = user_id
     return user_path(user_id, "stock", "watchlist.md")
 
 
@@ -915,7 +1354,6 @@ def _to_watchlist_runtime_rows(
         runtime.append(
             {
                 "id": index,
-                "user_id": str(user_id),
                 "stock_code": code,
                 "stock_name": str(item.get("stock_name") or code),
                 "platform": str(item.get("platform") or "telegram"),
@@ -925,16 +1363,35 @@ def _to_watchlist_runtime_rows(
 
 
 async def _read_watchlist(user_id: int | str) -> list[dict[str, Any]]:
-    data = await read_json(_watchlist_path(user_id), [])
-    if not isinstance(data, list):
-        return []
-    rows = [_normalize_watchlist_row(item) for item in data if isinstance(item, dict)]
-    return [item for item in rows if item.get("stock_code")]
+    _ = user_id
+    current_rows = _read_row_list(await read_json(_watchlist_path(user_id), []))
+    normalized_current: list[dict[str, Any]] = []
+    for raw in current_rows:
+        normalized = _normalize_watchlist_row(raw)
+        if normalized.get("stock_code"):
+            normalized_current.append(normalized)
+    return _dedupe_rows(
+        normalized_current,
+        key_fn=lambda row: (
+            str(row.get("stock_code") or "").strip().lower(),
+            str(row.get("platform") or "telegram").strip().lower(),
+        ),
+    )
+
+
+async def _legacy_watchlist_user_ids() -> list[str]:
+    return []
 
 
 async def _write_watchlist(user_id: int | str, rows: list[dict[str, Any]]) -> None:
     payload: list[dict[str, Any]] = []
-    for row in rows:
+    for row in _dedupe_rows(
+        rows,
+        key_fn=lambda item: (
+            str(item.get("stock_code") or "").strip().lower(),
+            str(item.get("platform") or "telegram").strip().lower(),
+        ),
+    ):
         code = str(row.get("stock_code") or "").strip()
         if not code:
             continue
@@ -994,66 +1451,18 @@ async def get_user_watchlist(
             for item in rows
             if str(item.get("platform") or "telegram").strip().lower() == target
         ]
+    else:
+        rows = _dedupe_rows(
+            rows,
+            key_fn=lambda row: str(row.get("stock_code") or "").strip().lower(),
+        )
     return _to_watchlist_runtime_rows(user_id, rows)
 
 
 async def get_all_watchlist_users() -> list[tuple[int | str, str]]:
-    pairs: list[tuple[int | str, str]] = []
-    seen: set[tuple[str, str]] = set()
-    for uid in all_user_ids():
-        rows = await _read_watchlist(uid)
-        for row in rows:
-            plat = str(row.get("platform") or "telegram")
-            key = (str(uid), plat)
-            if key in seen:
-                continue
-            seen.add(key)
-            pairs.append((uid, plat))
-    return pairs
-
-
-def _settings_path(user_id: int | str):
-    return user_path(user_id, "settings.md")
-
-
-def _default_user_settings(user_id: int | str) -> dict[str, object]:
-    return {
-        "user_id": str(user_id),
-        "auto_translate": 0,
-        "target_lang": "zh-CN",
-        "updated_at": now_iso(),
-    }
-
-
-async def set_translation_mode(user_id: int | str, enabled: bool):
-    path = _settings_path(user_id)
-    current = await read_json(path, _default_user_settings(user_id))
-    if isinstance(current, dict):
-        settings: dict[str, object] = {
-            str(key): value for key, value in current.items()
-        }
-    else:
-        settings = _default_user_settings(user_id)
-    settings["user_id"] = str(user_id)
-    settings["auto_translate"] = 1 if bool(enabled) else 0
-    settings["target_lang"] = str(settings.get("target_lang") or "zh-CN")
-    settings["updated_at"] = now_iso()
-    await write_json(path, settings)
-
-
-async def get_user_settings(user_id: int | str) -> dict[str, str | int]:
-    path = _settings_path(user_id)
-    current = await read_json(path, {})
-    settings: dict[str, object] = (
-        {str(key): value for key, value in current.items()}
-        if isinstance(current, dict)
-        else {}
-    )
-    return {
-        "user_id": str(user_id),
-        "auto_translate": int(
-            cast(int | str | None, settings.get("auto_translate")) or 0
-        ),
-        "target_lang": str(settings.get("target_lang") or "zh-CN"),
-        "updated_at": str(settings.get("updated_at") or now_iso()),
-    }
+    rows = await _read_watchlist("")
+    if not rows:
+        return []
+    target = await get_feature_delivery_target("", "stock")
+    platform = str(target.get("platform") or rows[0].get("platform") or "telegram")
+    return [(SINGLE_USER_SCOPE, platform)]

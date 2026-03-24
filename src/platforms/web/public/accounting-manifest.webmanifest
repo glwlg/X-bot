@@ -1,7 +1,7 @@
 {
-    "name": "X-Bot Accounting",
-    "short_name": "Accounting",
-    "description": "A PWA accounting application for X-Bot",
+    "name": "Ikaros Accounting",
+    "short_name": "Ikaros Acc",
+    "description": "A PWA accounting application for Ikaros",
     "start_url": "/accounting",
     "display": "standalone",
     "background_color": "#ffffff",

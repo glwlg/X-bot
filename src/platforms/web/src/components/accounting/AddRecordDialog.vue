@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { createRecord, getCategories, getAccounts, type CategoryItem, type AccountItem } from '@/api/accounting'
 import { X, Delete, Loader2 } from 'lucide-vue-next'
 import { appendOperationLog } from '@/utils/accountingLocal'
+import { toLocalIsoString } from '@/utils/accountingDateTime'
 
 const props = defineProps<{
     bookId: number
@@ -288,7 +289,7 @@ const handleSave = async () => {
             account_name: selectedAccount.value,
             target_account_name: selectedTargetAccount.value,
             remark: remark.value,
-            record_time: new Date().toISOString(),
+            record_time: toLocalIsoString(new Date(), { includeSeconds: true }),
         })
         appendOperationLog(
             props.bookId,

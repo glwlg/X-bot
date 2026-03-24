@@ -8,8 +8,11 @@ from typing import Any, Awaitable, Callable, cast
 from core.config import get_client_for_model
 from core.model_config import (
     load_models_config,
+    get_model_candidates_for_input,
     get_model_for_input,
     get_model_id_for_api,
+    mark_model_failed,
+    mark_model_success,
 )
 from services.openai_adapter import build_messages
 
@@ -17,6 +20,7 @@ from services.openai_adapter import build_messages
 load_models_config()
 
 logger = logging.getLogger(__name__)
+MAX_TOOL_HISTORY_STRING = 64_000
 
 # Backward-compatible async client injection for tests/legacy callers.
 openai_async_client: Any = None
@@ -26,6 +30,20 @@ def _resolve_async_client(model_name: str) -> Any:
     if openai_async_client is not None:
         return openai_async_client
     return get_client_for_model(model_name, is_async=True)
+
+
+def _missing_model_error_message(input_type: str) -> str:
+    normalized_input_type = str(input_type or "text").strip().lower() or "text"
+    if normalized_input_type == "image":
+        return (
+            "当前未配置可用的图片识别模型，请在 config/models.json 的 "
+            "model.image / model.vision 与 models.image / models.vision 中配置支持 image 输入的模型"
+        )
+    if normalized_input_type == "voice":
+        return (
+            "当前未配置可用的语音模型，请在 config/models.json 中配置支持 voice 输入的模型"
+        )
+    return "No candidate model available for current request"
 
 
 def _split_text_for_streaming(text: str, max_chars: int) -> list[str]:
@@ -93,17 +111,19 @@ class AiService:
             str: Text chunks of the final response.
         """
         try:
-            MAX_TURNS = max(1, int(os.getenv("AI_TOOL_MAX_TURNS", "20")))
+            MAX_TURNS = max(1, int(os.getenv("AI_TOOL_MAX_TURNS", "40")))
         except ValueError:
-            MAX_TURNS = 20
+            MAX_TURNS = 40
         try:
             TOOL_EXEC_TIMEOUT_SEC = max(
                 30, int(os.getenv("AI_TOOL_EXEC_TIMEOUT_SEC", "420"))
             )
         except ValueError:
             TOOL_EXEC_TIMEOUT_SEC = 420
+        # Tool-final text is synthesized after execution; deliver it in one shot
+        # unless streaming is explicitly re-enabled.
         tool_final_stream_enabled = (
-            os.getenv("AI_TOOL_FINAL_STREAM_ENABLED", "true").lower() == "true"
+            os.getenv("AI_TOOL_FINAL_STREAM_ENABLED", "false").lower() == "true"
         )
         try:
             tool_final_stream_chunk_chars = max(
@@ -144,16 +164,96 @@ class AiService:
         last_terminal_tool_name = ""
 
         # 根据消息内容选择合适的模型
-        current_model = self._get_model_for_request(message_history)
+        current_model, request_input_type, request_pool_type = (
+            self._get_model_for_request(message_history)
+        )
 
         current_history = build_messages(
             contents=message_history,
             system_instruction=system_instruction,
         )
         openai_tools = self._build_openai_tools(tools)
-        client = _resolve_async_client(current_model)
+        client = _resolve_async_client(current_model) if current_model else None
 
         try:
+
+            async def _create_chat_completion(request_kwargs: dict[str, Any]) -> Any:
+                nonlocal current_model, client
+
+                candidate_models = get_model_candidates_for_input(
+                    input_type=request_input_type,
+                    pool_type=request_pool_type,
+                    preferred_model=current_model,
+                )
+                if not candidate_models and current_model:
+                    candidate_models = [current_model]
+                if not candidate_models:
+                    raise RuntimeError(
+                        _missing_model_error_message(request_input_type)
+                    )
+
+                last_error: Exception | None = None
+                for index, candidate_model in enumerate(candidate_models):
+                    model_client = _resolve_async_client(candidate_model)
+                    if model_client is None:
+                        last_error = RuntimeError(
+                            f"No async client available for model: {candidate_model}"
+                        )
+                        mark_model_failed(candidate_model)
+                        next_model = (
+                            candidate_models[index + 1]
+                            if index + 1 < len(candidate_models)
+                            else ""
+                        )
+                        if next_model:
+                            logger.warning(
+                                "[AiService] Model client unavailable for %s; trying %s",
+                                candidate_model,
+                                next_model,
+                            )
+                            continue
+                        raise last_error
+
+                    payload = dict(request_kwargs)
+                    payload["model"] = get_model_id_for_api(candidate_model)
+                    try:
+                        response = await cast(
+                            Any, model_client
+                        ).chat.completions.create(**payload)
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:
+                        last_error = exc
+                        mark_model_failed(candidate_model)
+                        next_model = (
+                            candidate_models[index + 1]
+                            if index + 1 < len(candidate_models)
+                            else ""
+                        )
+                        if next_model:
+                            logger.warning(
+                                "[AiService] Model request failed via %s: %s; trying %s",
+                                candidate_model,
+                                exc,
+                                next_model,
+                            )
+                            continue
+                        raise
+
+                    mark_model_success(candidate_model)
+                    if candidate_model != current_model:
+                        logger.warning(
+                            "[AiService] Model failover succeeded: %s -> %s",
+                            current_model,
+                            candidate_model,
+                        )
+                    current_model = candidate_model
+                    client = model_client
+                    return response
+
+                if last_error is not None:
+                    raise last_error
+                raise RuntimeError(_missing_model_error_message(request_input_type))
 
             async def _emit(event: str, payload: dict[str, Any]):
                 if not event_callback:
@@ -170,32 +270,31 @@ class AiService:
             async def _synthesize_async_dispatch_notice(
                 dispatch_rows: list[dict[str, str]],
             ) -> str:
-                if client is None:
-                    return ""
                 compact: list[str] = []
                 for row in dispatch_rows[:3]:
-                    worker_name = str(row.get("worker_name") or "").strip()
+                    executor_name = str(row.get("executor_name") or "").strip()
                     task_id = str(row.get("task_id") or "").strip()
-                    if worker_name and task_id:
-                        compact.append(f"{worker_name}（任务 {task_id}）")
+                    if executor_name and task_id:
+                        compact.append(f"{executor_name}（任务 {task_id}）")
                     elif task_id:
                         compact.append(f"任务 {task_id}")
-                    elif worker_name:
-                        compact.append(worker_name)
+                    elif executor_name:
+                        compact.append(executor_name)
 
                 guidance = (
-                    "系统提示：你刚刚通过工具成功派发了异步执行任务。"
+                    "系统提示：你刚刚通过工具成功启动了后台子任务。"
                     "现在请只向用户回复任务已开始处理的进度说明（1-2句中文）。"
-                    "必须提到任务编号；若有执行助手名称也请提到。"
+                    "必须提到任务编号；若有子任务名称也请提到。"
                     "不要输出任务最终结论，不要编造天气/数据结果，不要假装任务已完成。"
-                    "派发信息：" + ("；".join(compact) if compact else "已派发")
+                    "启动信息：" + ("；".join(compact) if compact else "已启动")
                 )
                 synth_history = list(current_history)
                 synth_history.append({"role": "user", "content": guidance})
                 try:
-                    synth_response = await cast(Any, client).chat.completions.create(
-                        model=get_model_id_for_api(current_model),
-                        messages=synth_history,
+                    synth_response = await _create_chat_completion(
+                        {
+                            "messages": synth_history,
+                        }
                     )
                 except Exception as exc:
                     logger.warning(
@@ -208,21 +307,19 @@ class AiService:
                 dispatch_rows: list[dict[str, str]],
             ) -> str:
                 first = dispatch_rows[0] if dispatch_rows else {}
-                worker_name = str(first.get("worker_name") or "执行助手").strip()
+                executor_name = str(first.get("executor_name") or "后台子任务").strip()
                 task_id = str(first.get("task_id") or "").strip()
                 if task_id:
                     return (
-                        f"已派发给 {worker_name} 处理（任务 {task_id}），"
+                        f"已启动 {executor_name}（任务 {task_id}），"
                         "正在处理中，完成后会自动把结果发给你。"
                     )
                 return (
-                    f"已派发给 {worker_name} 处理，"
+                    f"已启动 {executor_name}，"
                     "正在处理中，完成后会自动把结果发给你。"
                 )
 
             async def _synthesize_final_after_guard(*, guard_reason: str) -> str:
-                if client is None:
-                    return ""
                 guidance = (
                     "系统提示：工具调用已触发保护阈值（"
                     f"{guard_reason}"
@@ -233,9 +330,10 @@ class AiService:
                 synth_history = list(current_history)
                 synth_history.append({"role": "user", "content": guidance})
                 try:
-                    synth_response = await cast(Any, client).chat.completions.create(
-                        model=get_model_id_for_api(current_model),
-                        messages=synth_history,
+                    synth_response = await _create_chat_completion(
+                        {
+                            "messages": synth_history,
+                        }
                     )
                 except Exception as exc:
                     logger.warning(
@@ -250,9 +348,6 @@ class AiService:
                 turn_count += 1
                 await _emit("turn_start", {"turn": turn_count})
 
-                if client is None:
-                    raise RuntimeError("OpenAI async client is not initialized")
-
                 if tools:
                     logger.debug(
                         f"🤖 [AiService] Sending prompt to AI (Tools Mode):\n{current_history}"
@@ -263,9 +358,7 @@ class AiService:
                     }
                     if openai_tools:
                         request_kwargs["tools"] = openai_tools
-                    response = await cast(Any, client).chat.completions.create(
-                        **request_kwargs
-                    )
+                    response = await _create_chat_completion(request_kwargs)
                     function_calls = self._extract_tool_calls(response)
 
                     if function_calls:
@@ -586,6 +679,14 @@ class AiService:
                                         "terminal_ui": terminal_ui,
                                         "terminal_payload": terminal_payload,
                                         "failure_mode": failure_mode,
+                                        "history_visibility": (
+                                            str(
+                                                tool_result.get("history_visibility")
+                                                or ""
+                                            ).strip()
+                                            if isinstance(tool_result, dict)
+                                            else ""
+                                        ),
                                     },
                                 )
                                 current_history.append(
@@ -603,6 +704,25 @@ class AiService:
                                         ),
                                     }
                                 )
+                                if (
+                                    tool_ok
+                                    and isinstance(tool_result, dict)
+                                    and str(tool_result.get("history_visibility") or "")
+                                    .strip()
+                                    .lower()
+                                    == "suppress_success"
+                                ):
+                                    current_history.append(
+                                        {
+                                            "role": "user",
+                                            "content": (
+                                                "系统提示：上一步工具只是内部预检且已成功，"
+                                                "不要把该成功结果直接回复给用户。"
+                                                "如果当前任务还没完成，请继续调用后续工具或继续执行；"
+                                                "只有当认证异常、未登录或用户明确询问状态时，才需要显式说明认证情况。"
+                                            ),
+                                        }
+                                    )
                                 if self._should_apply_cost_guards(tool_name):
                                     per_tool_call_count[tool_name] = (
                                         int(per_tool_call_count.get(tool_name) or 0) + 1
@@ -616,8 +736,10 @@ class AiService:
                                     async_dispatch_rows.append(
                                         {
                                             "tool_name": tool_name,
-                                            "worker_name": str(
-                                                tool_result.get("worker_name") or ""
+                                            "executor_name": str(
+                                                tool_result.get("executor_name")
+                                                or tool_result.get("subagent_id")
+                                                or ""
                                             ).strip(),
                                             "task_id": str(
                                                 tool_result.get("task_id") or ""
@@ -771,10 +893,11 @@ class AiService:
                     logger.debug(
                         f"🤖 [AiService] Sending prompt to AI (Stream Mode):\n{current_history}"
                     )
-                    stream = await cast(Any, client).chat.completions.create(
-                        model=get_model_id_for_api(current_model),
-                        messages=current_history,
-                        stream=True,
+                    stream = await _create_chat_completion(
+                        {
+                            "messages": current_history,
+                            "stream": True,
+                        }
                     )
                     async for chunk in stream:
                         chunk_text = self._extract_stream_text(chunk)
@@ -980,6 +1103,11 @@ class AiService:
     @staticmethod
     def _summarize_tool_result(tool_result) -> str:
         if isinstance(tool_result, dict):
+            history_visibility = (
+                str(tool_result.get("history_visibility") or "").strip().lower()
+            )
+            if history_visibility == "suppress_success" and bool(tool_result.get("ok")):
+                return "tool preflight ok"
             if "text" in tool_result and tool_result["text"]:
                 return str(tool_result["text"])[:200]
             if "result" in tool_result and tool_result["result"]:
@@ -1034,6 +1162,21 @@ class AiService:
     def _sanitize_tool_result_for_history(tool_result: Any) -> Any:
         def _sanitize(value: Any) -> Any:
             if isinstance(value, dict):
+                history_visibility = (
+                    str(value.get("history_visibility") or "").strip().lower()
+                )
+                if history_visibility == "suppress_success" and bool(value.get("ok")):
+                    return {
+                        "ok": True,
+                        "data": {
+                            "continue_task_without_user_notice": True,
+                            "authenticated": bool(
+                                dict(value.get("data") or {})
+                                .get("auth_status", {})
+                                .get("authenticated")
+                            ),
+                        },
+                    }
                 sanitized: dict[str, Any] = {}
                 for key, item in value.items():
                     key_text = str(key)
@@ -1052,6 +1195,13 @@ class AiService:
                 return [_sanitize(item) for item in list(value)[:50]]
             if isinstance(value, (bytes, bytearray)):
                 return f"<binary:{len(value)} bytes>"
+            if isinstance(value, str):
+                if len(value) > MAX_TOOL_HISTORY_STRING:
+                    return (
+                        value[:MAX_TOOL_HISTORY_STRING].rstrip()
+                        + "\n...[truncated]"
+                    )
+                return value
             return value
 
         return _sanitize(tool_result)
@@ -1099,7 +1249,7 @@ class AiService:
         return bool(name) and name.startswith("ext_")
 
     @staticmethod
-    def _get_model_for_request(message_history: list) -> str:
+    def _get_model_for_request(message_history: list) -> tuple[str, str, str]:
         """根据消息历史选择合适的模型"""
         has_image = False
 
@@ -1135,9 +1285,10 @@ class AiService:
                         has_image = True
 
         input_type = "image" if has_image else "text"
-        model = get_model_for_input(input_type)
+        pool_type = "vision" if input_type == "image" else "primary"
+        model = get_model_for_input(input_type, pool_type=pool_type)
         model_id = get_model_id_for_api(model)
         logger.info(
             f"[AiService] Selected model: {model_id} (full_key: {model}, input_type: {input_type})"
         )
-        return model
+        return model, input_type, pool_type

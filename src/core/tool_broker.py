@@ -16,7 +16,7 @@ class ToolBroker:
             policy = str((ctx.user_data or {}).get("execution_policy", "")).strip()
         except Exception:
             policy = ""
-        return policy or "worker_execution_policy"
+        return policy or "manager_execution_policy"
 
     async def execute_core_tool(
         self,

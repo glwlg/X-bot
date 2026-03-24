@@ -1,7 +1,7 @@
 """
 语音消息处理模块
 
-统一将语音转写为文字后，再按普通文本消息处理，或进行语音翻译。
+统一将语音转写为文字后，再按普通文本消息处理。
 """
 
 import logging
@@ -16,14 +16,30 @@ from core.config import is_user_allowed, get_client_for_model
 from core.model_config import get_voice_model
 from core.platform.exceptions import MediaProcessingError
 from services.openai_adapter import build_messages
-from user_context import add_message, get_user_context
+from user_context import add_message, bind_delivery_target, get_user_context
 from core.platform.models import MessageType, UnifiedContext
+from .ai_handlers import _acknowledge_received
+from .base_handlers import require_feature_access
 from .media_utils import extract_media_input
 
 logger = logging.getLogger(__name__)
 
 # Backward-compatible async client injection for tests/legacy callers.
 openai_async_client: Any = None
+
+
+def _extract_weixin_voice_transcript(ctx: UnifiedContext) -> str:
+    raw_data = getattr(ctx.message, "raw_data", None)
+    if not isinstance(raw_data, dict):
+        return ""
+    for item in raw_data.get("item_list") or []:
+        if not isinstance(item, dict) or item.get("type") != 3:
+            continue
+        voice_item = item.get("voice_item") or {}
+        transcript = _normalize_transcribed_text(voice_item.get("text") or "")
+        if transcript:
+            return transcript
+    return ""
 
 
 def _resolve_voice_client(model_name: str) -> Any:
@@ -127,6 +143,34 @@ def _extract_model_text(response) -> str:
         if merged:
             return merged
     return ""
+
+
+def _parse_audio_response_payload(raw_text: str) -> tuple[str, str]:
+    text = str(raw_text or "").strip()
+    if not text:
+        return "empty", ""
+
+    candidates = [text]
+    candidates.extend(re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.I))
+    for candidate in candidates:
+        try:
+            payload = json.loads(candidate)
+        except Exception:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        status = str(payload.get("status") or "").strip().lower() or "transcribed"
+        transcript = _normalize_transcribed_text(
+            str(
+                payload.get("transcript")
+                or payload.get("text")
+                or payload.get("content")
+                or ""
+            )
+        )
+        return status, transcript
+
+    return "unstructured", _normalize_transcribed_text(text)
 
 
 def _audio_mime_candidates(mime_type: str) -> list[str]:
@@ -310,34 +354,46 @@ async def _run_audio_prompt(prompt: str, voice_bytes: bytes, mime_type: str) -> 
                         prompt, candidate_bytes, candidate_mime
                     ),
                 ),
+                response_format={"type": "json_object"},
             )
         except Exception as exc:
-            last_error = exc
-            logger.warning(
-                "Voice model call failed with model=%s mime=%s source=%s err=%s",
-                voice_model,
-                candidate_mime,
-                source,
-                exc,
-            )
-            continue
+            try:
+                response = await cast(Any, client).chat.completions.create(
+                    model=voice_model,
+                    messages=build_messages(
+                        contents=_build_audio_contents(
+                            prompt, candidate_bytes, candidate_mime
+                        ),
+                    ),
+                )
+            except Exception as inner_exc:
+                last_error = inner_exc
+                logger.warning(
+                    "Voice model call failed with model=%s mime=%s source=%s err=%s",
+                    voice_model,
+                    candidate_mime,
+                    source,
+                    inner_exc,
+                )
+                continue
 
         text = _extract_model_text(response)
-        if text and _looks_like_audio_missing_reply(text):
+        status, transcript = _parse_audio_response_payload(text)
+        if status in {"no_audio", "unintelligible", "empty"}:
             logger.info(
-                "Voice model could not consume audio: model=%s mime=%s",
+                "Voice model returned non-transcribable status=%s model=%s mime=%s",
+                status,
                 voice_model,
                 candidate_mime,
             )
             continue
 
-        normalized = _normalize_transcribed_text(text)
-        if text and not normalized:
+        if text and not transcript:
             logger.info("Voice model returned only quotes, retrying...")
             continue
 
-        if text:
-            return text
+        if transcript:
+            return transcript
 
     if last_error is not None:
         logger.error("Voice model call failed after mime retries: %s", last_error)
@@ -362,12 +418,12 @@ async def transcribe_voice(voice_bytes: bytes, mime_type: str) -> str | None:
     try:
         prompt = (
             "请将这段语音转写为文字。"
-            "只输出语音中说的原话，不要添加任何解释或回复。"
-            "如果无法识别，返回空字符串。"
+            "返回 JSON，格式为 "
+            '{"status":"transcribed|no_audio|unintelligible","transcript":"..."}。'
+            "如果成功识别，status=transcribed，transcript 只保留语音原话，不要添加解释。"
+            "如果没有收到可用音频或无法识别，transcript 置空。"
         )
-        text = _normalize_transcribed_text(
-            await _run_audio_prompt(prompt, voice_bytes, mime_type)
-        )
+        text = _normalize_transcribed_text(await _run_audio_prompt(prompt, voice_bytes, mime_type))
         if text:
             return text
         return None
@@ -376,65 +432,16 @@ async def transcribe_voice(voice_bytes: bytes, mime_type: str) -> str | None:
         return None
 
 
-async def transcribe_and_translate_voice(
-    voice_bytes: bytes, mime_type: str
-) -> dict | None:
-    """
-    转写语音并翻译为双语对照
-
-    Returns:
-        {"original": "原文", "original_lang": "语言", "translated": "译文"} 或 None
-    """
-    if not voice_bytes:
-        logger.warning("Voice translation skipped: empty audio payload.")
-        return None
-
-    try:
-        prompt = (
-            "请完成以下任务：\n"
-            "1. 将语音转写为文字\n"
-            "2. 识别语音的语言\n"
-            "3. 如果是中文，翻译为英文；如果是其他语言，翻译为中文\n\n"
-            "请严格按以下格式输出（不要添加其他内容）：\n"
-            "原文语言：[语言名称]\n"
-            "原文：[转写的原文]\n"
-            "译文：[翻译后的文字]"
-        )
-
-        text = await _run_audio_prompt(prompt, voice_bytes, mime_type)
-        if not text:
-            return None
-
-        # 解析结果
-        text = text.strip()
-        result = {}
-
-        for line in text.split("\n"):
-            if line.startswith("原文语言："):
-                result["original_lang"] = line.replace("原文语言：", "").strip()
-            elif line.startswith("原文："):
-                result["original"] = line.replace("原文：", "").strip()
-            elif line.startswith("译文："):
-                result["translated"] = line.replace("译文：", "").strip()
-
-        if result.get("original") and result.get("translated"):
-            return result
-        return None
-
-    except Exception as e:
-        logger.error(f"Voice translation error: {e}")
-        return None
-
-
 async def handle_voice_message(ctx: UnifiedContext) -> None:
-    from core.state_store import get_user_settings
-
     user_id = ctx.message.user.id
 
     # 检查用户权限
     if not await is_user_allowed(user_id):
-        await ctx.reply("⛔ 抱歉，您没有使用 AI 功能的权限。")
         return
+    if not await require_feature_access(ctx, "chat"):
+        return
+
+    await _acknowledge_received(ctx)
 
     try:
         media = await extract_media_input(
@@ -457,15 +464,7 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
         else (ctx.message.text or "").strip() or None
     )
 
-    # 检查是否开启翻译模式
-    settings = await get_user_settings(user_id)
-    translate_mode = settings.get("auto_translate", 0)
-
-    # 发送处理中提示
-    if translate_mode:
-        thinking_msg = await ctx.reply("🌍 正在翻译语音内容...")
-    else:
-        thinking_msg = await ctx.reply("🎤 正在理解语音内容...")
+    thinking_msg = await ctx.reply("🎤 正在理解语音内容...")
 
     # 发送"正在输入"状态
     await ctx.send_chat_action(action="typing")
@@ -480,40 +479,7 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
             await ctx.edit_message(msg_id, "❌ 未能读取语音数据，请重试。")
             return
 
-        # 翻译模式：双语对照输出
-        if translate_mode:
-            result = await transcribe_and_translate_voice(voice_bytes, mime_type)
-
-            if not result:
-                msg_id = getattr(
-                    thinking_msg, "message_id", getattr(thinking_msg, "id", None)
-                )
-                await ctx.edit_message(msg_id, "❌ 无法识别或翻译语音内容，请重试。")
-                return
-
-            original_lang = result.get("original_lang", "未知")
-            original = result.get("original", "")
-            translated = result.get("translated", "")
-
-            output = (
-                f"🎤 **语音翻译**\n\n"
-                f"📝 **原文** ({original_lang}):\n"
-                f"「{original}」\n\n"
-                f"🌐 **译文**:\n"
-                f"「{translated}」"
-            )
-
-            msg_id = getattr(
-                thinking_msg, "message_id", getattr(thinking_msg, "id", None)
-            )
-            await ctx.edit_message(msg_id, output)
-
-            # 记录统计
-            from stats import increment_stat
-
-            await increment_stat(user_id, "translations_count")
-            return
-
+        await bind_delivery_target(ctx, user_id)
         await process_as_voice_message(
             ctx=ctx,
             voice_bytes=voice_bytes,
@@ -554,33 +520,6 @@ async def handle_voice_message(ctx: UnifiedContext) -> None:
         except BadRequest:
             pass
 
-
-def _looks_like_audio_missing_reply(text: str) -> bool:
-    lowered = str(text or "").strip().lower()
-    if not lowered:
-        return False
-    if ("没有收到" in lowered or "未收到" in lowered) and (
-        "语音" in lowered or "音频" in lowered
-    ):
-        return True
-    cues = (
-        "没有附上语音",
-        "没有附上音频",
-        "语音内容/音频文件",
-        "音频文件",
-        "无法听到",
-        "请上传语音",
-        "语音文件/语音链接",
-        "no audio",
-        "no voice",
-        "voice file",
-        "audio file",
-        "upload audio",
-        "attach audio",
-    )
-    return any(cue in lowered for cue in cues)
-
-
 async def process_as_voice_message(
     ctx: UnifiedContext,
     voice_bytes: bytes,
@@ -597,6 +536,13 @@ async def process_as_voice_message(
 
     # ── Step 1: 转写语音 ──
     transcribed_text = await transcribe_voice(voice_bytes, mime_type)
+    if not transcribed_text:
+        transcribed_text = _extract_weixin_voice_transcript(ctx)
+        if transcribed_text:
+            logger.info(
+                "Using embedded Weixin voice transcript fallback for user_id=%s",
+                ctx.message.user.id,
+            )
     if not transcribed_text:
         await ctx.edit_message(msg_id, "❌ 无法识别语音内容，请重试或改用文字发送。")
         return

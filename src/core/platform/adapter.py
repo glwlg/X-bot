@@ -69,6 +69,17 @@ class BotAdapter(ABC):
         """Send a chat action"""
         pass
 
+    async def set_message_reaction(
+        self,
+        context: UnifiedContext,
+        message_id: str,
+        emoji: str,
+        chat_id: Optional[str] = None,
+        **kwargs,
+    ) -> Any:
+        """React to a message when the platform supports it."""
+        return False
+
     @abstractmethod
     async def download_file(
         self, context: UnifiedContext, file_id: str, **kwargs

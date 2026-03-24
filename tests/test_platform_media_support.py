@@ -5,10 +5,10 @@ import pytest
 
 from core.platform.exceptions import MediaDownloadUnavailableError
 from core.platform.models import MessageType
-from platforms.dingtalk.adapter import DingTalkAdapter
-from platforms.dingtalk.mapper import map_chatbot_message, map_dingtalk_message
-from platforms.discord.adapter import DiscordAdapter
-from platforms.telegram.mapper import map_telegram_message
+from extension.channels.dingtalk.adapter import DingTalkAdapter
+from extension.channels.dingtalk.mapper import map_chatbot_message, map_dingtalk_message
+from extension.channels.discord.adapter import DiscordAdapter
+from extension.channels.telegram.mapper import map_telegram_message, map_update_to_message
 
 
 class _FakeTelegramObject:
@@ -117,6 +117,36 @@ def test_telegram_mapper_supports_all_main_message_types(media_type, expected_fi
     mapped = map_telegram_message(_build_telegram_message(media_type))
     assert mapped.type == media_type
     assert mapped.file_id == expected_file_id
+
+
+def test_telegram_callback_update_uses_clicker_as_effective_user():
+    bot_user = _FakeTelegramObject(
+        id=999001,
+        username="x_bot",
+        first_name="X",
+        last_name="Bot",
+        language_code="zh",
+        is_bot=True,
+    )
+    click_user = _FakeTelegramObject(
+        id=10086,
+        username="real_user",
+        first_name="Real",
+        last_name="User",
+        language_code="zh",
+        is_bot=False,
+    )
+    message = _build_telegram_message(MessageType.TEXT)
+    message.from_user = bot_user
+    update = _FakeTelegramObject(
+        effective_message=message,
+        callback_query=_FakeTelegramObject(from_user=click_user, data="taskm_recent_0"),
+    )
+
+    mapped = map_update_to_message(update)
+
+    assert mapped.user.id == "10086"
+    assert mapped.user.is_bot is False
 
 
 def test_dingtalk_payload_mapper_maps_media_fields():

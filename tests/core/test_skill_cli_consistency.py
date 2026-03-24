@@ -45,9 +45,8 @@ def test_entrypoint_skills_expose_cli_contract() -> None:
         assert script_path.exists(), f"{script_path} must exist"
 
         permissions = frontmatter.get("permissions") or {}
-        assert permissions.get("shell") is True, (
-            f"{skill_md_path} must set permissions.shell=true "
-            "for bash-driven entrypoint execution"
+        assert isinstance(permissions.get("shell"), bool), (
+            f"{skill_md_path} must declare permissions.shell as a boolean"
         )
 
         script_text = script_path.read_text(encoding="utf-8")

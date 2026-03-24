@@ -27,6 +27,7 @@ from api.auth.models import User
 from api.models.accounting import (
     Book,
     Account,
+    AccountAlias,
     Category,
     Record,
     Budget,
@@ -35,7 +36,8 @@ from api.models.accounting import (
     StatsPanel,
     OperationLog,
 )
-from shared.queue.dispatch_queue import dispatch_queue
+from manager.dispatch.web_accounting_auto_image import run_web_accounting_auto_image_task
+from shared.contracts.dispatch import TaskEnvelope
 
 router = APIRouter()
 
@@ -77,6 +79,10 @@ class AccountUpdate(BaseModel):
     type: Optional[str] = None
     balance: Optional[float] = None
     include_in_assets: Optional[bool] = None
+
+
+class AccountMerge(BaseModel):
+    target_account_id: int
 
 
 class BalanceAdjust(BaseModel):
@@ -188,6 +194,129 @@ async def _get_book(
 # ─── Helper: get or create account/category ──────────────────────────
 
 
+def _normalize_account_name(name: str) -> str:
+    return (name or "").strip()
+
+
+async def _find_account_by_name_or_alias(
+    session: AsyncSession,
+    book_id: int,
+    name: str,
+) -> Optional[Account]:
+    normalized_name = _normalize_account_name(name)
+    if not normalized_name:
+        return None
+
+    res = await session.execute(
+        select(Account).where(
+            Account.book_id == book_id,
+            Account.name == normalized_name,
+        )
+    )
+    acc = res.scalars().first()
+    if acc:
+        return acc
+
+    res = await session.execute(
+        select(Account)
+        .join(AccountAlias, AccountAlias.account_id == Account.id)
+        .where(
+            Account.book_id == book_id,
+            AccountAlias.book_id == book_id,
+            AccountAlias.name == normalized_name,
+        )
+    )
+    return res.scalars().first()
+
+
+async def _find_account_name_owner_id(
+    session: AsyncSession,
+    book_id: int,
+    name: str,
+) -> Optional[int]:
+    normalized_name = _normalize_account_name(name)
+    if not normalized_name:
+        return None
+
+    res = await session.execute(
+        select(Account.id).where(
+            Account.book_id == book_id,
+            Account.name == normalized_name,
+        )
+    )
+    owner_id = res.scalar_one_or_none()
+    if owner_id is not None:
+        return int(owner_id)
+
+    res = await session.execute(
+        select(AccountAlias.account_id).where(
+            AccountAlias.book_id == book_id,
+            AccountAlias.name == normalized_name,
+        )
+    )
+    owner_id = res.scalar_one_or_none()
+    if owner_id is None:
+        return None
+    return int(owner_id)
+
+
+async def _ensure_account_name_available(
+    session: AsyncSession,
+    book_id: int,
+    name: str,
+    *,
+    exclude_account_ids: Optional[set[int]] = None,
+) -> str:
+    normalized_name = _normalize_account_name(name)
+    if not normalized_name:
+        raise HTTPException(status_code=400, detail="账户名称不能为空")
+
+    owner_id = await _find_account_name_owner_id(session, book_id, normalized_name)
+    if owner_id is not None and owner_id not in (exclude_account_ids or set()):
+        raise HTTPException(
+            status_code=400,
+            detail=f"账户名称“{normalized_name}”已存在或已作为别名使用",
+        )
+    return normalized_name
+
+
+async def _load_account_aliases_map(
+    session: AsyncSession,
+    account_ids: list[int],
+) -> dict[int, list[str]]:
+    unique_account_ids = list(dict.fromkeys(account_ids))
+    if not unique_account_ids:
+        return {}
+
+    res = await session.execute(
+        select(AccountAlias)
+        .where(AccountAlias.account_id.in_(unique_account_ids))
+        .order_by(AccountAlias.name)
+    )
+    alias_map: dict[int, list[str]] = {account_id: [] for account_id in unique_account_ids}
+    for alias in res.scalars().all():
+        alias_map.setdefault(alias.account_id, []).append(alias.name)
+    return alias_map
+
+
+def _serialize_account_payload(
+    account: Account,
+    *,
+    balance: float,
+    aliases: Optional[list[str]] = None,
+) -> dict:
+    return {
+        "id": account.id,
+        "name": account.name,
+        "type": account.type,
+        "initial_balance": float(account.balance),
+        "balance": balance,
+        "include_in_assets": account.include_in_assets,
+        "book_id": account.book_id,
+        "aliases": aliases or [],
+    }
+
+
 async def _get_or_create_account(
     session: AsyncSession,
     book_id: int,
@@ -195,20 +324,19 @@ async def _get_or_create_account(
     acc_type: str = "现金",
     cache: Optional[dict] = None,
 ) -> Optional[Account]:
-    if not name:
+    normalized_name = _normalize_account_name(name)
+    if not normalized_name:
         return None
-    if cache is not None and name in cache:
-        return cache[name]
-    res = await session.execute(
-        select(Account).where(Account.book_id == book_id, Account.name == name)
-    )
-    acc = res.scalars().first()
+    if cache is not None and normalized_name in cache:
+        return cache[normalized_name]
+
+    acc = await _find_account_by_name_or_alias(session, book_id, normalized_name)
     if not acc:
-        acc = Account(book_id=book_id, name=name, type=acc_type)
+        acc = Account(book_id=book_id, name=normalized_name, type=acc_type)
         session.add(acc)
         await session.flush()
     if cache is not None:
-        cache[name] = acc
+        cache[normalized_name] = acc
     return acc
 
 
@@ -273,6 +401,66 @@ async def _serialize_record(session: AsyncSession, record: Record) -> dict:
     }
 
 
+def _parse_record_time_value(value: Optional[str]) -> datetime:
+    record_time = datetime.utcnow()
+    raw = str(value or "").strip()
+    if not raw:
+        return record_time
+    try:
+        return datetime.fromisoformat(raw)
+    except ValueError:
+        return record_time
+
+
+def _record_create_from_draft(draft: dict[str, object]) -> RecordCreate:
+    return RecordCreate(
+        type=str(draft.get("type") or "").strip(),
+        amount=float(draft.get("amount") or 0),
+        category_name=(
+            str(draft.get("category_name") or draft.get("category") or "").strip()
+            or "未分类"
+        ),
+        account_name=str(
+            draft.get("account_name") or draft.get("account") or ""
+        ).strip(),
+        target_account_name=str(
+            draft.get("target_account_name") or draft.get("target_account") or ""
+        ).strip(),
+        payee=str(draft.get("payee") or "").strip(),
+        remark=str(draft.get("remark") or "").strip(),
+        record_time=str(draft.get("record_time") or "").strip() or None,
+    )
+
+
+async def _create_record_entity(
+    session: AsyncSession,
+    *,
+    book_id: int,
+    creator_id: int,
+    data: RecordCreate,
+) -> Record:
+    cat = await _get_or_create_category(session, book_id, data.category_name, data.type)
+    from_acc = await _get_or_create_account(session, book_id, data.account_name)
+    to_acc = await _get_or_create_account(session, book_id, data.target_account_name)
+
+    rec = Record(
+        book_id=book_id,
+        type=data.type,
+        amount=data.amount,
+        account_id=from_acc.id if from_acc else None,
+        target_account_id=to_acc.id if to_acc else None,
+        category_id=cat.id if cat else None,
+        record_time=_parse_record_time_value(data.record_time),
+        payee=data.payee[:100] if data.payee else "",
+        remark=data.remark[:500] if data.remark else "",
+        creator_id=creator_id,
+    )
+    session.add(rec)
+    await session.commit()
+    await session.refresh(rec)
+    return rec
+
+
 def _web_accounting_upload_root() -> Path:
     data_dir = str(os.getenv("DATA_DIR", "/app/data")).strip() or "/app/data"
     root = Path(data_dir).expanduser().resolve() / "system" / "web_accounting_uploads"
@@ -292,68 +480,6 @@ def _store_web_accounting_image(image_bytes: bytes, mime_type: str) -> str:
     return str(path)
 
 
-async def _wait_for_dispatch_result(task_id: str, timeout_sec: float) -> dict:
-    interval = 0.5
-    deadline = asyncio.get_running_loop().time() + max(5.0, timeout_sec)
-    while asyncio.get_running_loop().time() < deadline:
-        result_obj = await dispatch_queue.latest_result(task_id)
-        if result_obj is not None:
-            payload = result_obj.to_dict()
-            raw = payload.get("payload")
-            payload_obj = dict(raw) if isinstance(raw, dict) else {}
-            record_id_raw = payload_obj.get("record_id") or payload_obj.get(
-                "accounting_record_id"
-            )
-            book_id_raw = payload_obj.get("book_id")
-            try:
-                record_id = int(record_id_raw)
-            except (TypeError, ValueError):
-                record_id = 0
-            try:
-                book_id = int(book_id_raw)
-            except (TypeError, ValueError):
-                book_id = 0
-
-            message = str(
-                payload_obj.get("message")
-                or payload_obj.get("text")
-                or payload.get("summary")
-                or payload.get("error")
-                or ""
-            ).strip()
-            return {
-                "ok": bool(payload.get("ok")) and record_id > 0,
-                "message": message[:500],
-                "record_id": record_id,
-                "book_id": book_id,
-            }
-
-        task_obj = await dispatch_queue.get_task(task_id)
-        if task_obj is None:
-            return {
-                "ok": False,
-                "message": "记账任务已丢失，请重试。",
-                "record_id": 0,
-                "book_id": 0,
-            }
-        if task_obj.status in {"failed", "cancelled"}:
-            return {
-                "ok": False,
-                "message": str(task_obj.error or "AI 未能完成记账").strip()[:500],
-                "record_id": 0,
-                "book_id": 0,
-            }
-
-        await asyncio.sleep(interval)
-
-    return {
-        "ok": False,
-        "message": "AI 识别超时，请稍后重试。",
-        "record_id": 0,
-        "book_id": 0,
-    }
-
-
 async def _run_web_image_quick_accounting(
     *,
     user: User,
@@ -364,12 +490,9 @@ async def _run_web_image_quick_accounting(
 ) -> dict:
     image_path = _store_web_accounting_image(image_bytes, mime_type)
     timeout_sec = float(os.getenv("WEB_ACCOUNTING_AUTO_TIMEOUT_SEC", "110"))
-    worker_id = str(os.getenv("WEB_ACCOUNTING_MANAGER_ID", "manager-main")).strip()
-    if not worker_id:
-        worker_id = "manager-main"
 
     instruction = (
-        "请先识别这张交易图片，再调用 ext_quick_accounting 完成真实记账。"
+        "请先识别这张交易图片，再调用 submit_accounting_draft 提交结构化记账草稿。"
         "优先提取：类型、金额、分类、账户、交易对象、时间。"
         "若字段不完整，请基于常识补全，但不要虚构明显不存在的信息。"
     )
@@ -378,23 +501,58 @@ async def _run_web_image_quick_accounting(
         instruction += f"\n\n补充说明：{user_note}"
 
     try:
-        queued = await dispatch_queue.submit_task(
-            worker_id=worker_id,
-            instruction=instruction,
-            source="web_accounting_auto_image",
-            metadata={
-                "execution_mode": "web_accounting_auto_image",
-                "accounting_user_id": int(user.id),
-                "accounting_book_id": int(book_id),
-                "accounting_source": "web_clipboard",
-                "web_accounting_image_path": image_path,
-                "web_accounting_image_mime": mime_type,
-            },
+        result_obj = await asyncio.wait_for(
+            run_web_accounting_auto_image_task(
+                TaskEnvelope(
+                    task_id=f"web-accounting-{uuid4().hex[:8]}",
+                    executor_id="manager-main",
+                    instruction=instruction,
+                    source="web_accounting_auto_image",
+                    metadata={
+                        "execution_mode": "web_accounting_auto_image",
+                        "accounting_user_id": int(user.id),
+                        "accounting_book_id": int(book_id),
+                        "accounting_source": "web_clipboard",
+                        "web_accounting_image_path": image_path,
+                        "web_accounting_image_mime": mime_type,
+                    },
+                )
+            ),
+            timeout=max(5.0, timeout_sec),
         )
-        result = await _wait_for_dispatch_result(queued.task_id, timeout_sec)
+        payload = result_obj.to_dict()
+        payload_obj = (
+            dict(payload.get("payload") or {})
+            if isinstance(payload.get("payload"), dict)
+            else {}
+        )
+        draft_raw = payload_obj.get("draft") or payload_obj.get("accounting_draft")
+        draft = dict(draft_raw) if isinstance(draft_raw, dict) else None
+        message = str(
+            payload_obj.get("message")
+            or payload_obj.get("text")
+            or payload.get("summary")
+            or payload.get("error")
+            or ""
+        ).strip()[:500]
+        result = {
+            "ok": bool(payload.get("ok")),
+            "message": message,
+            "record_id": 0,
+            "book_id": int(payload_obj.get("book_id") or book_id or 0),
+        }
+        if draft is not None:
+            result["draft"] = draft
         if result.get("book_id", 0) <= 0:
             result["book_id"] = int(book_id)
         return result
+    except asyncio.TimeoutError:
+        return {
+            "ok": False,
+            "message": "AI 识别超时，请稍后重试。",
+            "record_id": 0,
+            "book_id": int(book_id),
+        }
     finally:
         try:
             Path(image_path).unlink(missing_ok=True)
@@ -813,33 +971,12 @@ async def create_record(
     session: AsyncSession = Depends(get_async_session),
 ):
     await _get_book(book_id, user, session)
-
-    cat = await _get_or_create_category(session, book_id, data.category_name, data.type)
-    from_acc = await _get_or_create_account(session, book_id, data.account_name)
-    to_acc = await _get_or_create_account(session, book_id, data.target_account_name)
-
-    record_time = datetime.utcnow()
-    if data.record_time:
-        try:
-            record_time = datetime.fromisoformat(data.record_time)
-        except ValueError:
-            pass
-
-    rec = Record(
+    rec = await _create_record_entity(
+        session,
         book_id=book_id,
-        type=data.type,
-        amount=data.amount,
-        account_id=from_acc.id if from_acc else None,
-        target_account_id=to_acc.id if to_acc else None,
-        category_id=cat.id if cat else None,
-        record_time=record_time,
-        payee=data.payee[:100] if data.payee else "",
-        remark=data.remark[:500] if data.remark else "",
-        creator_id=user.id,
+        creator_id=int(user.id),
+        data=data,
     )
-    session.add(rec)
-    await session.commit()
-    await session.refresh(rec)
     return {"id": rec.id, "message": "记录已创建"}
 
 
@@ -876,11 +1013,26 @@ async def auto_create_record_from_image(
         detail = str(result.get("message") or "AI 未能完成记账")
         raise HTTPException(status_code=422, detail=detail)
 
+    draft_raw = result.get("draft")
+    if not isinstance(draft_raw, dict):
+        raise HTTPException(status_code=422, detail="AI 未返回有效的记账草稿")
+    try:
+        draft = _record_create_from_draft(draft_raw)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="AI 返回的记账草稿格式无效")
+
+    record = await _create_record_entity(
+        session,
+        book_id=book_id,
+        creator_id=int(user.id),
+        data=draft,
+    )
+
     return {
         "ok": True,
         "message": "记账成功",
         "book_id": int(result.get("book_id") or book_id),
-        "record_id": int(result.get("record_id") or 0),
+        "record_id": int(record.id),
     }
 
 
@@ -1637,18 +1789,16 @@ async def list_accounts(
         select(Account).where(Account.book_id == book_id).order_by(Account.type)
     )
     accounts = result.scalars().all()
+    alias_map = await _load_account_aliases_map(session, [account.id for account in accounts])
     enriched = []
     for a in accounts:
         current_balance = await _calc_account_balance(session, a.id, float(a.balance))
         enriched.append(
-            {
-                "id": a.id,
-                "name": a.name,
-                "type": a.type,
-                "initial_balance": float(a.balance),
-                "balance": current_balance,
-                "include_in_assets": a.include_in_assets,
-            }
+            _serialize_account_payload(
+                a,
+                balance=current_balance,
+                aliases=alias_map.get(a.id, []),
+            )
         )
     return enriched
 
@@ -1666,15 +1816,12 @@ async def get_account_detail(
     await _get_book(acc.book_id, user, session)
 
     current_balance = await _calc_account_balance(session, acc.id, float(acc.balance))
-    return {
-        "id": acc.id,
-        "name": acc.name,
-        "type": acc.type,
-        "initial_balance": float(acc.balance),
-        "balance": current_balance,
-        "include_in_assets": acc.include_in_assets,
-        "book_id": acc.book_id,
-    }
+    alias_map = await _load_account_aliases_map(session, [acc.id])
+    return _serialize_account_payload(
+        acc,
+        balance=current_balance,
+        aliases=alias_map.get(acc.id, []),
+    )
 
 
 @router.get("/accounts/{account_id}/records")
@@ -1887,9 +2034,10 @@ async def create_account(
     session: AsyncSession = Depends(get_async_session),
 ):
     await _get_book(book_id, user, session)
+    account_name = await _ensure_account_name_available(session, book_id, data.name)
     acc = Account(
         book_id=book_id,
-        name=data.name,
+        name=account_name,
         type=data.type,
         balance=data.balance,
         include_in_assets=data.include_in_assets,
@@ -1897,14 +2045,7 @@ async def create_account(
     session.add(acc)
     await session.commit()
     await session.refresh(acc)
-    return {
-        "id": acc.id,
-        "name": acc.name,
-        "type": acc.type,
-        "initial_balance": float(acc.balance),
-        "balance": float(acc.balance),
-        "include_in_assets": acc.include_in_assets,
-    }
+    return _serialize_account_payload(acc, balance=float(acc.balance), aliases=[])
 
 
 @router.put("/accounts/{account_id}")
@@ -1920,7 +2061,12 @@ async def update_account(
     await _get_book(acc.book_id, user, session)
 
     if data.name is not None:
-        acc.name = data.name
+        acc.name = await _ensure_account_name_available(
+            session,
+            acc.book_id,
+            data.name,
+            exclude_account_ids={acc.id},
+        )
     if data.type is not None:
         acc.type = data.type
     if data.balance is not None:
@@ -1929,13 +2075,98 @@ async def update_account(
         acc.include_in_assets = data.include_in_assets
     await session.commit()
     current = await _calc_account_balance(session, acc.id, float(acc.balance))
+    alias_map = await _load_account_aliases_map(session, [acc.id])
+    return _serialize_account_payload(
+        acc,
+        balance=current,
+        aliases=alias_map.get(acc.id, []),
+    )
+
+
+@router.post("/accounts/{account_id}/merge")
+async def merge_account(
+    account_id: int,
+    data: AccountMerge,
+    user: User = Depends(current_active_user),
+    session: AsyncSession = Depends(get_async_session),
+):
+    source = await session.get(Account, account_id)
+    if not source:
+        raise HTTPException(status_code=404, detail="账户不存在")
+    await _get_book(source.book_id, user, session)
+
+    if data.target_account_id == source.id:
+        raise HTTPException(status_code=400, detail="不能合并到同一个账户")
+
+    target = await session.get(Account, data.target_account_id)
+    if not target or target.book_id != source.book_id:
+        raise HTTPException(status_code=404, detail="目标账户不存在")
+
+    alias_map = await _load_account_aliases_map(session, [source.id, target.id])
+    target_aliases = list(alias_map.get(target.id, []))
+    merge_aliases = sorted(set(alias_map.get(source.id, []) + [source.name]))
+    allowed_account_ids = {source.id, target.id}
+
+    for alias_name in merge_aliases:
+        if alias_name == target.name or alias_name in target_aliases:
+            continue
+        owner_id = await _find_account_name_owner_id(session, source.book_id, alias_name)
+        if owner_id is not None and owner_id not in allowed_account_ids:
+            raise HTTPException(
+                status_code=400,
+                detail=f"账户名称“{alias_name}”已被其他账户或别名使用，无法合并",
+            )
+
+    await session.execute(
+        update(Record)
+        .where(Record.account_id == source.id)
+        .values(account_id=target.id)
+    )
+    await session.execute(
+        update(Record)
+        .where(Record.target_account_id == source.id)
+        .values(target_account_id=target.id)
+    )
+    await session.execute(
+        update(ScheduledTask)
+        .where(ScheduledTask.account_id == source.id)
+        .values(account_id=target.id)
+    )
+    await session.execute(
+        update(ScheduledTask)
+        .where(ScheduledTask.target_account_id == source.id)
+        .values(target_account_id=target.id)
+    )
+
+    target.balance = float(target.balance) + float(source.balance)
+
+    await session.execute(delete(AccountAlias).where(AccountAlias.account_id == source.id))
+    await session.flush()
+    await session.delete(source)
+    await session.flush()
+
+    for alias_name in merge_aliases:
+        if alias_name == target.name or alias_name in target_aliases:
+            continue
+        session.add(
+            AccountAlias(
+                book_id=target.book_id,
+                account_id=target.id,
+                name=alias_name,
+            )
+        )
+        target_aliases.append(alias_name)
+
+    await session.commit()
+
+    current = await _calc_account_balance(session, target.id, float(target.balance))
     return {
-        "id": acc.id,
-        "name": acc.name,
-        "type": acc.type,
-        "initial_balance": float(acc.balance),
-        "balance": current,
-        "include_in_assets": acc.include_in_assets,
+        "message": "账户已合并",
+        "account": _serialize_account_payload(
+            target,
+            balance=current,
+            aliases=sorted(target_aliases),
+        ),
     }
 
 
@@ -1949,6 +2180,7 @@ async def delete_account(
     if not acc:
         raise HTTPException(status_code=404, detail="账户不存在")
     await _get_book(acc.book_id, user, session)
+    await session.execute(delete(AccountAlias).where(AccountAlias.account_id == account_id))
     await session.delete(acc)
     await session.commit()
     return {"message": "账户已删除"}

@@ -1,0 +1,215 @@
+from __future__ import annotations
+
+import shlex
+from typing import Any, Awaitable, Callable, Dict
+
+from core.tools.codex_tools import codex_tools
+from core.tools.git_tools import git_tools
+from core.tools.gh_tools import gh_tools
+from core.tools.repo_workspace_tools import repo_workspace_tools
+from core.tools.task_tracker_tools import task_tracker_tools
+
+
+SkillToolHandler = Callable[[Any, Dict[str, Any]], Awaitable[Dict[str, Any]]]
+
+
+class SkillToolHandlerRegistry:
+    def __init__(self) -> None:
+        self._handlers: Dict[str, SkillToolHandler] = {}
+
+    def register(self, handler_id: str, handler: SkillToolHandler) -> None:
+        safe_handler_id = str(handler_id or "").strip()
+        if not safe_handler_id:
+            return
+        self._handlers[safe_handler_id] = handler
+
+    async def dispatch(
+        self,
+        handler_id: str,
+        *,
+        dispatcher: Any,
+        args: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        safe_handler_id = str(handler_id or "").strip()
+        handler = self._handlers.get(safe_handler_id)
+        if handler is None:
+            return {
+                "ok": False,
+                "error_code": "unsupported_skill_tool_handler",
+                "message": f"Unsupported skill tool handler: {safe_handler_id}",
+                "failure_mode": "recoverable",
+            }
+        return await handler(dispatcher, dict(args or {}))
+
+
+def _notify_target_from_dispatcher(dispatcher: Any) -> Dict[str, str]:
+    ctx_user_data = getattr(dispatcher.ctx, "user_data", None)
+    user_data = ctx_user_data if isinstance(ctx_user_data, dict) else {}
+    msg = getattr(dispatcher.ctx, "message", None)
+    msg_user = getattr(msg, "user", None)
+    msg_chat = getattr(msg, "chat", None)
+
+    platform = str(getattr(msg, "platform", "") or "").strip()
+    chat_id = str(getattr(msg_chat, "id", "") or "").strip()
+    user_id = str(getattr(msg_user, "id", "") or "").strip()
+
+    forced_platform = str(user_data.get("subagent_delivery_platform") or "").strip()
+    forced_chat_id = str(user_data.get("subagent_delivery_chat_id") or "").strip()
+    if forced_platform:
+        platform = forced_platform
+    if forced_chat_id:
+        chat_id = forced_chat_id
+
+    return {
+        "notify_platform": platform,
+        "notify_chat_id": chat_id,
+        "notify_user_id": user_id,
+    }
+
+
+def _normalize_cli_argv(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        try:
+            return [
+                str(item).strip() for item in shlex.split(value) if str(item).strip()
+            ]
+        except Exception:
+            return [item.strip() for item in value.split() if item.strip()]
+    return []
+
+
+async def _gh_cli_handler(
+    dispatcher: Any,
+    tool_args: Dict[str, Any],
+) -> Dict[str, Any]:
+    notify_target = _notify_target_from_dispatcher(dispatcher)
+    return await gh_tools.gh_cli(
+        action=str(tool_args.get("action") or "auth_status"),
+        hostname=str(tool_args.get("hostname") or "github.com"),
+        scopes=tool_args.get("scopes"),
+        argv=_normalize_cli_argv(tool_args.get("argv") or tool_args.get("command")),
+        cwd=str(tool_args.get("cwd") or ""),
+        timeout_sec=tool_args.get("timeout_sec", 120),
+        notify_platform=notify_target["notify_platform"],
+        notify_chat_id=notify_target["notify_chat_id"],
+        notify_user_id=notify_target["notify_user_id"],
+    )
+
+
+async def _repo_workspace_handler(
+    dispatcher: Any,
+    tool_args: Dict[str, Any],
+) -> Dict[str, Any]:
+    _ = dispatcher
+    return await repo_workspace_tools.repo_workspace(
+        action=str(tool_args.get("action") or "prepare"),
+        workspace_id=str(tool_args.get("workspace_id") or ""),
+        repo_url=str(tool_args.get("repo_url") or ""),
+        repo_path=str(tool_args.get("repo_path") or ""),
+        repo_root=str(tool_args.get("repo_root") or tool_args.get("cwd") or ""),
+        base_branch=str(tool_args.get("base_branch") or ""),
+        branch_name=str(tool_args.get("branch_name") or ""),
+        mode=str(tool_args.get("mode") or "fresh_worktree"),
+        force=tool_args.get("force", True),
+    )
+
+
+async def _codex_session_handler(
+    dispatcher: Any,
+    tool_args: Dict[str, Any],
+) -> Dict[str, Any]:
+    user_request = dispatcher._extract_user_request()
+    return await codex_tools.codex_session(
+        action=str(tool_args.get("action") or "status"),
+        session_id=str(tool_args.get("session_id") or ""),
+        workspace_id=str(tool_args.get("workspace_id") or ""),
+        cwd=str(tool_args.get("cwd") or ""),
+        instruction=str(tool_args.get("instruction") or user_request),
+        user_reply=str(
+            tool_args.get("user_reply") or tool_args.get("instruction") or ""
+        ),
+        backend=str(tool_args.get("backend") or "codex"),
+        timeout_sec=tool_args.get("timeout_sec", 2400),
+        source=str(tool_args.get("source") or ""),
+        skill_name=str(tool_args.get("skill_name") or ""),
+    )
+
+
+async def _git_ops_handler(
+    dispatcher: Any,
+    tool_args: Dict[str, Any],
+) -> Dict[str, Any]:
+    _ = dispatcher
+    return await git_tools.git_ops(
+        action=str(tool_args.get("action") or "status"),
+        workspace_id=str(tool_args.get("workspace_id") or ""),
+        repo_root=str(tool_args.get("repo_root") or tool_args.get("cwd") or ""),
+        mode=str(tool_args.get("mode") or "working"),
+        base_branch=str(tool_args.get("base_branch") or ""),
+        message=str(tool_args.get("message") or tool_args.get("commit_message") or ""),
+        strategy=str(tool_args.get("strategy") or "auto"),
+        branch_name=str(tool_args.get("branch_name") or ""),
+        owner=str(tool_args.get("owner") or ""),
+        repo=str(tool_args.get("repo") or ""),
+    )
+
+
+async def _task_tracker_handler(
+    dispatcher: Any,
+    tool_args: Dict[str, Any],
+) -> Dict[str, Any]:
+    notify_target = _notify_target_from_dispatcher(dispatcher)
+    msg = getattr(dispatcher.ctx, "message", None)
+    msg_user = getattr(msg, "user", None)
+    return await task_tracker_tools.task_tracker(
+        action=str(tool_args.get("action") or "list_open"),
+        user_id=str(tool_args.get("user_id") or getattr(msg_user, "id", "") or ""),
+        task_id=str(
+            tool_args.get("task_id") or getattr(dispatcher, "task_inbox_id", "") or ""
+        ),
+        limit=int(tool_args.get("limit", 20) or 20),
+        due_only=bool(tool_args.get("due_only", True)),
+        event_limit=int(tool_args.get("event_limit", 20) or 20),
+        status=str(tool_args.get("status") or ""),
+        result_summary=str(tool_args.get("result_summary") or ""),
+        done_when=str(tool_args.get("done_when") or ""),
+        next_review_after=str(tool_args.get("next_review_after") or ""),
+        refs=(
+            dict(tool_args.get("refs"))
+            if isinstance(tool_args.get("refs"), dict)
+            else {}
+        ),
+        notes=str(tool_args.get("notes") or ""),
+        announce_before_action=tool_args.get("announce_before_action"),
+        last_observation=str(tool_args.get("last_observation") or ""),
+        last_action_summary=str(tool_args.get("last_action_summary") or ""),
+        announce_text=str(tool_args.get("announce_text") or ""),
+        announce_key=str(tool_args.get("announce_key") or ""),
+        announce_platform=notify_target["notify_platform"],
+        announce_chat_id=notify_target["notify_chat_id"],
+    )
+
+
+skill_tool_handler_registry = SkillToolHandlerRegistry()
+skill_tool_handler_registry.register(
+    "manager.gh_cli",
+    _gh_cli_handler,
+)
+skill_tool_handler_registry.register(
+    "manager.repo_workspace",
+    _repo_workspace_handler,
+)
+skill_tool_handler_registry.register(
+    "manager.codex_session",
+    _codex_session_handler,
+)
+skill_tool_handler_registry.register(
+    "manager.git_ops",
+    _git_ops_handler,
+)
+skill_tool_handler_registry.register(
+    "manager.task_tracker",
+    _task_tracker_handler,
+)

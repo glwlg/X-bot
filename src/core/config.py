@@ -27,6 +27,25 @@ DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DINGTALK_CLIENT_ID = os.getenv("DINGTALK_CLIENT_ID")
 DINGTALK_CLIENT_SECRET = os.getenv("DINGTALK_CLIENT_SECRET")
 
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(str(os.getenv(name, str(default))).strip())
+    except Exception:
+        return default
+
+
+# Weixin (微信 iLink Bot) 配置
+WEIXIN_ENABLE = os.getenv("WEIXIN_ENABLE", "false").lower() == "true"
+WEIXIN_BASE_URL = os.getenv("WEIXIN_BASE_URL", "https://ilinkai.weixin.qq.com/")
+WEIXIN_CDN_BASE_URL = os.getenv(
+    "WEIXIN_CDN_BASE_URL", "https://novac2c.cdn.weixin.qq.com/c2c"
+)
+WEIXIN_LOGIN_TIMEOUT_SEC = _env_int("WEIXIN_LOGIN_TIMEOUT_SEC", 300)
+WEIXIN_LOGIN_POLL_INTERVAL_SEC = _env_int("WEIXIN_LOGIN_POLL_INTERVAL_SEC", 3)
+WEIXIN_TEXT_CHUNK_LIMIT = _env_int("WEIXIN_TEXT_CHUNK_LIMIT", 2000)
+WEIXIN_DEBUG_UPDATES = os.getenv("WEIXIN_DEBUG_UPDATES", "false").lower() == "true"
+
 # 日志配置
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
@@ -39,6 +58,7 @@ MODELS_CONFIG_PATH = os.getenv("MODELS_CONFIG_PATH", "config/models.json")
 # ============================================================================
 
 _clients_cache = {}
+_wrapped_clients_cache = {}
 
 
 def get_client_for_model(model_key: str | None = None, is_async: bool = True):
@@ -52,6 +72,7 @@ def get_client_for_model(model_key: str | None = None, is_async: bool = True):
         get_base_url_for_model,
         get_current_model,
     )
+    from core.llm_usage_store import wrap_openai_client
 
     key = model_key or get_current_model()
     api_key = get_api_key_for_model(key)
@@ -67,7 +88,14 @@ def get_client_for_model(model_key: str | None = None, is_async: bool = True):
         else:
             _clients_cache[cache_key] = OpenAI(api_key=api_key, base_url=base_url)
 
-    return _clients_cache[cache_key]
+    wrapper_key = f"{cache_key}:{str(key or '').strip() or '__default__'}"
+    if wrapper_key not in _wrapped_clients_cache:
+        _wrapped_clients_cache[wrapper_key] = wrap_openai_client(
+            _clients_cache[cache_key],
+            default_model_key=str(key or "").strip(),
+        )
+
+    return _wrapped_clients_cache[wrapper_key]
 
 
 # 为了兼容尚未迁移的旧代码，提供一个代理客户端
@@ -90,15 +118,12 @@ class SyncOpenAIProxy:
 openai_client = SyncOpenAIProxy() if OpenAI else None
 openai_async_client = AsyncOpenAIProxy() if AsyncOpenAI else None
 
-# 兼容旧代码，提供模型名称常量
-GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gpt-4o-mini")
-
 
 # ============================================================================
 # 用户访问控制
 # ============================================================================
 
-ADMIN_USER_IDS_STR = os.getenv("ADMIN_USER_IDS") or os.getenv("ALLOWED_USER_IDS", "")
+ADMIN_USER_IDS_STR = os.getenv("ADMIN_USER_IDS", "")
 ADMIN_USER_IDS = set()
 if ADMIN_USER_IDS_STR.strip():
     ADMIN_USER_IDS = {
@@ -108,29 +133,22 @@ if ADMIN_USER_IDS_STR.strip():
 
 async def is_user_allowed(user_id: int | str) -> bool:
     """
-    检查用户是否有权限使用 Bot
-    权限逻辑：管理员 OR 在白名单存储中
+    检查用户是否有权限使用 Bot。
+
+    管理员仅来自 `ADMIN_USER_IDS`；
+    普通可用用户来自持久化 allow-list。
     """
     uid_str = str(user_id).strip()
-
-    # 1. 如果是管理员，直接允许
+    if not uid_str:
+        return False
     if uid_str in ADMIN_USER_IDS:
         return True
-
-    # 检查白名单存储
-    from core.state_store import check_user_allowed_in_db
-
     try:
-        if await check_user_allowed_in_db(uid_str):
-            return True
+        from core.state_store import check_user_allowed_in_db
+
+        return await check_user_allowed_in_db(uid_str)
     except Exception:
-        pass
-
-    # 如果管理员列表为空，开放模式
-    if not ADMIN_USER_IDS:
-        return True
-
-    return False
+        return False
 
 
 def is_user_admin(user_id: int | str) -> bool:
@@ -197,9 +215,6 @@ HEARTBEAT_TIMEZONE = os.getenv("HEARTBEAT_TIMEZONE", "")
 HEARTBEAT_TICK_SEC = int(os.getenv("HEARTBEAT_TICK_SEC", "30"))
 HEARTBEAT_SUPPRESS_OK = os.getenv("HEARTBEAT_SUPPRESS_OK", "true").lower() == "true"
 HEARTBEAT_MODE = os.getenv("HEARTBEAT_MODE", "readonly").strip().lower() or "readonly"
-HEARTBEAT_READONLY_DISPATCH = (
-    os.getenv("HEARTBEAT_READONLY_DISPATCH", "false").lower() == "true"
-)
 
 
 def _as_int(value: str, default: int) -> int:
@@ -216,40 +231,15 @@ def _as_float(value: str, default: float) -> float:
         return default
 
 
-WEB_DASHBOARD_ENABLED = os.getenv("WEB_DASHBOARD_ENABLED", "false").lower() == "true"
-WEB_DASHBOARD_HOST = os.getenv("WEB_DASHBOARD_HOST", "127.0.0.1").strip() or "127.0.0.1"
-WEB_DASHBOARD_PORT = max(1, _as_int(os.getenv("WEB_DASHBOARD_PORT", "8765"), 8765))
-WEB_DASHBOARD_POLL_SEC = max(
-    0.5,
-    _as_float(os.getenv("WEB_DASHBOARD_POLL_SEC", "2.0"), 2.0),
-)
-WEB_DASHBOARD_EVENT_BUFFER = max(
-    200,
-    _as_int(os.getenv("WEB_DASHBOARD_EVENT_BUFFER", "1200"), 1200),
-)
-WEB_DASHBOARD_ALLOW_WRITE = (
-    os.getenv("WEB_DASHBOARD_ALLOW_WRITE", "true").lower() == "true"
-)
-WEB_DASHBOARD_TOKEN = os.getenv("WEB_DASHBOARD_TOKEN", "").strip()
-
 # Auto recovery budget for terminal/recoverable failures in orchestrator loop
 AUTO_RECOVERY_MAX_ATTEMPTS = int(os.getenv("AUTO_RECOVERY_MAX_ATTEMPTS", "3"))
 
-USERLAND_ROOT = os.getenv(
-    "USERLAND_ROOT", os.path.join(DATA_DIR, "userland", "workers")
-)
-WORKER_DEFAULT_BACKEND = os.getenv("WORKER_DEFAULT_BACKEND", "core-agent")
-
-# Core chat dispatch policy:
-# - worker_only: always dispatch to worker, no fallback
-# - worker_preferred: dispatch worker first, fallback to core orchestrator on worker failure
-# - orchestrator: keep current core orchestrator execution path
+# Core chat execution policy:
+# - manager_only: manager handles the request directly
+# - manager_with_subagents: manager may launch internal subagents when needed
 CORE_CHAT_EXECUTION_MODE = (
-    os.getenv("CORE_CHAT_EXECUTION_MODE", "worker_only").strip().lower()
-    or "worker_only"
-)
-CORE_CHAT_WORKER_BACKEND = (
-    os.getenv("CORE_CHAT_WORKER_BACKEND", "core-agent").strip().lower() or "core-agent"
+    os.getenv("CORE_CHAT_EXECUTION_MODE", "manager_with_subagents").strip().lower()
+    or "manager_with_subagents"
 )
 
 # Kernel-protected source roots (comma-separated absolute/relative paths)

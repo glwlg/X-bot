@@ -8,7 +8,7 @@ os.environ.setdefault("LLM_API_KEY", "test-key")
 
 
 def _load_module():
-    module_path = Path("skills/builtin/deployment_manager/scripts/execute.py")
+    module_path = Path("extension/skills/builtin/deployment_manager/scripts/execute.py")
     spec = importlib.util.spec_from_file_location(
         "deployment_manager_execute", module_path
     )

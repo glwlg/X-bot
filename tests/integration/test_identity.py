@@ -21,21 +21,21 @@ class TestIdentity:
 
             assert "SOUL" in base
             assert "I am a helpful assistant with a distinct personality." in base
-            assert "Worker 池" in base
+            assert "spawn_subagent" in base
 
-    def test_worker_identity_prompt(self):
+    def test_subagent_identity_prompt(self):
         with patch(
             "core.soul_store.soul_store.resolve_for_runtime_user"
         ) as mock_resolve:
             mock_soul = MagicMock()
-            mock_soul.content = "I am a worker."
+            mock_soul.content = "I am a subagent."
             mock_resolve.return_value = mock_soul
 
             base = prompt_composer.compose_base(
-                runtime_user_id="worker::abc",
-                mode="worker",
-                runtime_policy_ctx={"agent_kind": "worker"},
+                runtime_user_id="subagent::abc",
+                mode="subagent",
+                runtime_policy_ctx={"agent_kind": "subagent"},
             )
 
             assert "SOUL" in base
-            assert "I am a worker." in base
+            assert "I am a subagent." in base

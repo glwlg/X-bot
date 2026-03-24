@@ -37,8 +37,6 @@ FROM bot-runtime-python AS manager-python
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system --group manager-runtime
 
-FROM bot-runtime-python AS worker-python
-
 FROM shared-runtime-python AS api-python
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system --group api
@@ -58,10 +56,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     net-tools \
     iproute2 \
     && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && chmod a+r /etc/apt/keyrings/githubcli-archive-keyring.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
     && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
     && chmod a+r /etc/apt/keyrings/docker.asc \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
     && apt-get update && apt-get install -y --no-install-recommends \
+    gh \
     docker-ce-cli \
     docker-compose-plugin
 
@@ -81,47 +83,6 @@ CMD ["python", "main.py"]
 FROM manager-runtime AS manager-runtime-full
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system --group optional-skill-runtime
-
-
-FROM worker-python AS worker-runtime
-
-ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
-    PLAYWRIGHT_CLI_BROWSER=chrome \
-    PLAYWRIGHT_MCP_CONFIG=/app/playwright-cli.json
-
-RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
-    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
-    apt-get update && apt-get install -y --no-install-recommends \
-    ffmpeg \
-    git \
-    nodejs \
-    npm \
-    gnupg \
-    procps \
-    net-tools \
-    iproute2 \
-    && install -m 0755 -d /etc/apt/keyrings \
-    && curl -fsSL https://download.docker.com/linux/debian/gpg -o /etc/apt/keyrings/docker.asc \
-    && chmod a+r /etc/apt/keyrings/docker.asc \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/debian bookworm stable" > /etc/apt/sources.list.d/docker.list \
-    && apt-get update && apt-get install -y --no-install-recommends \
-    docker-ce-cli \
-    docker-compose-plugin
-
-RUN npm install -g @playwright/cli@latest \
-    && npx -y playwright install chrome
-
-RUN printf '{\n  "browser": {\n    "launchOptions": {\n      "args": ["--no-sandbox", "--disable-setuid-sandbox"],\n      "channel": "chrome",\n      "chromiumSandbox": false\n    }\n  }\n}\n' > /app/playwright-cli.json
-
-COPY src/ .
-
-CMD ["python", "-m", "worker_main"]
-
-
-FROM worker-runtime AS worker-runtime-full
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system --group optional-skill-runtime
-
 
 FROM api-python AS api-runtime
 

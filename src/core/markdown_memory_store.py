@@ -1,13 +1,27 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import re
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, List
 
 from core.audit_store import audit_store
-from core.config import DATA_DIR
+from core.config import get_client_for_model
+from core.model_config import get_current_model
+from core.state_paths import system_path, user_path
+
+
+logger = logging.getLogger(__name__)
+
+# Backward-compatible async client injection for tests/legacy callers.
+openai_async_client: Any = None
+
+MEMORY_EXTRACTION_MAX_INPUT_CHARS = int(
+    os.getenv("MEMORY_EXTRACTION_MAX_INPUT_CHARS", "12000")
+)
 
 
 def _now_iso() -> str:
@@ -29,22 +43,55 @@ def _norm_text(text: str) -> str:
     return lowered[:240]
 
 
+def _resolve_memory_client(model_name: str) -> Any:
+    if openai_async_client is not None:
+        return openai_async_client
+    return get_client_for_model(model_name, is_async=True)
+
+
+def _extract_response_text(response: Any) -> str:
+    choices = list(getattr(response, "choices", []) or [])
+    if choices:
+        message = getattr(choices[0], "message", None)
+        content = getattr(message, "content", "")
+        if isinstance(content, str):
+            return content.strip()
+    direct_text = getattr(response, "text", None)
+    if isinstance(direct_text, str):
+        return direct_text.strip()
+    return ""
+
+
+def _extract_json_object(text: str) -> dict[str, Any]:
+    raw = str(text or "").strip()
+    if not raw:
+        return {}
+    candidates = [raw]
+    candidates.extend(re.findall(r"```(?:json)?\s*([\s\S]*?)\s*```", raw, flags=re.I))
+    for candidate in candidates:
+        try:
+            loaded = json.loads(candidate)
+        except Exception:
+            continue
+        if isinstance(loaded, dict):
+            return loaded
+    return {}
+
+
 class MarkdownMemoryStore:
     """Per-user markdown memory store: MEMORY.md + memory/YYYY-MM-DD.md."""
 
     MIGRATION_MARK = "<!-- migrated-from-memory-json -->"
 
     def __init__(self):
-        self.users_root = (Path(DATA_DIR) / "users").resolve()
+        self.users_root = user_path("private")
         self.users_root.mkdir(parents=True, exist_ok=True)
 
     def _user_root(self, user_id: str) -> Path:
-        return (self.users_root / _safe_key(user_id)).resolve()
+        return user_path(user_id).resolve()
 
     def _system_root(self) -> Path:
-        root = (Path(DATA_DIR) / "system").resolve()
-        root.mkdir(parents=True, exist_ok=True)
-        return root
+        return system_path()
 
     def memory_path(self, user_id: str) -> Path:
         return (self._user_root(user_id) / "MEMORY.md").resolve()
@@ -115,6 +162,121 @@ class MarkdownMemoryStore:
             )
         except Exception:
             return
+
+    async def initialize(self) -> None:
+        self._ensure_manager_memory_file()
+
+    def list_user_items_sync(self, user_id: str) -> List[dict[str, Any]]:
+        self.ensure_migrated(user_id)
+        items: List[dict[str, Any]] = []
+        for line in self._read_text(self.memory_path(user_id)).splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("- "):
+                continue
+            text = stripped[2:].strip()
+            if not text:
+                continue
+            items.append({"text": text, "metadata": {}, "created_at": ""})
+        return items
+
+    async def list_user_items(self, user_id: str) -> List[dict[str, Any]]:
+        return self.list_user_items_sync(user_id)
+
+    async def add_user_items(
+        self, user_id: str, items: List[dict[str, Any]]
+    ) -> List[dict[str, Any]]:
+        self.ensure_migrated(user_id)
+        memory_path = self.memory_path(user_id)
+        current_memory = self._read_text(memory_path)
+        cleaned = [
+            str(item.get("text") or "").strip()
+            for item in items
+            if isinstance(item, dict) and str(item.get("text") or "").strip()
+        ]
+        if not cleaned:
+            return []
+
+        if not current_memory.strip():
+            current_memory = "# MEMORY\n\n## 用户长期记忆\n\n"
+        elif "## 用户长期记忆" not in current_memory:
+            current_memory = current_memory.rstrip() + "\n\n## 用户长期记忆\n\n"
+        elif not current_memory.endswith("\n"):
+            current_memory += "\n"
+
+        merged = current_memory.rstrip() + "\n"
+        for text in cleaned:
+            merged += f"- {text}\n"
+        self._write_text(
+            memory_path,
+            merged,
+            actor="system",
+            reason="provider_add_user_memory",
+        )
+        return [{"text": text, "metadata": {}, "created_at": ""} for text in cleaned]
+
+    def list_manager_items_sync(self) -> List[dict[str, Any]]:
+        self._ensure_manager_memory_file()
+        items: List[dict[str, Any]] = []
+        for line in self._read_text(self.manager_memory_path()).splitlines():
+            stripped = line.strip()
+            if not stripped.startswith("- "):
+                continue
+            payload = stripped[2:].strip()
+            if not payload:
+                continue
+            metadata: dict[str, Any] = {}
+            text = payload
+            matched = re.match(r"^\[(\d{4}-\d{2}-\d{2})\]\s*(.+)$", payload)
+            if matched:
+                metadata["day"] = matched.group(1)
+                text = matched.group(2).strip()
+            items.append({"text": text, "metadata": metadata, "created_at": ""})
+        return items
+
+    async def list_manager_items(self) -> List[dict[str, Any]]:
+        return self.list_manager_items_sync()
+
+    async def add_manager_items(
+        self, items: List[dict[str, Any]]
+    ) -> List[dict[str, Any]]:
+        self._ensure_manager_memory_file()
+        path = self.manager_memory_path()
+        current = self._read_text(path)
+        cleaned: List[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text") or "").strip()
+            if not text:
+                continue
+            metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            cleaned.append(
+                {
+                    "text": text,
+                    "metadata": dict(metadata),
+                    "created_at": str(item.get("created_at") or "").strip(),
+                }
+            )
+        if not cleaned:
+            return []
+
+        if "## 经验记忆" not in current:
+            current = current.rstrip() + "\n\n## 经验记忆\n\n"
+        merged = current.rstrip() + "\n"
+        for item in cleaned:
+            day = str(item.get("metadata", {}).get("day") or "").strip()
+            text = str(item.get("text") or "").strip()
+            if day:
+                merged += f"- [{day}] {text}\n"
+            else:
+                merged += f"- {text}\n"
+        self._write_text(
+            path,
+            merged,
+            actor="system",
+            reason="provider_add_manager_memory",
+        )
+        return cleaned
 
     def _parse_legacy_memory_json(self, path: Path) -> List[str]:
         lines: List[str] = []
@@ -217,48 +379,9 @@ class MarkdownMemoryStore:
 
     @staticmethod
     def _extract_memory_facts(raw: str) -> List[str]:
-        items = re.split(r"[，,。；;！!？?\n]+", str(raw or ""))
-        facts: List[str] = []
-        for item in items:
-            text = str(item or "").strip()
-            if not text:
-                continue
-
-            nickname_match = re.search(
-                r"(?:以后)?(?:请)?(?:称呼我为|叫我|喊我)([^，,。；;]+)",
-                text,
-                flags=re.IGNORECASE,
-            )
-            if nickname_match:
-                nickname = str(nickname_match.group(1) or "").strip()
-                if nickname:
-                    facts.append(f"偏好称呼：{nickname}")
-                continue
-
-            location_match = re.search(
-                r"(?:我)?(?:住在|居住在|常住)([^，,。；;]+)",
-                text,
-                flags=re.IGNORECASE,
-            )
-            if location_match:
-                location = str(location_match.group(1) or "").strip()
-                if location:
-                    facts.append(f"居住地：{location}")
-                continue
-
-            identity_match = re.search(
-                r"(?:我(?:是|是一名|是个))([^，,。；;]+)",
-                text,
-                flags=re.IGNORECASE,
-            )
-            if identity_match:
-                identity = str(identity_match.group(1) or "").strip()
-                if identity:
-                    facts.append(f"身份：{identity}")
-                continue
-
-            facts.append(text)
-
+        facts = MarkdownMemoryStore._split_sentences(str(raw or ""))
+        if not facts and str(raw or "").strip():
+            facts = [str(raw or "").strip()]
         return MarkdownMemoryStore._dedupe(facts, limit=32)
 
     def remember(
@@ -389,85 +512,162 @@ class MarkdownMemoryStore:
         return [str(item or "").strip() for item in pieces if str(item or "").strip()]
 
     @staticmethod
-    def _is_high_value_user_fact(text: str) -> bool:
-        raw = str(text or "").strip()
-        if not raw:
-            return False
-        if raw.startswith(("偏好称呼：", "居住地：", "身份：")):
-            return True
-        if len(raw) < 4 or len(raw) > 100:
-            return False
-        keywords = (
-            "喜欢",
-            "不喜欢",
-            "习惯",
-            "偏好",
-            "目标",
-            "计划",
-            "常用",
-            "时区",
-            "工作",
-            "职业",
-            "家庭",
-        )
-        return any(key in raw for key in keywords)
-
-    @staticmethod
-    def _extract_manager_experiences(transcripts: List[dict[str, Any]]) -> List[str]:
-        cues = (
-            "优先",
-            "避免",
-            "建议",
-            "需要",
-            "必须",
-            "不要",
-            "排查",
-            "修复",
-            "迁移",
-            "兼容",
-            "验证",
-            "回滚",
-            "失败",
-            "成功",
-            "稳定",
-        )
-        candidates: list[tuple[int, str]] = []
-        for bundle in transcripts:
+    def _render_transcripts_for_ai(
+        transcripts: List[dict[str, Any]],
+        *,
+        max_chars: int = MEMORY_EXTRACTION_MAX_INPUT_CHARS,
+    ) -> str:
+        lines: list[str] = []
+        total_chars = 0
+        for bundle_index, bundle in enumerate(transcripts, start=1):
             messages = bundle.get("messages") if isinstance(bundle, dict) else None
             if not isinstance(messages, list):
                 continue
+            header = f"## Session {bundle_index}"
+            lines.append(header)
+            total_chars += len(header) + 1
             for item in messages:
                 if not isinstance(item, dict):
                     continue
                 role = str(item.get("role") or "").strip().lower()
-                if role != "model":
+                content = str(item.get("content") or "").strip()
+                if not content:
                     continue
-                for sentence in MarkdownMemoryStore._split_sentences(
-                    item.get("content", "")
-                ):
-                    text = sentence.strip()
-                    if len(text) < 10 or len(text) > 120:
-                        continue
-                    if any(token in text for token in ("我住", "我喜欢", "你的", "您")):
-                        continue
-                    score = 0
-                    score += sum(1 for cue in cues if cue in text)
-                    if score <= 0:
-                        continue
-                    candidates.append((score, text))
-
-        candidates.sort(key=lambda item: item[0], reverse=True)
-        deduped: List[str] = []
-        seen: set[str] = set()
-        for _score, text in candidates:
-            key = _norm_text(text)
-            if not key or key in seen:
-                continue
-            seen.add(key)
-            deduped.append(text)
-            if len(deduped) >= 5:
+                role_label = "user" if role == "user" else "assistant"
+                line = f"{role_label}: {content[:800]}"
+                lines.append(line)
+                total_chars += len(line) + 1
+                if total_chars >= max_chars:
+                    break
+            if total_chars >= max_chars:
                 break
-        return deduped
+        rendered = "\n".join(lines).strip()
+        if len(rendered) > max_chars:
+            rendered = rendered[:max_chars]
+        return rendered
+
+    async def extract_user_facts_ai(
+        self,
+        text: str,
+        *,
+        max_facts: int = 8,
+    ) -> List[str]:
+        request = str(text or "").strip()
+        if not request:
+            return []
+
+        model_to_use = get_current_model()
+        client = _resolve_memory_client(model_to_use)
+        if client is None:
+            return []
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You extract durable user memory facts. "
+                    "Return JSON only with key `facts` (array of strings). "
+                    "Only keep explicit long-term user facts or explicit remember requests. "
+                    "Do not infer. Do not keep temporary tasks or one-off requests. "
+                    "Normalize concise facts in Chinese when possible, for example "
+                    "`偏好称呼：老王`, `居住地：北京`, `身份：后端工程师`."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"user_text:\n{request[:MEMORY_EXTRACTION_MAX_INPUT_CHARS]}",
+            },
+        ]
+        request_kwargs: dict[str, Any] = {
+            "model": model_to_use,
+            "messages": messages,
+            "temperature": 0,
+        }
+        try:
+            response = await client.chat.completions.create(
+                **request_kwargs,
+                response_format={"type": "json_object"},
+            )
+        except Exception:
+            try:
+                response = await client.chat.completions.create(**request_kwargs)
+            except Exception as exc:
+                logger.debug("User memory extraction failed: %s", exc)
+                return []
+
+        payload = _extract_json_object(_extract_response_text(response))
+        raw_facts = payload.get("facts")
+        if not isinstance(raw_facts, list):
+            return []
+        return self._dedupe(
+            [str(item or "").strip() for item in raw_facts],
+            limit=max_facts,
+        )
+
+    async def extract_daily_rollup_ai(
+        self,
+        transcripts: List[dict[str, Any]],
+    ) -> dict[str, List[str]]:
+        rendered = self._render_transcripts_for_ai(transcripts)
+        if not rendered:
+            return {"user_facts": [], "manager_experiences": []}
+
+        model_to_use = get_current_model()
+        client = _resolve_memory_client(model_to_use)
+        if client is None:
+            return {"user_facts": [], "manager_experiences": []}
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You extract structured long-term memory from conversation transcripts. "
+                    "Return JSON only with keys `user_facts` and `manager_experiences`, both arrays of strings. "
+                    "`user_facts` should contain only durable user facts explicitly stated by the user and useful for future personalization. "
+                    "`manager_experiences` should contain only reusable operator or engineering lessons from assistant outputs, not user-specific wording. "
+                    "Do not infer. Do not keep temporary tasks, transient requests, or duplicates. "
+                    "Keep each item concise."
+                ),
+            },
+            {
+                "role": "user",
+                "content": f"transcripts:\n{rendered}",
+            },
+        ]
+        request_kwargs: dict[str, Any] = {
+            "model": model_to_use,
+            "messages": messages,
+            "temperature": 0,
+        }
+        try:
+            response = await client.chat.completions.create(
+                **request_kwargs,
+                response_format={"type": "json_object"},
+            )
+        except Exception:
+            try:
+                response = await client.chat.completions.create(**request_kwargs)
+            except Exception as exc:
+                logger.debug("Daily memory rollup extraction failed: %s", exc)
+                return {"user_facts": [], "manager_experiences": []}
+
+        payload = _extract_json_object(_extract_response_text(response))
+        user_facts = payload.get("user_facts")
+        manager_experiences = payload.get("manager_experiences")
+        return {
+            "user_facts": self._dedupe(
+                [str(item or "").strip() for item in user_facts]
+                if isinstance(user_facts, list)
+                else [],
+                limit=6,
+            ),
+            "manager_experiences": self._dedupe(
+                [str(item or "").strip() for item in manager_experiences]
+                if isinstance(manager_experiences, list)
+                else [],
+                limit=5,
+            ),
+        }
 
     def add_manager_experiences(
         self,
@@ -561,30 +761,18 @@ class MarkdownMemoryStore:
             max_chars_per_session=5000,
         )
 
-        user_facts: List[str] = []
-        for bundle in transcripts:
-            messages = bundle.get("messages") if isinstance(bundle, dict) else None
-            if not isinstance(messages, list):
-                continue
-            for item in messages:
-                if not isinstance(item, dict):
-                    continue
-                role = str(item.get("role") or "").strip().lower()
-                if role != "user":
-                    continue
-                extracted = self._extract_memory_facts(str(item.get("content") or ""))
-                for fact in extracted:
-                    if self._is_high_value_user_fact(fact):
-                        user_facts.append(fact)
-
-        user_facts = self._dedupe(user_facts, limit=6)
+        extracted = await self.extract_daily_rollup_ai(transcripts)
+        user_facts = self._dedupe(extracted.get("user_facts") or [], limit=6)
         added_user_count = self.remember_facts(
             str(user_id),
             user_facts,
             source="daily_session_rollup",
         )
 
-        manager_experiences = self._extract_manager_experiences(transcripts)
+        manager_experiences = self._dedupe(
+            extracted.get("manager_experiences") or [],
+            limit=5,
+        )
         added_manager_count = self.add_manager_experiences(
             manager_experiences,
             day=day,

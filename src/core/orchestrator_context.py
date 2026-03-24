@@ -6,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict
 
+from core.channel_runtime_store import channel_runtime_store
 from core.heartbeat_store import heartbeat_store
 from core.task_inbox import task_inbox
 from core.task_manager import task_manager
@@ -20,7 +21,7 @@ class OrchestratorRuntimeContext:
     user_data: Dict[str, Any]
     runtime_user_id: str
     platform_name: str
-    worker_kernel_user: bool
+    subagent_runtime_user: bool
     heartbeat_runtime_user: bool
     session_state_enabled: bool
     runtime_policy_ctx: Dict[str, Any]
@@ -28,6 +29,7 @@ class OrchestratorRuntimeContext:
     manager_runtime: bool
     task_id: str
     task_inbox_id: str
+    session_id: str = ""
     session_state_active: bool = False
     workspace_event_logged: bool = False
 
@@ -44,11 +46,24 @@ class OrchestratorRuntimeContext:
 
         runtime_user_id = str(user_data.get("runtime_user_id") or "").strip() or user_id
         platform_name = str(getattr(msg, "platform", "") or "").strip().lower()
-        worker_kernel_user = (
-            platform_name == "worker_kernel" or runtime_user_id.startswith("worker::")
+        subagent_runtime_user = (
+            platform_name == "subagent_kernel"
+            or runtime_user_id.startswith("subagent::")
+            or str(user_data.get("runtime_agent_kind") or "").strip().lower()
+            == "subagent"
         )
         heartbeat_runtime_user = platform_name == "heartbeat_daemon"
-        session_state_enabled = not worker_kernel_user and not heartbeat_runtime_user
+        heartbeat_session_state_enabled = bool(
+            user_data.get("heartbeat_session_state_enabled")
+        )
+        subagent_session_state_enabled = bool(
+            user_data.get("subagent_session_state_enabled")
+        )
+        session_state_enabled = not subagent_runtime_user and (
+            not heartbeat_runtime_user or heartbeat_session_state_enabled
+        )
+        if subagent_runtime_user and subagent_session_state_enabled:
+            session_state_enabled = True
 
         runtime_policy_ctx = tool_access_store.resolve_runtime_policy(
             runtime_user_id=runtime_user_id,
@@ -57,22 +72,24 @@ class OrchestratorRuntimeContext:
         runtime_agent_kind = (
             str(runtime_policy_ctx.get("agent_kind") or "").strip().lower()
         )
-        manager_runtime = runtime_agent_kind != "worker"
+        manager_runtime = runtime_agent_kind == "core-manager"
 
         task_info = task_manager.get_task_info(user_id)
-        task_id = (
-            task_info.get("task_id")
-            if isinstance(task_info, dict) and task_info.get("task_id")
-            else f"{int(datetime.datetime.now().timestamp())}"
-        )
-        task_inbox_id = ""
+        runtime_task_id = str(user_data.get("runtime_task_id") or "").strip()
+        task_id = runtime_task_id
+        if not task_id and isinstance(task_info, dict):
+            task_id = str(task_info.get("task_id") or "").strip()
+        if not task_id:
+            task_id = f"{int(datetime.datetime.now().timestamp())}"
+        task_inbox_id = str(user_data.get("task_inbox_id") or "").strip()
+        session_id = str(user_data.get("current_session_id") or "").strip()
 
         return cls(
             user_id=user_id,
             user_data=user_data,
             runtime_user_id=runtime_user_id,
             platform_name=platform_name,
-            worker_kernel_user=worker_kernel_user,
+            subagent_runtime_user=subagent_runtime_user,
             heartbeat_runtime_user=heartbeat_runtime_user,
             session_state_enabled=session_state_enabled,
             runtime_policy_ctx=runtime_policy_ctx,
@@ -80,6 +97,7 @@ class OrchestratorRuntimeContext:
             manager_runtime=manager_runtime,
             task_id=str(task_id),
             task_inbox_id=task_inbox_id,
+            session_id=session_id,
         )
 
     async def append_session_event(self, note: str) -> None:
@@ -90,8 +108,8 @@ class OrchestratorRuntimeContext:
     def _task_inbox_source(self) -> str:
         if self.heartbeat_runtime_user:
             return "heartbeat"
-        if self.worker_kernel_user:
-            return "worker_kernel"
+        if self.subagent_runtime_user:
+            return "subagent"
         return "user_chat"
 
     async def ensure_task_inbox(self, *, task_goal: str) -> str:
@@ -105,20 +123,25 @@ class OrchestratorRuntimeContext:
             return ""
 
         try:
+            payload = {
+                "task_id": self.task_id,
+                "runtime_user_id": self.runtime_user_id,
+                "platform": self.platform_name,
+            }
+            metadata = {
+                "runtime_agent_kind": self.runtime_agent_kind,
+            }
+            if self.session_id:
+                payload["session_id"] = self.session_id
+                metadata["session_id"] = self.session_id
             envelope = await task_inbox.submit(
                 source=self._task_inbox_source(),
                 goal=goal,
                 user_id=self.user_id,
-                payload={
-                    "task_id": self.task_id,
-                    "runtime_user_id": self.runtime_user_id,
-                    "platform": self.platform_name,
-                },
+                payload=payload,
                 priority="normal",
                 requires_reply=bool(self.manager_runtime),
-                metadata={
-                    "runtime_agent_kind": self.runtime_agent_kind,
-                },
+                metadata=metadata,
             )
         except Exception as exc:
             logger.warning(
@@ -154,7 +177,15 @@ class OrchestratorRuntimeContext:
         if clear_active:
             fields["clear_active"] = True
         if fields:
-            await heartbeat_store.update_session_active_task(self.user_id, **fields)
+            if not self.heartbeat_runtime_user and not self.subagent_runtime_user:
+                channel_runtime_store.update_active_task(
+                    platform=self.platform_name,
+                    platform_user_id=self.user_id,
+                    **fields,
+                )
+                await heartbeat_store.update_session_active_task(self.user_id, **fields)
+            else:
+                await heartbeat_store.update_session_active_task(self.user_id, **fields)
 
     async def update_task_inbox_status(
         self,
@@ -189,18 +220,40 @@ class OrchestratorRuntimeContext:
     ) -> None:
         if not self.session_state_enabled:
             return
-        await heartbeat_store.set_session_active_task(
-            self.user_id,
-            {
-                "id": self.task_id,
-                "goal": task_goal,
-                "status": "running",
-                "source": "user_chat",
-                "result_summary": "",
-                "needs_confirmation": False,
-                "confirmation_deadline": "",
-            },
-        )
+        payload = {
+            "id": self.task_id,
+            "session_task_id": self.task_inbox_id or self.task_id,
+            "task_inbox_id": self.task_inbox_id,
+            "goal": task_goal,
+            "status": "running",
+            "source": self._task_inbox_source(),
+            "result_summary": "",
+            "needs_confirmation": False,
+            "confirmation_deadline": "",
+            "stage_index": 0,
+            "stage_total": 0,
+            "stage_id": "",
+            "stage_title": "",
+            "attempt_index": 0,
+            "last_blocking_reason": "",
+            "resume_instruction_preview": "",
+            "adjustments_count": 0,
+        }
+        if not self.heartbeat_runtime_user and not self.subagent_runtime_user:
+            channel_runtime_store.set_active_task(
+                payload,
+                platform=self.platform_name,
+                platform_user_id=self.user_id,
+            )
+            await heartbeat_store.set_session_active_task(
+                self.user_id,
+                payload,
+            )
+        else:
+            await heartbeat_store.set_session_active_task(
+                self.user_id,
+                payload,
+            )
         task_manager.set_heartbeat_path(
             self.user_id, str(heartbeat_store.heartbeat_path(self.user_id))
         )

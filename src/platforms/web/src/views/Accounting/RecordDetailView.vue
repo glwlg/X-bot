@@ -14,6 +14,10 @@ import {
 } from '@/api/accounting'
 import { ChevronLeft, Loader2, Trash2 } from 'lucide-vue-next'
 import { appendOperationLog } from '@/utils/accountingLocal'
+import {
+    formatRecordTimeForInput,
+    serializeRecordTimeInput,
+} from '@/utils/accountingDateTime'
 
 const router = useRouter()
 const route = useRoute()
@@ -63,26 +67,6 @@ const displayCategories = computed(() => {
     return names
 })
 
-const formatToDatetimeLocal = (iso: string) => {
-    if (!iso) return ''
-    const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) return ''
-
-    const pad = (n: number) => String(n).padStart(2, '0')
-    const yyyy = d.getFullYear()
-    const mm = pad(d.getMonth() + 1)
-    const dd = pad(d.getDate())
-    const hh = pad(d.getHours())
-    const min = pad(d.getMinutes())
-    return `${yyyy}-${mm}-${dd}T${hh}:${min}`
-}
-
-const toIsoString = (localValue: string) => {
-    if (!localValue) return ''
-    const d = new Date(localValue)
-    return Number.isNaN(d.getTime()) ? '' : d.toISOString()
-}
-
 const loadData = async () => {
     if (!recordId) {
         loadFailed.value = true
@@ -121,7 +105,7 @@ const loadData = async () => {
             target_account_name: record.target_account || '',
             payee: record.payee || '',
             remark: record.remark || '',
-            record_time: formatToDatetimeLocal(record.record_time),
+            record_time: formatRecordTimeForInput(record.record_time),
         }
     } catch (e) {
         console.error('Failed to load record detail', e)
@@ -142,7 +126,7 @@ const handleSave = async () => {
 
     saving.value = true
     try {
-        const recordTime = toIsoString(form.value.record_time)
+        const recordTime = serializeRecordTimeInput(form.value.record_time)
         await updateRecord(store.currentBookId, recordId, {
             type: form.value.type,
             amount,

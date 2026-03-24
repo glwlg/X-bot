@@ -1,7 +1,7 @@
 {
-    "name": "X-Bot",
-    "short_name": "X-Bot",
-    "description": "A PWA application for X-Bot",
+    "name": "Ikaros",
+    "short_name": "Ikaros",
+    "description": "A PWA application for Ikaros",
     "start_url": "/",
     "display": "standalone",
     "background_color": "#ffffff",

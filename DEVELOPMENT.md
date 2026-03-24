@@ -1,253 +1,409 @@
-# X-Bot DEVELOPMENT
+# Ikaros DEVELOPMENT
 
-更新时间：2026-02-18  
-状态：`ACTIVE`（当前实现与维护约束文档）
+更新时间：2026-03-24  
+状态：`ACTIVE`
 
-## 1. 设计目标
+本文描述当前仓库已经落地的运行时边界、extension 分层和开发约束。若文档与代码冲突，以现有实现为准。
 
-X-Bot 采用“双层操作系统”模型：
+## 1. 当前系统形态
 
-- 内核层（Core Manager）负责调度、治理、记忆与系统修复。
-- Worker 执行层（Worker Fleet）负责面向用户的任务执行与交付。
-- Core Manager 默认不执行用户业务任务，只做调度者、管理者、维护者。
-- 当进入“修复/治理模式”时，Core Manager 可以对 worker 与工具链进行修复操作。
+Ikaros 当前的主运行形态是两类进程：
 
-## 2. 双层架构（当前实现）
+- `ikaros`：唯一用户可见的 Core Manager
+- `ikaros-api`：FastAPI + SPA
 
-### 2.1 内核层（Core Manager）
+Manager 运行在宿主机或单容器内，必要时在同进程内启动受控 `subagent` 做并发执行。  
+`subagent` 不是独立部署单元，也不是直接对用户交付结果的 agent。
 
-职责：
+## 2. 职责边界
 
-- 路由：接收用户输入并决定是直接对话、派发任务、还是进入治理流程。
-- 编排：维护任务状态机、重试预算、超时、失败归因与回执。
-- 治理：管理 worker 生命周期、权限、工具白名单与人格配置。
-- 修复：基于 worker 失败上下文进行诊断与修复（仅限治理范围）。
-- 记忆：维护短期上下文与长期记忆（自我记忆 / 用户记忆）。
-- 维护：驱动 heartbeat 周期任务（健康检查、经验压缩、记忆固化）。
+### 2.1 Core Manager
 
-非职责：
+Manager 负责：
 
-- 不直接承担常规用户任务执行。
-- 不把“编码工具执行”当成默认路径。
+- 平台无关的消息上下文、提示词、SOUL、工具面组装
+- 请求路由、skill 缩圈、任务治理、heartbeat、记忆、权限控制
+- 直接执行普通请求
+- 在需要并发或风险隔离时启动内部 `subagent`
+- 初始化 extension runtime，并按顺序加载 memory、channel、skill、plugin
+- 统一接收 `subagent` 结果并决定继续、降级、重试、等待用户或最终交付
+- 编码会话、仓库工作区、git/gh 发布与本地 rollout
 
-### 2.2 Worker 执行层（Worker Fleet）
+Manager 的基础原语：
 
-职责：
+- `read`
+- `write`
+- `edit`
+- `bash`
+- `load_skill`
 
-- 执行任务：接受 Core Manager 派发，完成用户目标并返回结果。
-- 工具使用：按调度策略调用原语与扩展工具。
-- 失败回报：执行失败时回传结构化错误与诊断线索给 Core Manager。
-- 运行隔离：每个 worker 有独立工作区、独立运行态、独立 SOUL。
+Manager 内部控制面工具：
 
-非职责：
+- `spawn_subagent`
+- `await_subagents`
 
-- 不修改 Core Manager 内核逻辑。
-- 不越权管理其他 worker。
+Manager 侧常用 direct tool：
 
-## 3. 项目目录结构（保留）
+- `repo_workspace`
+- `codex_session`
+- `git_ops`
+- `gh_cli`
+- `task_tracker`
 
-以下为需要长期保留并持续维护的结构说明（目录名可扩展，但职责边界应保持）：
+约束：
 
-### 3.1 仓库顶层
+- 用户最终只和 Manager 对话
+- `subagent` 不能直接向平台发消息
+- `subagent` 只能使用 Manager 显式分配的工具与技能
+- `subagent` 失败后必须先回 Manager 决策，不能直接把原始失败结果当作最终交付
+- Core 不再直接写 channel / memory / skill 的业务注册分支；应通过 extension runtime 暴露的统一注册函数完成扩展注入
 
-```text
-.
-├── src/                    # 主代码
-├── skills/                 # 技能（builtin / learned）
-├── data/                   # 运行态与持久化数据
-├── tests/                  # 测试
-├── docs/                   # 设计与说明文档
-├── docker-compose.yml      # 多容器编排
-├── pyproject.toml          # Python 项目配置
-└── DEVELOPMENT.md          # 本开发文档
-```
+### 2.2 Internal Subagent
 
-### 3.2 `src/` 结构
+`subagent` 负责：
+
+- 执行一个边界清晰的子任务
+- 在受控工具集内完成局部目标
+- 返回结构化结果、附件和诊断信息
+
+`subagent` 不负责：
+
+- 直接面向用户回复
+- 继续拆分出新的 `subagent`
+- 自己决定任务闭环是否成立
+
+### 2.3 API Service
+
+`ikaros-api` 负责：
+
+- `/api/v1/*` 路由
+- auth、binding、accounting 等 Web/API 能力
+- 前端静态资源和 SPA fallback
+
+## 3. 代码结构
 
 ```text
 src/
-├── main.py
-├── agents/
-├── core/
-│   ├── agent_orchestrator.py
-│   ├── worker_runtime.py
-│   ├── worker_store.py
-│   ├── heartbeat_store.py
-│   ├── heartbeat_worker.py
-│   ├── state_store.py
-│   ├── state_io.py
-│   ├── state_paths.py
-│   ├── state_file.py
-│   ├── tool_registry.py
-│   └── config.py
-├── handlers/
-│   ├── ai_handlers.py
-│   ├── worker_handlers.py
-│   ├── heartbeat_handlers.py
-│   ├── voice_handler.py
-│   └── document_handler.py
-├── services/
+├── api/               # FastAPI + SPA
+├── core/              # orchestrator、runtime、state/task/subagent、platform 抽象、extension runtime
+├── handlers/          # 可复用的命令与消息处理逻辑
+├── manager/           # manager 侧开发/规划/闭环服务
 ├── platforms/
-├── mcp_client/
-└── worker_runtime/
+│   └── web/           # Web 前端与静态资源
+├── services/          # LLM、下载、搜索、统一路由等外部服务
+└── shared/            # 通用契约与跨模块共享类型
+
+extension/
+├── channels/          # Telegram / Discord / DingTalk / Weixin 渠道扩展
+├── memories/          # file / mem0 等记忆扩展
+├── plugins/           # 普通扩展
+└── skills/            # builtin / learned skills
 ```
 
-### 3.3 `skills/` 结构
+补充：
 
-```text
-skills/
-├── builtin/                # 系统内置技能
-└── learned/                # 学习/安装得到的技能
-```
+- `src/core/platform/` 只保留平台无关抽象、统一消息模型和 adapter registry
+- Telegram / Discord / DingTalk / Weixin 的 bot 渠道实现已迁到 `extension/channels/*`
+- `src/platforms/web/` 保留 Web 前端与静态资源，不属于 bot 渠道扩展
 
-### 3.4 `data/` 关键运行态
+关键入口：
 
-```text
-data/
-├── WORKERS.json            # worker 元数据
-├── WORKER_TASKS.jsonl      # worker 任务事件流水
-├── userland/workers/       # 各 worker 工作区
-├── users/                  # 用户维度状态与文件
-├── runtime_tasks/          # 运行期任务上下文缓存
-└── credentials/workers/    # worker 凭证（如 CLI auth）
-```
+- `src/main.py`：Manager 主程序，负责 extension runtime 启动顺序
+- `src/api/main.py`：API 主程序
+- `src/core/extension_runtime.py`：统一注册函数、生命周期和 active memory 挂载
+- `src/core/extension_base.py`：`BaseExtension` / `SkillExtension` / `ChannelExtension` / `MemoryExtension` / `PluginExtension`
+- `extension/channels/registry.py`：渠道扩展发现与注册
+- `extension/memories/registry.py`：记忆扩展发现与激活
+- `extension/plugins/registry.py`：普通扩展发现与注册
+- `extension/skills/registry.py`：skill 索引、`SKILL.md` 解析、代码型 skill 注册
+- `src/core/long_term_memory.py`：长期记忆服务，从 active memory extension 获取 provider
+- `src/services/intent_router.py`：统一请求路由，输出 `request_mode + candidate_skills`
+- `src/core/agent_orchestrator.py`：LLM function-call 编排
+- `src/core/orchestrator_runtime_tools.py`：工具装配与执行策略
+- `src/core/orchestrator_context.py`：task/session 运行时上下文
+- `src/core/subagent_supervisor.py`：内部 `subagent` 启动、等待、后台交付
+- `src/core/model_config.py`：`config/models.json` 读写、角色模型解析与运行时重载
+- `src/core/llm_usage_store.py`：LLM 用量聚合存储、token 估算与 OpenAI client 包装
 
-说明：
+## 4. Extension Runtime 约束
 
-- `/worker tasks` 以 `data/WORKER_TASKS.jsonl`（`WorkerTaskStore`）为主，并与 `dispatch_queue` 合并，状态字段以队列快照为准。
-- `data/userland/workers/<worker_id>/` 为空通常表示该任务未产出文件型副作用（例如 `echo hello`）。
-- 任务事件标准字段：`source` / `status` / `created_at` / `started_at` / `ended_at` / `error` / `retry_count` / `events[]`。
-- `/worker tasks` 查询链路：`handlers/worker_handlers.py -> core.worker_store.WorkerTaskStore.list_recent + shared.queue.dispatch_queue.list_tasks`（合并视图）。
-- heartbeat 运行态查询链路：`handlers/heartbeat_handlers.py -> core.heartbeat_store.get_state -> data/runtime_tasks/<user_id>/{HEARTBEAT.md,STATUS.json}`。
-- 对话检索链路：`/chatlog -> handlers/service_handlers.py -> core.state_store.search_messages -> data/users/<user_id>/chat/<YYYY-MM-DD>/<session_id>.md`。
-- 系统级状态文件：`data/system/repositories/{allowed_users.md,id_counters.md,video_cache.md}`。
-- 状态路径与读写原语：`core.state_paths.py + core.state_io.py`。
-- 业务状态聚合入口：`core.state_store.py`（替代历史 repository 分层）。
-- 业务状态文件统一采用 canonical 协议：`core.state_file.py`（`XBOT_STATE_BEGIN/END + fenced yaml`）。
+### 4.1 分类
 
-## 4. 任务调度模型（当前实现）
+当前 extension 体系分四类：
 
-### 4.1 默认调度原则
+- `extension/skills`
+  - 真源是 `SKILL.md`
+  - skill metadata、prompt、trigger、`tool_exports` 从 `SKILL.md` 解析
+  - 带代码注册能力的 skill 通过 `SkillExtension` 子类注册命令、回调、job
+  - `/skills`、`/reload_skills` 和 skill 菜单回调由 skill registry 注入
+  - Telegram 的 `/teach` skill 创建流程也由 skill registry 负责安装
 
-- 普通聊天请求默认可自动派发到默认 worker（无需先输入 `/worker`）。
-- `/worker` 命令用于显式控制和运维，不应成为唯一任务入口。
-- Core Manager 负责派发、追踪和治理；Worker 负责执行与回执。
+- `extension/channels`
+  - 通过 `ChannelExtension` 子类注册 adapter、消息路由、平台命令和渠道业务能力
+  - 可同时启用多个 channel
+  - 微信绑定 `/wxbind` 归属 Weixin channel extension
 
-### 4.2 状态机
+- `extension/memories`
+  - 通过 `MemoryExtension` 子类提供长期记忆 provider
+  - 启动时只允许一个 enabled provider
+  - `long_term_memory` 不再在内部硬编码 provider switch
 
-- `queued -> running -> (done | failed | cancelled)`
-- 每个状态变更必须持久化、可追溯。
-- 任务来源必须标注：`user_chat` / `user_cmd` / `heartbeat` / `system`。
+- `extension/plugins`
+  - 普通扩展，没有额外抽象层
+  - 当前 `/start`、`/help`、`/task`、`/model`、`/usage` 等控制面命令和菜单从这里注入
 
-### 4.3 已识别调度缺口
+### 4.2 基类与最小接口
 
-- 普通聊天在“派发-执行-回传”链路上仍有体感延迟。
-- `/worker tasks` 默认视图被 heartbeat 失败记录噪声影响。
-- 部分路径仍对编码工具可用性耦合过深，影响简单任务直达执行。
-- `runtime_tasks` 目录层级出现异常膨胀，需做 key 规范与清理策略。
+当前最小扩展接口定义在 `src/core/extension_base.py`：
 
-## 5. 工具调度策略（当前实现）
+- `BaseExtension`
+  - `name`
+  - `priority`
+  - `enabled(runtime) -> bool`
+  - `register(runtime) -> None`
+- `SkillExtension`
+  - 额外字段：`skill_name`
+- `ChannelExtension`
+  - 额外字段：`platform_name`
+- `MemoryExtension`
+  - 额外字段：`provider_name`
+  - 额外方法：`create_provider(runtime) -> provider`
+- `PluginExtension`
 
-### 5.1 调用优先级
+约束：
 
-先原语，后扩展：
+- 扩展自己调用 runtime 注册函数完成注入
+- 不是 core 去找每种扩展的专用导出函数
+- skill 继续保留 `SKILL.md` 作为 agent/SOP 真源；其他扩展类型不引入额外 md/yaml manifest
 
-1. `read`
-2. `write/edit`
-3. `bash`
-4. `browser/search`
-5. 编码工具（`codex` / `gemini-cli`）
+### 4.3 统一注册面
 
-原则：四原语可解时，不升级到编码工具。
+当前 runtime 暴露的核心注册能力包括：
 
-### 5.2 失败恢复链
+- `register_adapter(...)`
+- `register_command(...)`
+- `register_callback(...)`
+- `register_job(...)`
+- `on_startup(...)`
+- `on_shutdown(...)`
+- `activate_memory_provider(...)`
 
-- 第 1 段：同工具自修复重试（参数、输入、环境）。
-- 第 2 段：降级到四原语兜底。
-- 第 3 段：启用备选工具或备选执行路径。
-- 仅在 `fatal` 或恢复预算耗尽时失败交付。
+约束：
 
-## 6. SOUL.MD 人格系统（当前实现）
+- 不要重新增加 `register_skill_handlers`、`register_skill_jobs` 这类类型特化 helper
+- 新的扩展能力优先复用现有 runtime 注册面；只有确实无法表达时才扩展 runtime
 
-每个执行体（包括 Core Manager）都必须持有独立 `SOUL.MD`，其内容注入系统提示词。
+### 4.4 发现规则
 
-### 6.1 角色约束
+- `extension/skills/registry.py`
+  - 扫描 `extension/skills/**/SKILL.md`
+  - 索引 skill metadata、alias、`tool_exports`
+  - 如 skill 目录下存在 `scripts/*.py`，继续扫描其中的 `SkillExtension` 子类
 
-- Core Manager：具备名字、性格、治理风格与长期自我记忆。
-- Worker：执行型人格，强调任务交付，不持有独立长期人生记忆。
-- SOUL 支持版本化、审计、回滚。
+- `extension/channels/registry.py`
+  - 扫描 `extension/channels/*/channel.py`
+  - 加载其中定义的 `ChannelExtension` 子类
 
-### 6.2 建议路径
+- `extension/memories/registry.py`
+  - 扫描 `extension/memories/*.py`
+  - 加载其中定义的 `MemoryExtension` 子类
+  - 启动时必须且只能激活一个 enabled extension
 
-- `data/kernel/core-manager/SOUL.MD`
-- `data/userland/workers/<worker_id>/SOUL.MD`
+- `extension/plugins/registry.py`
+  - 扫描 `extension/plugins/*.py`
+  - 加载其中定义的 `PluginExtension` 子类
 
-## 7. 记忆系统（当前实现）
+## 5. 启动顺序
 
-Core Manager 采用双层记忆：
+当前 `src/main.py` 的启动链路固定为：
 
-### 7.1 短期记忆（Short-Term Context）
+1. 初始化数据库与基础状态存储
+2. 启动 scheduler，并加载持久化 reminder / cron job
+3. 初始化 extension runtime
+4. 激活唯一 memory extension
+5. 初始化 `long_term_memory`
+6. 扫描 skills，建立 skill 索引
+7. 注册 channel extensions
+8. 注册 skill extensions
+9. 注册 plugin extensions
+10. 启动动态 skill scheduler
+11. 启动 heartbeat worker
+12. 运行 extension startup hooks
+13. 启动 adapters
+14. 启动 subagent supervisor
 
-- 会话窗口、当前任务、最近决策依据。
-- 与任务生命周期绑定，可快速淘汰。
+约束：
 
-### 7.2 长期记忆（Long-Term Memory）
+- 所有用户入口注册必须在 adapter start 前完成
+- 平台 scoped 注册必须在对应 channel adapter 已挂入 registry 后完成
+- 新增扩展能力时，不应回写 `src/main.py` 的类型特化分支
 
-- 自我记忆：系统经验、修复模式、策略偏好、历史教训。
-- 用户记忆：用户偏好、长期要求、显式“请记住”事项。
+## 6. 请求路由与执行主路径
 
-### 7.3 对话留存与压缩
+### 6.1 Unified Routing
 
-- 与用户的对话必须全量留存。
-- heartbeat 周期性压缩提炼：
-  - 系统经验（写入自我记忆）
-  - 用户偏好（写入用户记忆）
-- 记忆条目必须保留来源引用与时间戳。
+统一路由入口只有 `services.intent_router`。  
+`skill_router.py` 已删除，不再保留双实现。
 
-## 8. Heartbeat 职责（当前实现）
+`intent_router.route(...)` 一次性完成两件事：
 
-- 心跳是周期维护机制，不是即时任务队列。
-- 用于健康检查、对话压缩、记忆固化与治理提醒。
-- 无事项时返回 `HEARTBEAT_OK` 并抑制主动打扰。
-- 支持 `every + active_hours + pause/resume`。
+- 判断本轮是 `task` 还是 `chat`
+- 从 extension candidate 列表里筛出 `candidate_skills`
 
-## 9. 开发待办（按优先级）
+标准返回结构是 `RoutingDecision`：
 
-## 10. 验收标准（针对本规划）
+- `request_mode`
+- `candidate_skills`
+- `confidence`
+- `reason`
+- `raw`
 
-- 用户不使用 `/worker` 也能触发默认 worker 执行。
-- Core Manager 不执行普通业务任务，但可执行修复/治理任务。
-- 简单命令（如 `echo hello`）不受 codex/gemini-cli 可用性影响。
-- 每个 agent 可加载独立 `SOUL.MD` 并在提示链路生效。
-- 长期记忆能区分“系统经验”和“用户偏好”。
-- 对话全量留存，heartbeat 可周期提炼经验与偏好。
+判定口径：
 
-## 11. 备注
+- `task`：多步执行、可能用工具或外部查询、可跟踪、可恢复、可能等待外部结果、需要 `/task` 或 follow-up/closure
+- `chat`：闲聊、轻问答、互动小游戏、连续猜题、普通陪聊、无需闭环
 
-- 本文是开发任务规范，不等同于已上线能力。
-- 实施时请在 PR/提交中关联任务编号（如 `ARCH-001`）。
+兜底规则：
 
-## 12. 2026-02-18 交接状态（最新）
+- 路由失败时默认回退到 `request_mode=task`
+- 同时返回 `candidate_skills=[]`
+- 目标是宁可少缩圈，也不要漏掉真实任务
 
-本节用于交接当前实现状态与遗留问题，供后续接手者快速定位。
+### 6.2 Orchestrator Flow
 
-### 12.1 本轮架构收敛结果
+`AgentOrchestrator` 的顺序固定为：
 
-- 业务状态访问已统一收敛到 `core.state_store.py`（settings/subscriptions/watchlist/reminders/scheduled_tasks/allowed_users/chat/account）。
-- `src/repositories/` 已移除，不再作为业务状态访问入口。
-- 状态文件协议统一为 canonical Markdown payload（`XBOT_STATE_BEGIN/END + fenced yaml`），由 `core.state_file.py` 负责解析/渲染。
-- 状态路径与通用读写能力已统一到 `core.state_paths.py` 与 `core.state_io.py`。
-- 一次性迁移工具 `core.state_migration` 已在迁移完成后下线（脚本已删除）。
+1. 先由 `extension_router` 给出全量 extension candidates
+2. 再调用 `intent_router.route(...)`
+3. 用 `candidate_skills` 缩圈 skill 候选
+4. 用 `request_mode` 决定是否启用 task/session tracking
 
-### 12.2 关键代码入口（交接索引）
+约束：
 
-- `src/handlers/ai_handlers.py`：派发、上下文封装、Markdown memory 读写、回执主链路。
-- `src/core/prompt_composer.py`：角色与 SOUL 注入。
-- `src/core/prompts.py`：默认系统提示词与通用约束。
-- `src/core/tool_access_store.py`：工具分组与 worker memory 禁用策略。
-- `src/core/agent_orchestrator.py`：function call 工具注入过滤。
-- `src/core/state_store.py`：业务状态统一访问面（chat/account/subscription/watchlist/reminder/task/settings）。
-- `src/core/state_io.py`：通用状态读写与计数器原语（canonical 协议）。
-- `src/core/state_paths.py`：`data/` 目录路径规范与 user/system path 构造。
-- `src/core/state_file.py`：canonical state payload 解析/渲染协议。
-- `src/core/markdown_memory_store.py`：基于 `MEMORY.md` + `memory/YYYY-MM-DD.md` 的记忆实现。
+- 普通请求默认仍由 Manager 直接处理
+- 只有存在并发收益或隔离需求时才启动 `subagent`
+- `subagent` 运行在同进程内，由 `SubagentSupervisor` 托管
+
+### 6.3 Chat vs Task Tracking
+
+`task_inbox` 只记录真实任务，不再承担聊天转录职责。
+
+当 `request_mode=chat` 时，orchestrator 必须跳过：
+
+- `ensure_task_inbox`
+- `mark_manager_loop_started`
+- `activate_session`
+- session event 写入
+- task 状态写入
+
+当 `request_mode=task` 时，保留现有 task/session/closure 路径。
+
+### 6.4 Vision 输入归一化
+
+图片输入必须在消息入口完成归一化，再交给 orchestrator 和 LLM 适配层。
+
+当前实现约束：
+
+- 入口解析位于 `src/handlers/ai_handlers.py` 和 `src/handlers/message_utils.py`
+- 远程图片下载与 MIME 校验位于 `src/services/image_input_service.py`
+- 远程图片只支持 `http/https`
+- 单轮最多带入 5 张图片
+- 单张默认大小上限 8 MB
+- 检测到图片引用但 0 张成功加载时，必须直接报错
+
+明确原则：
+
+- 图片下载、路径读取、MIME 判定属于确定性预处理，不属于 skill，也不属于 `subagent`
+- 不要在 LLM 工具调用阶段再去补做图片下载
+
+## 7. Task / Session / Heartbeat 语义
+
+状态语义：
+
+- `pending`
+- `planning`
+- `running`
+- `waiting_user`
+- `waiting_external`
+- `completed`
+- `failed`
+- `cancelled`
+- `heartbeat`
+
+约束：
+
+- 不要把某个中间动作完成误写成 `completed`
+- heartbeat 自动推进前必须先通知用户
+- `/task` 与 `task_tracker` 只展示真实 task，不展示普通聊天轮次
+
+### 7.1 Task Inbox 存储边界
+
+`data/task_inbox/tasks/*.json` 是任务级真源。  
+运行时查询应基于 task 文件中的 `TaskEnvelope.events`，而不是全局 `events.jsonl`。
+
+### 7.2 Legacy Task Event Log
+
+`data/task_inbox/events.jsonl` 已降级为 legacy 文件：
+
+- 默认不再写入
+- 若历史文件存在，启动维护时转存到 `data/task_inbox/archive/`
+- 代码不应再把它当作运行态查询入口
+
+### 7.3 Model Config 与 LLM 用量统计
+
+模型配置的单一真源是 `config/models.json`：
+
+- 角色模型：`primary`、`routing`、`vision`、`image_generation`、`voice`
+- provider 连接信息与模型池都在同一个配置文件中维护
+- 运行时切换应通过 `model_config` 或 `/model` 完成，并触发进程内重载
+
+LLM 用量统计当前约束：
+
+- 命令入口是 `/usage`
+- 存储真源是 `data/bot_data.db` 的聚合表，不再向 `events.jsonl` 逐条追加
+- 聚合粒度是 `day + session_id + model_key`
+
+## 8. 审计与版本快照
+
+`audit_store` 的职责是“有限回滚窗口 + 可审计”，不是无限历史。
+
+当前落盘模型：
+
+- `data/kernel/audit/index/*.json`：per-target 版本索引真源
+- `data/kernel/audit/logs/YYYY-MM-DD.jsonl`：按天分片的审计流水
+- `data/kernel/versions/**.bak`：可回滚快照文件
+
+## 9. Skill 运行时约束
+
+Skill 仍是一等运行时扩展，但物理位置已迁到：
+
+- `extension/skills/builtin/`
+- `extension/skills/learned/`
+
+标准调用链：
+
+1. 模型调用 `load_skill`
+2. 读取 `SKILL.md`
+3. 按 SOP 用 `bash` 执行 `python scripts/execute.py ...`
+
+若 skill frontmatter 声明 `tool_exports`，则可以被动态注入为 direct tool。  
+Manager 是否给 `subagent` 分配某个 skill，由 `allowed_skills` 决定。
+
+约束：
+
+- 不要重新引入顶层 `skills/` 目录作为运行时真源
+- 不要重新引入 `src/core/skill_loader.py`
+- 不要把 skill 命令 / 定时任务注册重新写回 core 特化函数
+- 代码型 skill 应通过 `SkillExtension` 子类完成注册
+
+## 10. Anti-Patterns
+
+不要做以下事情：
+
+- 不要把新的用户侧业务注册直接写进 `src/main.py`
+- 不要把 channel / memory / skill 业务逻辑重新塞回 `src/core`
+- 不要为 channel / memory / plugin 重新设计一套额外 manifest
+- 不要绕过 `state_store` / `state_paths` 使用 ad-hoc 文件路径
+- 不要重新引入独立 Worker 执行面或过时的 manager/worker 分裂架构
+- 不要把新的聚合型运行时数据写回无界 JSONL
+- 不要在语义判定上回退到 regex/关键词硬编码路由

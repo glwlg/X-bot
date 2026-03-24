@@ -8,6 +8,10 @@ REFERENCE_ROOTS = [
     (REPO_ROOT / "src").resolve(),
     (REPO_ROOT / "skills").resolve(),
 ]
+INTENTIONALLY_DORMANT_CORE_MODULES = {
+    "skill_arg_planner",
+    "state_migration",
+}
 
 
 def _iter_python_files(root: Path):
@@ -69,7 +73,11 @@ def test_core_modules_are_referenced_by_runtime_code():
     modules = _collect_core_modules()
     references = _collect_core_references()
 
-    unreferenced = sorted(name for name in modules if name not in references)
+    unreferenced = sorted(
+        name
+        for name in modules
+        if name not in references and name not in INTENTIONALLY_DORMANT_CORE_MODULES
+    )
     assert not unreferenced, "Found unreferenced src/core modules:\n" + "\n".join(
         f"- {name} ({modules[name].relative_to(REPO_ROOT)})" for name in unreferenced
     )

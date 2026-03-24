@@ -178,7 +178,7 @@ const router = createRouter({
 })
 
 router.beforeEach(async (to, _from, next) => {
-    document.title = to.meta.title ? `${to.meta.title} - X-Bot` : 'X-Bot'
+    document.title = to.meta.title ? `${to.meta.title} - Ikaros` : 'Ikaros'
 
     if (to.meta.public) {
         return next()

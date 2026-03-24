@@ -230,3 +230,123 @@ async def test_ai_service_sanitizes_binary_tool_result_for_history(monkeypatch):
     ]
     assert tool_messages
     assert "dog.png" in str(tool_messages[-1].get("content") or "")
+
+
+class _ModelResponseCompletions:
+    def __init__(self, *, text="", error: Exception | None = None):
+        self.text = text
+        self.error = error
+        self.calls = []
+
+    async def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error is not None:
+            raise self.error
+        return _Response(text=self.text)
+
+
+class _ModelResponseClient:
+    def __init__(self, *, text="", error: Exception | None = None):
+        self.chat = SimpleNamespace(
+            completions=_ModelResponseCompletions(text=text, error=error)
+        )
+
+
+@pytest.mark.asyncio
+async def test_ai_service_fails_over_to_backup_model_on_request_error(monkeypatch):
+    service = AiService()
+    primary_client = _ModelResponseClient(
+        error=RuntimeError("Error code: 402 - {'detail': {'code': 'deactivated_workspace'}}")
+    )
+    backup_client = _ModelResponseClient(text="来自备用模型的回复")
+    clients = {
+        "proxy/gpt-5.4": primary_client,
+        "proxy/bailian/qwen3.5-flash": backup_client,
+    }
+
+    monkeypatch.setattr(ai_service_module, "openai_async_client", None)
+    monkeypatch.setattr(
+        ai_service_module,
+        "_resolve_async_client",
+        lambda model_name: clients.get(str(model_name)),
+    )
+    monkeypatch.setattr(
+        ai_service_module,
+        "get_model_for_input",
+        lambda input_type, pool_type="primary": "proxy/gpt-5.4",
+    )
+    monkeypatch.setattr(
+        ai_service_module,
+        "get_model_candidates_for_input",
+        lambda *args, **kwargs: [
+            "proxy/gpt-5.4",
+            "proxy/bailian/qwen3.5-flash",
+        ],
+    )
+
+    failed_models = []
+    succeeded_models = []
+    monkeypatch.setattr(
+        ai_service_module, "mark_model_failed", lambda model_key: failed_models.append(model_key)
+    )
+    monkeypatch.setattr(
+        ai_service_module,
+        "mark_model_success",
+        lambda model_key: succeeded_models.append(model_key),
+    )
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "你好"}]}],
+        tools=[{"name": "read", "description": "", "parameters": {"type": "object"}}],
+        system_instruction="test",
+    ):
+        chunks.append(chunk)
+
+    assert chunks == ["来自备用模型的回复"]
+    assert failed_models == ["proxy/gpt-5.4"]
+    assert succeeded_models == ["proxy/bailian/qwen3.5-flash"]
+    assert primary_client.chat.completions.calls[0]["model"] == "gpt-5.4"
+    assert backup_client.chat.completions.calls[0]["model"] == "bailian/qwen3.5-flash"
+
+
+@pytest.mark.asyncio
+async def test_ai_service_image_request_raises_clear_error_without_image_model(
+    monkeypatch,
+):
+    service = AiService()
+
+    monkeypatch.setattr(ai_service_module, "openai_async_client", None)
+    monkeypatch.setattr(ai_service_module, "_resolve_async_client", lambda _model: None)
+    monkeypatch.setattr(
+        ai_service_module,
+        "get_model_for_input",
+        lambda input_type, pool_type="primary": ""
+        if input_type == "image"
+        else "proxy/gpt-5.4",
+    )
+    monkeypatch.setattr(
+        ai_service_module,
+        "get_model_candidates_for_input",
+        lambda *args, **kwargs: [],
+    )
+
+    with pytest.raises(RuntimeError, match="当前未配置可用的图片识别模型"):
+        async for _ in service.generate_response_stream(
+            message_history=[
+                {
+                    "role": "user",
+                    "parts": [
+                        {"text": "识别这张图片"},
+                        {
+                            "inline_data": {
+                                "mime_type": "image/png",
+                                "data": "ZmFrZQ==",
+                            }
+                        },
+                    ],
+                }
+            ],
+            system_instruction="test",
+        ):
+            pass

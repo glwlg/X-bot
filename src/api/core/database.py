@@ -60,6 +60,7 @@ async def init_db():
     from api.models.accounting import (  # noqa: F401
         Book,
         Account,
+        AccountAlias,
         Category,
         Record,
         Budget,

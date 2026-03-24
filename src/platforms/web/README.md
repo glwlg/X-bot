@@ -1,6 +1,6 @@
-# X-Bot Web 前端
+# Ikaros Web 前端
 
-基于 **Vue 3 + Vite + TailwindCSS 4** 构建的 X-Bot Web 管理面板，提供记账、RSS 订阅、定时任务、心跳监控等核心功能的可视化管理界面。
+基于 **Vue 3 + Vite + TailwindCSS 4** 构建的 Ikaros Web 管理面板，提供记账、RSS 订阅、定时任务、心跳监控等核心功能的可视化管理界面。
 
 ## 技术栈
 

@@ -10,14 +10,19 @@ from typing import Any
 
 from core.platform.models import Chat, MessageType, UnifiedContext, UnifiedMessage, User
 
+TOOL_RESULT_PREFIX = "tool_result="
+
 
 def prepare_default_env(repo_root: Path) -> None:
     data_dir = (repo_root / "data").resolve()
+    raw_models_config_path = str(
+        os.getenv("MODELS_CONFIG_PATH", "config/models.json") or "config/models.json"
+    ).strip()
+    models_config_path = Path(raw_models_config_path)
+    if not models_config_path.is_absolute():
+        models_config_path = (repo_root / models_config_path).resolve()
     os.environ.setdefault("DATA_DIR", str(data_dir))
-    os.environ.setdefault(
-        "MANAGER_DISPATCH_ROOT",
-        str((data_dir / "system" / "dispatch").resolve()),
-    )
+    os.environ["MODELS_CONFIG_PATH"] = str(models_config_path)
     os.environ.setdefault(
         "X_DEPLOYMENT_STAGING_PATH",
         str((data_dir / "system" / "deployment_staging").resolve()),
@@ -71,12 +76,12 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--output-dir",
         default="",
-        help="Directory for files emitted by the skill. Defaults to current directory.",
+        help="Directory for files emitted by the skill. Defaults to DATA_DIR/user/skills/<skill>/outputs.",
     )
     parser.add_argument(
         "--raw-json",
         action="store_true",
-        help="Print raw structured output instead of a rendered text view.",
+        help="Print machine-readable tool_result JSON instead of the default rendered view.",
     )
 
 
@@ -139,10 +144,15 @@ async def run_execute_cli(
     ctx = build_context_from_args(args)
     result = execute_fn(ctx, params, runtime=None)
     rendered = await _collect_result(result)
+    output_dir = _resolve_output_dir(args, execute_fn=execute_fn)
     if bool(getattr(args, "raw_json", False)):
-        print(json.dumps(rendered, ensure_ascii=False, indent=2, default=_json_default))
-        return _exit_code_from_rendered(rendered)
-    return _render_default(rendered, output_dir=str(getattr(args, "output_dir", "") or ""))
+        normalized = _normalize_raw_tool_result(rendered)
+        print(
+            f"{TOOL_RESULT_PREFIX}"
+            + json.dumps(normalized, ensure_ascii=False, default=_json_default)
+        )
+        return _exit_code_from_item(normalized)
+    return _render_default(rendered, output_dir=output_dir)
 
 
 async def _collect_result(result: Any) -> Any:
@@ -199,6 +209,47 @@ def _save_files(files: Any, *, output_dir: str) -> list[str]:
     return saved_paths
 
 
+def _resolve_output_dir(args: argparse.Namespace, *, execute_fn: Any) -> str:
+    explicit = str(getattr(args, "output_dir", "") or "").strip()
+    if explicit:
+        return explicit
+
+    configured = str(os.getenv("X_BOT_SKILL_OUTPUT_DIR", "") or "").strip()
+    if configured:
+        return configured
+
+    data_dir = Path(str(os.getenv("DATA_DIR", "data") or "data")).expanduser()
+    if not data_dir.is_absolute():
+        data_dir = data_dir.resolve()
+
+    skill_name = _infer_skill_name(execute_fn)
+    return str((data_dir / "user" / "skills" / skill_name / "outputs").resolve())
+
+
+def _infer_skill_name(execute_fn: Any) -> str:
+    code_obj = getattr(execute_fn, "__code__", None)
+    filename = str(getattr(code_obj, "co_filename", "") or "").strip()
+    if filename:
+        path = Path(filename).resolve()
+        parts = list(path.parts)
+        for root_name in ("builtin", "learned"):
+            if root_name in parts:
+                idx = parts.index(root_name)
+                if idx + 1 < len(parts):
+                    candidate = str(parts[idx + 1] or "").strip()
+                    if candidate:
+                        return candidate
+    module_name = str(getattr(execute_fn, "__module__", "") or "").strip()
+    if module_name:
+        parts = [part for part in module_name.split(".") if part]
+        if "scripts" in parts:
+            idx = parts.index("scripts")
+            if idx - 1 >= 0:
+                return parts[idx - 1]
+        return parts[-1]
+    return "unknown_skill"
+
+
 def _exit_code_from_rendered(rendered: Any) -> int:
     if isinstance(rendered, list):
         return max((_exit_code_from_rendered(item) for item in rendered), default=0)
@@ -219,7 +270,42 @@ def _exit_code_from_item(item: Any) -> int:
     return 0
 
 
+def _normalize_raw_tool_result(rendered: Any) -> dict[str, Any]:
+    if isinstance(rendered, dict):
+        return dict(rendered)
+
+    if isinstance(rendered, list):
+        final_dict: dict[str, Any] | None = None
+        progress_messages: list[str] = []
+        for item in rendered:
+            if isinstance(item, dict):
+                final_dict = dict(item)
+                continue
+            text = str(item or "").strip()
+            if text:
+                progress_messages.append(text)
+
+        if final_dict is None:
+            if progress_messages:
+                return {"ok": True, "text": progress_messages[-1]}
+            return {"ok": True}
+
+        if progress_messages and "progress_messages" not in final_dict:
+            final_dict["progress_messages"] = progress_messages[-20:]
+        return final_dict
+
+    if rendered is None:
+        return {"ok": True}
+
+    text = str(rendered or "").strip()
+    if not text:
+        return {"ok": True}
+    return {"ok": True, "text": text}
+
+
 def _json_default(value: Any) -> Any:
     if isinstance(value, Path):
         return str(value)
+    if isinstance(value, (bytes, bytearray)):
+        return f"<binary:{len(value)} bytes>"
     return str(value)

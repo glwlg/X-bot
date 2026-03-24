@@ -2,7 +2,7 @@ import re
 from dataclasses import dataclass, field
 from typing import List
 
-from core.skill_loader import skill_loader
+from extension.skills.registry import skill_registry as skill_loader
 
 
 @dataclass

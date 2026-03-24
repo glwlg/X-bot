@@ -27,12 +27,12 @@ def _fake_ctx():
 
 
 @pytest.mark.asyncio
-async def test_skill_manager_create_uses_software_delivery_template(monkeypatch):
+async def test_skill_manager_create_uses_codex_session(monkeypatch):
     module = _load_module()
     calls: list[str] = []
 
-    async def fake_create_with_software_delivery(**kwargs):
-        calls.append("software_delivery")
+    async def fake_create_with_codex_session(**kwargs):
+        calls.append("codex_session")
         assert kwargs.get("backend") == "codex"
         return {
             "ok": True,
@@ -42,7 +42,7 @@ async def test_skill_manager_create_uses_software_delivery_template(monkeypatch)
         }
 
     monkeypatch.setattr(
-        module, "_create_with_software_delivery", fake_create_with_software_delivery
+        module, "_create_with_codex_session", fake_create_with_codex_session
     )
     monkeypatch.setattr(module.skill_loader, "reload_skills", lambda: None)
     monkeypatch.setattr(
@@ -61,7 +61,7 @@ async def test_skill_manager_create_uses_software_delivery_template(monkeypatch)
         runtime=object(),
     )
 
-    assert calls == ["software_delivery"]
+    assert calls == ["codex_session"]
     assert result["created_skill_name"] == "demo_skill"
     assert result["used_backend"] == "codex"
     assert result["has_scripts"] is True
@@ -72,8 +72,8 @@ async def test_skill_manager_create_ignores_legacy_hint(monkeypatch):
     module = _load_module()
     calls: list[str] = []
 
-    async def fake_create_with_software_delivery(**kwargs):
-        calls.append("software_delivery")
+    async def fake_create_with_codex_session(**kwargs):
+        calls.append("codex_session")
         assert kwargs.get("backend") == "gemini-cli"
         return {
             "ok": True,
@@ -83,7 +83,7 @@ async def test_skill_manager_create_ignores_legacy_hint(monkeypatch):
         }
 
     monkeypatch.setattr(
-        module, "_create_with_software_delivery", fake_create_with_software_delivery
+        module, "_create_with_codex_session", fake_create_with_codex_session
     )
     monkeypatch.setattr(module.skill_loader, "reload_skills", lambda: None)
     monkeypatch.setattr(module.skill_loader, "get_skill", lambda name: {"scripts": []})
@@ -100,22 +100,22 @@ async def test_skill_manager_create_ignores_legacy_hint(monkeypatch):
         runtime=object(),
     )
 
-    assert calls == ["software_delivery"]
+    assert calls == ["codex_session"]
     assert result["used_backend"] == "gemini-cli"
 
 
 @pytest.mark.asyncio
-async def test_skill_manager_modify_uses_software_delivery_template(monkeypatch):
+async def test_skill_manager_modify_uses_codex_session(monkeypatch):
     module = _load_module()
     calls: list[str] = []
 
-    async def fake_modify_with_software_delivery(**kwargs):
-        calls.append("software_delivery")
+    async def fake_modify_with_codex_session(**kwargs):
+        calls.append("codex_session")
         assert kwargs.get("skill_name") == "demo_skill"
         return {"ok": True, "backend": "codex"}
 
     monkeypatch.setattr(
-        module, "_modify_with_software_delivery", fake_modify_with_software_delivery
+        module, "_modify_with_codex_session", fake_modify_with_codex_session
     )
 
     result = await module.execute(
@@ -128,7 +128,7 @@ async def test_skill_manager_modify_uses_software_delivery_template(monkeypatch)
         runtime=object(),
     )
 
-    assert calls == ["software_delivery"]
+    assert calls == ["codex_session"]
     assert "修改并生效" in str(result.get("text") or "")
 
 
@@ -137,13 +137,13 @@ async def test_skill_manager_modify_ignores_legacy_hint(monkeypatch):
     module = _load_module()
     calls: list[str] = []
 
-    async def fake_modify_with_software_delivery(**kwargs):
-        calls.append("software_delivery")
+    async def fake_modify_with_codex_session(**kwargs):
+        calls.append("codex_session")
         assert kwargs.get("backend") == "codex"
         return {"ok": True, "backend": "codex"}
 
     monkeypatch.setattr(
-        module, "_modify_with_software_delivery", fake_modify_with_software_delivery
+        module, "_modify_with_codex_session", fake_modify_with_codex_session
     )
 
     result = await module.execute(
@@ -157,5 +157,5 @@ async def test_skill_manager_modify_ignores_legacy_hint(monkeypatch):
         runtime=object(),
     )
 
-    assert calls == ["software_delivery"]
+    assert calls == ["codex_session"]
     assert "修改并生效" in str(result.get("text") or "")

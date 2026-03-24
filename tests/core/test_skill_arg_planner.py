@@ -6,7 +6,7 @@ import core.skill_arg_planner as planner_module
 
 
 @pytest.mark.asyncio
-async def test_skill_arg_planner_uses_heuristic_url_and_action(monkeypatch):
+async def test_skill_arg_planner_does_not_guess_args_without_model(monkeypatch):
     monkeypatch.setattr(
         planner_module.skill_loader,
         "get_skill",
@@ -25,6 +25,7 @@ async def test_skill_arg_planner_uses_heuristic_url_and_action(monkeypatch):
         },
     )
     monkeypatch.setattr(planner_module, "openai_async_client", None)
+    monkeypatch.setattr(planner_module, "get_client_for_model", lambda *_args, **_kwargs: None)
 
     plan = await planner_module.skill_arg_planner.plan(
         skill_name="web_browser",
@@ -32,10 +33,10 @@ async def test_skill_arg_planner_uses_heuristic_url_and_action(monkeypatch):
         user_request="请总结这个网页 https://example.com/a",
     )
 
-    assert plan["args"]["url"] == "https://example.com/a"
-    assert plan["args"]["action"] == "summarize"
-    assert plan["missing_fields"] == []
+    assert plan["args"] == {}
+    assert plan["missing_fields"] == ["url"]
     assert plan["planned"] is False
+    assert plan["source"] == "direct"
 
 
 @pytest.mark.asyncio

@@ -77,8 +77,10 @@ async def process_feature_request(ctx: UnifiedContext, description: str) -> int:
     )  # lazy import to avoid top level issues if moved
     from core.model_config import get_current_model
     from services.openai_adapter import generate_text
+    from user_context import get_or_create_session_id
 
     msg = await ctx.reply("🤔 正在整理您的需求...")
+    await get_or_create_session_id(ctx, ctx.message.user.id)
 
     prompt = f"""用户提出了一个功能需求，请整理成简洁的需求描述。
 

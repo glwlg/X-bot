@@ -187,7 +187,7 @@ const colorMap: Record<string, { bg: string; icon: string; border: string; hover
         <h1 class="text-2xl font-bold text-theme-primary">
           欢迎回来，{{ authStore.user?.display_name || authStore.user?.email || '用户' }} 👋
         </h1>
-        <p class="text-theme-muted mt-1">这里是你的 X-Bot 控制面板，选择一个模块开始吧</p>
+        <p class="text-theme-muted mt-1">这里是你的 Ikaros 控制面板，选择一个模块开始吧</p>
       </div>
 
       <div class="rounded-2xl border border-theme-primary bg-theme-elevated p-3 shadow-sm min-w-[220px]">

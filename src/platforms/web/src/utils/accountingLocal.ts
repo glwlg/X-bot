@@ -116,7 +116,8 @@ export interface StatsPanelConfig {
     sort_order: number
 }
 
-const STORAGE_PREFIX = 'x-bot:accounting'
+const STORAGE_PREFIX = 'ikaros:accounting'
+const LEGACY_STORAGE_PREFIX = 'x-bot:accounting'
 
 const nowIso = () => new Date().toISOString()
 
@@ -124,36 +125,60 @@ const randomId = () => {
     return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 }
 
-const storageKey = (bookId: number | null, section: string) => {
+const storageKey = (
+    bookId: number | null,
+    section: string,
+    prefix: string = STORAGE_PREFIX,
+) => {
     const scope = bookId ?? 'global'
-    return `${STORAGE_PREFIX}:${scope}:${section}`
+    return `${prefix}:${scope}:${section}`
 }
 
-const readJson = <T>(key: string, fallback: T): T => {
+const legacyStorageKey = (bookId: number | null, section: string) => {
+    return storageKey(bookId, section, LEGACY_STORAGE_PREFIX)
+}
+
+const readJson = <T>(key: string, fallback: T, legacyKeys: string[] = []): T => {
     if (typeof window === 'undefined') return fallback
-    const raw = localStorage.getItem(key)
-    if (!raw) return fallback
+    const keys = [key, ...legacyKeys.filter(candidate => candidate && candidate !== key)]
 
-    try {
-        return JSON.parse(raw) as T
-    } catch {
-        return fallback
+    for (const candidate of keys) {
+        const raw = localStorage.getItem(candidate)
+        if (!raw) continue
+
+        try {
+            const parsed = JSON.parse(raw) as T
+            if (candidate !== key) {
+                localStorage.setItem(key, raw)
+                localStorage.removeItem(candidate)
+            }
+            return parsed
+        } catch {
+            continue
+        }
     }
+
+    return fallback
 }
 
-const writeJson = (key: string, value: unknown) => {
+const writeJson = (key: string, value: unknown, legacyKeys: string[] = []) => {
     if (typeof window === 'undefined') return
     localStorage.setItem(key, JSON.stringify(value))
+    for (const candidate of legacyKeys) {
+        if (candidate && candidate !== key) {
+            localStorage.removeItem(candidate)
+        }
+    }
 }
 
 export const loadNamedItems = (bookId: number | null, section: string) => {
     const key = storageKey(bookId, section)
-    return readJson<NamedItem[]>(key, [])
+    return readJson<NamedItem[]>(key, [], [legacyStorageKey(bookId, section)])
 }
 
 export const saveNamedItems = (bookId: number | null, section: string, items: NamedItem[]) => {
     const key = storageKey(bookId, section)
-    writeJson(key, items)
+    writeJson(key, items, [legacyStorageKey(bookId, section)])
 }
 
 export const addNamedItem = (bookId: number | null, section: string, name: string) => {
@@ -191,7 +216,9 @@ export const appendOperationLog = (
     options: AppendOperationLogOptions = {},
 ) => {
     const key = storageKey(bookId, 'operation-logs')
-    const logs = normalizeAndSortOperationLogs(readJson<OperationLogEntry[]>(key, []))
+    const logs = normalizeAndSortOperationLogs(
+        readJson<OperationLogEntry[]>(key, [], [legacyStorageKey(bookId, 'operation-logs')]),
+    )
     const entry: OperationLogEntry = {
         id: randomId(),
         created_at: nowIso(),
@@ -214,7 +241,9 @@ export const appendOperationLog = (
 
 export const loadOperationLogs = async (bookId: number | null) => {
     const key = storageKey(bookId, 'operation-logs')
-    const localLogs = normalizeAndSortOperationLogs(readJson<OperationLogEntry[]>(key, []))
+    const localLogs = normalizeAndSortOperationLogs(
+        readJson<OperationLogEntry[]>(key, [], [legacyStorageKey(bookId, 'operation-logs')]),
+    )
 
     if (!bookId) {
         return localLogs
@@ -349,32 +378,40 @@ const upsertRemoteOperationLog = async (bookId: number, log: OperationLogEntry) 
 
 export const loadGlobalSettings = (): GlobalSettingsState => {
     const key = storageKey(null, 'global-settings')
-    return readJson<GlobalSettingsState>(key, {
-        currency_symbol: '¥',
-        decimal_places: 2,
-        week_start: '周一',
-        quick_create_enabled: true,
-    })
+    return readJson<GlobalSettingsState>(
+        key,
+        {
+            currency_symbol: '¥',
+            decimal_places: 2,
+            week_start: '周一',
+            quick_create_enabled: true,
+        },
+        [legacyStorageKey(null, 'global-settings')],
+    )
 }
 
 export const saveGlobalSettings = (state: GlobalSettingsState) => {
     const key = storageKey(null, 'global-settings')
-    writeJson(key, state)
+    writeJson(key, state, [legacyStorageKey(null, 'global-settings')])
 }
 
 export const loadExtensionSettings = (): ExtensionSettingsState => {
     const key = storageKey(null, 'extension-settings')
-    return readJson<ExtensionSettingsState>(key, {
-        smart_category_enabled: true,
-        recurring_reminder_enabled: true,
-        debt_reminder_enabled: true,
-        quick_import_enabled: true,
-    })
+    return readJson<ExtensionSettingsState>(
+        key,
+        {
+            smart_category_enabled: true,
+            recurring_reminder_enabled: true,
+            debt_reminder_enabled: true,
+            quick_import_enabled: true,
+        },
+        [legacyStorageKey(null, 'extension-settings')],
+    )
 }
 
 export const saveExtensionSettings = (state: ExtensionSettingsState) => {
     const key = storageKey(null, 'extension-settings')
-    writeJson(key, state)
+    writeJson(key, state, [legacyStorageKey(null, 'extension-settings')])
 }
 
 const DEFAULT_STATS_PANELS: StatsPanelConfig[] = [

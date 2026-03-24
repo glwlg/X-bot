@@ -5,6 +5,7 @@ import { useAccountingStore } from '@/stores/accounting'
 import {
     getAccounts,
     createAccount,
+    mergeAccount,
     getBalanceTrend,
     type AccountItem,
     type BalanceTrendScope,
@@ -45,6 +46,10 @@ const newAccName = ref('')
 const newAccType = ref('储蓄卡')
 const newAccBalance = ref(0)
 const creatingAcc = ref(false)
+const showMergeAccount = ref(false)
+const mergeSourceAccount = ref<AccountItem | null>(null)
+const mergeTargetAccountId = ref<number | null>(null)
+const mergingAccount = ref(false)
 
 const accountTypes = ['网络支付', '信用卡', '储蓄卡', '投资账户', '现金', '充值卡', '应收账户', '应付账户']
 
@@ -60,6 +65,11 @@ const grouped = computed(() => {
 
 const groupTotal = (items: AccountItem[]) =>
     items.reduce((sum, a) => sum + a.balance, 0)
+
+const mergeCandidates = computed(() => {
+    if (!mergeSourceAccount.value) return []
+    return accounts.value.filter(account => account.id !== mergeSourceAccount.value?.id)
+})
 
 const includedAccounts = computed(() => {
     return accounts.value.filter(account => account.include_in_assets)
@@ -267,6 +277,43 @@ const handleCreateAccount = async () => {
     }
 }
 
+const openMergeAccount = (account: AccountItem) => {
+    mergeSourceAccount.value = account
+    mergeTargetAccountId.value = accounts.value.find(item => item.id !== account.id)?.id ?? null
+    showMergeAccount.value = true
+}
+
+const closeMergeAccount = () => {
+    showMergeAccount.value = false
+    mergeSourceAccount.value = null
+    mergeTargetAccountId.value = null
+}
+
+const handleMergeAccount = async () => {
+    if (!store.currentBookId || !mergeSourceAccount.value || !mergeTargetAccountId.value) return
+
+    const source = mergeSourceAccount.value
+    const target = accounts.value.find(account => account.id === mergeTargetAccountId.value)
+    if (!target) return
+
+    const confirmed = confirm(
+        `确认将「${source.name}」合并到账户「${target.name}」吗？合并后原账户会删除，原名称会作为别名保留。`
+    )
+    if (!confirmed) return
+
+    mergingAccount.value = true
+    try {
+        await mergeAccount(source.id, target.id)
+        appendOperationLog(store.currentBookId, '合并账户', `${source.name} -> ${target.name}`)
+        await loadData()
+        closeMergeAccount()
+    } catch (error: any) {
+        alert(error?.response?.data?.detail || '合并失败，请稍后重试')
+    } finally {
+        mergingAccount.value = false
+    }
+}
+
 const getScrollParent = () => {
     let node: HTMLElement | null = pageRef.value?.parentElement || null
     while (node) {
@@ -467,7 +514,19 @@ onBeforeUnmount(() => {
           <div :class="['w-9 h-9 rounded-xl flex items-center justify-center', typeColor(type as string)]">
             <component :is="typeIcon(type as string)" class="w-4 h-4 text-white" />
           </div>
-          <span class="flex-1 font-medium text-theme-primary text-sm">{{ acc.name }}</span>
+          <div class="flex-1 min-w-0">
+            <div class="font-medium text-theme-primary text-sm truncate">{{ acc.name }}</div>
+            <div v-if="acc.aliases?.length" class="mt-0.5 text-xs text-theme-muted truncate">
+              别名：{{ acc.aliases.join(' / ') }}
+            </div>
+          </div>
+          <button
+            v-if="accounts.length > 1"
+            @click.stop="openMergeAccount(acc)"
+            class="px-2.5 py-1 rounded-lg border border-slate-200 dark:border-slate-600 text-xs text-theme-muted hover:text-teal-600 hover:border-teal-300 dark:hover:border-teal-500 transition"
+          >
+            合并
+          </button>
           <button
             @click.stop="goBalanceTrend('account', { accountId: acc.id })"
             class="text-teal-500 font-semibold text-sm hover:text-teal-600 transition"
@@ -518,6 +577,51 @@ onBeforeUnmount(() => {
             <span v-else>添加</span>
           </button>
         </form>
+      </div>
+    </div>
+
+    <div
+      v-if="showMergeAccount && mergeSourceAccount"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
+      @click.self="closeMergeAccount"
+    >
+      <div class="bg-white dark:bg-slate-800 rounded-2xl p-6 w-[340px] shadow-xl">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-lg font-semibold text-theme-primary">合并账户</h3>
+          <button @click="closeMergeAccount"><X class="w-5 h-5 text-theme-muted" /></button>
+        </div>
+        <div class="space-y-3">
+          <div class="rounded-2xl bg-slate-50 dark:bg-slate-700/60 px-3 py-3">
+            <div class="text-xs text-theme-muted">待合并账户</div>
+            <div class="mt-1 text-sm font-medium text-theme-primary">{{ mergeSourceAccount.name }}</div>
+            <div v-if="mergeSourceAccount.aliases?.length" class="mt-1 text-xs text-theme-muted">
+              现有别名：{{ mergeSourceAccount.aliases.join(' / ') }}
+            </div>
+          </div>
+          <div>
+            <label class="text-xs text-theme-muted font-medium">合并到</label>
+            <select
+              v-model.number="mergeTargetAccountId"
+              class="w-full mt-1 px-3 py-2.5 rounded-xl border border-gray-200 dark:border-slate-600 bg-gray-50 dark:bg-slate-700 text-theme-primary text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+            >
+              <option v-for="account in mergeCandidates" :key="account.id" :value="account.id">
+                {{ account.name }}
+              </option>
+            </select>
+          </div>
+          <p class="text-xs leading-5 text-theme-muted">
+            合并后，原账户会被删除，原名称和已有别名会挂到目标账户下，后续识别到账户名时会优先匹配这些别名。
+          </p>
+          <button
+            type="button"
+            :disabled="mergingAccount || !mergeTargetAccountId"
+            @click="handleMergeAccount"
+            class="w-full py-2.5 bg-teal-600 hover:bg-teal-700 text-white font-medium rounded-xl transition disabled:opacity-50"
+          >
+            <Loader2 v-if="mergingAccount" class="w-4 h-4 animate-spin mx-auto" />
+            <span v-else>确认合并</span>
+          </button>
+        </div>
       </div>
     </div>
   </div>

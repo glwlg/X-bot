@@ -28,6 +28,12 @@ class AdapterManager:
             raise ValueError(f"No adapter registered for platform: {platform_name}")
         return adapter
 
+    def has_adapter(self, platform_name: str) -> bool:
+        return str(platform_name or "").strip().lower() in self._adapters
+
+    def list_platforms(self) -> list[str]:
+        return sorted(self._adapters.keys())
+
     async def start_all(self):
         """Start all registered adapters"""
         for name, adapter in self._adapters.items():

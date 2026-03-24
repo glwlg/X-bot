@@ -5,20 +5,25 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Set
 
-from core.task_inbox import task_inbox
+from core.local_file_delivery import send_local_file
+from core.skill_tool_handlers import skill_tool_handler_registry
 from core.tool_registry import tool_registry
 
-from core.tools.dev_tools import dev_tools
-from core.tools.dispatch_tools import dispatch_tools
-from core.skill_loader import skill_loader
+from extension.skills.registry import skill_registry as skill_loader
 
-RUNTIME_ONLY_TOOL_NAMES = frozenset(tool_registry.get_manager_tool_names())
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
-RuntimeToolAllowed = Callable[..., bool]
-RecordToolProfile = Callable[[str, Any, float], None]
+RuntimeToolAllowed = Callable[..., Any]
 TodoMarkStep = Callable[[str, str, str], Any]
 AppendSessionEvent = Callable[[str], Awaitable[None]]
-OnWorkerDispatched = Callable[[str, str], None]
+
+
+def _policy_result_allowed(result: Any) -> bool:
+    if isinstance(result, tuple):
+        if not result:
+            return False
+        return bool(result[0])
+    return bool(result)
 
 
 class RuntimeToolAssembler:
@@ -30,10 +35,30 @@ class RuntimeToolAssembler:
         runtime_user_id: str,
         platform_name: str,
         runtime_tool_allowed: RuntimeToolAllowed,
+        allowed_skill_names: Set[str] | None = None,
+        allowed_tool_names: Set[str] | None = None,
     ):
         self.runtime_user_id = str(runtime_user_id or "")
         self.platform_name = str(platform_name or "")
         self.runtime_tool_allowed = runtime_tool_allowed
+        self.allowed_skill_names = (
+            {
+                str(item or "").strip()
+                for item in list(allowed_skill_names or [])
+                if str(item or "").strip()
+            }
+            if allowed_skill_names is not None
+            else None
+        )
+        self.allowed_tool_names = (
+            {
+                str(item or "").strip()
+                for item in list(allowed_tool_names or [])
+                if str(item or "").strip()
+            }
+            if allowed_tool_names is not None
+            else None
+        )
 
     @staticmethod
     def _tool_name(item: Any) -> str:
@@ -57,20 +82,52 @@ class RuntimeToolAssembler:
             if not name or name in seen:
                 continue
             seen.add(name)
-            if self.runtime_tool_allowed(
-                runtime_user_id=self.runtime_user_id,
-                platform=self.platform_name,
-                tool_name=name,
-                kind="tool",
+            if _policy_result_allowed(
+                self.runtime_tool_allowed(
+                    runtime_user_id=self.runtime_user_id,
+                    platform=self.platform_name,
+                    tool_name=name,
+                    kind="tool",
+                )
             ):
+                filtered.append(item)
+        return filtered
+
+    def _is_manager_runtime(self) -> bool:
+        uid = str(self.runtime_user_id or "").strip().lower()
+        platform = str(self.platform_name or "").strip().lower()
+        return not uid.startswith("subagent::") and platform != "subagent_kernel"
+
+    def _runtime_role(self) -> str:
+        uid = str(self.runtime_user_id or "").strip().lower()
+        platform = str(self.platform_name or "").strip().lower()
+        if uid.startswith("subagent::") or platform == "subagent_kernel":
+            return "subagent"
+        return "manager"
+
+    def _filter_by_explicit_allowed_names(self, tools: List[Any]) -> List[Any]:
+        if self.allowed_tool_names is None:
+            return tools
+        allowed_names = set(self.allowed_tool_names)
+        filtered: List[Any] = []
+        for item in tools or []:
+            name = self._tool_name(item)
+            if name and name in allowed_names:
                 filtered.append(item)
         return filtered
 
     async def assemble(self) -> List[Any]:
         merged_tools: List[Any] = []
-        merged_tools.extend(tool_registry.get_core_tools())
-        merged_tools.append(tool_registry.get_load_skill_tool())
-        return self._filter_by_policy(merged_tools)
+        merged_tools.extend(
+            tool_registry.get_core_tools(runtime_role=self._runtime_role())
+        )
+        if self.allowed_skill_names is None or self.allowed_skill_names:
+            merged_tools.append(tool_registry.get_load_skill_tool())
+        merged_tools.extend(
+            tool_registry.get_skill_tools(runtime_role=self._runtime_role())
+        )
+        merged_tools = self._filter_by_policy(merged_tools)
+        return self._filter_by_explicit_allowed_names(merged_tools)
 
 
 @dataclass
@@ -86,23 +143,38 @@ class ToolCallDispatcher:
     runtime: Any
     tool_broker: Any
     runtime_tool_allowed: RuntimeToolAllowed
-    record_tool_profile: RecordToolProfile
     todo_mark_step: TodoMarkStep
     append_session_event: AppendSessionEvent
-    on_worker_dispatched: OnWorkerDispatched | None = None
     available_tool_names: Set[str] = field(default_factory=set)
+    allowed_skill_names: Set[str] | None = None
+    allowed_tool_names: Set[str] | None = None
 
     def _runtime_only_allowed_tool_names(self) -> Set[str]:
         allowed: Set[str] = set()
-        for name in RUNTIME_ONLY_TOOL_NAMES:
-            if self.runtime_tool_allowed(
-                runtime_user_id=self.runtime_user_id,
-                platform=self.platform_name,
-                tool_name=name,
-                kind="tool",
+        runtime_role = self._runtime_role()
+        if runtime_role != "manager":
+            return allowed
+        for name in tool_registry.get_manager_tool_names():
+            if _policy_result_allowed(
+                self.runtime_tool_allowed(
+                    runtime_user_id=self.runtime_user_id,
+                    platform=self.platform_name,
+                    tool_name=name,
+                    kind="tool",
+                )
             ):
                 allowed.add(name)
         return allowed
+
+    def _policy_allows(self, tool_name: str, *, kind: str = "tool") -> bool:
+        return _policy_result_allowed(
+            self.runtime_tool_allowed(
+                runtime_user_id=self.runtime_user_id,
+                platform=self.platform_name,
+                tool_name=tool_name,
+                kind=kind,
+            )
+        )
 
     def set_available_tool_names(self, names: Set[str]) -> None:
         resolved = set(names or set())
@@ -123,7 +195,7 @@ class ToolCallDispatcher:
 
     def _normalize_runtime_user_for_path(self) -> str:
         runtime_user = str(self.runtime_user_id or "").strip()
-        if runtime_user.startswith("worker::"):
+        if runtime_user.startswith("subagent::"):
             parts = runtime_user.split("::")
             if len(parts) >= 3:
                 candidate = str(parts[2] or "").strip()
@@ -131,48 +203,44 @@ class ToolCallDispatcher:
                     return candidate
         return runtime_user
 
-    def _normalize_legacy_user_path(
-        self,
-        *,
-        tool_name: str,
-        args: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        if tool_name not in {"read", "write", "edit"}:
-            return args
-        if not self._is_manager_runtime():
-            return args
-
-        user_id = self._normalize_runtime_user_for_path()
-        if not user_id or user_id == "user1":
-            return args
-
-        path = str(args.get("path") or "").strip()
-        if not path:
-            return args
-
-        replacements = (
-            ("data/users/user1/", f"data/users/{user_id}/"),
-            ("./data/users/user1/", f"./data/users/{user_id}/"),
-            ("/app/data/users/user1/", f"/app/data/users/{user_id}/"),
-        )
-
-        normalized = path
-        for source, target in replacements:
-            if normalized.startswith(source):
-                normalized = target + normalized[len(source) :]
-                break
-
-        if normalized == path:
-            return args
-
-        patched = dict(args or {})
-        patched["path"] = normalized
-        return patched
-
     def _is_manager_runtime(self) -> bool:
         uid = str(self.runtime_user_id or "").strip().lower()
         platform = str(self.platform_name or "").strip().lower()
-        return not uid.startswith("worker::") and platform != "worker_kernel"
+        return not uid.startswith("subagent::") and platform != "subagent_kernel"
+
+    def _runtime_role(self) -> str:
+        uid = str(self.runtime_user_id or "").strip().lower()
+        platform = str(self.platform_name or "").strip().lower()
+        if uid.startswith("subagent::") or platform == "subagent_kernel":
+            return "subagent"
+        return "manager"
+
+    @staticmethod
+    def _resolve_repo_path(path: str) -> Path | None:
+        raw = str(path or "").strip()
+        if not raw:
+            return None
+        candidate = Path(raw).expanduser()
+        if not candidate.is_absolute():
+            candidate = REPO_ROOT / candidate
+        try:
+            return candidate.resolve(strict=False)
+        except Exception:
+            return None
+
+    @classmethod
+    def _is_repo_mutation_path(cls, path: str) -> bool:
+        resolved = cls._resolve_repo_path(path)
+        if resolved is None:
+            return False
+        try:
+            relative = resolved.relative_to(REPO_ROOT)
+        except ValueError:
+            return False
+        parts = relative.parts
+        if not parts:
+            return False
+        return parts[0] != "data"
 
     def _inject_runtime_bash_env(self, args: Dict[str, Any]) -> Dict[str, Any]:
         command = str(args.get("command") or "").strip()
@@ -191,30 +259,26 @@ class ToolCallDispatcher:
         chat_id = str(getattr(msg_chat, "id", "") or "").strip()
         source_user_id = str(getattr(msg_user, "id", "") or "").strip()
         forced_platform = str(
-            user_data_obj.get("worker_delivery_platform") or ""
+            user_data_obj.get("subagent_delivery_platform") or ""
         ).strip()
-        forced_chat_id = str(user_data_obj.get("worker_delivery_chat_id") or "").strip()
+        forced_chat_id = str(
+            user_data_obj.get("subagent_delivery_chat_id") or ""
+        ).strip()
 
         if forced_platform:
             platform = forced_platform
         if forced_chat_id:
             chat_id = forced_chat_id
         if runtime_user:
-            export_parts.append(
-                f"X_BOT_RUNTIME_USER_ID={shlex.quote(runtime_user)}"
-            )
+            export_parts.append(f"X_BOT_RUNTIME_USER_ID={shlex.quote(runtime_user)}")
         if source_user_id:
             export_parts.append(
                 f"X_BOT_RUNTIME_SOURCE_USER_ID={shlex.quote(source_user_id)}"
             )
         if platform:
-            export_parts.append(
-                f"X_BOT_RUNTIME_PLATFORM={shlex.quote(platform)}"
-            )
+            export_parts.append(f"X_BOT_RUNTIME_PLATFORM={shlex.quote(platform)}")
         if chat_id:
-            export_parts.append(
-                f"X_BOT_RUNTIME_CHAT_ID={shlex.quote(chat_id)}"
-            )
+            export_parts.append(f"X_BOT_RUNTIME_CHAT_ID={shlex.quote(chat_id)}")
         if not export_parts:
             return args
 
@@ -252,62 +316,6 @@ class ToolCallDispatcher:
         patched = dict(args or {})
         patched["cwd"] = skill_dir
         return patched
-
-    @staticmethod
-    def _is_software_delivery_intent(text: str) -> bool:
-        raw = str(text or "").strip().lower()
-        if not raw:
-            return False
-
-        direct_keywords = (
-            "software_delivery",
-            "software delivery",
-            "代码",
-            "编码",
-            "改代码",
-            "开发",
-            "修复",
-            "bug",
-            "调试",
-            "debug",
-            "重构",
-            "技能",
-            "skill",
-            "创建技能",
-            "修改技能",
-            "实现功能",
-            "写单测",
-            "测试修复",
-        )
-        if any(token in raw for token in direct_keywords):
-            return True
-
-        repo_hints = (
-            "github",
-            "仓库",
-            "repo",
-            "issue",
-            "pull request",
-            "pr",
-            "commit",
-        )
-        coding_actions = (
-            "修复",
-            "实现",
-            "开发",
-            "排查",
-            "review",
-            "提交",
-            "发布",
-            "publish",
-            "merge",
-            "合并",
-            "改",
-            "写",
-        )
-        return any(token in raw for token in repo_hints) and any(
-            token in raw for token in coding_actions
-        )
 
     def _is_loaded_skill_cli_bash_command(self, command: str) -> bool:
         raw = str(command or "").strip()
@@ -352,68 +360,29 @@ class ToolCallDispatcher:
             return True
         return False
 
-    @staticmethod
-    def _infer_software_delivery_action(
+    def _resolve_skill_tool_binding(self, tool_name: str) -> Dict[str, Any] | None:
+        return tool_registry.get_skill_tool_binding(
+            tool_name,
+            runtime_role=self._runtime_role(),
+        )
+
+    async def _execute_skill_tool_binding(
+        self,
         *,
-        requested_action: str,
-        user_request: str,
-        args: Dict[str, Any],
-    ) -> str:
-        action = str(requested_action or "").strip().lower() or "run"
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        started: float,
+    ) -> Dict[str, Any] | None:
+        binding = self._resolve_skill_tool_binding(tool_name)
+        if not binding:
+            return None
 
-        skill_name = str(args.get("skill_name") or "").strip()
-        template_kind = str(args.get("template_kind") or "").strip().lower()
-        requirement = str(args.get("requirement") or "").strip()
-        instruction = str(args.get("instruction") or "").strip()
-        text = " ".join(
-            [item for item in [user_request, requirement, instruction] if item]
-        ).lower()
-
-        is_skill_intent = (
-            bool(skill_name)
-            or template_kind in {"skill_create", "skill_modify"}
-            or "技能" in text
-            or "skill" in text
+        result = await skill_tool_handler_registry.dispatch(
+            str(binding.get("handler") or "").strip(),
+            dispatcher=self,
+            args=tool_args,
         )
-
-        repo_path = str(args.get("repo_path") or "").strip()
-        repo_url = str(args.get("repo_url") or "").strip()
-        issue = str(args.get("issue") or "").strip()
-        owner = str(args.get("owner") or "").strip()
-        repo = str(args.get("repo") or "").strip()
-        has_repo_hint = (
-            bool(repo_url)
-            or bool(issue)
-            or bool(owner and repo)
-            or (repo_path not in {"", ".", "./"})
-        )
-
-        if action in {"skill_create", "skill_modify", "skill_template"}:
-            return action
-        if action not in {"", "run", "plan"}:
-            return action
-        if not is_skill_intent or has_repo_hint:
-            return action if action in {"plan", "run"} else "run"
-
-        modify_tokens = (
-            "修改",
-            "修复",
-            "排查",
-            "优化",
-            "fix",
-            "modify",
-            "update",
-            "debug",
-        )
-        create_tokens = ("创建", "新建", "新增", "create", "build", "开发", "实现")
-
-        if any(token in text for token in modify_tokens):
-            return "skill_modify"
-        if any(token in text for token in create_tokens):
-            return "skill_create"
-        if skill_name:
-            return "skill_modify"
-        return "skill_create"
+        return result
 
     def _should_retry_extension(self, result: Dict[str, Any]) -> bool:
         if not isinstance(result, dict):
@@ -428,9 +397,7 @@ class ToolCallDispatcher:
         if error_code in {"invalid_args", "skill_failed", "workflow_failed"}:
             return True
 
-        text = str(result.get("message") or result.get("text") or "").lower().strip()
-        hints = ("missing", "required", "请提供", "缺少", "参数", "field")
-        return any(token in text for token in hints)
+        return False
 
     def _is_args_changed(
         self,
@@ -485,7 +452,6 @@ class ToolCallDispatcher:
                 "message": f"Tool not available: {tool_name}",
                 "failure_mode": "recoverable",
             }
-            self.record_tool_profile(tool_name, unknown, started)
             return unknown
 
         user_data = getattr(self.ctx, "user_data", None)
@@ -499,50 +465,18 @@ class ToolCallDispatcher:
             user_data["called_tool_names"] = called_names[-50:]
 
         if tool_name in {"read", "write", "edit", "bash"}:
-            user_request = self._extract_user_request()
-            if (
-                tool_name == "bash"
-                and self._is_manager_runtime()
-                and "software_delivery" in self.available_tool_names
-                and self._is_software_delivery_intent(user_request)
-                and not self._is_loaded_skill_cli_bash_command(
-                    str(tool_args.get("command") or "")
-                )
-            ):
-                blocked = {
-                    "ok": False,
-                    "error_code": "software_delivery_required",
-                    "message": (
-                        "For code/skill troubleshooting in manager runtime, "
-                        "use software_delivery directly instead of bash probing."
-                    ),
-                    "failure_mode": "recoverable",
-                }
-                self.record_tool_profile(tool_name, blocked, started)
-                return blocked
-
-            if not self.runtime_tool_allowed(
-                runtime_user_id=self.runtime_user_id,
-                platform=self.platform_name,
-                tool_name=tool_name,
-                kind="tool",
-            ):
+            if not self._policy_allows(tool_name, kind="tool"):
                 blocked = {
                     "ok": False,
                     "error_code": "policy_blocked",
                     "message": f"Tool policy blocked: {tool_name}",
                     "failure_mode": "recoverable",
                 }
-                self.record_tool_profile(tool_name, blocked, started)
                 return blocked
-            normalized_args = self._normalize_legacy_user_path(
-                tool_name=tool_name,
-                args=dict(args or {}),
-            )
+            normalized_args = dict(args or {})
             if tool_name == "bash":
-                normalized_args = self._apply_loaded_skill_bash_context(
-                    normalized_args
-                )
+                normalized_args = dict(normalized_args)
+                normalized_args = self._apply_loaded_skill_bash_context(normalized_args)
                 normalized_args = self._inject_runtime_bash_env(normalized_args)
             result = await self.tool_broker.execute_core_tool(
                 name=tool_name,
@@ -551,8 +485,65 @@ class ToolCallDispatcher:
                 task_workspace_root=self.task_workspace_root,
             )
             self.todo_mark_step("act", "in_progress", f"Tool `{tool_name}` finished.")
-            self.record_tool_profile(tool_name, result, started)
             return result
+
+        if tool_name == "send_local_file":
+            if self._runtime_role() != "manager":
+                return {
+                    "ok": False,
+                    "error_code": "policy_blocked",
+                    "message": "Tool policy blocked: send_local_file",
+                    "failure_mode": "fatal",
+                    "terminal": True,
+                    "text": "❌ 当前执行上下文不允许直接向用户发送服务器文件。",
+                }
+            if not self._policy_allows(tool_name, kind="tool"):
+                return {
+                    "ok": False,
+                    "error_code": "policy_blocked",
+                    "message": f"Tool policy blocked: {tool_name}",
+                    "failure_mode": "fatal",
+                    "terminal": True,
+                    "text": "❌ 当前策略不允许直接向用户发送服务器文件。",
+                }
+            result = await send_local_file(
+                self.ctx,
+                path=str(tool_args.get("path") or ""),
+                caption=str(tool_args.get("caption") or ""),
+                filename=str(tool_args.get("filename") or ""),
+                kind=str(tool_args.get("kind") or "auto"),
+                task_workspace_root=self.task_workspace_root,
+            )
+            self.todo_mark_step(
+                "act", "in_progress", "Tool `send_local_file` finished."
+            )
+            return result
+
+        if tool_name in {"spawn_subagent", "await_subagents"}:
+            if self._runtime_role() != "manager":
+                return {
+                    "ok": False,
+                    "error_code": "policy_blocked",
+                    "message": f"Tool policy blocked: {tool_name}",
+                    "failure_mode": "recoverable",
+                }
+            from core.subagent_supervisor import subagent_supervisor
+
+            if tool_name == "spawn_subagent":
+                return await subagent_supervisor.spawn(
+                    ctx=self.ctx,
+                    goal=str(tool_args.get("goal") or ""),
+                    allowed_tools=list(tool_args.get("allowed_tools") or []),
+                    allowed_skills=list(tool_args.get("allowed_skills") or []),
+                    mode=str(tool_args.get("mode") or "inline"),
+                    timeout_sec=int(tool_args.get("timeout_sec") or 300),
+                    parent_task_id=str(self.task_id or ""),
+                    parent_task_inbox_id=str(self.task_inbox_id or ""),
+                )
+            return await subagent_supervisor.await_subagents(
+                subagent_ids=list(tool_args.get("subagent_ids") or []),
+                wait_policy=str(tool_args.get("wait_policy") or "all"),
+            )
 
         if tool_name == "load_skill":
             skill_name = str(args.get("skill_name") or "").strip()
@@ -563,10 +554,75 @@ class ToolCallDispatcher:
                     "message": "Missing 'skill_name' argument",
                     "failure_mode": "recoverable",
                 }
-                self.record_tool_profile(tool_name, result, started)
                 return result
 
             skill_info = skill_loader.get_skill(skill_name) or {}
+            resolved_skill_name = str(skill_info.get("name") or skill_name).strip()
+            if (
+                self.allowed_skill_names is not None
+                and resolved_skill_name not in self.allowed_skill_names
+            ):
+                return {
+                    "ok": False,
+                    "error_code": "skill_not_in_scope",
+                    "message": (
+                        f"Skill '{resolved_skill_name or skill_name}' is not available "
+                        "for this turn."
+                    ),
+                    "failure_mode": "recoverable",
+                }
+            canonical_tool_name = (
+                f"ext_{resolved_skill_name.replace('-', '_')}"
+                if resolved_skill_name
+                else ""
+            )
+            allowed_roles = [
+                str(item or "").strip().lower()
+                for item in list(skill_info.get("allowed_roles") or [])
+                if str(item or "").strip()
+            ]
+            contract = dict(skill_info.get("contract") or {})
+            runtime_target = str(contract.get("runtime_target") or "").strip().lower()
+
+            if canonical_tool_name and not self._policy_allows(
+                canonical_tool_name,
+                kind="tool",
+            ):
+                result = {
+                    "ok": False,
+                    "error_code": "skill_policy_blocked",
+                    "message": (
+                        f"Skill '{resolved_skill_name or skill_name}' is not allowed "
+                        f"in {self._runtime_role()} runtime."
+                    ),
+                    "failure_mode": "recoverable",
+                }
+                return result
+
+            if allowed_roles and self._runtime_role() not in allowed_roles:
+                result = {
+                    "ok": False,
+                    "error_code": "skill_role_blocked",
+                    "message": (
+                        f"Skill '{resolved_skill_name or skill_name}' is not available "
+                        f"in {self._runtime_role()} runtime."
+                    ),
+                    "failure_mode": "recoverable",
+                }
+                return result
+
+            if self._runtime_role() == "subagent" and runtime_target == "manager":
+                result = {
+                    "ok": False,
+                    "error_code": "skill_role_blocked",
+                    "message": (
+                        f"Skill '{resolved_skill_name or skill_name}' is manager-only "
+                        "and cannot be loaded in subagent runtime."
+                    ),
+                    "failure_mode": "recoverable",
+                }
+                return result
+
             content = str(skill_info.get("skill_md_content") or "").strip()
             if not content:
                 result = {
@@ -575,7 +631,6 @@ class ToolCallDispatcher:
                     "message": f"Skill '{skill_name}' not found or has no content.",
                     "failure_mode": "recoverable",
                 }
-                self.record_tool_profile(tool_name, result, started)
                 return result
 
             skill_dir = str(skill_info.get("skill_dir") or "").strip()
@@ -603,6 +658,16 @@ class ToolCallDispatcher:
                 runtime_note_lines.append(
                     f"- Absolute entrypoint: `python {absolute_entrypoint} ...`"
                 )
+            if contract:
+                runtime_note_lines.append(
+                    f"- Contract runtime_target: `{str(contract.get('runtime_target') or '').strip()}`"
+                )
+                runtime_note_lines.append(
+                    f"- Contract change_level: `{str(contract.get('change_level') or '').strip()}`"
+                )
+                runtime_note_lines.append(
+                    f"- Contract rollout_target: `{str(contract.get('rollout_target') or '').strip()}`"
+                )
             rendered_content = content
             if runtime_note_lines:
                 rendered_content = (
@@ -616,114 +681,18 @@ class ToolCallDispatcher:
                 "entrypoint": entrypoint,
                 "absolute_entrypoint": absolute_entrypoint,
             }
-            self.todo_mark_step("act", "in_progress", f"Tool `load_skill` loaded '{skill_name}'.")
-            self.record_tool_profile(tool_name, result, started)
-            return result
-
-        if tool_name == "list_workers":
-            result = await dispatch_tools.list_workers()
-            self.record_tool_profile(tool_name, result, started)
-            return result
-
-        if tool_name == "dispatch_worker":
-            metadata = args.get("metadata")
-            metadata_obj = dict(metadata) if isinstance(metadata, dict) else {}
-            ctx_user_data = getattr(self.ctx, "user_data", None)
-            user_data = ctx_user_data if isinstance(ctx_user_data, dict) else {}
-            msg = getattr(self.ctx, "message", None)
-            msg_user = getattr(msg, "user", None)
-            msg_chat = getattr(msg, "chat", None)
-            if "user_id" not in metadata_obj:
-                metadata_obj["user_id"] = str(getattr(msg_user, "id", "") or "")
-            if "chat_id" not in metadata_obj:
-                metadata_obj["chat_id"] = str(getattr(msg_chat, "id", "") or "")
-            if "platform" not in metadata_obj:
-                metadata_obj["platform"] = str(getattr(msg, "platform", "") or "")
-
-            forced_platform = str(
-                user_data.get("worker_delivery_platform") or ""
-            ).strip()
-            forced_chat_id = str(user_data.get("worker_delivery_chat_id") or "").strip()
-            if forced_platform:
-                metadata_obj["platform"] = forced_platform
-            if forced_chat_id:
-                metadata_obj["chat_id"] = forced_chat_id
-
-            if "session_id" not in metadata_obj:
-                metadata_obj["session_id"] = str(self.task_id or "")
-            result = await dispatch_tools.dispatch_worker(
-                instruction=str(args.get("instruction") or ""),
-                worker_id=str(args.get("worker_id") or ""),
-                backend=str(args.get("backend") or ""),
-                metadata=metadata_obj,
+            self.todo_mark_step(
+                "act", "in_progress", f"Tool `load_skill` loaded '{skill_name}'."
             )
-            if self.task_inbox_id:
-                dispatched_worker_id = str(result.get("worker_id") or "").strip()
-                if dispatched_worker_id:
-                    try:
-                        await task_inbox.assign_worker(
-                            self.task_inbox_id,
-                            worker_id=dispatched_worker_id,
-                            reason=str(result.get("selection_reason") or ""),
-                            manager_id="core-manager",
-                        )
-                    except Exception:
-                        pass
-            if self.on_worker_dispatched is not None:
-                self.on_worker_dispatched(
-                    str(result.get("worker_id") or "").strip(),
-                    str(result.get("worker_name") or "").strip(),
-                )
-            self.record_tool_profile(tool_name, result, started)
             return result
 
-        if tool_name == "worker_status":
-            result = await dispatch_tools.worker_status(
-                worker_id=str(args.get("worker_id") or ""),
-                limit=int(args.get("limit", 10) or 10),
-            )
-            self.record_tool_profile(tool_name, result, started)
-            return result
-
-        if tool_name == "software_delivery":
-            user_request = self._extract_user_request()
-            requested_action = self._infer_software_delivery_action(
-                requested_action=str(tool_args.get("action") or "run"),
-                user_request=user_request,
-                args=dict(tool_args),
-            )
-            requested_requirement = str(tool_args.get("requirement") or "")
-            requested_instruction = str(tool_args.get("instruction") or "")
-            result = await dev_tools.software_delivery(
-                action=requested_action,
-                task_id=str(tool_args.get("task_id") or ""),
-                requirement=requested_requirement or user_request,
-                instruction=requested_instruction
-                or requested_requirement
-                or user_request,
-                issue=str(tool_args.get("issue") or ""),
-                repo_path=str(tool_args.get("repo_path") or ""),
-                repo_url=str(tool_args.get("repo_url") or ""),
-                cwd=str(tool_args.get("cwd") or ""),
-                skill_name=str(tool_args.get("skill_name") or ""),
-                source=str(tool_args.get("source") or ""),
-                template_kind=str(tool_args.get("template_kind") or ""),
-                owner=str(tool_args.get("owner") or ""),
-                repo=str(tool_args.get("repo") or ""),
-                backend=str(tool_args.get("backend") or ""),
-                branch_name=str(tool_args.get("branch_name") or ""),
-                base_branch=str(tool_args.get("base_branch") or ""),
-                commit_message=str(tool_args.get("commit_message") or ""),
-                pr_title=str(tool_args.get("pr_title") or ""),
-                pr_body=str(tool_args.get("pr_body") or ""),
-                timeout_sec=tool_args.get("timeout_sec", 1800),
-                validation_commands=tool_args.get("validation_commands"),
-                auto_publish=tool_args.get("auto_publish", True),
-                auto_push=tool_args.get("auto_push", True),
-                auto_pr=tool_args.get("auto_pr", True),
-            )
-            self.record_tool_profile(tool_name, result, started)
-            return result
+        binding_result = await self._execute_skill_tool_binding(
+            tool_name=tool_name,
+            tool_args=tool_args,
+            started=started,
+        )
+        if binding_result is not None:
+            return binding_result
 
         if tool_name == "list_extensions":
             # Direct loading from skill_loader instead of using extension_tools
@@ -741,10 +710,6 @@ class ToolCallDispatcher:
                 "extensions": items,
                 "summary": f"{len(items)} extension(s) available",
             }
-            self.record_tool_profile(tool_name, result, started)
-            return result
-
-            self.record_tool_profile(tool_name, result, started)
             return result
 
         self.todo_mark_step("act", "blocked", f"Unknown tool `{tool_name}`.")
@@ -756,5 +721,4 @@ class ToolCallDispatcher:
             "error_code": "unknown_tool",
             "message": f"Unknown tool: {tool_name}",
         }
-        self.record_tool_profile(tool_name, unknown, started)
         return unknown

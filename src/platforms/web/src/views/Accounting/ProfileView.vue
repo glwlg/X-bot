@@ -130,7 +130,7 @@ const handleShare = async () => {
 
     const userName = authStore.user?.display_name || authStore.user?.email || '用户'
     const text = [
-        `X-Bot 智能记账`,
+        `Ikaros 智能记账`,
         `用户：${userName}`,
         `记账天数：${overview.value.days}`,
         `交易笔数：${overview.value.transactions}`,

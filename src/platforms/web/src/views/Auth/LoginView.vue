@@ -85,8 +85,8 @@ const handleAuth = async () => {
         <div class="w-full max-w-md">
             <!-- Logo & Title -->
             <div class="text-center mb-8">
-                <img :src="logoPng" alt="X-Bot Logo" class="w-20 h-20 rounded-2xl mb-4 mx-auto shadow-lg bg-slate-800 object-contain p-2" />
-                <h1 class="text-3xl font-bold text-white mb-2 shadow-sm">X-Bot</h1>
+                <img :src="logoPng" alt="Ikaros Logo" class="w-20 h-20 rounded-2xl mb-4 mx-auto shadow-lg bg-slate-800 object-contain p-2" />
+                <h1 class="text-3xl font-bold text-white mb-2 shadow-sm">Ikaros</h1>
                 <p class="text-gray-200 font-medium shadow-sm">多平台私人智能助理</p>
             </div>
 
@@ -153,7 +153,7 @@ const handleAuth = async () => {
 
             <!-- Footer -->
             <p class="text-center text-slate-400 text-xs mt-8 opacity-60">
-                &copy; 2026 X-Bot. All rights reserved.
+                &copy; 2026 Ikaros. All rights reserved.
             </p>
         </div>
     </div>

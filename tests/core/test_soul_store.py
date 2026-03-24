@@ -5,18 +5,25 @@ from core.soul_store import SoulStore
 def _redirect_audit_paths(tmp_path):
     audit_root = (tmp_path / "audit").resolve()
     versions_root = (tmp_path / "versions").resolve()
+    index_root = (audit_root / "index").resolve()
+    logs_root = (audit_root / "logs").resolve()
     audit_root.mkdir(parents=True, exist_ok=True)
     versions_root.mkdir(parents=True, exist_ok=True)
+    index_root.mkdir(parents=True, exist_ok=True)
+    logs_root.mkdir(parents=True, exist_ok=True)
     audit_store.audit_root = audit_root
     audit_store.versions_root = versions_root
+    audit_store.index_root = index_root
+    audit_store.logs_root = logs_root
     audit_store.events_path = (audit_root / "events.jsonl").resolve()
+    audit_store._legacy_migrated = False
 
 
 def test_soul_store_load_update_and_rollback(tmp_path):
     _redirect_audit_paths(tmp_path)
     store = SoulStore()
     store.kernel_root = (tmp_path / "kernel" / "core-manager").resolve()
-    store.userland_root = (tmp_path / "userland" / "workers").resolve()
+    store.userland_root = (tmp_path / "userland" / "subagents").resolve()
     store.kernel_root.mkdir(parents=True, exist_ok=True)
     store.userland_root.mkdir(parents=True, exist_ok=True)
 
@@ -35,5 +42,22 @@ def test_soul_store_load_update_and_rollback(tmp_path):
     assert version_id
     assert store.rollback_core(version_id, actor="tester") is True
 
-    worker = store.load_worker("worker-main")
-    assert "Worker SOUL" in worker.content
+    subagent = store.load_subagent("subagent-main")
+    assert "Subagent SOUL" in subagent.content
+
+
+def test_soul_store_migrates_legacy_core_soul_to_data_root(tmp_path):
+    _redirect_audit_paths(tmp_path)
+    store = SoulStore()
+    store.kernel_root = (tmp_path / "kernel" / "core-manager").resolve()
+    store.userland_root = (tmp_path / "userland" / "subagents").resolve()
+    store.kernel_root.mkdir(parents=True, exist_ok=True)
+    store.userland_root.mkdir(parents=True, exist_ok=True)
+
+    legacy_path = store.kernel_root / "SOUL.MD"
+    legacy_path.write_text("# Core Manager SOUL\n- legacy: true\n", encoding="utf-8")
+
+    core = store.load_core()
+
+    assert core.path == str((tmp_path / "SOUL.MD").resolve())
+    assert "legacy: true" in core.content

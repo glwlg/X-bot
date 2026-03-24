@@ -1,0 +1,7 @@
+targets:
+  manager:
+    service: ikaros
+    image: ikaros-manager
+  api:
+    service: ikaros-api
+    image: ikaros-api

@@ -1,6 +1,6 @@
 # Rclone 备份配置指南
 
-为了将 X-Bot 的核心数据目录 (`data/`, `config/`, `.env` 等) 安全稳定地定期备份到云盘（如 OneDrive），我们采用了优秀的开源工具 **Rclone**。
+为了将 Ikaros 的核心数据目录 (`data/`, `config/`, `.env` 等) 安全稳定地定期备份到云盘（如 OneDrive），我们采用了优秀的开源工具 **Rclone**。
 
 如果你需要在新的服务器或者给其他协作者配置备份功能，请按照以下步骤进行。
 
@@ -66,12 +66,12 @@ rclone ls onedrive:
    ```bash
    crontab -e
    ```
-3. 在文件底部添加这一行记录（表示 **每天凌晨 3:00** 运行备份，并且记录执行日志到 `xbot_backup_log.txt` 中）：
+3. 在文件底部添加这一行记录（表示 **每天凌晨 3:00** 运行备份，并且记录执行日志到 `ikaros_backup_log.txt` 中）：
    ```cron
-   0 3 * * * /你的项目绝对路径/scripts/backup.sh >> /tmp/xbot_backup_log.txt 2>&1
+   0 3 * * * /你的项目绝对路径/scripts/backup.sh >> /tmp/ikaros_backup_log.txt 2>&1
    ```
 
 ## 注意事项与常见排错
 
-- 脚本设置了 `KEEP_DAYS=14`，它会自动帮你在每次运行完毕时检查 `onedrive:backup/XBot` 目录下的超期打包文件并删除，因此你不必担心云盘容量爆棚。
-- 如果某天突然备份失效了（报错通常会在 `>> /tmp/xbot_backup_log.txt` 日志），大部分是因为长期未动造成的**云端 Token 失效**，此时只需要 `rclone config`，删除原本的 `onedrive` remote，并重复一遍上文所述的『第 2 步到第 3 步』重新完成授权即可续时拉起服务。
+- 脚本设置了 `KEEP_DAYS=14`，它会自动帮你在每次运行完毕时检查 `onedrive:backup/Ikaros` 目录下的超期打包文件并删除，因此你不必担心云盘容量爆棚。
+- 如果某天突然备份失效了（报错通常会在 `>> /tmp/ikaros_backup_log.txt` 日志），大部分是因为长期未动造成的**云端 Token 失效**，此时只需要 `rclone config`，删除原本的 `onedrive` remote，并重复一遍上文所述的『第 2 步到第 3 步』重新完成授权即可续时拉起服务。

@@ -11,6 +11,67 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
+_MODEL_POOL_ALIASES: dict[str, tuple[str, ...]] = {
+    "image": ("image", "vision"),
+    "vision": ("vision", "image"),
+    "image_gen": ("image_gen", "image_generation"),
+    "image_generation": ("image_generation", "image_gen"),
+}
+
+_MODEL_ROLE_ALIASES: dict[str, tuple[str, ...]] = {
+    "primary": ("primary", "main"),
+    "routing": ("routing", "route", "router"),
+    "vision": ("vision", "image"),
+    "image_generation": ("image_generation", "image_gen", "draw", "drawing"),
+    "voice": ("voice", "audio"),
+}
+
+_MODEL_ROLE_STORAGE_KEYS: dict[str, tuple[str, ...]] = {
+    "primary": ("primary",),
+    "routing": ("routing",),
+    "vision": ("vision", "image"),
+    "image_generation": ("image_generation", "image_gen"),
+    "voice": ("voice",),
+}
+
+
+def _pool_aliases(pool_type: str) -> tuple[str, ...]:
+    normalized = str(pool_type or "primary").strip().lower() or "primary"
+    return _MODEL_POOL_ALIASES.get(normalized, (normalized,))
+
+
+def normalize_model_role(role: str) -> str:
+    """将模型角色别名归一化为统一名称。"""
+    normalized = str(role or "").strip().lower()
+    if not normalized:
+        return ""
+    for canonical, aliases in _MODEL_ROLE_ALIASES.items():
+        if normalized == canonical or normalized in aliases:
+            return canonical
+    return ""
+
+
+def resolve_models_config_path(config_path: Optional[str] = None) -> Path:
+    """解析 models.json 路径。"""
+    raw_path = str(
+        config_path or os.getenv("MODELS_CONFIG_PATH", "config/models.json")
+    ).strip() or "config/models.json"
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute():
+        path = path.resolve()
+    return path
+
+
+def _resolve_model_storage_key(role: str, model_section: dict[str, Any]) -> str:
+    normalized_role = normalize_model_role(role)
+    if not normalized_role:
+        raise ValueError(f"Unsupported model role: {role}")
+    candidates = _MODEL_ROLE_STORAGE_KEYS.get(normalized_role, (normalized_role,))
+    for key in candidates:
+        if key in model_section:
+            return key
+    return candidates[0]
+
 
 @dataclass
 class ModelCost:
@@ -94,9 +155,22 @@ class ModelsConfig:
         """获取路由模型"""
         return self.model.get("routing", "")
 
+    def get_vision_model(self) -> str:
+        """获取多模态视觉理解模型。
+
+        优先使用 `model.vision`。为兼容旧配置，缺失时回退到 `model.image`。
+        """
+        return self.model.get("vision", "") or self.model.get("image", "")
+
+    def get_image_generation_model(self) -> str:
+        """获取图片生成模型。"""
+        return self.model.get("image_generation", "") or self.model.get(
+            "image_gen", ""
+        )
+
     def get_image_model(self) -> str:
-        """获取画图模型"""
-        return self.model.get("image", "")
+        """兼容旧接口：返回视觉理解模型。"""
+        return self.get_vision_model()
 
     def get_voice_model(self) -> str:
         """获取语音模型"""
@@ -104,12 +178,17 @@ class ModelsConfig:
 
     def get_model_pool(self, pool_type: str = "primary") -> list[str]:
         """获取指定类型的模型池"""
-        pool = self.models.get(pool_type, {})
-        return list(pool.keys())
+        for candidate in _pool_aliases(pool_type):
+            pool = self.models.get(candidate, {})
+            if isinstance(pool, dict) and pool:
+                return [str(key) for key in pool.keys() if str(key).strip()]
+            if isinstance(pool, list) and pool:
+                return [str(item) for item in pool if str(item).strip()]
+        return []
 
     def is_model_available(self, model_key: str, pool_type: str = "primary") -> bool:
         """检查模型是否在指定类型的模型池中"""
-        return model_key in self.models.get(pool_type, {})
+        return model_key in self.get_model_pool(pool_type)
 
 
 class ModelManager:
@@ -189,25 +268,63 @@ class ModelManager:
             self._failed_models.discard(model_key)
             logger.info(f"[ModelManager] Model recovered: {model_key}")
 
+    def get_candidate_models(
+        self,
+        required_input_type: str = "text",
+        pool_type: str = "primary",
+        *,
+        preferred_model: Optional[str] = None,
+        include_failed: bool = False,
+    ) -> list[str]:
+        """获取指定池内、支持输入类型的候选模型列表。"""
+        pool_models = [
+            model_key
+            for model_key in self.config.get_model_pool(pool_type)
+            if self.config.get_model(model_key)
+        ]
+        base_order = pool_models or list(self._model_order)
+
+        preferred = str(preferred_model or "").strip()
+        if preferred not in base_order:
+            preferred = ""
+        if not preferred and self._current_model in base_order:
+            preferred = self._current_model
+        if not preferred and self.primary_model in base_order:
+            preferred = self.primary_model
+
+        ordered_models: list[str] = []
+        if preferred:
+            ordered_models.append(preferred)
+        for model_key in base_order:
+            if model_key and model_key not in ordered_models:
+                ordered_models.append(model_key)
+
+        candidates: list[str] = []
+        for model_key in ordered_models:
+            model_config = self.config.get_model(model_key)
+            if not model_config or not model_config.supports_input(required_input_type):
+                continue
+            if not include_failed and model_key in self._failed_models:
+                continue
+            candidates.append(model_key)
+        return candidates
+
     def get_next_available_model(
-        self, required_input_type: str = "text"
+        self,
+        required_input_type: str = "text",
+        pool_type: str = "primary",
     ) -> Optional[str]:
         """获取下一个可用的模型（支持指定输入类型）"""
-        # 优先尝试当前模型
-        if self._current_model not in self._failed_models:
-            current_config = self.config.get_model(self._current_model)
-            if current_config and current_config.supports_input(required_input_type):
-                return self._current_model
-
-        # 遍历所有模型找可用的
-        for model_key in self._model_order:
-            if model_key in self._failed_models:
-                continue
-            model_config = self.config.get_model(model_key)
-            if model_config and model_config.supports_input(required_input_type):
-                self._current_model = model_key
-                logger.info(f"[ModelManager] Switching to model: {model_key}")
-                return model_key
+        candidates = self.get_candidate_models(
+            required_input_type=required_input_type,
+            pool_type=pool_type,
+        )
+        if candidates:
+            selected = candidates[0]
+            if selected != self._current_model:
+                self._current_model = selected
+                logger.info(f"[ModelManager] Switching to model: {selected}")
+            return selected
 
         logger.error("[ModelManager] No available model found")
         return None
@@ -223,22 +340,93 @@ class ModelManager:
 _models_config: Optional[ModelsConfig] = None
 _model_manager: Optional[ModelManager] = None
 _primary_model: str = ""
+_loaded_config_path: Optional[Path] = None
+_loaded_config_mtime_ns: Optional[int] = None
 
 
-def load_models_config(config_path: Optional[str] = None) -> ModelsConfig:
-    """加载模型配置并自动初始化ModelManager"""
-    global _models_config, _model_manager, _primary_model
+def _config_mtime_ns(path: Path) -> Optional[int]:
+    try:
+        return path.stat().st_mtime_ns
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
 
-    if _models_config is not None:
+
+def _parse_models_config_data(data: dict[str, Any]) -> ModelsConfig:
+    """将原始 JSON 数据解析为 ModelsConfig。"""
+    providers = {}
+    for provider_name, provider_data in data.get("providers", {}).items():
+        models = []
+        for model_data in provider_data.get("models", []):
+            cost_data = model_data.get("cost", {})
+            model = ModelConfig(
+                id=model_data["id"],
+                name=model_data.get("name", model_data["id"]),
+                reasoning=model_data.get("reasoning", False),
+                input=model_data.get("input", ["text"]),
+                cost=ModelCost(
+                    input=cost_data.get("input", 0),
+                    output=cost_data.get("output", 0),
+                    cacheRead=cost_data.get("cacheRead", 0),
+                    cacheWrite=cost_data.get("cacheWrite", 0),
+                ),
+                contextWindow=model_data.get("contextWindow", 1000000),
+                maxTokens=model_data.get("maxTokens", 65536),
+            )
+            models.append(model)
+
+        providers[provider_name] = ProviderConfig(
+            baseUrl=provider_data["baseUrl"],
+            apiKey=provider_data.get("apiKey", ""),
+            api=provider_data.get("api", "openai-completions"),
+            models=models,
+        )
+
+    return ModelsConfig(
+        mode=data.get("mode", "merge"),
+        model=data.get("model", {}),
+        models=data.get("models", {}),
+        providers=providers,
+    )
+
+
+def _ensure_models_loaded() -> Optional[ModelsConfig]:
+    global _models_config
+    if _models_config is None:
+        load_models_config()
         return _models_config
 
-    # 默认配置路径
-    if config_path is None:
-        config_path = os.getenv("MODELS_CONFIG_PATH", "config/models.json")
+    if _loaded_config_path is None:
+        return _models_config
 
-    config_file = Path(config_path)
+    config_file = resolve_models_config_path()
+    current_mtime_ns = _config_mtime_ns(config_file)
+    if config_file != _loaded_config_path or current_mtime_ns != _loaded_config_mtime_ns:
+        load_models_config(config_path=str(config_file), force_reload=True)
+    return _models_config
+
+
+def load_models_config(
+    config_path: Optional[str] = None,
+    *,
+    force_reload: bool = False,
+) -> ModelsConfig:
+    """加载模型配置并自动初始化ModelManager"""
+    global _models_config, _model_manager, _primary_model
+    global _loaded_config_path, _loaded_config_mtime_ns
+
+    if _models_config is not None and not force_reload:
+        return _models_config
+
+    config_file = resolve_models_config_path(config_path)
+    _model_manager = None
+    _primary_model = ""
+    _loaded_config_path = config_file
+    _loaded_config_mtime_ns = _config_mtime_ns(config_file)
+
     if not config_file.exists():
-        logger.warning(f"[ModelManager] Config file not found: {config_path}")
+        logger.warning(f"[ModelManager] Config file not found: {config_file}")
         _models_config = ModelsConfig()
         return _models_config
 
@@ -246,44 +434,10 @@ def load_models_config(config_path: Optional[str] = None) -> ModelsConfig:
         with open(config_file, "r", encoding="utf-8") as f:
             data = json.load(f)
 
-        # 解析providers
-        providers = {}
-        for provider_name, provider_data in data.get("providers", {}).items():
-            models = []
-            for model_data in provider_data.get("models", []):
-                cost_data = model_data.get("cost", {})
-                model = ModelConfig(
-                    id=model_data["id"],
-                    name=model_data.get("name", model_data["id"]),
-                    reasoning=model_data.get("reasoning", False),
-                    input=model_data.get("input", ["text"]),
-                    cost=ModelCost(
-                        input=cost_data.get("input", 0),
-                        output=cost_data.get("output", 0),
-                        cacheRead=cost_data.get("cacheRead", 0),
-                        cacheWrite=cost_data.get("cacheWrite", 0),
-                    ),
-                    contextWindow=model_data.get("contextWindow", 1000000),
-                    maxTokens=model_data.get("maxTokens", 65536),
-                )
-                models.append(model)
-
-            providers[provider_name] = ProviderConfig(
-                baseUrl=provider_data["baseUrl"],
-                apiKey=provider_data.get("apiKey", ""),
-                api=provider_data.get("api", "openai-completions"),
-                models=models,
-            )
-
-        _models_config = ModelsConfig(
-            mode=data.get("mode", "merge"),
-            model=data.get("model", {}),
-            models=data.get("models", {}),
-            providers=providers,
-        )
+        _models_config = _parse_models_config_data(data)
 
         logger.info(
-            f"[ModelManager] Loaded {len(_models_config.list_models())} models from {config_path}"
+            f"[ModelManager] Loaded {len(_models_config.list_models())} models from {config_file}"
         )
 
         # 自动初始化ModelManager（使用配置中的primary模型）
@@ -301,6 +455,11 @@ def load_models_config(config_path: Optional[str] = None) -> ModelsConfig:
         logger.error(f"[ModelManager] Failed to load config: {e}")
         _models_config = ModelsConfig()
         return _models_config
+
+
+def reload_models_config(config_path: Optional[str] = None) -> ModelsConfig:
+    """强制重载模型配置。"""
+    return load_models_config(config_path=config_path, force_reload=True)
 
 
 def init_model_manager(
@@ -327,6 +486,81 @@ def get_models_config() -> Optional[ModelsConfig]:
     return _models_config
 
 
+def get_configured_model(role: str) -> str:
+    """获取指定角色当前配置的模型。"""
+    normalized_role = normalize_model_role(role)
+    if not normalized_role:
+        return ""
+    _ensure_models_loaded()
+    if _models_config is None:
+        return ""
+    if normalized_role == "primary":
+        return _models_config.get_primary_model()
+    if normalized_role == "routing":
+        return _models_config.get_routing_model()
+    if normalized_role == "vision":
+        return _models_config.get_vision_model()
+    if normalized_role == "image_generation":
+        return _models_config.get_image_generation_model()
+    if normalized_role == "voice":
+        return _models_config.get_voice_model()
+    return ""
+
+
+def update_configured_model(
+    role: str,
+    model_key: str,
+    *,
+    config_path: Optional[str] = None,
+) -> dict[str, str]:
+    """更新指定角色的模型配置并写回 models.json。"""
+    normalized_role = normalize_model_role(role)
+    if not normalized_role:
+        raise ValueError(f"Unsupported model role: {role}")
+
+    normalized_model_key = str(model_key or "").strip()
+    if not normalized_model_key:
+        raise ValueError("Model key is required")
+
+    config_file = resolve_models_config_path(config_path)
+    if not config_file.exists():
+        raise FileNotFoundError(f"Config file not found: {config_file}")
+
+    with open(config_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if not isinstance(data, dict):
+        raise ValueError("Invalid models config root")
+
+    parsed = _parse_models_config_data(data)
+    if not parsed.get_model(normalized_model_key):
+        raise ValueError(f"Unknown model key: {normalized_model_key}")
+
+    raw_model_section = data.get("model", {})
+    if raw_model_section is None:
+        raw_model_section = {}
+    if not isinstance(raw_model_section, dict):
+        raise ValueError("Invalid models config: model must be an object")
+
+    storage_key = _resolve_model_storage_key(normalized_role, raw_model_section)
+    previous = str(raw_model_section.get(storage_key, "") or "")
+    raw_model_section[storage_key] = normalized_model_key
+    data["model"] = raw_model_section
+
+    with open(config_file, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.write("\n")
+
+    reload_models_config(str(config_file))
+    return {
+        "role": normalized_role,
+        "storage_key": storage_key,
+        "previous": previous,
+        "current": normalized_model_key,
+        "config_path": str(config_file),
+    }
+
+
 def get_primary_model() -> str:
     """获取主模型"""
     return _primary_model
@@ -335,18 +569,71 @@ def get_primary_model() -> str:
 # 便捷函数 - 兼容现有代码
 def get_current_model() -> str:
     """获取当前使用的模型（用于AiService）"""
+    _ensure_models_loaded()
     if _model_manager:
         return _model_manager.get_current_model()
     return _primary_model
 
 
-def get_model_for_input(input_type: str = "text") -> str:
+def get_model_for_input(input_type: str = "text", pool_type: str = "primary") -> str:
     """获取支持指定输入类型的模型"""
+    _ensure_models_loaded()
     if _model_manager:
-        model = _model_manager.get_next_available_model(input_type)
+        model = _model_manager.get_next_available_model(input_type, pool_type)
         if model:
             return model
+    normalized_input_type = str(input_type or "text").strip().lower() or "text"
+    if normalized_input_type != "text":
+        return ""
     return _primary_model
+
+
+def get_model_candidates_for_input(
+    input_type: str = "text",
+    pool_type: str = "primary",
+    *,
+    preferred_model: Optional[str] = None,
+    include_failed: bool = False,
+) -> list[str]:
+    """获取指定输入类型的候选模型列表。"""
+    _ensure_models_loaded()
+    if _model_manager:
+        return _model_manager.get_candidate_models(
+            required_input_type=input_type,
+            pool_type=pool_type,
+            preferred_model=preferred_model,
+            include_failed=include_failed,
+        )
+    if _models_config is None:
+        return []
+
+    pool_models = [
+        model_key
+        for model_key in _models_config.get_model_pool(pool_type)
+        if _models_config.get_model(model_key)
+    ]
+    base_order = pool_models or _models_config.list_models()
+    candidates: list[str] = []
+    for model_key in base_order:
+        model_config = _models_config.get_model(model_key)
+        if not model_config or not model_config.supports_input(input_type):
+            continue
+        candidates.append(model_key)
+    return candidates
+
+
+def mark_model_failed(model_key: str) -> None:
+    """标记模型失败，用于后续请求跳过该模型。"""
+    _ensure_models_loaded()
+    if _model_manager and model_key:
+        _model_manager.mark_failed(model_key)
+
+
+def mark_model_success(model_key: str) -> None:
+    """标记模型恢复成功。"""
+    _ensure_models_loaded()
+    if _model_manager and model_key:
+        _model_manager.mark_success(model_key)
 
 
 def get_model_id_for_api(model_key: Optional[str] = None) -> str:
@@ -358,6 +645,7 @@ def get_model_id_for_api(model_key: Optional[str] = None) -> str:
         model_key = 'bailian/qwen3.5-plus'
         returns = 'qwen3.5-plus'
     """
+    _ensure_models_loaded()
     if _model_manager:
         return _model_manager.get_model_id(model_key)
 
@@ -370,6 +658,7 @@ def get_model_id_for_api(model_key: Optional[str] = None) -> str:
 
 def get_api_key_for_model(model_key: Optional[str] = None) -> str:
     """获取模型对应的API Key"""
+    _ensure_models_loaded()
     if _model_manager:
         provider_config = _model_manager.get_provider_config(model_key)
         if provider_config:
@@ -379,6 +668,7 @@ def get_api_key_for_model(model_key: Optional[str] = None) -> str:
 
 def get_base_url_for_model(model_key: Optional[str] = None) -> Optional[str]:
     """获取模型对应的baseUrl"""
+    _ensure_models_loaded()
     if _model_manager:
         provider_config = _model_manager.get_provider_config(model_key)
         if provider_config:
@@ -388,6 +678,7 @@ def get_base_url_for_model(model_key: Optional[str] = None) -> Optional[str]:
 
 def get_routing_model() -> str:
     """获取路由模型"""
+    _ensure_models_loaded()
     if _models_config:
         return _models_config.get_routing_model()
     return _primary_model
@@ -395,13 +686,28 @@ def get_routing_model() -> str:
 
 def get_voice_model() -> str:
     """获取语音模型"""
+    _ensure_models_loaded()
     if _models_config:
         return _models_config.get_voice_model()
     return _primary_model
 
 
-def get_image_model() -> str:
-    """获取图像模型"""
+def get_vision_model() -> str:
+    """获取多模态视觉理解模型。"""
+    _ensure_models_loaded()
     if _models_config:
-        return _models_config.get_image_model()
+        return _models_config.get_vision_model()
     return _primary_model
+
+
+def get_image_generation_model() -> str:
+    """获取图片生成模型。"""
+    _ensure_models_loaded()
+    if _models_config:
+        return _models_config.get_image_generation_model()
+    return ""
+
+
+def get_image_model() -> str:
+    """兼容旧接口：返回视觉理解模型。"""
+    return get_vision_model()

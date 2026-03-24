@@ -151,7 +151,7 @@ class GitHubClient:
     def _headers(self) -> Dict[str, str]:
         headers: Dict[str, str] = {
             "Accept": "application/vnd.github+json",
-            "User-Agent": "x-bot-manager-dev",
+            "User-Agent": "ikaros-manager-dev",
         }
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"

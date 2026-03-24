@@ -1,9 +1,9 @@
 ---
 trigger: always_on
-description: X-Bot 项目开发规范与注意事项
+description: IKaros 项目开发规范与注意事项
 ---
 
-# X-Bot 开发规范
+# IKaros 开发规范
 
 ## 1. 核心架构与环境
 - **运行环境**：

@@ -15,12 +15,20 @@ class TestRepositoryBase:
     async def test_init_db(self, mock_db):
         """测试仓储目录初始化"""
         from core.state_io import init_db
-        from core.state_paths import repo_root, users_root
+        from core.state_paths import repo_root
 
         await init_db()
 
         assert repo_root().exists()
-        assert users_root().exists()
+
+    def test_user_path_uses_per_user_root(self, mock_db):
+        from core.state_paths import shared_user_path, user_path
+
+        target = user_path("42", "profile.md")
+        shared = shared_user_path("profile.md")
+
+        assert target.parts[-2:] == ("user", "profile.md")
+        assert shared.parts[-2:] == ("user", "profile.md")
 
     @pytest.mark.asyncio
     async def test_next_id_counter(self, mock_db):
@@ -150,39 +158,74 @@ class TestSubscriptionRepo:
     """测试订阅 Repository"""
 
     @pytest.mark.asyncio
-    async def test_add_subscription(self, mock_db):
+    async def test_create_feed_subscription(self, mock_db):
         """测试添加订阅"""
         from core.state_io import init_db
         from core.state_store import (
-            add_subscription,
-            get_user_subscriptions,
+            create_subscription,
+            list_subscriptions,
         )
 
         await init_db()
 
-        await add_subscription(12345, "https://example.com/rss", "测试订阅")
+        await create_subscription(
+            12345,
+            {
+                "title": "测试订阅",
+                "feed_url": "https://example.com/rss",
+            },
+        )
 
-        subs = await get_user_subscriptions(12345)
+        subs = await list_subscriptions(12345)
         assert len(subs) == 1
         assert subs[0]["title"] == "测试订阅"
+        assert subs[0]["feed_url"] == "https://example.com/rss"
 
     @pytest.mark.asyncio
     async def test_delete_subscription(self, mock_db):
         """测试删除订阅"""
         from core.state_io import init_db
         from core.state_store import (
-            add_subscription,
+            create_subscription,
             delete_subscription,
-            get_user_subscriptions,
+            list_subscriptions,
         )
 
         await init_db()
 
-        await add_subscription(12345, "https://example.com/rss", "测试订阅")
-        await delete_subscription(12345, "https://example.com/rss")
+        created = await create_subscription(
+            12345,
+            {
+                "title": "测试订阅",
+                "feed_url": "https://example.com/rss",
+            },
+        )
+        await delete_subscription(12345, created["id"])
 
-        subs = await get_user_subscriptions(12345)
+        subs = await list_subscriptions(12345)
         assert len(subs) == 0
+
+    @pytest.mark.asyncio
+    async def test_list_subscriptions_uses_single_shared_scope(self, mock_db):
+        from core.state_io import init_db
+        from core.state_store import create_subscription, list_subscriptions
+
+        await init_db()
+
+        await create_subscription(
+            12345,
+            {"title": "A", "feed_url": "https://example.com/a.xml"},
+        )
+        await create_subscription(
+            67890,
+            {"title": "B", "feed_url": "https://example.com/b.xml"},
+        )
+
+        subs_a = await list_subscriptions(12345)
+        subs_b = await list_subscriptions(67890)
+
+        assert [row["title"] for row in subs_a] == ["A", "B"]
+        assert [row["title"] for row in subs_b] == ["A", "B"]
 
 
 class TestAllowedUsersStateStore:
@@ -305,15 +348,15 @@ class TestRepositoryStateFiles:
         from core.state_io import read_json, write_json
         from core.state_paths import user_path
 
-        target = user_path("42", "settings.md")
+        target = user_path("42", "profile.md")
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(":::not-yaml:::\n---broken", encoding="utf-8")
 
         await write_json(target, {"foo": "bar"})
 
-        backups = sorted(target.parent.glob("settings.md.bak-*"))
+        backups = sorted(target.parent.glob("profile.md.bak-*"))
         assert len(backups) == 1
-        assert re.match(r"settings\.md\.bak-\d{8}-\d{6}$", backups[0].name)
+        assert re.match(r"profile\.md\.bak-\d{8}-\d{6}$", backups[0].name)
         assert backups[0].read_text(encoding="utf-8") == ":::not-yaml:::\n---broken"
 
         loaded = await read_json(target, {})
@@ -324,10 +367,10 @@ class TestRepositoryStateFiles:
         "label,path_parts,payload,expected",
         [
             (
-                "settings",
-                ("user", "7", ("settings.md",)),
-                {"auto_translate": 1, "target_lang": "zh-CN"},
-                {"version": 1, "auto_translate": 1, "target_lang": "zh-CN"},
+                "profile",
+                ("user", "7", ("profile.md",)),
+                {"nickname": "alice", "timezone": "Asia/Shanghai"},
+                {"version": 1, "nickname": "alice", "timezone": "Asia/Shanghai"},
             ),
             (
                 "subscriptions",

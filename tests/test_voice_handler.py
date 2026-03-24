@@ -55,7 +55,12 @@ async def test_transcribe_voice_extracts_candidate_text_when_response_text_raise
     monkeypatch,
 ):
     fake_client = _FakeClient(
-        [_Response(text=ValueError("no direct text"), candidate_text="测试语音内容")]
+        [
+            _Response(
+                text=ValueError("no direct text"),
+                candidate_text='{"status":"transcribed","transcript":"测试语音内容"}',
+            )
+        ]
     )
     monkeypatch.setattr(voice_handler, "openai_async_client", fake_client)
 
@@ -68,8 +73,8 @@ async def test_transcribe_voice_extracts_candidate_text_when_response_text_raise
 async def test_transcribe_voice_retries_with_fallback_mime(monkeypatch):
     fake_client = _FakeClient(
         [
-            _Response(text=""),
-            _Response(text="fallback transcript"),
+            _Response(text='{"status":"no_audio","transcript":""}'),
+            _Response(text='{"status":"transcribed","transcript":"fallback transcript"}'),
         ]
     )
     monkeypatch.setattr(voice_handler, "openai_async_client", fake_client)
@@ -96,29 +101,10 @@ async def test_transcribe_voice_skips_model_call_on_empty_audio(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_transcribe_and_translate_voice_parses_from_candidate_text(monkeypatch):
-    fake_client = _FakeClient(
-        [
-            _Response(
-                text=ValueError("no direct text"),
-                candidate_text="原文语言：中文\n原文：今天天气不错\n译文：The weather is nice today",
-            )
-        ]
-    )
-    monkeypatch.setattr(voice_handler, "openai_async_client", fake_client)
-
-    result = await voice_handler.transcribe_and_translate_voice(
-        b"audio-bytes", "audio/ogg"
-    )
-    assert result is not None
-    assert result["original_lang"] == "中文"
-    assert result["original"] == "今天天气不错"
-    assert result["translated"] == "The weather is nice today"
-
-
-@pytest.mark.asyncio
 async def test_transcribe_voice_strips_wrapping_quotes(monkeypatch):
-    fake_client = _FakeClient([_Response(text=' "你好" ')])
+    fake_client = _FakeClient(
+        [_Response(text='{"status":"transcribed","transcript":" \\"你好\\" "}')]
+    )
     monkeypatch.setattr(voice_handler, "openai_async_client", fake_client)
 
     result = await voice_handler.transcribe_voice(b"audio-bytes", "audio/ogg")
@@ -131,8 +117,8 @@ async def test_transcribe_voice_retries_when_first_result_is_quote_placeholder(
 ):
     fake_client = _FakeClient(
         [
-            _Response(text='""""'),
-            _Response(text="你好"),
+            _Response(text='{"status":"transcribed","transcript":"\\"\\"\\"\\""}'),
+            _Response(text='{"status":"transcribed","transcript":"你好"}'),
         ]
     )
     monkeypatch.setattr(voice_handler, "openai_async_client", fake_client)
@@ -144,7 +130,9 @@ async def test_transcribe_voice_retries_when_first_result_is_quote_placeholder(
 
 @pytest.mark.asyncio
 async def test_transcribe_voice_prefers_transcoded_wav_payload(monkeypatch):
-    fake_client = _FakeClient([_Response(text="transcoded transcript")])
+    fake_client = _FakeClient(
+        [_Response(text='{"status":"transcribed","transcript":"transcoded transcript"}')]
+    )
     monkeypatch.setattr(voice_handler, "openai_async_client", fake_client)
 
     async def _fake_transcode(voice_bytes: bytes, mime_type: str) -> bytes | None:
@@ -238,9 +226,12 @@ async def test_process_as_voice_message_falls_back_to_transcription(
     assert any("正在处理" in item for item in ctx.edits)
 
 
-def test_audio_missing_reply_detector_catches_model_phrase() -> None:
-    text = "我现在还没有收到任何‘语音内容/音频文件’，因此无法提取意图。"
-    assert voice_handler._looks_like_audio_missing_reply(text) is True
+def test_parse_audio_response_payload_reads_structured_status() -> None:
+    status, transcript = voice_handler._parse_audio_response_payload(
+        '{"status":"no_audio","transcript":""}'
+    )
+    assert status == "no_audio"
+    assert transcript == ""
 
 
 def test_normalize_transcribed_text_extracts_json_text_value() -> None:

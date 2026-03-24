@@ -46,15 +46,15 @@ class ProgramManifest:
 
 
 @dataclass
-class WorkerProgramBinding:
-    worker_id: str
+class SubagentProgramBinding:
+    subagent_id: str
     program_id: str
     version: str
     updated_at: str = field(default_factory=now_iso)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
-            "worker_id": str(self.worker_id or "").strip(),
+            "subagent_id": str(self.subagent_id or "").strip(),
             "program_id": str(self.program_id or "").strip(),
             "version": str(self.version or "").strip(),
             "updated_at": str(self.updated_at or now_iso()),

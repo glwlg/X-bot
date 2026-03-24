@@ -263,6 +263,29 @@ class UnifiedContext:
         """
         return await self._adapter.send_chat_action(self, action, chat_id, **kwargs)
 
+    async def set_message_reaction(
+        self,
+        emoji: str,
+        *,
+        message_id: Optional[str] = None,
+        chat_id: Optional[str] = None,
+        **kwargs,
+    ) -> Any:
+        """
+        React to a message when the platform supports it.
+        Defaults to the current incoming message.
+        """
+        target_message_id = str(message_id or self.message.id or "").strip()
+        if not target_message_id:
+            return False
+        return await self._adapter.set_message_reaction(
+            self,
+            target_message_id,
+            str(emoji or "").strip(),
+            chat_id,
+            **kwargs,
+        )
+
     async def download_file(self, file_id: str, **kwargs) -> bytes:
         """
         Download a file by ID and return bytes.
@@ -281,8 +304,7 @@ class UnifiedContext:
 
         # 2. Adapter Managed (Discord)
         if self._adapter and hasattr(self._adapter, "get_user_data"):
-            # Prefer explicit 'user' (effective user), else message sender
-            target_user_id = self.user.id if self.user else self.message.user.id
+            target_user_id = self.effective_user_id
             return self._adapter.get_user_data(target_user_id)
 
         # 3. Fallback (Ephemeral)
@@ -319,10 +341,23 @@ class UnifiedContext:
             hasattr(self.platform_event, "callback_query")
             and self.platform_event.callback_query
         ):
-            return self.platform_event.callback_query.from_user.id
+            from_user = getattr(self.platform_event.callback_query, "from_user", None)
+            if from_user is not None and getattr(from_user, "id", None) is not None:
+                return str(from_user.id)
         if hasattr(self, "user") and self.user:
-            return self.user.id
+            return str(self.user.id)
         return None
+
+    @property
+    def effective_user_id(self) -> str:
+        callback_user_id = self.callback_user_id
+        if callback_user_id:
+            return str(callback_user_id)
+        if self.user and getattr(self.user, "id", None):
+            return str(self.user.id)
+        if self.message and self.message.user and getattr(self.message.user, "id", None):
+            return str(self.message.user.id)
+        return ""
 
     async def answer_callback(self, text: str = None, show_alert: bool = False):
         """Unified way to acknowledge a callback"""
@@ -351,7 +386,7 @@ class UnifiedContext:
         This provides a programmatic way for skills to compose other skills.
         """
         try:
-            from core.skill_loader import skill_loader
+            from extension.skills.registry import skill_registry as skill_loader
             import inspect
 
             # 1. Get Module

@@ -8,7 +8,7 @@ from typing import Any, Dict, List, cast
 
 from core.config import get_client_for_model
 from core.model_config import get_current_model
-from core.skill_loader import skill_loader
+from extension.skills.registry import skill_registry as skill_loader
 
 logger = logging.getLogger(__name__)
 
@@ -74,106 +74,6 @@ def _missing_required_fields(args: Dict[str, Any], schema: Dict[str, Any]) -> Li
     return missing
 
 
-def _extract_first_url(text: str) -> str:
-    candidate = str(text or "")
-    url_match = re.search(r"https?://[^\s)\]>]+", candidate)
-    if url_match:
-        return url_match.group(0)
-    domain_match = re.search(
-        r"\b(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?:/[^\s)\]>]*)?",
-        candidate,
-    )
-    if domain_match:
-        token = domain_match.group(0)
-        if not token.lower().startswith("http"):
-            return f"https://{token}"
-    return ""
-
-
-def _pick_action_enum(user_request: str, enum_values: List[str]) -> str:
-    lowered = str(user_request or "").lower()
-    rules = [
-        (("summary", "summarize", "总结", "概括"), ("summary", "summarize", "摘要")),
-        (
-            ("visit", "browse", "open", "访问", "打开", "网页"),
-            ("visit", "browse", "open"),
-        ),
-        (("search", "搜索", "查找", "find"), ("search", "query", "find")),
-    ]
-    for intent_tokens, action_tokens in rules:
-        if not any(token in lowered for token in intent_tokens):
-            continue
-        for item in enum_values:
-            value = str(item or "").strip().lower()
-            if any(token in value for token in action_tokens):
-                return str(item)
-    return str(enum_values[0]) if enum_values else ""
-
-
-def _seed_args_from_request(
-    *,
-    args: Dict[str, Any],
-    schema: Dict[str, Any],
-    user_request: str,
-) -> Dict[str, Any]:
-    seeded = dict(args)
-    properties = dict(schema.get("properties") or {})
-    request_text = str(user_request or "").strip()
-    if not request_text:
-        return seeded
-
-    first_url = _extract_first_url(request_text)
-    for key, prop in properties.items():
-        name = str(key or "").strip()
-        if not name:
-            continue
-        current = seeded.get(name)
-        if not _is_empty_value(current):
-            continue
-
-        lowered_name = name.lower()
-        expected = str((prop or {}).get("type") or "").lower()
-        enum_values = list((prop or {}).get("enum") or [])
-
-        if expected == "string" and lowered_name in {
-            "url",
-            "link",
-            "source_url",
-            "website",
-        }:
-            if first_url:
-                seeded[name] = first_url
-                continue
-
-        if lowered_name in {
-            "query",
-            "question",
-            "topic",
-            "prompt",
-            "instruction",
-            "text",
-        }:
-            seeded[name] = request_text
-            continue
-
-        if lowered_name == "action" and enum_values:
-            action = _pick_action_enum(
-                request_text, [str(item) for item in enum_values]
-            )
-            if action:
-                seeded[name] = action
-
-    if len(properties) == 1:
-        (single_name, single_prop), *_ = properties.items()
-        if (
-            _is_empty_value(seeded.get(single_name))
-            and str((single_prop or {}).get("type") or "").lower() == "string"
-        ):
-            seeded[single_name] = request_text
-
-    return seeded
-
-
 def _extract_json_object(text: str) -> Dict[str, Any]:
     raw = str(text or "").strip()
     if not raw:
@@ -204,20 +104,17 @@ class SkillArgPlanner:
         base_args = dict(current_args or {})
         skill = skill_loader.get_skill(str(skill_name or "")) or {}
         schema = _normalize_schema(skill.get("input_schema"))
-        heuristic_args = _seed_args_from_request(
-            args=base_args,
-            schema=schema,
-            user_request=user_request,
-        )
-        missing = _missing_required_fields(heuristic_args, schema)
+        missing = _missing_required_fields(base_args, schema)
 
-        should_plan = bool(force or missing or not heuristic_args)
+        should_plan = bool(
+            SKILL_ARG_PLANNER_ENABLED and (force or missing or not base_args)
+        )
         if not should_plan or not SKILL_ARG_PLANNER_ENABLED:
             return {
-                "args": heuristic_args,
+                "args": base_args,
                 "missing_fields": missing,
                 "planned": False,
-                "source": "heuristic",
+                "source": "direct",
                 "reason": "",
             }
 
@@ -226,13 +123,13 @@ class SkillArgPlanner:
             skill=skill,
             schema=schema,
             user_request=user_request,
-            current_args=heuristic_args,
+            current_args=base_args,
             validation_error=validation_error,
         )
         llm_args = planned.get("args")
         llm_args = llm_args if isinstance(llm_args, dict) else {}
 
-        merged = dict(heuristic_args)
+        merged = dict(base_args)
         for key, value in llm_args.items():
             key_text = str(key or "").strip()
             if not key_text:
@@ -241,7 +138,8 @@ class SkillArgPlanner:
                 merged[key_text] = value
 
         missing_fields = _missing_required_fields(merged, schema)
-        if not missing_fields:
+        used_llm = bool(planned)
+        if used_llm and not missing_fields:
             reported_missing = planned.get("missing_fields")
             if isinstance(reported_missing, list):
                 missing_fields = [
@@ -253,9 +151,9 @@ class SkillArgPlanner:
         return {
             "args": merged,
             "missing_fields": missing_fields,
-            "planned": True,
-            "source": "llm",
-            "reason": str(planned.get("reason") or "").strip(),
+            "planned": used_llm,
+            "source": "llm" if used_llm else "direct",
+            "reason": str(planned.get("reason") or "").strip() if used_llm else "",
         }
 
     async def _plan_with_model(

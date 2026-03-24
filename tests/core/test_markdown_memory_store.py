@@ -7,17 +7,24 @@ from core.markdown_memory_store import markdown_memory_store
 def _redirect_audit_paths(tmp_path):
     audit_root = (tmp_path / "audit").resolve()
     versions_root = (tmp_path / "versions").resolve()
+    index_root = (audit_root / "index").resolve()
+    logs_root = (audit_root / "logs").resolve()
     audit_root.mkdir(parents=True, exist_ok=True)
     versions_root.mkdir(parents=True, exist_ok=True)
+    index_root.mkdir(parents=True, exist_ok=True)
+    logs_root.mkdir(parents=True, exist_ok=True)
     audit_store.audit_root = audit_root
     audit_store.versions_root = versions_root
+    audit_store.index_root = index_root
+    audit_store.logs_root = logs_root
     audit_store.events_path = (audit_root / "events.jsonl").resolve()
+    audit_store._legacy_migrated = False
 
 
 def test_markdown_memory_store_migrates_legacy_memory_json(tmp_path, monkeypatch):
     _redirect_audit_paths(tmp_path)
-    users_root = (tmp_path / "users").resolve()
-    user_root = (users_root / "u1").resolve()
+    monkeypatch.setenv("DATA_DIR", str((tmp_path / "data").resolve()))
+    user_root = (tmp_path / "data" / "user").resolve()
     user_root.mkdir(parents=True, exist_ok=True)
 
     legacy_lines = [
@@ -45,7 +52,6 @@ def test_markdown_memory_store_migrates_legacy_memory_json(tmp_path, monkeypatch
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(markdown_memory_store, "users_root", users_root)
     markdown_memory_store.ensure_migrated("u1")
 
     memory_text = (user_root / "MEMORY.md").read_text(encoding="utf-8")
@@ -55,18 +61,16 @@ def test_markdown_memory_store_migrates_legacy_memory_json(tmp_path, monkeypatch
 
 def test_markdown_memory_store_remember_deduplicates(tmp_path, monkeypatch):
     _redirect_audit_paths(tmp_path)
-    users_root = (tmp_path / "users").resolve()
-    users_root.mkdir(parents=True, exist_ok=True)
-    monkeypatch.setattr(markdown_memory_store, "users_root", users_root)
+    monkeypatch.setenv("DATA_DIR", str((tmp_path / "data").resolve()))
 
     ok_1, _ = markdown_memory_store.remember("u2", "请记住我住在北京", source="test")
     ok_2, _ = markdown_memory_store.remember("u2", "请记住我住在北京", source="test")
     assert ok_1 is True
     assert ok_2 is True
 
-    memory_path = users_root / "u2" / "MEMORY.md"
+    memory_path = markdown_memory_store.memory_path("u2")
     memory_text = memory_path.read_text(encoding="utf-8")
-    assert memory_text.count("居住地：北京") == 1
+    assert memory_text.count("请记住我住在北京") == 1
 
     daily_path = markdown_memory_store.daily_path("u2")
     daily_text = daily_path.read_text(encoding="utf-8")

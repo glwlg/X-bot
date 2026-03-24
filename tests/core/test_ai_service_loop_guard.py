@@ -4,6 +4,7 @@ import json
 import pytest
 
 import services.ai_service as ai_service_module
+from manager.integrations.gh_cli_service import GhCliService
 from services.ai_service import AiService
 
 
@@ -73,6 +74,70 @@ async def test_ai_service_emits_loop_guard_on_repeated_calls(monkeypatch):
     assert "loop_guard" in events
     assert chunks
     assert "重复工具调用" in chunks[-1]
+
+
+@pytest.mark.asyncio
+async def test_ai_service_default_tool_turn_limit_is_40(monkeypatch):
+    service = AiService()
+    monkeypatch.delenv("AI_TOOL_MAX_TURNS", raising=False)
+    monkeypatch.setenv("AI_TOOL_REPEAT_GUARD", "999")
+    monkeypatch.setenv("AI_TOOL_SEMANTIC_REPEAT_GUARD", "999")
+    monkeypatch.setenv("AI_TOOL_MAX_CALLS_PER_TOOL", "999")
+
+    captured = []
+
+    async def event_callback(event, payload):
+        if event == "max_turn_limit":
+            captured.append(dict(payload))
+        return None
+
+    class LoopingModels:
+        async def create(self, **kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="",
+                            tool_calls=[
+                                SimpleNamespace(
+                                    id="call-1",
+                                    function=SimpleNamespace(
+                                        name="read",
+                                        arguments=json.dumps(
+                                            {"path": "a.txt"}, ensure_ascii=False
+                                        ),
+                                    ),
+                                )
+                            ],
+                        )
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(
+        ai_service_module,
+        "openai_async_client",
+        SimpleNamespace(chat=SimpleNamespace(completions=LoopingModels())),
+    )
+
+    captured = []
+
+    async def fake_tool_executor(_name, _args):
+        return {"ok": True}
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "loop"}]}],
+        tools=[{"name": "read", "description": "", "parameters": {"type": "object"}}],
+        tool_executor=fake_tool_executor,
+        system_instruction="test",
+        event_callback=event_callback,
+    ):
+        chunks.append(chunk)
+
+    assert captured
+    assert captured[-1]["max_turns"] == 40
+    assert f"工具调用轮次已达上限（40）" in chunks[-1]
 
 
 @pytest.mark.asyncio
@@ -165,8 +230,12 @@ async def test_ai_service_terminal_payload_uses_result_and_ui(monkeypatch):
     class FakeResponse:
         def __init__(self):
             function_call = SimpleNamespace(
-                name="dispatch_worker",
-                args={"instruction": "检查 RSS"},
+                name="spawn_subagent",
+                args={
+                    "goal": "检查 RSS",
+                    "allowed_tools": ["read", "bash"],
+                    "mode": "inline",
+                },
             )
             self.choices = [
                 SimpleNamespace(
@@ -227,7 +296,7 @@ async def test_ai_service_terminal_payload_uses_result_and_ui(monkeypatch):
         message_history=[{"role": "user", "parts": [{"text": "rss"}]}],
         tools=[
             {
-                "name": "dispatch_worker",
+                "name": "spawn_subagent",
                 "description": "",
                 "parameters": {"type": "object"},
             }
@@ -606,9 +675,13 @@ async def test_ai_service_async_dispatch_emits_progress_notice(monkeypatch):
                                     SimpleNamespace(
                                         id="call-1",
                                         function=SimpleNamespace(
-                                            name="dispatch_worker",
+                                            name="spawn_subagent",
                                             arguments=json.dumps(
-                                                {"instruction": "查询明天天气"},
+                                                {
+                                                    "goal": "查询明天天气",
+                                                    "allowed_tools": ["web_search"],
+                                                    "mode": "detached",
+                                                },
                                                 ensure_ascii=False,
                                             ),
                                         ),
@@ -625,7 +698,7 @@ async def test_ai_service_async_dispatch_emits_progress_notice(monkeypatch):
                     SimpleNamespace(
                         message=SimpleNamespace(
                             content=(
-                                "已派发给阿黑处理（任务 wj-1），"
+                                "已启动 subagent-weather（任务 wj-1），"
                                 "正在处理中，完成后会自动把结果发给你。"
                             ),
                             tool_calls=[],
@@ -653,11 +726,11 @@ async def test_ai_service_async_dispatch_emits_progress_notice(monkeypatch):
         return {
             "ok": True,
             "async_dispatch": True,
-            "worker_name": "阿黑",
+            "executor_name": "subagent-weather",
             "task_id": "wj-1",
             "task_outcome": "partial",
-            "text": "worker dispatch accepted",
-            "summary": "worker job queued",
+            "text": "subagent started",
+            "summary": "subagent job queued",
         }
 
     async def event_callback(event, payload):
@@ -668,7 +741,7 @@ async def test_ai_service_async_dispatch_emits_progress_notice(monkeypatch):
         message_history=[{"role": "user", "parts": [{"text": "查天气"}]}],
         tools=[
             {
-                "name": "dispatch_worker",
+                "name": "spawn_subagent",
                 "description": "",
                 "parameters": {"type": "object"},
             }
@@ -687,5 +760,360 @@ async def test_ai_service_async_dispatch_emits_progress_notice(monkeypatch):
     assert "完成后会自动把结果发给你" in text
     assert any(
         name == "final_response" and payload.get("source") == "async_dispatch"
+        for name, payload in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_ai_service_does_not_short_circuit_on_gh_auth_probe_success(
+    monkeypatch, tmp_path
+):
+    service = AiService()
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    class FakeModels:
+        def __init__(self):
+            self.calls = 0
+
+        async def create(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content="",
+                                tool_calls=[
+                                    SimpleNamespace(
+                                        id="call-1",
+                                        function=SimpleNamespace(
+                                            name="gh_cli",
+                                            arguments=json.dumps(
+                                                {
+                                                    "action": "auth_status",
+                                                    "hostname": "github.com",
+                                                },
+                                                ensure_ascii=False,
+                                            ),
+                                        ),
+                                    )
+                                ],
+                            )
+                        )
+                    ]
+                )
+
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="继续执行了后续开发步骤。",
+                            tool_calls=[],
+                        )
+                    )
+                ]
+            )
+
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeModels()
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    monkeypatch.setattr(ai_service_module, "openai_async_client", FakeClient())
+
+    gh_service = GhCliService()
+
+    async def fake_status(hostname: str):
+        assert hostname == "github.com"
+        return {
+            "authenticated": True,
+            "text": "Logged in to github.com as octocat",
+            "raw": {"ok": True},
+        }
+
+    monkeypatch.setattr(gh_service, "_auth_status_command", fake_status)
+
+    async def fake_tool_executor(name, args):
+        assert name == "gh_cli"
+        return await gh_service.handle(**dict(args))
+
+    events = []
+
+    async def event_callback(event, payload):
+        events.append((event, dict(payload)))
+        if event == "tool_call_finished" and payload.get("terminal"):
+            return {
+                "stop": True,
+                "final_text": str(payload.get("terminal_text") or ""),
+            }
+        return None
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "继续开发"}]}],
+        tools=[
+            {
+                "name": "gh_cli",
+                "description": "",
+                "parameters": {"type": "object"},
+            }
+        ],
+        tool_executor=fake_tool_executor,
+        system_instruction="test",
+        event_callback=event_callback,
+    ):
+        chunks.append(chunk)
+
+    assert chunks == ["继续执行了后续开发步骤。"]
+    assert any(
+        name == "tool_call_finished"
+        and payload.get("name") == "gh_cli"
+        and payload.get("terminal") is False
+        for name, payload in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_ai_service_does_not_short_circuit_on_gh_exec_success(
+    monkeypatch, tmp_path
+):
+    service = AiService()
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    class FakeModels:
+        def __init__(self):
+            self.calls = 0
+
+        async def create(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content="",
+                                tool_calls=[
+                                    SimpleNamespace(
+                                        id="call-1",
+                                        function=SimpleNamespace(
+                                            name="gh_cli",
+                                            arguments=json.dumps(
+                                                {
+                                                    "action": "exec",
+                                                    "hostname": "github.com",
+                                                    "argv": [
+                                                        "pr",
+                                                        "list",
+                                                        "--repo",
+                                                        "Scenx/fuck-skill",
+                                                        "--json",
+                                                        "number",
+                                                    ],
+                                                    "timeout_sec": 30,
+                                                },
+                                                ensure_ascii=False,
+                                            ),
+                                        ),
+                                    )
+                                ],
+                            )
+                        )
+                    ]
+                )
+
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="后续步骤还会继续，不会把 [] 直接回给用户。",
+                            tool_calls=[],
+                        )
+                    )
+                ]
+            )
+
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeModels()
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    monkeypatch.setattr(ai_service_module, "openai_async_client", FakeClient())
+
+    gh_service = GhCliService()
+
+    async def fake_run_capture(argv, *, cwd=None, timeout_sec=120):
+        assert argv == [
+            "gh",
+            "pr",
+            "list",
+            "--repo",
+            "Scenx/fuck-skill",
+            "--json",
+            "number",
+        ]
+        assert cwd is None
+        assert timeout_sec == 30
+        return {
+            "ok": True,
+            "exit_code": 0,
+            "output": "[]",
+            "stdout": "[]",
+            "stderr": "",
+        }
+
+    monkeypatch.setattr(gh_service, "_run_capture", fake_run_capture)
+
+    async def fake_tool_executor(name, args):
+        assert name == "gh_cli"
+        return await gh_service.handle(**dict(args))
+
+    events = []
+
+    async def event_callback(event, payload):
+        events.append((event, dict(payload)))
+        if event == "tool_call_finished" and payload.get("terminal"):
+            return {
+                "stop": True,
+                "final_text": str(payload.get("terminal_text") or ""),
+            }
+        return None
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "继续开发"}]}],
+        tools=[
+            {
+                "name": "gh_cli",
+                "description": "",
+                "parameters": {"type": "object"},
+            }
+        ],
+        tool_executor=fake_tool_executor,
+        system_instruction="test",
+        event_callback=event_callback,
+    ):
+        chunks.append(chunk)
+
+    assert chunks == ["后续步骤还会继续，不会把 [] 直接回给用户。"]
+    assert any(
+        name == "tool_call_finished"
+        and payload.get("name") == "gh_cli"
+        and payload.get("terminal") is False
+        and payload.get("summary") == "[]"
+        for name, payload in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_ai_service_continues_after_send_local_file_success(monkeypatch):
+    service = AiService()
+
+    class FakeModels:
+        def __init__(self):
+            self.calls = 0
+
+        async def create(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content="",
+                                tool_calls=[
+                                    SimpleNamespace(
+                                        id="call-1",
+                                        function=SimpleNamespace(
+                                            name="send_local_file",
+                                            arguments=json.dumps(
+                                                {
+                                                    "path": "/tmp/baby_camera_latest.jpg",
+                                                    "caption": "请查收",
+                                                },
+                                                ensure_ascii=False,
+                                            ),
+                                        ),
+                                    )
+                                ],
+                            )
+                        )
+                    ]
+                )
+
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="宝宝在床上，正在安静睡觉。",
+                            tool_calls=[],
+                        )
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(
+        ai_service_module,
+        "openai_async_client",
+        SimpleNamespace(chat=SimpleNamespace(completions=FakeModels())),
+    )
+
+    async def fake_tool_executor(name, args):
+        assert name == "send_local_file"
+        assert args["path"] == "/tmp/baby_camera_latest.jpg"
+        return {
+            "ok": True,
+            "terminal": False,
+            "summary": "Sent local file baby_camera_latest.jpg",
+            "text": "📎 已发送文件：baby_camera_latest.jpg",
+            "payload": {
+                "text": "📎 已发送文件：baby_camera_latest.jpg",
+                "files": [
+                    {
+                        "path": "/tmp/baby_camera_latest.jpg",
+                        "filename": "baby_camera_latest.jpg",
+                        "kind": "photo",
+                    }
+                ],
+            },
+        }
+
+    events = []
+
+    async def event_callback(event, payload):
+        events.append((event, dict(payload)))
+        if event == "tool_call_finished" and payload.get("terminal"):
+            return {
+                "stop": True,
+                "final_text": str(payload.get("terminal_text") or ""),
+            }
+        return None
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "把图发给我并告诉我宝宝状态"}]}],
+        tools=[
+            {
+                "name": "send_local_file",
+                "description": "",
+                "parameters": {"type": "object"},
+            }
+        ],
+        tool_executor=fake_tool_executor,
+        system_instruction="test",
+        event_callback=event_callback,
+    ):
+        chunks.append(chunk)
+
+    assert chunks == ["宝宝在床上，正在安静睡觉。"]
+    assert any(
+        name == "tool_call_finished"
+        and payload.get("name") == "send_local_file"
+        and payload.get("terminal") is False
         for name, payload in events
     )

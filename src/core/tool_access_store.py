@@ -3,6 +3,7 @@ from pathlib import Path
 from threading import Lock
 from typing import Any, Dict, List, Tuple
 
+from core.channel_access import feature_for_tool_name, is_channel_feature_enabled
 from core.config import DATA_DIR
 
 
@@ -24,6 +25,9 @@ TOKEN_ALIASES = {
     "automation": "group:automation",
     "finance": "group:finance",
     "account": "group:account",
+    "delivery": "group:delivery",
+    "file-delivery": "group:delivery",
+    "file_delivery": "group:delivery",
     "memory": "group:memory",
     "skill-admin": "group:skill-admin",
     "skill_admin": "group:skill-admin",
@@ -46,8 +50,6 @@ SKILL_FUNCTION_GROUPS = {
     "stock_watch": {"group:finance"},
     "account_manager": {"group:account", "group:security"},
     "skill_manager": {"group:skill-admin"},
-    "worker_management": {"group:management"},
-    "software_delivery": {"group:management"},
     "download_video": {"group:media"},
     "news_article_writer": {"group:content", "group:research"},
     "xlsx": {"group:data"},
@@ -58,16 +60,7 @@ class ToolAccessStore:
     """Agent tool grouping and allow/deny policy store."""
 
     CORE_MANAGER_DEFAULT_ALLOW = [
-        "group:management",
-        "group:automation",
-        "group:coding",
-        "group:primitives",
-        "group:skill-admin",
-    ]
-    WORKER_DEFAULT_DENY = [
-        "group:coding",
-        "group:management",
-        "group:automation",
+        "group:all",
     ]
 
     def __init__(self):
@@ -86,13 +79,6 @@ class ToolAccessStore:
                     "deny": [],
                 }
             },
-            "worker_default": {
-                "tools": {
-                    "allow": ["group:all"],
-                    "deny": list(self.WORKER_DEFAULT_DENY),
-                }
-            },
-            "workers": {},
         }
 
     def _normalize_entries(self, items: List[str] | None) -> List[str]:
@@ -127,10 +113,6 @@ class ToolAccessStore:
             if isinstance(loaded, dict):
                 merged = dict(default)
                 merged.update(loaded)
-                workers = merged.get("workers")
-                if not isinstance(workers, dict):
-                    workers = {}
-                merged["workers"] = workers
                 core_policy = self._normalize_policy(
                     merged.get("core_manager"),
                     default["core_manager"],
@@ -195,38 +177,6 @@ class ToolAccessStore:
                         self.CORE_MANAGER_DEFAULT_ALLOW
                     )
                 merged["core_manager"] = core_policy
-
-                worker_default = self._normalize_policy(
-                    merged.get("worker_default"),
-                    default["worker_default"],
-                )
-                worker_allow = list(
-                    (worker_default.get("tools") or {}).get("allow") or []
-                )
-                worker_deny = list(
-                    (worker_default.get("tools") or {}).get("deny") or []
-                )
-                if worker_allow == ["group:all"] and worker_deny == ["group:coding"]:
-                    worker_default["tools"]["deny"] = list(self.WORKER_DEFAULT_DENY)
-                merged["worker_default"] = worker_default
-
-                worker_entries = merged.get("workers")
-                if isinstance(worker_entries, dict):
-                    normalized_workers: Dict[str, Any] = {}
-                    for wid, policy in worker_entries.items():
-                        normalized = self._normalize_policy(policy, worker_default)
-                        allow_entries = list(
-                            (normalized.get("tools") or {}).get("allow") or []
-                        )
-                        deny_entries = list(
-                            (normalized.get("tools") or {}).get("deny") or []
-                        )
-                        if allow_entries == ["group:all"] and deny_entries == [
-                            "group:coding"
-                        ]:
-                            normalized["tools"]["deny"] = list(self.WORKER_DEFAULT_DENY)
-                        normalized_workers[str(wid)] = normalized
-                    merged["workers"] = normalized_workers
                 return merged
         except Exception:
             pass
@@ -243,7 +193,7 @@ class ToolAccessStore:
             "group:all": "所有工具/技能/MCP",
             "group:fs": "文件系统工具：read/write/edit",
             "group:primitives": "基础原语：read/write/edit/bash/load_skill",
-            "group:execution": "执行类能力：bash/exec/process 与 Worker 执行后端",
+            "group:execution": "执行类能力：bash/exec/process 与内部执行运行时",
             "group:coding": "编码类能力：coding_backend(codex/gemini-cli)",
             "group:feeds": "信息订阅类：rss/news feed",
             "group:ops": "部署运维类：deployment/docker",
@@ -251,11 +201,43 @@ class ToolAccessStore:
             "group:finance": "金融行情类：stock_watch",
             "group:media": "多媒体类：download_video",
             "group:account": "账号凭据类：account_manager",
-            "group:memory": "记忆类：用户 MEMORY.md",
+            "group:memory": "记忆类：用户长期记忆",
             "group:skill-admin": "技能治理类：skill_manager",
             "group:skills": "扩展技能总开关：ext_*",
-            "group:management": "管理调度类：list_workers/dispatch_worker/worker_status",
+            "group:management": "管理调度类：subagent、repo workspace、git/gh/codex 与任务治理直连工具",
         }
+
+    @staticmethod
+    def _normalize_group_entries(value: Any) -> List[str]:
+        rows: List[str] = []
+        if isinstance(value, str):
+            value = [value]
+        if not isinstance(value, list):
+            return rows
+        for item in value:
+            token = str(item or "").strip().lower()
+            if not token:
+                continue
+            if not token.startswith("group:"):
+                token = f"group:{token}"
+            if token not in rows:
+                rows.append(token)
+        return rows
+
+    def _dynamic_skill_groups(self, skill_name: str) -> List[str]:
+        safe_skill = str(skill_name or "").strip().lower()
+        if not safe_skill:
+            return []
+        try:
+            from extension.skills.registry import skill_registry as skill_loader
+
+            info = skill_loader.get_skill(safe_skill) or {}
+            groups = self._normalize_group_entries(info.get("policy_groups"))
+            if groups:
+                return groups
+        except Exception:
+            pass
+        return sorted(SKILL_FUNCTION_GROUPS.get(safe_skill, set()))
 
     def groups_for_tool(self, tool_name: str, *, kind: str = "tool") -> List[str]:
         name = str(tool_name or "").strip().lower()
@@ -276,22 +258,45 @@ class ToolAccessStore:
         if name in {"read", "write", "edit", "load_skill"}:
             groups.add("group:fs")
             groups.add("group:primitives")
+        if name in {"send_local_file"}:
+            groups.add("group:fs")
+            groups.add("group:delivery")
         if name in {"coding_backend", "coding-backend"}:
             groups.add("group:coding")
             groups.add("group:execution")
-        if name in SKILL_FUNCTION_GROUPS:
+        dynamic_skill_groups = self._dynamic_skill_groups(name)
+        if dynamic_skill_groups:
             groups.add("group:skills")
             groups.add(f"group:skill:{name}")
-            for item in SKILL_FUNCTION_GROUPS.get(name, set()):
+            for item in dynamic_skill_groups:
                 groups.add(item)
+        try:
+            from extension.skills.registry import skill_registry as skill_loader
+
+            exported = skill_loader.get_tool_export(name)
+        except Exception:
+            exported = None
+        if isinstance(exported, dict):
+            skill_name = str(exported.get("skill_name") or "").strip().lower()
+            if skill_name:
+                groups.add("group:skills")
+                groups.add("group:execution")
+                groups.add(f"group:skill:{skill_name}")
+                for item in self._normalize_group_entries(
+                    exported.get("policy_groups")
+                ) or self._dynamic_skill_groups(skill_name):
+                    groups.add(item)
         if name in {"bash", "exec", "process"}:
             groups.add("group:execution")
             groups.add("group:primitives")
         if name in {
-            "list_workers",
-            "dispatch_worker",
-            "worker_status",
-            "software_delivery",
+            "spawn_subagent",
+            "await_subagents",
+            "repo_workspace",
+            "codex_session",
+            "git_ops",
+            "gh_cli",
+            "task_tracker",
         }:
             groups.add("group:management")
             groups.add("group:execution")
@@ -301,7 +306,7 @@ class ToolAccessStore:
             groups.add("group:skills")
             skill_name = name.removeprefix("ext_")
             groups.add(f"group:skill:{skill_name}")
-            for item in SKILL_FUNCTION_GROUPS.get(skill_name, set()):
+            for item in self._dynamic_skill_groups(skill_name):
                 groups.add(item)
             if any(
                 key in skill_name for key in ("browser", "search", "web", "research")
@@ -371,69 +376,6 @@ class ToolAccessStore:
         with self._lock:
             return dict(self._payload.get("core_manager") or {})
 
-    def get_worker_default_policy(self) -> Dict[str, Any]:
-        with self._lock:
-            return dict(self._payload.get("worker_default") or {})
-
-    def ensure_worker_policy(
-        self, worker_id: str, policy: Dict[str, Any] | None = None
-    ) -> Dict[str, Any]:
-        safe_id = str(worker_id or "").strip() or "worker-main"
-        with self._lock:
-            workers = self._payload.setdefault("workers", {})
-            fallback = dict(self._payload.get("worker_default") or {})
-            current = workers.get(safe_id)
-            if current is None:
-                workers[safe_id] = self._normalize_policy(policy, fallback)
-                self._write_unlocked()
-            return dict(workers.get(safe_id) or fallback)
-
-    def get_worker_policy(self, worker_id: str) -> Dict[str, Any]:
-        safe_id = str(worker_id or "").strip() or "worker-main"
-        with self._lock:
-            workers = self._payload.setdefault("workers", {})
-            policy = workers.get(safe_id)
-            if isinstance(policy, dict):
-                return dict(policy)
-            return dict(self._payload.get("worker_default") or {})
-
-    def set_worker_policy(
-        self,
-        worker_id: str,
-        *,
-        allow: List[str] | None = None,
-        deny: List[str] | None = None,
-        actor: str = "core-manager",
-    ) -> Tuple[bool, str]:
-        safe_id = str(worker_id or "").strip()
-        if not safe_id:
-            return False, "invalid_worker_id"
-        if safe_id in {"core-manager", "core_manager"}:
-            return False, "core_manager_policy_is_readonly"
-        with self._lock:
-            workers = self._payload.setdefault("workers", {})
-            fallback = dict(self._payload.get("worker_default") or {})
-            current = self._normalize_policy(workers.get(safe_id), fallback)
-            if allow is not None:
-                current["tools"]["allow"] = self._normalize_entries(allow)
-            if deny is not None:
-                current["tools"]["deny"] = self._normalize_entries(deny)
-            workers[safe_id] = current
-            self._write_unlocked()
-        return True, "updated"
-
-    def reset_worker_policy(self, worker_id: str) -> Tuple[bool, str]:
-        safe_id = str(worker_id or "").strip()
-        if not safe_id:
-            return False, "invalid_worker_id"
-        with self._lock:
-            workers = self._payload.setdefault("workers", {})
-            if safe_id in workers:
-                del workers[safe_id]
-                self._write_unlocked()
-                return True, "reset"
-            return True, "already_default"
-
     def resolve_runtime_policy(
         self,
         *,
@@ -442,13 +384,13 @@ class ToolAccessStore:
     ) -> Dict[str, Any]:
         uid = str(runtime_user_id or "").strip()
         platform_name = str(platform or "").strip().lower()
-        if uid.startswith("worker::"):
+        if uid.startswith("subagent::"):
             parts = uid.split("::")
-            worker_id = parts[1].strip() if len(parts) >= 2 else "worker-main"
+            subagent_id = parts[1].strip() if len(parts) >= 2 else "subagent"
             return {
-                "agent_kind": "worker",
-                "agent_id": worker_id or "worker-main",
-                "policy": self.get_worker_policy(worker_id or "worker-main"),
+                "agent_kind": "subagent",
+                "agent_id": subagent_id or "subagent",
+                "policy": self.get_core_policy(),
             }
         if platform_name == "heartbeat_daemon":
             return {
@@ -478,26 +420,28 @@ class ToolAccessStore:
         policy = dict(resolved.get("policy") or {})
         normalized_name = str(tool_name or "").strip().lower()
         groups = self.groups_for_tool(normalized_name, kind=kind)
-        # Hard boundary: worker execution runtime cannot access memory MCP tools.
-        if str(resolved.get("agent_kind") or "").strip().lower() == "worker":
-            if (
-                normalized_name in MEMORY_TOOL_NAMES
-                or "group:memory" in groups
-                or kind == "mcp"
-            ):
-                detail = {
-                    "agent_kind": resolved.get("agent_kind"),
-                    "agent_id": resolved.get("agent_id"),
-                    "tool_name": normalized_name,
-                    "groups": groups,
-                    "reason": "worker_memory_disabled",
-                }
-                return False, detail
         allowed, reason = self._policy_allows(
             policy,
             tool_name=normalized_name,
             groups=groups,
         )
+        safe_platform = str(platform or "").strip().lower()
+        safe_runtime_user_id = str(runtime_user_id or "").strip()
+        feature = feature_for_tool_name(normalized_name)
+        if (
+            allowed
+            and feature
+            and safe_platform
+            and safe_platform != "subagent_kernel"
+            and safe_runtime_user_id
+        ):
+            if not is_channel_feature_enabled(
+                platform=safe_platform,
+                platform_user_id=safe_runtime_user_id,
+                feature=feature,
+            ):
+                allowed = False
+                reason = f"channel_feature_disabled:{feature}"
         detail = {
             "agent_kind": resolved.get("agent_kind"),
             "agent_id": resolved.get("agent_id"),
@@ -506,25 +450,6 @@ class ToolAccessStore:
             "reason": reason,
         }
         return allowed, detail
-
-    def is_backend_allowed(
-        self, *, worker_id: str, backend: str
-    ) -> Tuple[bool, Dict[str, Any]]:
-        policy = self.get_worker_policy(worker_id)
-        backend_name = str(backend or "").strip().lower()
-        groups = self.groups_for_tool(backend_name, kind="backend")
-        allowed, reason = self._policy_allows(
-            policy,
-            tool_name=backend_name,
-            groups=groups,
-        )
-        return allowed, {
-            "agent_kind": "worker",
-            "agent_id": str(worker_id),
-            "tool_name": backend_name,
-            "groups": groups,
-            "reason": reason,
-        }
 
 
 tool_access_store = ToolAccessStore()

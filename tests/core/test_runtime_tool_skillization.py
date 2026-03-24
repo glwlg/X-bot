@@ -5,14 +5,84 @@ import pytest
 
 from core.orchestrator_runtime_tools import RuntimeToolAssembler, ToolCallDispatcher
 import core.orchestrator_runtime_tools as runtime_tools_module
+from core.tool_registry import ToolRegistry
+
+
+def test_tool_registry_builds_skill_tools_from_loader_metadata(monkeypatch):
+    monkeypatch.setattr(
+        "core.tool_registry.skill_loader.get_tool_exports",
+        lambda: [
+            {
+                "name": "queue_status",
+                "description": "Query queue status",
+                "parameters": {"type": "object", "properties": {}},
+                "handler": "manager.queue.status",
+                "allowed_roles": ["manager"],
+            },
+            {
+                "name": "subagent_only_demo",
+                "description": "Subagent-only tool",
+                "parameters": {"type": "object", "properties": {}},
+                "handler": "subagent.demo",
+                "allowed_roles": ["subagent"],
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        "core.tool_registry.skill_loader.get_tool_export",
+        lambda name: {
+            "queue_status": {
+                "name": "queue_status",
+                "description": "Query queue status",
+                "parameters": {"type": "object", "properties": {}},
+                "handler": "manager.queue.status",
+                "allowed_roles": ["manager"],
+            }
+        }.get(name),
+    )
+
+    registry = ToolRegistry()
+
+    manager_tools = registry.get_skill_tools(runtime_role="manager")
+    subagent_tools = registry.get_skill_tools(runtime_role="subagent")
+    binding = registry.get_skill_tool_binding("queue_status", runtime_role="manager")
+
+    assert [item["name"] for item in manager_tools] == ["queue_status"]
+    assert [item["name"] for item in subagent_tools] == ["subagent_only_demo"]
+    assert binding["handler"] == "manager.queue.status"
 
 
 @pytest.mark.asyncio
-async def test_runtime_tool_assembler_only_injects_primitives_and_load_skill():
+async def test_runtime_tool_assembler_injects_manager_skill_tools():
     assembler = RuntimeToolAssembler(
         runtime_user_id="u-1",
         platform_name="telegram",
         runtime_tool_allowed=lambda **_kwargs: True,
+    )
+
+    tools = await assembler.assemble()
+    names = [tool["name"] for tool in tools]
+
+    assert {"read", "write", "edit", "bash", "load_skill"} <= set(names)
+    assert {
+        "await_subagents",
+        "codex_session",
+        "git_ops",
+        "gh_cli",
+        "repo_workspace",
+        "send_local_file",
+        "spawn_subagent",
+        "task_tracker",
+    } <= set(names)
+
+
+@pytest.mark.asyncio
+async def test_runtime_tool_assembler_keeps_subagent_surface_without_manager_control_plane_tools():
+    assembler = RuntimeToolAssembler(
+        runtime_user_id="subagent::subagent-main::u-1",
+        platform_name="subagent_kernel",
+        runtime_tool_allowed=lambda **_kwargs: True,
+        allowed_tool_names={"read", "write", "edit", "bash", "load_skill"},
     )
 
     tools = await assembler.assemble()
@@ -27,14 +97,13 @@ async def test_dispatcher_accepts_manager_runtime_only_tools_after_skill_load(
 ):
     captured = {}
 
-    async def fake_software_delivery(**kwargs):
+    async def fake_codex_session(**kwargs):
         captured.update(dict(kwargs))
         return {"ok": True, "summary": "ok"}
 
     monkeypatch.setattr(
-        runtime_tools_module.dev_tools,
-        "software_delivery",
-        fake_software_delivery,
+        "core.skill_tool_handlers.codex_tools.codex_session",
+        fake_codex_session,
     )
 
     async def append_event(_event: str):
@@ -59,37 +128,38 @@ async def test_dispatcher_accepts_manager_runtime_only_tools_after_skill_load(
             "edit",
             "bash",
             "load_skill",
-            "list_workers",
-            "dispatch_worker",
-            "worker_status",
-            "software_delivery",
+            "await_subagents",
+            "spawn_subagent",
+            "repo_workspace",
+            "codex_session",
+            "git_ops",
+            "gh_cli",
         },
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
     dispatcher.set_available_tool_names({"read", "write", "edit", "bash", "load_skill"})
 
     result = await dispatcher.execute(
-        name="software_delivery",
-        args={"action": "status", "task_id": "dev-1"},
+        name="codex_session",
+        args={"action": "status", "session_id": "cx-1"},
         execution_policy=None,
         started=time.perf_counter(),
     )
 
     assert result["ok"] is True
     assert captured["action"] == "status"
-    assert captured["task_id"] == "dev-1"
+    assert captured["session_id"] == "cx-1"
 
 
 @pytest.mark.asyncio
-async def test_dispatcher_keeps_runtime_only_management_tools_blocked_for_worker():
+async def test_dispatcher_blocks_subagent_control_plane_for_subagent_runtime():
     async def append_event(_event: str):
         return None
 
     dispatcher = ToolCallDispatcher(
-        runtime_user_id="worker::worker-main::u-1",
-        platform_name="worker_kernel",
+        runtime_user_id="subagent::subagent-main::u-1",
+        platform_name="subagent_kernel",
         task_id="task-2",
         task_inbox_id="",
         task_workspace_root="/tmp",
@@ -101,15 +171,14 @@ async def test_dispatcher_keeps_runtime_only_management_tools_blocked_for_worker
         tool_broker=object(),
         runtime_tool_allowed=lambda **kwargs: kwargs.get("tool_name")
         in {"read", "write", "edit", "bash", "load_skill"},
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
     dispatcher.set_available_tool_names({"read", "write", "edit", "bash", "load_skill"})
 
     result = await dispatcher.execute(
-        name="software_delivery",
-        args={"action": "status"},
+        name="spawn_subagent",
+        args={"goal": "parallelize", "allowed_tools": ["bash"]},
         execution_policy=None,
         started=time.perf_counter(),
     )
@@ -139,7 +208,7 @@ async def test_load_skill_sets_bash_cwd_for_relative_entrypoint(monkeypatch):
     async def append_event(_event: str):
         return None
 
-    skill_dir = "/tmp/skills/daily_query"
+    skill_dir = "/tmp/extension/skills/daily_query"
     monkeypatch.setattr(
         runtime_tools_module.skill_loader,
         "get_skill",
@@ -152,8 +221,8 @@ async def test_load_skill_sets_bash_cwd_for_relative_entrypoint(monkeypatch):
     )
 
     dispatcher = ToolCallDispatcher(
-        runtime_user_id="worker::worker-main::u1",
-        platform_name="worker_kernel",
+        runtime_user_id="subagent::subagent-main::u1",
+        platform_name="subagent_kernel",
         task_id="task-6",
         task_inbox_id="",
         task_workspace_root="/tmp",
@@ -168,7 +237,6 @@ async def test_load_skill_sets_bash_cwd_for_relative_entrypoint(monkeypatch):
         runtime=object(),
         tool_broker=_FakeToolBroker(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -194,14 +262,68 @@ async def test_load_skill_sets_bash_cwd_for_relative_entrypoint(monkeypatch):
     assert captured["name"] == "bash"
     assert captured["args"]["cwd"] == skill_dir
     assert captured["args"]["command"].startswith("export ")
-    assert "X_BOT_RUNTIME_USER_ID=u1" in captured["args"]["command"]
-    assert "X_BOT_RUNTIME_SOURCE_USER_ID=source-user-1" in captured["args"]["command"]
-    assert "X_BOT_RUNTIME_PLATFORM=worker_kernel" in captured["args"]["command"]
-    assert "X_BOT_RUNTIME_CHAT_ID=chat-99" in captured["args"]["command"]
 
 
 @pytest.mark.asyncio
-async def test_bash_env_prefers_forced_worker_delivery_target(monkeypatch):
+async def test_load_skill_blocks_manager_only_skill_for_subagent(monkeypatch):
+    async def append_event(_event: str):
+        return None
+
+    monkeypatch.setattr(
+        runtime_tools_module.skill_loader,
+        "get_skill",
+        lambda _skill_name: {
+            "name": "skill_manager",
+            "allowed_roles": ["manager"],
+            "contract": {"runtime_target": "manager"},
+            "skill_md_content": "# Skill Manager",
+            "skill_dir": "/tmp/extension/skills/skill_manager",
+            "entrypoint": "scripts/execute.py",
+        },
+    )
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="subagent::subagent-main::u1",
+        platform_name="subagent_kernel",
+        task_id="task-7",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(
+            message=SimpleNamespace(
+                text="管理技能",
+                user=SimpleNamespace(id="source-user-1"),
+                chat=SimpleNamespace(id="chat-99"),
+            ),
+            user_data={},
+        ),
+        runtime=object(),
+        tool_broker=object(),
+        runtime_tool_allowed=lambda **kwargs: (
+            (
+                False,
+                {"reason": "matched_deny_list"},
+            )
+            if kwargs.get("tool_name") == "ext_skill_manager"
+            else True
+        ),
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"load_skill"})
+
+    result = await dispatcher.execute(
+        name="load_skill",
+        args={"skill_name": "skill_manager"},
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert result["ok"] is False
+    assert result["error_code"] == "skill_policy_blocked"
+
+
+@pytest.mark.asyncio
+async def test_bash_env_prefers_forced_subagent_delivery_target(monkeypatch):
     captured = {}
 
     class _FakeToolBroker:
@@ -229,19 +351,18 @@ async def test_bash_env_prefers_forced_worker_delivery_target(monkeypatch):
         task_workspace_root="/tmp",
         ctx=SimpleNamespace(
             message=SimpleNamespace(
-                text="派发 worker 任务",
+                text="启动子任务",
                 user=SimpleNamespace(id="user-origin-7"),
                 chat=SimpleNamespace(id="chat-origin-7"),
             ),
             user_data={
-                "worker_delivery_platform": "discord",
-                "worker_delivery_chat_id": "discord-target-8",
+                "subagent_delivery_platform": "discord",
+                "subagent_delivery_chat_id": "discord-target-8",
             },
         ),
         runtime=object(),
         tool_broker=_FakeToolBroker(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -304,7 +425,6 @@ async def test_bash_env_export_wraps_chained_commands(monkeypatch):
         runtime=object(),
         tool_broker=_FakeToolBroker(),
         runtime_tool_allowed=lambda **_kwargs: True,
-        record_tool_profile=lambda *_args, **_kwargs: None,
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
@@ -313,7 +433,7 @@ async def test_bash_env_export_wraps_chained_commands(monkeypatch):
     result = await dispatcher.execute(
         name="bash",
         args={
-            "command": "cd skills/builtin/worker_management && python scripts/execute.py dispatch hi"
+            "command": "cd skills/builtin/deployment_manager && python scripts/execute.py help"
         },
         execution_policy=None,
         started=time.perf_counter(),
@@ -323,6 +443,7 @@ async def test_bash_env_export_wraps_chained_commands(monkeypatch):
     assert captured["name"] == "bash"
     assert captured["args"]["command"].startswith("export ")
     assert "X_BOT_RUNTIME_CHAT_ID=chat-chain-1" in captured["args"]["command"]
-    assert "&& cd skills/builtin/worker_management && python scripts/execute.py dispatch hi" in captured[
-        "args"
-    ]["command"]
+    assert (
+        "&& cd skills/builtin/deployment_manager && python scripts/execute.py help"
+        in captured["args"]["command"]
+    )

@@ -1,185 +1,306 @@
-# X-Bot
+# Ikaros
 
-**X-Bot** 是一个具有 **自进化能力** 的全能型 AI 智能体，集成了媒体下载、多模态对话、文档分析、语音交互和 AI 绘图功能。
+Ikaros 是一个 Python 多平台 AI Bot，当前采用 `Core Manager + API Service + Extension Runtime` 架构。
 
-它不仅仅是一个下载工具或简单的 AI 问答机器人，而是一个能够通过自主学习不断扩展能力的**智能生命体**。
+- `ikaros`：唯一用户可见的 Core Manager，负责请求编排、任务治理、模型路由、心跳、状态访问和 extension runtime
+- `ikaros-api`：FastAPI + SPA，提供 Web/API 能力
 
-![logo](logo.png) 
+运行时状态统一落在 `data/` 下，主体仍是文件系统优先；需要聚合查询的部分使用 `data/bot_data.db` 做 SQLite 存储。
 
-## 🏗️ 系统架构
+![logo](logo.png)
 
-> **开发者说明**：详细的系统架构图、模块说明及开发指南，请参阅独立的开发文档：
-> 
-> 📚 **[X-Bot 开发手册 (DEVELOPMENT.md)](DEVELOPMENT.md)**
-> 🔍 **[Web Search 服务配置指南 (docs/web_search_config.md)](docs/web_search_config.md)**
+## 当前能力
 
-## 🌍 支持平台
+- 多平台接入：Telegram、Discord、钉钉 Stream、微信 iLink，以及独立 Web/API 服务
+- 多模态交互：文本、图片、视频、语音、文档输入
+- Extension 分层：
+  - `extension/skills`：skill 真源，继续使用 `SKILL.md` 描述 SOP、参数契约和 `tool_exports`
+  - `extension/channels`：渠道扩展，负责注册 adapter、消息路由和渠道专属命令
+  - `extension/memories`：长期记忆 provider 扩展，启动时必须且只能有一个 active provider
+  - `extension/plugins`：普通扩展，承接控制面命令、菜单和其他 runtime 注入能力
+- 任务治理：真实任务具备 task/session/heartbeat 闭环，普通闲聊不写入 `task_inbox`
+- 模型配置：统一使用 `config/models.json`，支持在聊天内通过 `/model` 查看和切换
+- LLM 用量统计：通过 `/usage` 查看按天 + 会话 + 模型聚合的 token 使用；数据持久化到 `data/bot_data.db`
+- Manager 开发链路：仓库类任务优先使用 `repo_workspace`、`codex_session`、`git_ops`、`gh_cli`
 
-X-Bot 现已支持多平台运行，一套代码，无缝体验：
+## 架构概览
 
-- **Telegram Bot**: 经典体验，功能最全，支持复杂的会话和菜单交互。
-- **Discord Bot**: 全新支持，流畅的 AI 对话，高清视频下载，原生 Button 交互。
+### 1. Core Manager
 
+Manager 是系统统一入口，负责：
 
-## ✨ 核心功能
+- 接收平台消息、命令和回调
+- 组装提示词、SOUL、上下文和工具面
+- 路由请求、缩圈 skill、维护 task/session/heartbeat
+- 执行普通用户请求
+- 在必要时启动同进程内的受控 `subagent`
+- 初始化 extension runtime，并按顺序加载 memory、channel、skill、plugin 四类扩展
 
-### 🤖 强大的 AI 能力
--   **多轮智能对话**：基于 OpenAI 对话模型，支持深层上下文理解。
--   **🧠 长期记忆 (New)**：
-    -   **个性化记忆**：自动记住你的偏好、习惯和重要信息（如“我住在北京”，“不要吃辣”）。
-    -   **隐私隔离**：采用**物理级文件隔离**架构，每个用户的记忆存储在独立的加密空间，绝无数据混淆风险。
--   **多模态分析**：
-    -   **图片分析**：发送图片，AI 识别内容并回答问题。
-    -   **视频分析**：发送视频，AI 理解画面并进行总结或问答。
-    -   **语音/音频分析**：支持语音消息及 .m4a/.mp3 等音频文件，自动转录并回复（支持 Caption 指令）。
-    -   **文档分析**：支持 PDF 和 DOCX 文档，提取内容并回答相关问题。
--   **🌐 高可靠网络搜索 (New)**：内置 Exa, Tavily, DuckDuckGo, SearXNG 等全免费容灾后撤（Fallback）搜索引擎池，并智能截取网页摘要。
--   **🎨 AI 绘图 (New)**：
-    -   **官方模型**：集成 OpenAI **gpt-image-1**，生成质量极高。
-    -   **简单指令**：只需说 "画一只猫" 或 "生成赛博朋克风格的街道"。
-    -   **独立通道**：支持配置独立的官方 API Key，与对话 LLM 隔离，确保稳定性。
+### 2. API Service
 
-### 📹 全能媒体下载
--   **支持平台**：YouTube, X (Twitter), Instagram, TikTok, Bilibili 等。
--   **多种格式**：支持下载高清视频或仅提取音频 (MP3)。
--   **智能处理**：
-    -   **秒传技术**：智能文件缓存与去重，已下载内容无需重复下载。
-    -   **大文件提示**：若视频/音频超过 Telegram 20MB 下载限制，Bot 会给出友好提示。
+`ikaros-api` 负责：
 
-### 📊 数据持久化
--   **文件系统存储**：用户对话、订阅、提醒与偏好数据持久化到 `data/` 目录。
--   **Docker 卷映射**：重启容器不丢失任何数据。
+- `/api/v1/*` 路由
+- Web 认证、绑定、记账等 API 能力
+- 前端静态资源与 SPA fallback
 
-## ✨ 进阶功能
+### 3. Extension Runtime
 
-### 📈 股票盯盘 (New)
--   **实时监控**：在交易时段（美股/港股/A股）实时监控自选股价格。
--   **智能推送**：当股价发生显著波动时自动推送消息。
--   **指令**：使用 `/watchlist` 管理自选股。
+extension runtime 由 `src/core/extension_runtime.py` 和 `src/core/extension_base.py` 提供统一注册面。  
+Core 只暴露运行时基础设施，不再在 core 里硬编码 channel / memory / skill 业务注册分支。
 
-### 🌍 沉浸式翻译
--   **双向翻译**：开启后，自动将外语翻译为中文，中文翻译为英文。
--   **无缝体验**：使用 `/translate` 开启/关闭，专为跨语言交流设计。
+基础注册能力包括：
 
-### 📢 订阅监控
--   **RSS/关键词监控**：使用 `/monitor <关键词>` 或 `/subscribe <URL>` 订阅感兴趣的内容。
--   **管理订阅**：
-    -   `监控列表` / `订阅列表`：查看当前所有任务。
-    -   `取消监控 <关键词>` / `取消订阅 <URL>`：移除不再需要的任务。
--   **自动推送**：Bot 每 30 分钟检查一次，发现新内容自动推送到聊天窗口。
+- `register_adapter(...)`
+- `register_command(...)`
+- `register_callback(...)`
+- `register_job(...)`
+- `on_startup(...)`
+- `on_shutdown(...)`
+- `activate_memory_provider(...)`
 
-### 💡 需求收集
--   **提交想法**：有新功能想要？使用 `/feature` 进入交互式需求提交模式。
--   **AI 生成文档**：Bot 会协助你完善需求，并自动生成结构化的需求文档。
+四类扩展的发现规则如下：
 
-### 📓 NotebookLM 知识库 (New)
--   **个人知识库**：上传 PDF/网页/文本，构建专属知识库。
--   **Deep Dive 播客**：一键生成两人对话风格的英文播客，深入浅出讲解复杂内容。
--   **专业问答**：基于可靠来源回答问题，杜绝幻觉，并提供引用来源。
--   **指令**：说 "NotebookLM" 或 "/help" 查看详细指令。
+- `extension/skills`
+  - 真源仍是 `SKILL.md`
+  - `extension/skills/registry.py` 扫描 `extension/skills/**/SKILL.md`
+  - skill metadata、prompt、trigger、`tool_exports` 继续从 `SKILL.md` 解析
+  - 如需动态注册命令 / 回调 / job，可在 skill 的 `scripts/*.py` 中定义 `SkillExtension` 子类
+  - `/skills`、`/reload_skills` 和 Telegram 的 `/teach` 流程由 skill registry 注入
 
-### 🛳️ 智能部署管家 (New)
--   **自然语言部署**:
-    -   发送 "部署项目"，内置的 **Smart Deployment Manager** 会自动接管。
-    -   **自主规划**: 自动拉取代码、生成配置、解决端口冲突、执行健康检查。
-    -   **安全策略**: 强制使用 20000+ 端口，优先 Docker Compose，杜绝随意构建镜像。
-    -   **静默体验**: 执行过程零打扰，仅在部署成功后汇报访问地址。
--   **服务管理**:
-    -   **查看状态**：发送 "列出运行的服务"，按项目分组显示容器状态。
-    -   **安全停止**：发送 "停止 xx 服务"，安全停止（Stop）容器，**绝不删除**数据。
+- `extension/channels`
+  - 渠道代码位于 `extension/channels/<platform>/channel.py`
+  - 通过 `ChannelExtension` 子类注册 adapter、消息分发和渠道命令
+  - 微信绑定 `/wxbind` 已归属 Weixin channel extension
 
-### 💬 Agentic Core - 真正的智能体 (New)
--   **所想即所得**：无需死记硬背指令，直接说出你的需求。
--   **智能决策**：
-    -   发送 "下载这个视频 https://..." -> 自动调用下载工具
-    -   发送 "10分钟后提醒我喝水" -> 自动设置提醒
-    -   发送 "部署仓库 https://..." -> 自动部署 Docker 服务
-    -   发送 "列出运行的服务" -> 自动查询 Docker 状态
-    -   发送 "订阅这个RSS https://..." -> 自动添加订阅
-    -   发送 "监控关键词 AI" -> 自动订阅 Google News
-    -   发送 "帮我关注英伟达股票" -> 自动添加自选股
-    -   发送 "列出我的订阅" -> 自动查询用户状态文件
+- `extension/memories`
+  - 通过 `MemoryExtension` 子类提供长期记忆 provider
+  - `extension/memories/registry.py` 只允许一个 enabled provider 激活
+  - `src/core/long_term_memory.py` 不再硬编码 provider switch
 
-### 🧑‍💻 Manager 软件交付能力 (New)
--   **需求到代码**：Manager 可根据自然语言需求生成并修改项目代码。
--   **Issue 驱动开发**：支持读取 GitHub Issue（正文/标签/评论）并按问题上下文实施修复或功能开发。
--   **自动交付链路**：支持实现后自动验证、提交代码、推送分支、创建 PR，并可回写 Issue 评论。
--   **任务可恢复**：开发任务状态持久化，支持中断后继续执行。
+- `extension/plugins`
+  - 普通扩展，没有额外抽象层
+  - 当前控制面命令和菜单由这里注入
 
-### 🧬 Skill 自进化系统 (V2)
--   **无师自通**：遇到未知指令（如 "查询 GitHub 最新 Commit"），Bot 会自动编写 Python 代码并热加载新技能，实现即时能力扩展。
--   **技能组合**：AI 懂得像搭积木一样组合现有技能。例如 "搜索并订阅 RSS" 会自动串联 `web_search` 和 `rss_subscribe`。
--   **自我修复**：如果生成的代码报错，Bot 会自动阅读错误日志、修正代码并重启服务，直至运行成功。
--   **深度研究**：支持 Deep Research 模式，自主进行大规模信息搜集、阅读与汇总，生成长篇深度报告。
--   **安全沙箱**：自动生成的代码运行在受限环境中，确保系统安全。
+### 4. 启动顺序
 
-## 🚀 快速部署
+当前 `src/main.py` 的启动链路为：
 
-### 1. 准备环境
-确保已安装 [Docker](https://docs.docker.com/get-docker/) 和 [Docker Compose](https://docs.docker.com/compose/install/)。
+1. 初始化数据库与基础状态存储
+2. 启动 scheduler，并加载持久化 reminder / cron job
+3. 初始化 extension runtime
+4. 激活唯一 memory extension，并初始化 `long_term_memory`
+5. 扫描 `extension/skills/**/SKILL.md`，建立 skill 索引
+6. 注册 channel extensions
+7. 注册 skill extensions 与 plugin extensions
+8. 启动动态 skill scheduler
+9. 运行 extension startup hooks，随后启动 adapters、heartbeat 和 subagent supervisor
 
-### 2. 获取配置
-创建一个 `.env` 文件（参考 `.env.example`）：
+约束：
 
-```env
-# Telegram (Optional)
-TELEGRAM_BOT_TOKEN="你的 Telegram Bot Token"
+- 所有用户入口注册必须在 adapter start 前完成
+- 新的用户侧业务入口不要写回 `src/main.py`
 
-# Discord (Optional)
-DISCORD_BOT_TOKEN="你的 Discord Bot Token"
+## 目录结构
 
-# OpenAI (https://platform.openai.com/)
-LLM_API_KEY="你的 API Key"
-CORE_MODEL="gpt-4o-mini"
-ROUTING_MODEL="gpt-4o-mini"
-CREATOR_MODEL="gpt-4o" # 用于生成 Skill 代码的强力模型
-OPENAI_IMAGE_MODEL="gpt-image-1"
+```text
+.
+├── src/
+│   ├── api/              # FastAPI + SPA
+│   ├── core/             # orchestrator、runtime、state、task、platform 抽象、extension runtime
+│   ├── handlers/         # 可复用的命令/消息处理逻辑
+│   ├── manager/          # manager 侧开发/规划/闭环服务
+│   ├── platforms/
+│   │   └── web/          # Web 前端与静态资源
+│   ├── services/         # AI、下载、搜索等外部服务集成
+│   └── shared/           # 跨模块通用契约与共享类型
+├── extension/
+│   ├── channels/         # Telegram / Discord / DingTalk / Weixin 渠道扩展
+│   ├── memories/         # file / mem0 等记忆扩展
+│   ├── plugins/          # 普通扩展
+│   └── skills/           # builtin + learned skills
+├── data/                 # 运行时状态与持久化数据
+├── config/               # 结构化运行配置
+├── tests/                # pytest 测试
+├── docker-compose.yml
+├── README.md
+└── DEVELOPMENT.md
 ```
 
-### 3. 一键启动
+补充说明：
+
+- Telegram / Discord / DingTalk / Weixin 的 bot 渠道实现已经迁到 `extension/channels/*`
+- `src/core/platform/` 只保留平台无关抽象、统一消息模型和 adapter registry
+- `src/platforms/web/` 保留 Web 前端与静态资源，不属于 bot 渠道扩展
+
+## 快速开始
+
+### 1. 准备配置
+
+```bash
+cp .env.example .env
+cp config/models.example.json config/models.json
+```
+
+`.env` 里至少按需填写：
+
+- `TELEGRAM_BOT_TOKEN`
+- `DISCORD_BOT_TOKEN`
+- `DINGTALK_CLIENT_ID`
+- `DINGTALK_CLIENT_SECRET`
+- `WEIXIN_ENABLE`
+- `WEIXIN_CDN_BASE_URL`
+- `ADMIN_USER_IDS`
+- `SEARXNG_URL`
+
+如需自定义模型配置文件位置，可设置：
+
+```bash
+MODELS_CONFIG_PATH="/absolute/path/to/models.json"
+```
+
+### 2. 配置模型
+
+模型配置统一使用 `config/models.json`，主要包含三部分：
+
+1. 当前角色模型
+   - `model.primary`
+   - `model.routing`
+   - `model.vision`
+   - `model.image_generation`
+   - `model.voice`
+2. 角色模型池
+   - `models.primary`
+   - `models.routing`
+   - `models.vision`
+   - `models.image_generation`
+   - `models.voice`
+3. provider 连接信息
+   - `providers.<provider>.baseUrl`
+   - `providers.<provider>.apiKey`
+   - `providers.<provider>.api`
+   - `providers.<provider>.models[]`
+
+其中：
+
+- `vision` 用于看图、看视频、识别表情包等多模态理解
+- `image_generation` 用于文生图
+- 旧键 `model.image` 仍保留兼容，但新配置应优先使用 `model.vision`
+
+### 3. 安装依赖
+
+```bash
+uv sync
+```
+
+### 4. 启动
+
+本地直接运行 Manager：
+
+```bash
+uv run python src/main.py
+```
+
+本地运行 API：
+
+```bash
+uv run uvicorn api.main:app --host 0.0.0.0 --port 8764
+```
+
+Docker 方式：
+
 ```bash
 docker compose up --build -d
+docker compose logs -f ikaros
+docker compose logs -f ikaros-api
 ```
 
-### 4. 数据管理
-所有持久化数据存储在 `./data`（文件状态）、`./downloads`（媒体）和 `./skills`（技能）目录。
+## 聊天内管理命令
 
-### 5. 权限管理
- Bot 启动后，管理员可以使用以下命令动态管理允许使用的用户白名单：
- - `/adduser <user_id> [备注]` : 添加用户到白名单
- - `/deluser <user_id>` : 从白名单移除用户
- - 所有白名单用户的权限数据将持久化保存在 `data/system/repositories/allowed_users.md`。
+当前命令来源按扩展层划分如下。
 
-### 6. Worker 执行层与 Coding Backend
-当前版本采用 Manager/Worker 硬分离架构：Manager 负责调度和编程能力，Worker 负责异步执行任务。
+### 1. `extension/plugins` 注入的控制面命令
 
-1. 选择 Worker 后端（示例）：
-```bash
-/worker backend worker-main codex
-# 或
-/worker backend worker-main gemini-cli
-```
+- `/start`
+- `/new`
+- `/help`
+- `/chatlog`
+- `/compact`
+- `/stop`
+- `/heartbeat`
+- `/task`
+- `/model`
+- `/usage`
 
-2. 若使用 `gemini-cli`，可在 `.env` 设置 `GEMINI_API_KEY` 并重启容器生效。
+### 2. `extension/skills` 注册器注入的技能管理命令
 
-3. `/worker auth` 指令已移除，不再通过聊天命令管理 Worker 认证流程。
+- `/skills`
+- `/reload_skills`
 
-## 🤖 使用指南
+### 3. 典型 builtin skill / channel 扩展命令
 
-### 常用命令
--   `/start` - 呼出主菜单
--   `/new` - 开启新话题（清除上下文）
--   `/image` - 快速进入画图模式
--   `/teach` - 教 Bot 新能力 (Core!)
--   `/skills` - 查看拥有的能力
--   `/feature` - 提交新功能需求
--   `/help` - 查看帮助信息
--   `/adduser` / `/deluser` - 用户权限管理（仅管理员）
+- `/acc`
+- `/account`
+- `/wxbind`
 
-### 交互方式
--   **直接对话**：像和真人聊天一样，直接说出你的需求。
--   **教它做事**：如果它不会，试着说 "/teach 教你查汇率"。
--   **多模态**：发送图片问 "这是什么"，发送视频说 "总结一下"。
+### 4. 平台特有流程
 
----
-Enjoy X-Bot! 🚀
+- Telegram 额外保留 `/feature`
+- Telegram skill 管理流包含 `/teach`
+- `/wxbind` 当前由 Weixin channel extension 注册，可在 Telegram / Weixin 管理员链路中使用
+
+### `/model`
+
+`/model` 用于查看和切换当前模型配置，支持文本命令和按钮菜单。
+
+常用形式：
+
+- `/model`
+- `/model show`
+- `/model list`
+- `/model list <role>`
+- `/model use <provider/model>`
+- `/model use <role> <provider/model>`
+
+支持角色：
+
+- `primary`
+- `routing`
+- `vision`
+- `image_generation`
+- `voice`
+
+### `/usage`
+
+`/usage` 用于查看 LLM 用量统计。统计口径：
+
+- 按 `天 + 会话 + 模型` 聚合
+- 所有通过 `get_client_for_model(...)`、`openai_async_client`、`openai_client` 发起的 OpenAI 兼容调用都会记账
+- 上游返回 `usage` 时使用真实 token
+- 上游未返回 `usage` 时，输入/输出 token 使用本地估算
+- 缓存命中与缓存写入只统计上游实际返回值
+
+统计数据写入：
+
+- `data/bot_data.db`
+
+## 运行时目录
+
+- `data/`：聊天、任务、记忆、心跳、审计、SQLite 聚合数据等运行时状态
+- `data/bot_data.db`：Web/API 与 LLM 用量等聚合型 SQLite 数据
+- `downloads/`：媒体下载产物
+- `extension/`：四类运行时扩展
+- `config/`：结构化运行配置，当前主要包括 `models.json`、`memory.json` 和 `deployment_targets.yaml`
+
+## 当前维护原则
+
+- 文档以当前实现为准，不保留未落地的旧架构描述
+- 普通用户执行统一走 Core Manager，不重新引入独立 Worker 执行面
+- 新的用户侧业务注册，不要写回 `src/main.py` 或 core 特化逻辑，优先通过 extension runtime 注入
+- skill 真源始终是 `extension/skills/**/SKILL.md`
+- channel / memory / plugin 扩展保持代码优先，不额外引入 manifest
+- 聚合统计优先使用有界表或按日分片，不再依赖单个无限增长的 `events.jsonl`
+
+## 开发文档
+
+- 架构与边界约束：[DEVELOPMENT.md](DEVELOPMENT.md)
