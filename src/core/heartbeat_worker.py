@@ -480,7 +480,18 @@ class HeartbeatWorker:
                 if not rss_refresh_attempted:
                     rss_refresh_attempted = True
                     try:
-                        from core.scheduler import trigger_manual_rss_check
+                        from core.skill_loader import skill_loader
+
+                        rss_module = skill_loader.import_skill_module("rss_subscribe")
+                        trigger_manual_rss_check = getattr(
+                            rss_module,
+                            "trigger_manual_rss_check",
+                            None,
+                        )
+                        if not callable(trigger_manual_rss_check):
+                            raise RuntimeError(
+                                "rss_subscribe.trigger_manual_rss_check unavailable"
+                            )
 
                         rss_refresh_text = str(
                             await trigger_manual_rss_check(
@@ -762,20 +773,22 @@ class HeartbeatWorker:
             and not has_stock_focus
         ):
             with contextlib.suppress(Exception):
-                from core.scheduler import is_trading_time
+                from core.skill_loader import skill_loader
                 from core.state_store import get_user_watchlist
 
-                if is_trading_time():
+                stock_module = skill_loader.import_skill_module("stock_watch")
+                is_trading_time = getattr(stock_module, "is_trading_time", None)
+                if callable(is_trading_time) and is_trading_time():
                     watchlist = await get_user_watchlist(numeric_user_id)
                     if watchlist:
                         specs.append(
-                        {
-                            "type": "stock_signal",
-                            "title": "股票行情检查",
-                            "goal": "获取用户自选股的最新行情并给出重点波动提醒。",
-                            "delivery_target": stock_delivery_target,
-                        }
-                    )
+                            {
+                                "type": "stock_signal",
+                                "title": "股票行情检查",
+                                "goal": "获取用户自选股的最新行情并给出重点波动提醒。",
+                                "delivery_target": stock_delivery_target,
+                            }
+                        )
 
         return specs
 

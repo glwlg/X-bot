@@ -412,6 +412,10 @@ class SkillLoader:
             frontmatter.get("platform_handlers"),
             default=False,
         )
+        scheduled_jobs = _as_bool(
+            frontmatter.get("scheduled_jobs"),
+            default=False,
+        )
         tool_exports = _normalize_tool_exports(
             frontmatter=frontmatter,
             markdown_content=markdown_content,
@@ -474,6 +478,7 @@ class SkillLoader:
             "tool_exports": tool_exports,
             "policy_groups": policy_groups,
             "platform_handlers": platform_handlers,
+            "scheduled_jobs": scheduled_jobs,
             "permissions": permissions_obj,
             "manager_only": manager_only,
             "allowed_roles": allowed_roles,
@@ -622,33 +627,93 @@ class SkillLoader:
             return True
         return False
 
-    def register_skill_handlers(self, adapter_manager: Any):
-        import importlib.util
+    def _load_skill_script_module(
+        self,
+        *,
+        skill_name: str,
+        skill_info: Dict[str, Any],
+        script_name: str = "execute.py",
+    ) -> Optional[Any]:
+        cached = self._loaded_modules.get(skill_name)
+        if cached is not None and script_name == "execute.py":
+            return cached
 
+        scripts = skill_info.get("scripts", [])
+        if script_name not in scripts:
+            return None
+
+        script_path = os.path.join(skill_info["skill_dir"], "scripts", script_name)
+        if not os.path.exists(script_path):
+            return None
+
+        try:
+            import importlib.util
+            import sys
+
+            module_name = (
+                f"skills.{skill_info['source']}.{skill_name}.scripts."
+                f"{script_name.replace('.py', '')}"
+            )
+            spec = importlib.util.spec_from_file_location(module_name, script_path)
+            if not spec or not spec.loader:
+                return None
+
+            module = importlib.util.module_from_spec(spec)
+            script_dir = os.path.dirname(script_path)
+            if script_dir not in sys.path:
+                sys.path.insert(0, script_dir)
+            spec.loader.exec_module(module)
+
+            if script_name == "execute.py":
+                self._loaded_modules[skill_name] = module
+            return module
+        except Exception as exc:
+            logger.error(
+                "Failed to import skill module %s/%s: %s",
+                skill_name,
+                script_name,
+                exc,
+            )
+            return None
+
+    def register_skill_handlers(self, adapter_manager: Any):
         for skill_name, info in self.get_skill_index().items():
             if not bool(info.get("platform_handlers")):
                 continue
-            scripts = info.get("scripts", [])
-            if "execute.py" not in scripts:
+
+            module = self._load_skill_script_module(
+                skill_name=skill_name,
+                skill_info=info,
+            )
+            if module is None or not hasattr(module, "register_handlers"):
                 continue
 
-            script_path = os.path.join(info["skill_dir"], "scripts", "execute.py")
-            module_name = f"skills.{info['source']}.{skill_name}.scripts.execute"
-
             try:
-                spec = importlib.util.spec_from_file_location(module_name, script_path)
-                if not spec or not spec.loader:
-                    continue
-
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-
-                if hasattr(module, "register_handlers"):
-                    module.register_handlers(adapter_manager)
-                    self._loaded_modules[skill_name] = module
+                module.register_handlers(adapter_manager)
             except Exception as exc:
                 logger.error(
                     "Failed to register handlers for skill %s: %s",
+                    skill_name,
+                    exc,
+                )
+
+    def register_skill_jobs(self, scheduler: Any):
+        for skill_name, info in self.get_skill_index().items():
+            if not bool(info.get("scheduled_jobs")):
+                continue
+
+            module = self._load_skill_script_module(
+                skill_name=skill_name,
+                skill_info=info,
+            )
+            if module is None or not hasattr(module, "register_jobs"):
+                continue
+
+            try:
+                module.register_jobs(scheduler)
+            except Exception as exc:
+                logger.error(
+                    "Failed to register jobs for skill %s: %s",
                     skill_name,
                     exc,
                 )
@@ -663,36 +728,15 @@ class SkillLoader:
             logger.warning("Skill not found: %s", skill_name)
             return None
 
-        script_path = os.path.join(skill_info["skill_dir"], "scripts", script_name)
-        if not os.path.exists(script_path):
-            logger.warning("Script not found: %s", script_path)
-            return None
-
-        try:
-            import importlib.util
-            import sys
-
-            module_name = (
-                f"skills.dynamic.{skill_name}.{script_name.replace('.py', '')}"
-            )
-            spec = importlib.util.spec_from_file_location(module_name, script_path)
-            if not spec or not spec.loader:
-                return None
-
-            module = importlib.util.module_from_spec(spec)
-            script_dir = os.path.dirname(script_path)
-            if script_dir not in sys.path:
-                sys.path.insert(0, script_dir)
-            spec.loader.exec_module(module)
-            return module
-        except Exception as exc:
-            logger.error(
-                "Failed to import skill module %s/%s: %s",
-                skill_name,
-                script_name,
-                exc,
-            )
-            return None
+        module = self._load_skill_script_module(
+            skill_name=skill_name,
+            skill_info=skill_info,
+            script_name=script_name,
+        )
+        if module is None:
+            script_path = os.path.join(skill_info["skill_dir"], "scripts", script_name)
+            logger.warning("Script not found or failed to import: %s", script_path)
+        return module
 
 
 skill_loader = SkillLoader()

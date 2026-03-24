@@ -10,6 +10,7 @@ triggers:
 - 转账
 - spend
 - income
+platform_handlers: true
 input_schema:
   type: object
   properties:

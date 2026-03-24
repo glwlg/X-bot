@@ -12,6 +12,7 @@ policy_groups:
 - research
 - feeds
 platform_handlers: true
+scheduled_jobs: true
 input_schema:
   type: object
   properties:

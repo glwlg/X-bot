@@ -56,8 +56,6 @@ from handlers import (
     handle_heartbeat_callback,
     task_command,
     handle_task_callback,
-    accounting_command,
-    handle_accounting_callback,
     model_command,
     handle_model_callback,
     usage_command,
@@ -75,7 +73,6 @@ from handlers.skill_handlers import (
 )
 from handlers.voice_handler import handle_voice_message
 from handlers.document_handler import handle_document
-from handlers.weixin_bind_handlers import weixin_bind_command
 
 # Multi-Channel Imports
 from core.platform.registry import adapter_manager
@@ -107,8 +104,6 @@ async def init_services() -> None:
         from core.scheduler import (
             scheduler,
             load_jobs_from_db,
-            start_rss_scheduler,
-            start_stock_scheduler,
             start_dynamic_skill_scheduler,
         )
 
@@ -118,18 +113,17 @@ async def init_services() -> None:
 
         # Initialize Jobs
         await load_jobs_from_db()
-        logger.info("Starting built-in stock and RSS schedulers.")
-        start_rss_scheduler()
-        start_stock_scheduler()
-        # 启动动态 Skill 定时任务
-        start_dynamic_skill_scheduler()
-        logger.info("✅ Schedulers started.")
 
         # 初始化 Skill 索引
         from core.skill_loader import skill_loader
 
         skill_loader.scan_skills()
         logger.info(f"Loaded {len(skill_loader.get_skill_index())} skills")
+        skill_loader.register_skill_jobs(scheduler)
+
+        # 启动动态 Skill 定时任务
+        start_dynamic_skill_scheduler()
+        logger.info("✅ Schedulers started.")
 
         from core.kernel_config_store import kernel_config_store
         from core.audit_store import audit_store
@@ -256,21 +250,12 @@ async def main():
     adapter_manager.on_command("stop", stop_command, description="停止当前任务")
     adapter_manager.on_command("heartbeat", heartbeat_command, description="管理心跳")
     adapter_manager.on_command("task", task_command, description="查看 Manager 任务")
-    adapter_manager.on_command("acc", accounting_command, description="快捷记账助手")
     adapter_manager.on_command("model", model_command, description="查看和切换模型")
     adapter_manager.on_command("usage", usage_command, description="查看 LLM 用量")
-    if tg_adapter and weixin_adapter:
-        tg_adapter.on_command(
-            "wxbind",
-            weixin_bind_command,
-            description="微信多绑定",
-            group=-2,
-        )
     adapter_manager.on_callback_query("^home_", handle_home_callback)
     adapter_manager.on_callback_query("^helpm_", handle_home_callback)
     adapter_manager.on_callback_query("^hbm_", handle_heartbeat_callback)
     adapter_manager.on_callback_query("^taskm_", handle_task_callback)
-    adapter_manager.on_callback_query("^accu_", handle_accounting_callback)
     adapter_manager.on_callback_query("^model_", handle_model_callback)
     adapter_manager.on_callback_query("^usagem_", handle_usage_callback)
     adapter_manager.on_callback_query("^chatlog_", handle_chatlog_callback)
@@ -410,8 +395,6 @@ async def main():
 
     # Register Weixin handlers
     if weixin_adapter:
-        weixin_adapter.on_command("wxbind", weixin_bind_command, description="微信多绑定")
-
         async def weixin_router(ctx):
             msg_type = ctx.message.type
             if msg_type == MessageType.IMAGE:

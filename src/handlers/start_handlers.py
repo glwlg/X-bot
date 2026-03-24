@@ -411,9 +411,19 @@ async def _dispatch_home_callback_data(ctx: UnifiedContext, data: str) -> int:
         if action == "accounting":
             if not await require_feature_access(ctx, "accounting"):
                 return CONVERSATION_END
-            from handlers.accounting_handlers import _build_accounting_info_payload
+            from core.skill_loader import skill_loader
 
-            payload, ui = await _build_accounting_info_payload(ctx)
+            module = skill_loader.import_skill_module("quick_accounting")
+            builder = getattr(module, "build_accounting_info_payload", None)
+            if not callable(builder):
+                await edit_callback_message(
+                    ctx,
+                    "❌ 记账技能当前不可用，请稍后重试。",
+                    ui=get_main_menu_ui(_access_flags(ctx)),
+                )
+                return CONVERSATION_END
+
+            payload, ui = await builder(ctx)
             await edit_callback_message(ctx, payload, ui=ui)
             return CONVERSATION_END
         if action == "chatlog":

@@ -4,6 +4,7 @@ Stock Watch Skill Script
 
 import argparse
 import asyncio
+import datetime
 import os
 import re
 import sys
@@ -23,6 +24,7 @@ from core.channel_access import channel_feature_denied_text, is_channel_feature_
 from core.state_store import (
     remove_watchlist_stock,
     get_user_watchlist,
+    get_all_watchlist_users,
     add_watchlist_stock,
     get_feature_delivery_target,
     set_feature_delivery_target,
@@ -46,6 +48,7 @@ else:
 
 logger = logging.getLogger(__name__)
 STOCK_MENU_NS = "stkm"
+STOCK_PUSH_INTERVAL_SEC = 10 * 60
 
 
 def _stock_enabled(ctx: UnifiedContext) -> bool:
@@ -197,7 +200,6 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> str:
     """执行自选股操作"""
     if not _stock_enabled(ctx):
         return {"text": channel_feature_denied_text("stock"), "ui": {}}
-    from core.scheduler import trigger_manual_stock_check
 
     user_id = ctx.message.user.id
     raw_action = params.get("action", "list")
@@ -246,6 +248,140 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> str:
         return await show_watchlist(ctx, user_id)
 
 
+def is_trading_time(now: datetime.datetime | None = None) -> bool:
+    """判断当前是否为 A 股交易时段。"""
+    current = now or datetime.datetime.now()
+    if current.weekday() >= 5:
+        return False
+
+    current_time = current.time()
+    return (
+        datetime.time(9, 30) <= current_time <= datetime.time(11, 30)
+        or datetime.time(13, 0) <= current_time <= datetime.time(15, 0)
+    )
+
+
+async def stock_push_job() -> None:
+    """交易时段定时推送自选股行情。"""
+    if not is_trading_time():
+        logger.debug("Not trading time, skipping stock push")
+        return
+
+    logger.info("Starting stock push job...")
+
+    from core.scheduler import (
+        _remember_proactive_delivery_target,
+        _resolve_proactive_delivery_target,
+        send_via_adapter,
+    )
+
+    try:
+        users_with_platform = await get_all_watchlist_users()
+        if not users_with_platform:
+            logger.info("No users with watchlist, skipping")
+            return
+
+        for user_id, platform in users_with_platform:
+            try:
+                watchlist = await get_user_watchlist(user_id)
+                if not watchlist:
+                    continue
+
+                stock_codes = [item["stock_code"] for item in watchlist]
+                quotes = await fetch_stock_quotes(stock_codes)
+                if not quotes:
+                    continue
+
+                message = format_stock_message(quotes)
+                stock_delivery_target = await get_feature_delivery_target(
+                    user_id, "stock"
+                )
+                target_platform, target_chat_id = await _resolve_proactive_delivery_target(
+                    user_id,
+                    platform,
+                    metadata=(
+                        {
+                            "resource_binding": {
+                                "platform": str(
+                                    stock_delivery_target.get("platform") or platform
+                                ),
+                                "chat_id": str(
+                                    stock_delivery_target.get("chat_id") or ""
+                                ).strip(),
+                            }
+                        }
+                        if str(stock_delivery_target.get("chat_id") or "").strip()
+                        else None
+                    ),
+                )
+                if not target_platform or not target_chat_id:
+                    logger.warning(
+                        "Stock push skipped: no delivery target for user=%s on %s",
+                        user_id,
+                        platform,
+                    )
+                    continue
+
+                await send_via_adapter(
+                    chat_id=target_chat_id,
+                    text=message,
+                    platform=target_platform,
+                    user_id=user_id,
+                    record_history=True,
+                )
+                await _remember_proactive_delivery_target(
+                    user_id,
+                    target_platform,
+                    target_chat_id,
+                )
+                logger.info(
+                    "Sent stock quotes to user %s on %s",
+                    user_id,
+                    target_platform,
+                )
+            except Exception as exc:
+                logger.error(
+                    "Failed to send stock quotes to %s on %s: %s",
+                    user_id,
+                    platform,
+                    exc,
+                )
+    except Exception as exc:
+        logger.error("Stock push job error: %s", exc)
+
+
+async def trigger_manual_stock_check(user_id: int | str) -> str:
+    """手动刷新指定用户的自选股行情。"""
+    try:
+        watchlist = await get_user_watchlist(user_id)
+        if not watchlist:
+            return ""
+
+        stock_codes = [item["stock_code"] for item in watchlist]
+        quotes = await fetch_stock_quotes(stock_codes)
+        if not quotes:
+            return "❌ 无法获取行情数据，请稍后重试。"
+        return format_stock_message(quotes)
+    except Exception as exc:
+        logger.error("Manual stock check error for %s: %s", user_id, exc)
+        return f"❌ 刷新失败: {str(exc)}"
+
+
+def register_jobs(scheduler) -> None:
+    scheduler.add_job(
+        stock_push_job,
+        "interval",
+        seconds=STOCK_PUSH_INTERVAL_SEC,
+        next_run_time=datetime.datetime.now() + datetime.timedelta(seconds=5),
+        id="skill_stock_watch_push",
+        replace_existing=True,
+    )
+    logger.info(
+        "Registered stock_watch scheduled job: interval=%ss",
+        STOCK_PUSH_INTERVAL_SEC,
+    )
+
+
 def register_handlers(adapter_manager):
     """注册 Stock 二级命令和 Callback"""
     from core.config import is_user_allowed
@@ -280,8 +416,6 @@ def register_handlers(adapter_manager):
             return await remove_stock(ctx, user_id, name)
 
         if sub == "refresh":
-            from core.scheduler import trigger_manual_stock_check
-
             result = await trigger_manual_stock_check(user_id)
             if result:
                 return {
@@ -497,8 +631,6 @@ async def handle_stock_select_callback(ctx: UnifiedContext) -> None:
         elif action == "list":
             payload = await show_watchlist(ctx, user_id, include_menu_nav=True)
         elif action == "refresh":
-            from core.scheduler import trigger_manual_stock_check
-
             result = await trigger_manual_stock_check(user_id)
             payload = {
                 "text": (

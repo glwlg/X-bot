@@ -11,6 +11,7 @@ triggers:
 policy_groups:
 - finance
 platform_handlers: true
+scheduled_jobs: true
 input_schema:
   type: object
   properties: {}

@@ -494,7 +494,7 @@ class DiscordAdapter(BotAdapter):
                 # Cache miss, 尝试从 API 获取
                 try:
                     channel = await self.client.fetch_channel(chat_id)
-                except discord.NotFound, discord.Forbidden:
+                except (discord.NotFound, discord.Forbidden):
                     pass
 
             if channel:
