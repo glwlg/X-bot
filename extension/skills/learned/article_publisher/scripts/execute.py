@@ -832,6 +832,118 @@ def _format_opencli_publish_error(
     return "; ".join(part for part in parts if part) or "unknown opencli publish error"
 
 
+def _opencli_doctor_connected(output_text: str) -> bool:
+    normalized = str(output_text or "").strip().lower()
+    return (
+        "[ok] extension: connected" in normalized
+        and "[ok] connectivity: connected" in normalized
+    )
+
+
+def _opencli_has_xiaohongshu_session(output_text: str) -> bool:
+    normalized = str(output_text or "").strip().lower()
+    return "site:xiaohongshu" in normalized
+
+
+def _format_opencli_command_error(
+    *,
+    action: str,
+    code: int | None = None,
+    stdout: str = "",
+    stderr: str = "",
+    detail: str = "",
+) -> str:
+    parts: list[str] = [action]
+    if detail:
+        parts.append(detail)
+    if code not in (None, 0):
+        parts.append(f"exit={code}")
+    stderr_summary = _condense_command_output(stderr)
+    stdout_summary = _condense_command_output(stdout)
+    if stderr_summary:
+        parts.append(f"stderr={stderr_summary}")
+    elif stdout_summary:
+        parts.append(f"stdout={stdout_summary}")
+    return "; ".join(part for part in parts if part)
+
+
+async def _ensure_xiaohongshu_opencli_session(
+    opencli_path: str,
+    *,
+    phase: str,
+    force_warmup: bool,
+) -> str:
+    try:
+        doctor_code, doctor_stdout, doctor_stderr = await _run_subprocess(
+            [opencli_path, "doctor", "--sessions"],
+            timeout_seconds=20.0,
+        )
+    except Exception as exc:
+        return f"⚠️ 发布中止：{phase}无法执行 `opencli doctor --sessions`：{exc}"
+
+    doctor_text = "\n".join(
+        part for part in (doctor_stdout, doctor_stderr) if str(part or "").strip()
+    ).strip()
+    doctor_summary = _condense_command_output(doctor_text) or "unknown doctor output"
+
+    if doctor_code != 0:
+        return (
+            f"⚠️ 发布中止：{phase}检测到 opencli 会话异常："
+            + _format_opencli_command_error(
+                action="doctor --sessions",
+                code=doctor_code,
+                stdout=doctor_stdout,
+                stderr=doctor_stderr,
+            )
+        )
+
+    if not _opencli_doctor_connected(doctor_text):
+        return (
+            f"⚠️ 发布中止：{phase}检测到 opencli bridge 未连接：{doctor_summary}"
+        )
+
+    if not force_warmup and _opencli_has_xiaohongshu_session(doctor_text):
+        return ""
+
+    warmup_errors: list[str] = []
+    for attempt in range(2):
+        cmd = [opencli_path, "xiaohongshu", "creator-profile", "-f", "json"]
+        logger.info(
+            "opencli xiaohongshu warmup attempt %s starting (%s): %s",
+            attempt + 1,
+            phase,
+            " ".join(cmd),
+        )
+        code, stdout, stderr = await _run_subprocess(cmd, timeout_seconds=90.0)
+        logger.info(
+            "opencli xiaohongshu warmup attempt %s finished (%s): code=%s stdout=%s stderr=%s",
+            attempt + 1,
+            phase,
+            code,
+            _condense_command_output(stdout) or "<empty>",
+            _condense_command_output(stderr) or "<empty>",
+        )
+        if code == 0 and str(stdout or "").strip():
+            return ""
+
+        warmup_errors.append(
+            _format_opencli_command_error(
+                action=f"creator-profile warmup {attempt + 1}",
+                code=code,
+                stdout=stdout,
+                stderr=stderr,
+            )
+        )
+        if attempt == 0:
+            await asyncio.sleep(2)
+
+    return (
+        f"⚠️ 发布中止：{phase}小红书会话预热失败："
+        + "；".join(warmup_errors)
+        + f"；doctor={doctor_summary}"
+    )
+
+
 async def _prepare_xiaohongshu_opencli() -> str:
     opencli_path = _resolve_opencli_path()
     if not opencli_path:
@@ -846,7 +958,11 @@ async def _prepare_xiaohongshu_opencli() -> str:
     if code != 0:
         detail = _condense_command_output(stderr) or "未知错误"
         return f"⚠️ 发布中止：`opencli` 小红书发布子命令不可用：{detail}"
-    return ""
+    return await _ensure_xiaohongshu_opencli_session(
+        opencli_path,
+        phase="预检阶段",
+        force_warmup=False,
+    )
 
 
 class WeChatPublisher:
@@ -988,6 +1104,14 @@ async def _publish_to_xiaohongshu(
     opencli_path = _resolve_opencli_path()
     if not opencli_path:
         return "❌ 小红书发布中止：未找到 `opencli` 命令。"
+
+    session_error = await _ensure_xiaohongshu_opencli_session(
+        opencli_path,
+        phase="发布前",
+        force_warmup=True,
+    )
+    if session_error:
+        raise RuntimeError(session_error.removeprefix("⚠️ 发布中止：").strip())
 
     publish_images: list[tuple[str, bytes]] = []
     if cover_bytes:

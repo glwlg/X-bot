@@ -20,6 +20,7 @@ Usage:
 Options:
   --system               Install a system service under /etc/systemd/system (default)
   --user                 Install a user service under ~/.config/systemd/user
+  --runner PATH          Runner script to execute (default: scripts/run_ikaros.sh)
   --target-user USER     Override the inferred runtime user for --system mode
   --service-name NAME    Override the unit name (default: ikaros)
   --print-unit           Print the rendered unit file instead of installing it
@@ -72,6 +73,22 @@ infer_target_user() {
     exit 1
 }
 
+normalize_runner_path() {
+    local input
+    input="$1"
+    if [[ "${input}" == /* ]]; then
+        printf '%s\n' "${input}"
+        return 0
+    fi
+
+    local candidate
+    candidate="${PROJECT_DIR}/${input#./}"
+    (
+        cd "$(dirname "${candidate}")" >/dev/null 2>&1
+        printf '%s/%s\n' "$(pwd)" "$(basename "${candidate}")"
+    )
+}
+
 render_system_unit() {
     local runtime_user runtime_uid runtime_gid
     runtime_user="$(infer_target_user)"
@@ -80,7 +97,7 @@ render_system_unit() {
 
     cat <<EOF
 [Unit]
-Description=Ikaros Ikaros
+Description=Ikaros ${SERVICE_NAME} service
 After=network-online.target docker.service
 Wants=network-online.target
 
@@ -102,7 +119,7 @@ EOF
 render_user_unit() {
     cat <<EOF
 [Unit]
-Description=Ikaros Ikaros
+Description=Ikaros ${SERVICE_NAME} service
 After=network-online.target
 Wants=network-online.target
 
@@ -201,11 +218,6 @@ print_next_steps() {
 }
 
 main() {
-    require_command systemctl
-    require_command install
-    require_command stat
-    require_command id
-
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --system)
@@ -213,6 +225,14 @@ main() {
                 ;;
             --user)
                 INSTALL_MODE="user"
+                ;;
+            --runner)
+                if [[ $# -lt 2 || -z "${2:-}" ]]; then
+                    echo "--runner requires a value." >&2
+                    exit 1
+                fi
+                RUNNER_PATH="${2:-}"
+                shift
                 ;;
             --target-user)
                 if [[ $# -lt 2 || -z "${2:-}" ]]; then
@@ -249,9 +269,16 @@ main() {
         shift
     done
 
+    require_command systemctl
+    require_command install
+    require_command stat
+    require_command id
+
     if [[ "${INSTALL_MODE}" == "system" && "${EUID}" -ne 0 ]]; then
         require_command sudo
     fi
+
+    RUNNER_PATH="$(normalize_runner_path "${RUNNER_PATH}")"
 
     if [[ ! -x "${RUNNER_PATH}" ]]; then
         chmod +x "${RUNNER_PATH}"
