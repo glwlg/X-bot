@@ -13,7 +13,7 @@ class Mem0LongTermMemoryProvider:
     def __init__(self, settings: dict[str, Any] | None = None):
         self.settings = dict(settings or {})
         self._memory: Any = None
-        self._manager_agent_id = "core-manager"
+        self._ikaros_agent_id = "core-ikaros"
 
     async def initialize(self) -> None:
         try:
@@ -40,7 +40,7 @@ class Mem0LongTermMemoryProvider:
             raise RuntimeError(f"failed to initialize mem0 AsyncMemory: {exc}") from exc
 
         try:
-            await self._memory.get_all(agent_id=self._manager_agent_id)
+            await self._memory.get_all(agent_id=self._ikaros_agent_id)
         except Exception as exc:
             raise RuntimeError(f"failed to verify mem0 provider: {exc}") from exc
 
@@ -51,7 +51,7 @@ class Mem0LongTermMemoryProvider:
 
     async def list_user_items(self, user_id: str) -> list[MemoryItem]:
         payload = await self._require_memory().get_all(user_id=str(user_id))
-        return self._normalize_items(payload, parse_manager_day=False)
+        return self._normalize_items(payload, parse_ikaros_day=False)
 
     async def add_user_items(
         self, user_id: str, items: list[MemoryItem]
@@ -69,11 +69,11 @@ class Mem0LongTermMemoryProvider:
             added.append({"text": text, "metadata": {}, "created_at": ""})
         return added
 
-    async def list_manager_items(self) -> list[MemoryItem]:
-        payload = await self._require_memory().get_all(agent_id=self._manager_agent_id)
-        return self._normalize_items(payload, parse_manager_day=True)
+    async def list_ikaros_items(self) -> list[MemoryItem]:
+        payload = await self._require_memory().get_all(agent_id=self._ikaros_agent_id)
+        return self._normalize_items(payload, parse_ikaros_day=True)
 
-    async def add_manager_items(self, items: list[MemoryItem]) -> list[MemoryItem]:
+    async def add_ikaros_items(self, items: list[MemoryItem]) -> list[MemoryItem]:
         memory = self._require_memory()
         added: list[MemoryItem] = []
         for item in items:
@@ -87,7 +87,7 @@ class Mem0LongTermMemoryProvider:
             content = f"[{day}] {text}" if day else text
             await memory.add(
                 messages=[{"role": "assistant", "content": content}],
-                agent_id=self._manager_agent_id,
+                agent_id=self._ikaros_agent_id,
             )
             normalized: MemoryItem = {"text": text, "metadata": {}, "created_at": ""}
             if day:
@@ -126,7 +126,7 @@ class Mem0LongTermMemoryProvider:
 
     @classmethod
     def _normalize_items(
-        cls, payload: Any, *, parse_manager_day: bool
+        cls, payload: Any, *, parse_ikaros_day: bool
     ) -> list[MemoryItem]:
         items: list[MemoryItem] = []
         for row in cls._extract_rows(payload):
@@ -134,7 +134,7 @@ class Mem0LongTermMemoryProvider:
             if not text:
                 continue
             metadata: dict[str, Any] = {}
-            if parse_manager_day:
+            if parse_ikaros_day:
                 match = re.match(r"^\[(\d{4}-\d{2}-\d{2})\]\s*(.+)$", text)
                 if match:
                     metadata["day"] = match.group(1)

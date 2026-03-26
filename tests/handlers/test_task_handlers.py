@@ -64,7 +64,7 @@ def _reset_task_inbox(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_task_command_lists_recent_manager_tasks(monkeypatch, tmp_path):
+async def test_task_command_lists_recent_ikaros_tasks(monkeypatch, tmp_path):
     _reset_task_inbox(tmp_path)
 
     async def _allow(_ctx):
@@ -401,8 +401,10 @@ def test_task_command_is_exported_from_handlers_package():
     assert exported_task_command is task_command
 
 
-def test_main_registers_task_command():
-    main_py = Path(__file__).resolve().parents[2] / "src" / "main.py"
-    text = main_py.read_text(encoding="utf-8")
+def test_core_commands_plugin_registers_task_command():
+    plugin_py = (
+        Path(__file__).resolve().parents[2] / "extension" / "plugins" / "core_commands.py"
+    )
+    text = plugin_py.read_text(encoding="utf-8")
 
-    assert 'on_command("task", task_command' in text
+    assert 'register_command("task", task_command' in text

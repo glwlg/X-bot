@@ -1,13 +1,9 @@
 ---
 api_version: v3
 name: opencli
-description: OpenCLI command reference for using existing browser, API, and desktop app commands. Use when the user mentions `opencli` or wants to search, read, download, post, publish, or automate supported platforms such as xiaohongshu, twitter, bilibili, zhihu, weixin, xueqiu, reddit, youtube, and more.
+description: OpenCLI 命令参考。仅当用户明确提到 `opencli`，并且就是想直接查看或运行已安装的 `opencli` 命令时才使用本 skill。对于通用搜索、下载、写作、发布或多步骤工作流，如果已有更贴合领域的 skill，就不要使用本 skill。
 triggers:
 - opencli
-- xiaohongshu publish
-- 小红书发布
-- twitter post
-- browser bridge
 - opencli doctor
 permissions:
   filesystem: workspace
@@ -15,52 +11,56 @@ permissions:
   network: limited
 ---
 
-# OpenCLI
+# OpenCLI 使用说明
 
-Use the installed `opencli` directly. This skill is only for using existing commands.
+直接使用当前环境中已安装的 `opencli`。本 skill 只用于调用现成的 `opencli` 命令。
 
-It intentionally does **not** cover:
+不要因为目标平台“恰好被 OpenCLI 支持”就选这个 skill。
+如果用户没有明确要求使用 `opencli`，而且已有其他领域 skill 能覆盖任务，应优先使用领域 skill。
+特别是当系统里已经存在更高层的 skill 时，不要让本 skill 接管诸如“下载视频 -> 转写 -> 写文章 -> 发布”这种端到端多步骤工作流。
 
-- adapter creation or modification
-- `explore` / `probe`, `synthesize`, `generate`, `record`, `cascade`
-- `install`, `register`, or plugin development
+本 skill **刻意不覆盖** 以下内容：
 
-## Version
+- adapter 的创建或修改
+- `explore` / `probe`、`synthesize`、`generate`、`record`、`cascade`
+- `install`、`register` 或 plugin 开发
 
-Local environment confirmed:
+## 版本
+
+当前环境已确认：
 
 `opencli --version` -> `1.4.1`
 
-## Default workflow
+## 默认使用流程
 
-1. Discover what is available:
+1. 先查看当前有哪些能力：
 
    `opencli list --format md`
 
-2. Inspect a platform:
+2. 再查看某个平台的帮助：
 
    `opencli <platform> --help`
 
-3. Inspect a concrete command:
+3. 再查看具体命令的帮助：
 
    `opencli <platform> <command> --help`
 
-4. Run the command with structured output when useful:
+4. 需要结构化结果时，优先使用结构化输出：
 
-   `-f json`, `-f md`, `-f yaml`, or `-f csv` when supported
+   支持时优先使用 `-f json`、`-f md`、`-f yaml` 或 `-f csv`
 
-5. If a browser-backed command fails, diagnose first:
+5. 如果浏览器驱动类命令失败，先做诊断：
 
    `opencli doctor --sessions`
 
-## Preconditions
+## 前置条件
 
-- Many commands are browser-backed. Keep Chrome running and logged into the target site before execution.
-- Browser-backed commands require the OpenCLI Browser Bridge to already be available in Chrome.
-- Some commands open tabs during execution and close them afterwards.
-- For write actions such as `post`, `publish`, `reply`, `follow`, `like`, `delete`, or similar account mutations, execute only when the user clearly asked for that action.
+- 很多命令依赖浏览器会话。执行前要确保 Chrome 正在运行，并且已经登录目标网站。
+- 浏览器驱动类命令依赖 Chrome 里已可用的 OpenCLI Browser Bridge 扩展。
+- 某些命令执行时会临时打开标签页，结束后再关闭。
+- 对于 `post`、`publish`、`reply`、`follow`、`like`、`delete` 等会修改账号状态的命令，只有在用户明确要求时才执行。
 
-## Discovery commands
+## 发现命令
 
 ```bash
 opencli --help
@@ -71,11 +71,11 @@ opencli <platform> --help
 opencli <platform> <command> --help
 ```
 
-`opencli list --format md` is the authoritative inventory in the current environment. It includes `command`, `site`, `description`, `strategy`, `browser`, and `args`, which are useful for deciding whether a command is browser-dependent and what arguments it expects.
+`opencli list --format md` 是当前环境里最权威的命令清单。输出里会包含 `command`、`site`、`description`、`strategy`、`browser`、`args` 等字段，适合用来判断命令是否依赖浏览器，以及它期望的参数形式。
 
-## Common usage patterns
+## 常见用法
 
-### Read or search content
+### 读取或搜索内容
 
 ```bash
 opencli xiaohongshu search "美食"
@@ -86,7 +86,7 @@ opencli xueqiu stock SH600519
 opencli reddit search "rust" --limit 10
 ```
 
-### Download or export content
+### 下载或导出内容
 
 ```bash
 opencli weixin download --url "https://mp.weixin.qq.com/..."
@@ -96,7 +96,7 @@ opencli twitter article <tweet-id>
 opencli web read --url "https://example.com" --output article.md
 ```
 
-### Publish or mutate account state
+### 发布内容或修改账号状态
 
 ```bash
 opencli xiaohongshu publish "正文内容" --title "标题" --images a.png,b.png --topics 话题1,话题2
@@ -105,7 +105,7 @@ opencli twitter reply https://x.com/... "Nice!"
 opencli twitter like https://x.com/...
 ```
 
-### Inspect creator or account data
+### 查看创作者或账号数据
 
 ```bash
 opencli xiaohongshu creator-profile
@@ -115,22 +115,22 @@ opencli bilibili me
 opencli twitter profile elonmusk
 ```
 
-## High-value platforms in the current install
+## 当前安装里较常用的平台
 
-Examples seen in local `opencli --help` / `opencli list --format md`:
+以下示例来自本机 `opencli --help` / `opencli list --format md`：
 
-- social and content: `xiaohongshu`, `twitter`, `bilibili`, `zhihu`, `reddit`, `weibo`, `youtube`, `douyin`
-- articles and exports: `weixin`, `web`, `zhihu download`, `twitter article`
-- finance and news: `xueqiu`, `barchart`, `yahoo-finance`, `reuters`, `bloomberg`, `bbc`
-- desktop and AI apps: `codex`, `cursor`, `chatgpt`, `chatwise`, `discord-app`, `doubao-app`
-- external CLIs: `gh`, `docker`
+- 社交和内容平台：`xiaohongshu`、`twitter`、`bilibili`、`zhihu`、`reddit`、`weibo`、`youtube`、`douyin`
+- 文章和导出：`weixin`、`web`、`zhihu download`、`twitter article`
+- 财经和新闻：`xueqiu`、`barchart`、`yahoo-finance`、`reuters`、`bloomberg`、`bbc`
+- 桌面和 AI 应用：`codex`、`cursor`、`chatgpt`、`chatwise`、`discord-app`、`doubao-app`
+- 外部 CLI：`gh`、`docker`
 
-Do not hardcode this list as complete. Re-check with `opencli list --format md` when the exact platform set matters.
+不要把上面这份列表当成完整清单。只要平台集合本身会影响决策，就重新执行 `opencli list --format md` 再确认。
 
-## Practical rules
+## 实用规则
 
-- Prefer positional arguments exactly as shown in `--help`; many commands use positional `query`, `id`, `url`, or `text`.
-- Prefer `-f json` when the result will be parsed by code or fed into another step.
-- Prefer `-f md` when producing a user-facing report or saved document.
-- If a command is ambiguous, inspect `--help` before running it.
-- If the user asks for a platform that might exist but is not obvious, check `opencli list --format md` instead of guessing.
+- 优先按 `--help` 展示的形式使用位置参数；很多命令会把 `query`、`id`、`url`、`text` 设计成位置参数。
+- 如果结果要被代码解析，或者要喂给下一步流程，优先用 `-f json`。
+- 如果要生成面向用户的报告或保存文档，优先用 `-f md`。
+- 如果命令含义不够明确，先看 `--help`，不要直接猜。
+- 如果用户提到某个平台，但你不确定当前安装里是否真的支持，先查 `opencli list --format md`，不要臆测。

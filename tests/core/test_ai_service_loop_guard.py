@@ -4,7 +4,7 @@ import json
 import pytest
 
 import services.ai_service as ai_service_module
-from manager.integrations.gh_cli_service import GhCliService
+from ikaros.integrations.gh_cli_service import GhCliService
 from services.ai_service import AiService
 
 

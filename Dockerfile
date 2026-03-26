@@ -33,16 +33,16 @@ FROM shared-runtime-python AS bot-runtime-python
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system --group bot-runtime
 
-FROM bot-runtime-python AS manager-python
+FROM bot-runtime-python AS ikaros-python
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install --system --group manager-runtime
+    uv pip install --system --group ikaros-runtime
 
 FROM shared-runtime-python AS api-python
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system --group api
 
 
-FROM manager-python AS manager-runtime
+FROM ikaros-python AS ikaros-runtime
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
@@ -80,7 +80,7 @@ COPY src/ .
 CMD ["python", "main.py"]
 
 
-FROM manager-runtime AS manager-runtime-full
+FROM ikaros-runtime AS ikaros-runtime-full
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system --group optional-skill-runtime
 

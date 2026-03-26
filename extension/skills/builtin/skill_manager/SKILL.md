@@ -3,7 +3,7 @@ api_version: v3
 name: skill_manager
 description: 核心技能中心。负责列出、搜索、安装、创建、修改和删除技能。
 allowed_roles:
-- manager
+- ikaros
 policy_groups:
 - skill-admin
 platform_handlers: false
@@ -26,7 +26,7 @@ entrypoint: scripts/execute.py
 
 # Skill Manager
 
-通过 `bash` 调用 CLI。创建和修改技能时，本 skill 会直接在本地技能目录驱动 manager 的 `codex_session`，不再依赖 `software_delivery`。如果 Codex 中途提出澄清问题，应直接回答并继续当前 coding session。
+通过 `bash` 调用 CLI。创建和修改技能时，本 skill 会直接在本地技能目录驱动 ikaros 的 `codex_session`，不再依赖 `software_delivery`。如果 Codex 中途提出澄清问题，应直接回答并继续当前 coding session。
 
 ## Commands
 

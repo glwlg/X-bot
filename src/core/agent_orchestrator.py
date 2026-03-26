@@ -30,7 +30,7 @@ from services.intent_router import intent_router
 logger = logging.getLogger(__name__)
 
 
-def _sanitize_manager_text(text: str, subagent_labels: Dict[str, str]) -> str:
+def _sanitize_ikaros_text(text: str, subagent_labels: Dict[str, str]) -> str:
     raw = str(text or "")
     if not raw or not subagent_labels:
         return raw
@@ -115,7 +115,7 @@ class AgentOrchestrator:
         user_id_str = runtime_ctx.runtime_user_id
         platform_name = runtime_ctx.platform_name
         runtime_policy_ctx = runtime_ctx.runtime_policy_ctx
-        manager_runtime = runtime_ctx.manager_runtime
+        ikaros_runtime = runtime_ctx.ikaros_runtime
         explicit_allowed_skill_names = {
             str(item or "").strip()
             for item in list(user_data.get("allowed_skill_names") or [])
@@ -218,7 +218,7 @@ class AgentOrchestrator:
         if task_tracking_enabled:
             await runtime_ctx.ensure_task_inbox(task_goal=task_goal)
             task_inbox_id = runtime_ctx.task_inbox_id
-            await runtime_ctx.mark_manager_loop_started(task_goal)
+            await runtime_ctx.mark_ikaros_loop_started(task_goal)
         logger.info(
             "Task tracking decision: enabled=%s mode=%s requested=%s task_inbox_id=%s",
             task_tracking_enabled,
@@ -309,8 +309,8 @@ class AgentOrchestrator:
         max_recovery_attempts = max(1, int(AUTO_RECOVERY_MAX_ATTEMPTS))
 
         def sanitize_preview(text: str) -> str:
-            if manager_runtime:
-                return _sanitize_manager_text(text, dispatched_subagent_labels)
+            if ikaros_runtime:
+                return _sanitize_ikaros_text(text, dispatched_subagent_labels)
             return text
 
         event_handler = OrchestratorEventHandler(
@@ -319,7 +319,7 @@ class AgentOrchestrator:
             task_inbox_id=task_inbox_id,
             ctx=ctx,
             todo_session=todo_session,
-            manager_runtime=manager_runtime,
+            ikaros_runtime=ikaros_runtime,
             session_state_active=runtime_ctx.session_state_active,
             max_recovery_attempts=max_recovery_attempts,
             sanitize_preview=sanitize_preview,
@@ -334,11 +334,11 @@ class AgentOrchestrator:
             subagent_progress_hook = user_data.get("subagent_progress_callback")
         if not callable(subagent_progress_hook):
             subagent_progress_hook = None
-        manager_progress_hook = get_runtime_callback(ctx, "manager_progress_callback")
-        if not callable(manager_progress_hook):
-            manager_progress_hook = user_data.get("manager_progress_callback")
-        if not callable(manager_progress_hook):
-            manager_progress_hook = None
+        ikaros_progress_hook = get_runtime_callback(ctx, "ikaros_progress_callback")
+        if not callable(ikaros_progress_hook):
+            ikaros_progress_hook = user_data.get("ikaros_progress_callback")
+        if not callable(ikaros_progress_hook):
+            ikaros_progress_hook = None
         progress_steps_raw = user_data.get("subagent_progress_steps")
         progress_steps: list[dict[str, Any]] = (
             [item for item in progress_steps_raw if isinstance(item, dict)]
@@ -454,22 +454,22 @@ class AgentOrchestrator:
             except Exception as exc:
                 logger.debug("subagent progress hook error: %s", exc)
 
-        async def emit_manager_progress(event: str, payload: Dict[str, Any]) -> None:
-            if not manager_runtime or manager_progress_hook is None:
+        async def emit_ikaros_progress(event: str, payload: Dict[str, Any]) -> None:
+            if not ikaros_runtime or ikaros_progress_hook is None:
                 return
             try:
                 snapshot = dict(payload or {})
                 snapshot["event"] = str(event or "").strip().lower()
                 snapshot.setdefault("task_id", str(task_id))
-                maybe_coro = manager_progress_hook(snapshot)
+                maybe_coro = ikaros_progress_hook(snapshot)
                 if inspect.isawaitable(maybe_coro):
                     await cast(Any, maybe_coro)
             except Exception as exc:
-                logger.debug("manager progress hook error: %s", exc)
+                logger.debug("ikaros progress hook error: %s", exc)
 
         async def on_agent_event(event: str, payload: Dict[str, Any]):
             directive = await event_handler.handle(event, payload)
-            await emit_manager_progress(event, payload)
+            await emit_ikaros_progress(event, payload)
             await emit_subagent_progress(event, payload)
             return directive
 
@@ -485,8 +485,8 @@ class AgentOrchestrator:
             if isinstance(chunk, str) and "工具调用轮次已达上限" in chunk:
                 suppressed_max_turn_warning = chunk
                 continue
-            if manager_runtime and isinstance(chunk, str):
-                yield _sanitize_manager_text(chunk, dispatched_subagent_labels)
+            if ikaros_runtime and isinstance(chunk, str):
+                yield _sanitize_ikaros_text(chunk, dispatched_subagent_labels)
             else:
                 yield chunk
 
@@ -584,8 +584,8 @@ class AgentOrchestrator:
                     if isinstance(chunk, str) and "工具调用轮次已达上限" in chunk:
                         suppressed_max_turn_warning = chunk
                         continue
-                    if manager_runtime and isinstance(chunk, str):
-                        yield _sanitize_manager_text(chunk, dispatched_subagent_labels)
+                    if ikaros_runtime and isinstance(chunk, str):
+                        yield _sanitize_ikaros_text(chunk, dispatched_subagent_labels)
                     else:
                         yield chunk
 
@@ -642,7 +642,7 @@ class AgentOrchestrator:
                         metadata={
                             "followup": dict(auto_followup.get("followup") or {})
                         },
-                        result={"manager_mode": "conversation_completed"},
+                        result={"ikaros_mode": "conversation_completed"},
                         output={"text": "Conversation loop completed."},
                     )
                     current_task_status = "waiting_external"
@@ -652,13 +652,13 @@ class AgentOrchestrator:
                         "waiting_external",
                         event="conversation_kept_open",
                         detail="Conversation loop completed.",
-                        result={"manager_mode": "conversation_completed"},
+                        result={"ikaros_mode": "conversation_completed"},
                         output={"text": "Conversation loop completed."},
                     )
                 else:
                     await task_inbox.complete(
                         task_inbox_id,
-                        result={"manager_mode": "conversation_completed"},
+                        result={"ikaros_mode": "conversation_completed"},
                         final_output="Conversation loop completed.",
                     )
 
@@ -712,7 +712,7 @@ class AgentOrchestrator:
         if agent_kind == "subagent":
             mode = "subagent"
         else:
-            mode = "manager"
+            mode = "ikaros"
         allowed_skill_names = (
             sorted(
                 {

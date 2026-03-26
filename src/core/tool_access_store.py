@@ -33,7 +33,7 @@ TOKEN_ALIASES = {
     "skill_admin": "group:skill-admin",
     "skills": "group:skills",
     "mcp": "group:memory",
-    "manager": "group:management",
+    "ikaros": "group:management",
     "dispatch": "group:management",
     "all": "group:all",
 }
@@ -51,7 +51,7 @@ SKILL_FUNCTION_GROUPS = {
     "credential_manager": {"group:account", "group:security"},
     "skill_manager": {"group:skill-admin"},
     "download_video": {"group:media"},
-    "news_article_writer": {"group:content", "group:research"},
+    "article_publisher": {"group:content", "group:research"},
     "xlsx": {"group:data"},
 }
 
@@ -59,7 +59,7 @@ SKILL_FUNCTION_GROUPS = {
 class ToolAccessStore:
     """Agent tool grouping and allow/deny policy store."""
 
-    CORE_MANAGER_DEFAULT_ALLOW = [
+    CORE_IKAROS_DEFAULT_ALLOW = [
         "group:all",
     ]
 
@@ -73,9 +73,9 @@ class ToolAccessStore:
     def _default_payload(self) -> Dict[str, Any]:
         return {
             "version": 1,
-            "core_manager": {
+            "core_ikaros": {
                 "tools": {
-                    "allow": list(self.CORE_MANAGER_DEFAULT_ALLOW),
+                    "allow": list(self.CORE_IKAROS_DEFAULT_ALLOW),
                     "deny": [],
                 }
             },
@@ -114,21 +114,21 @@ class ToolAccessStore:
                 merged = dict(default)
                 merged.update(loaded)
                 core_policy = self._normalize_policy(
-                    merged.get("core_manager"),
-                    default["core_manager"],
+                    merged.get("core_ikaros"),
+                    default["core_ikaros"],
                 )
                 core_allow = list((core_policy.get("tools") or {}).get("allow") or [])
                 core_deny = list((core_policy.get("tools") or {}).get("deny") or [])
                 if core_allow == ["group:management"] and not core_deny:
                     core_policy["tools"]["allow"] = list(
-                        self.CORE_MANAGER_DEFAULT_ALLOW
+                        self.CORE_IKAROS_DEFAULT_ALLOW
                     )
                     core_allow = list(
                         (core_policy.get("tools") or {}).get("allow") or []
                     )
                 if core_allow == ["group:all"] and not core_deny:
                     core_policy["tools"]["allow"] = list(
-                        self.CORE_MANAGER_DEFAULT_ALLOW
+                        self.CORE_IKAROS_DEFAULT_ALLOW
                     )
                     core_allow = list(
                         (core_policy.get("tools") or {}).get("allow") or []
@@ -174,9 +174,9 @@ class ToolAccessStore:
                     for item in legacy_core_allow_sets
                 ):
                     core_policy["tools"]["allow"] = list(
-                        self.CORE_MANAGER_DEFAULT_ALLOW
+                        self.CORE_IKAROS_DEFAULT_ALLOW
                     )
-                merged["core_manager"] = core_policy
+                merged["core_ikaros"] = core_policy
                 return merged
         except Exception:
             pass
@@ -374,7 +374,7 @@ class ToolAccessStore:
 
     def get_core_policy(self) -> Dict[str, Any]:
         with self._lock:
-            return dict(self._payload.get("core_manager") or {})
+            return dict(self._payload.get("core_ikaros") or {})
 
     def resolve_runtime_policy(
         self,
@@ -394,14 +394,14 @@ class ToolAccessStore:
             }
         if platform_name == "heartbeat_daemon":
             return {
-                "agent_kind": "core-manager",
-                "agent_id": "core-manager",
+                "agent_kind": "core-ikaros",
+                "agent_id": "core-ikaros",
                 "policy": self.get_core_policy(),
             }
-        # Regular user-facing orchestration runs in core-manager role.
+        # Regular user-facing orchestration runs in core-ikaros role.
         return {
-            "agent_kind": "core-manager",
-            "agent_id": "core-manager",
+            "agent_kind": "core-ikaros",
+            "agent_id": "core-ikaros",
             "policy": self.get_core_policy(),
         }
 

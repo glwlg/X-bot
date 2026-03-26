@@ -119,7 +119,7 @@ CORE_TOOLS: List[Dict[str, Any]] = [
     },
 ]
 
-MANAGER_INTERNAL_TOOLS: List[Dict[str, Any]] = [
+IKAROS_INTERNAL_TOOLS: List[Dict[str, Any]] = [
     {
         "name": "send_local_file",
         "description": (
@@ -239,8 +239,8 @@ class ToolRegistry:
 
     def get_core_tools(self, *, runtime_role: str = "") -> List[Dict[str, Any]]:
         tools = deepcopy(CORE_TOOLS)
-        if str(runtime_role or "").strip().lower() == "manager":
-            tools.extend(deepcopy(MANAGER_INTERNAL_TOOLS))
+        if str(runtime_role or "").strip().lower() == "ikaros":
+            tools.extend(deepcopy(IKAROS_INTERNAL_TOOLS))
         return tools
 
     def get_load_skill_tool(self) -> Dict[str, Any]:
@@ -280,14 +280,14 @@ class ToolRegistry:
         tools.sort(key=lambda item: str(item.get("name") or ""))
         return tools
 
-    def get_manager_tools(self) -> List[Dict[str, Any]]:
-        return self.get_core_tools(runtime_role="manager") + self.get_skill_tools(
-            runtime_role="manager"
+    def get_ikaros_tools(self) -> List[Dict[str, Any]]:
+        return self.get_core_tools(runtime_role="ikaros") + self.get_skill_tools(
+            runtime_role="ikaros"
         )
 
-    def get_manager_tool_names(self) -> List[str]:
+    def get_ikaros_tool_names(self) -> List[str]:
         return [
-            str(item.get("name") or "").strip() for item in self.get_manager_tools()
+            str(item.get("name") or "").strip() for item in self.get_ikaros_tools()
         ]
 
     def get_skill_tool_binding(

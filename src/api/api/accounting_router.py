@@ -36,7 +36,7 @@ from api.models.accounting import (
     StatsPanel,
     OperationLog,
 )
-from manager.dispatch.web_accounting_auto_image import run_web_accounting_auto_image_task
+from ikaros.dispatch.web_accounting_auto_image import run_web_accounting_auto_image_task
 from shared.contracts.dispatch import TaskEnvelope
 
 router = APIRouter()
@@ -505,7 +505,7 @@ async def _run_web_image_quick_accounting(
             run_web_accounting_auto_image_task(
                 TaskEnvelope(
                     task_id=f"web-accounting-{uuid4().hex[:8]}",
-                    executor_id="manager-main",
+                    executor_id="ikaros-main",
                     instruction=instruction,
                     source="web_accounting_auto_image",
                     metadata={

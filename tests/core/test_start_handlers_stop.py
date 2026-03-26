@@ -265,7 +265,7 @@ async def test_button_callback_continue_resumes_waiting_task(monkeypatch):
 
     monkeypatch.setattr(heartbeat_store_module, "heartbeat_store", fake_heartbeat_store)
     monkeypatch.setattr(
-        "manager.relay.closure_service.manager_closure_service",
+        "ikaros.relay.closure_service.ikaros_closure_service",
         fake_service,
     )
     monkeypatch.setattr(

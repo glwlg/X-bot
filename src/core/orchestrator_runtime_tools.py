@@ -93,7 +93,7 @@ class RuntimeToolAssembler:
                 filtered.append(item)
         return filtered
 
-    def _is_manager_runtime(self) -> bool:
+    def _is_ikaros_runtime(self) -> bool:
         uid = str(self.runtime_user_id or "").strip().lower()
         platform = str(self.platform_name or "").strip().lower()
         return not uid.startswith("subagent::") and platform != "subagent_kernel"
@@ -103,7 +103,7 @@ class RuntimeToolAssembler:
         platform = str(self.platform_name or "").strip().lower()
         if uid.startswith("subagent::") or platform == "subagent_kernel":
             return "subagent"
-        return "manager"
+        return "ikaros"
 
     def _filter_by_explicit_allowed_names(self, tools: List[Any]) -> List[Any]:
         if self.allowed_tool_names is None:
@@ -152,9 +152,9 @@ class ToolCallDispatcher:
     def _runtime_only_allowed_tool_names(self) -> Set[str]:
         allowed: Set[str] = set()
         runtime_role = self._runtime_role()
-        if runtime_role != "manager":
+        if runtime_role != "ikaros":
             return allowed
-        for name in tool_registry.get_manager_tool_names():
+        for name in tool_registry.get_ikaros_tool_names():
             if _policy_result_allowed(
                 self.runtime_tool_allowed(
                     runtime_user_id=self.runtime_user_id,
@@ -203,7 +203,7 @@ class ToolCallDispatcher:
                     return candidate
         return runtime_user
 
-    def _is_manager_runtime(self) -> bool:
+    def _is_ikaros_runtime(self) -> bool:
         uid = str(self.runtime_user_id or "").strip().lower()
         platform = str(self.platform_name or "").strip().lower()
         return not uid.startswith("subagent::") and platform != "subagent_kernel"
@@ -213,7 +213,7 @@ class ToolCallDispatcher:
         platform = str(self.platform_name or "").strip().lower()
         if uid.startswith("subagent::") or platform == "subagent_kernel":
             return "subagent"
-        return "manager"
+        return "ikaros"
 
     @staticmethod
     def _resolve_repo_path(path: str) -> Path | None:
@@ -488,7 +488,7 @@ class ToolCallDispatcher:
             return result
 
         if tool_name == "send_local_file":
-            if self._runtime_role() != "manager":
+            if self._runtime_role() != "ikaros":
                 return {
                     "ok": False,
                     "error_code": "policy_blocked",
@@ -520,7 +520,7 @@ class ToolCallDispatcher:
             return result
 
         if tool_name in {"spawn_subagent", "await_subagents"}:
-            if self._runtime_role() != "manager":
+            if self._runtime_role() != "ikaros":
                 return {
                     "ok": False,
                     "error_code": "policy_blocked",
@@ -611,12 +611,12 @@ class ToolCallDispatcher:
                 }
                 return result
 
-            if self._runtime_role() == "subagent" and runtime_target == "manager":
+            if self._runtime_role() == "subagent" and runtime_target == "ikaros":
                 result = {
                     "ok": False,
                     "error_code": "skill_role_blocked",
                     "message": (
-                        f"Skill '{resolved_skill_name or skill_name}' is manager-only "
+                        f"Skill '{resolved_skill_name or skill_name}' is ikaros-only "
                         "and cannot be loaded in subagent runtime."
                     ),
                     "failure_mode": "recoverable",

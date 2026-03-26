@@ -2,7 +2,7 @@
 
 `ikaros` 在 systemd 这类非交互环境里启动时，不会自动继承 `fnm`、`nvm`、`asdf` 等 shell 初始化出来的 PATH。
 
-当前 [run_manager.sh](/home/luwei/workspace/ikaros/scripts/run_manager.sh) 只保证 `~/.local/bin` 会进入服务进程的 PATH，所以依赖 Node.js 的外部 CLI 需要在这里放稳定软链。
+当前 [run_ikaros.sh](/home/luwei/workspace/ikaros/scripts/run_ikaros.sh) 只保证 `~/.local/bin` 会进入服务进程的 PATH，所以依赖 Node.js 的外部 CLI 需要在这里放稳定软链。
 
 ## Required for `opencli`
 

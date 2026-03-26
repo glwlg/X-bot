@@ -190,7 +190,7 @@ _VERBOSE_PROGRESS_MARKERS = (
 )
 
 
-def _format_manager_progress_summary(
+def _format_ikaros_progress_summary(
     tool_name: str,
     summary: str,
     *,
@@ -224,7 +224,7 @@ def _format_manager_progress_summary(
     return _compact_text(raw, limit=180)
 
 
-def _humanize_manager_tool_name(tool_name: str) -> str:
+def _humanize_ikaros_tool_name(tool_name: str) -> str:
     raw = str(tool_name or "").strip().lower()
     if not raw:
         return "工具"
@@ -247,7 +247,7 @@ def _humanize_manager_tool_name(tool_name: str) -> str:
     return aliases.get(raw, raw.replace("_", " "))
 
 
-def _summarize_manager_tool_args(
+def _summarize_ikaros_tool_args(
     tool_name: str, tool_args: dict[str, Any] | None
 ) -> tuple[str, str]:
     args = dict(tool_args or {})
@@ -339,7 +339,7 @@ def _summarize_manager_tool_args(
     return "", ""
 
 
-def _build_manager_progress_text(snapshot: dict[str, Any]) -> str:
+def _build_ikaros_progress_text(snapshot: dict[str, Any]) -> str:
     payload = dict(snapshot or {})
     event = str(payload.get("event") or "").strip().lower()
     turn = max(0, int(payload.get("turn") or 0))
@@ -350,12 +350,12 @@ def _build_manager_progress_text(snapshot: dict[str, Any]) -> str:
         if isinstance(item, dict)
     ]
     latest_step = recent_steps[-1] if recent_steps else {}
-    tool_name = _humanize_manager_tool_name(
+    tool_name = _humanize_ikaros_tool_name(
         str(latest_step.get("name") or payload.get("name") or "").strip()
     )
     detail_label = str(latest_step.get("detail_label") or "").strip()
     detail_value = _compact_text(str(latest_step.get("detail") or ""), limit=200)
-    summary = _format_manager_progress_summary(
+    summary = _format_ikaros_progress_summary(
         str(latest_step.get("name") or payload.get("name") or "").strip(),
         str(latest_step.get("summary") or payload.get("summary") or ""),
         ok=(
@@ -375,7 +375,7 @@ def _build_manager_progress_text(snapshot: dict[str, Any]) -> str:
     ]
     final_preview = _compact_text(str(payload.get("final_preview") or ""), limit=160)
 
-    lines = ["⏳ Manager 正在处理请求"]
+    lines = ["⏳ Ikaros 正在处理请求"]
     if task_id:
         lines.append(f"任务ID：`{task_id}`")
     if turn > 0:
@@ -589,7 +589,7 @@ async def _build_subagent_instruction_with_context(
     if wants_memory_summary and not subagent_has_memory:
         memory_snapshot = await _fetch_user_memory_snapshot(user_id)
 
-    # SIMPLIFIED: Core Manager no longer micromanages the prompt.
+    # SIMPLIFIED: Ikaros Core no longer micromanages the prompt.
     # The subagent's identity and tools are defined in its SOUL.MD.
     # We only pass the Request and Context.
     sections: list[str] = [
@@ -598,12 +598,12 @@ async def _build_subagent_instruction_with_context(
     if dialog_context:
         sections.append(f"【近期对话上下文】\n{dialog_context}")
     if memory_snapshot:
-        sections.append(f"【用户记忆摘要（由 Manager 提供）】\n{memory_snapshot}")
+        sections.append(f"【用户记忆摘要（由 Ikaros 提供）】\n{memory_snapshot}")
     sections.append(
         "【交付要求】\n"
         "- 直接给出可执行结果或结论。\n"
         "- 不要重复系统边界说明。\n"
-        "- 输出应可被 Manager 直接转述给用户。"
+        "- 输出应可被 Ikaros 直接转述给用户。"
     )
     instruction = "\n\n".join([item for item in sections if str(item).strip()]).strip()
     if len(instruction) > 6000:
@@ -661,7 +661,7 @@ async def _try_handle_waiting_confirmation(
 
     from core.channel_runtime_store import channel_runtime_store
     from core.heartbeat_store import heartbeat_store
-    from manager.relay.closure_service import manager_closure_service
+    from ikaros.relay.closure_service import ikaros_closure_service
 
     user_id = str(ctx.message.user.id)
     active_task = channel_runtime_store.get_active_task(
@@ -673,7 +673,7 @@ async def _try_handle_waiting_confirmation(
     if not active_task or active_task.get("status") != "waiting_user":
         return False
 
-    resume = await manager_closure_service.resume_waiting_task(
+    resume = await ikaros_closure_service.resume_waiting_task(
         user_id=user_id,
         user_message=user_message,
         source="text",
@@ -877,17 +877,17 @@ async def handle_ai_chat(
         "final_text": "",
         "running": True,
         "response_visible": False,
-        "manager_progress_text": "",
-        "manager_progress_task_id": "",
-        "manager_progress_draft_id": 0,
-        "manager_progress_last_sent_at": 0.0,
-        "manager_progress_last_rendered": "",
-        "manager_progress_final_preview": "",
+        "ikaros_progress_text": "",
+        "ikaros_progress_task_id": "",
+        "ikaros_progress_draft_id": 0,
+        "ikaros_progress_last_sent_at": 0.0,
+        "ikaros_progress_last_rendered": "",
+        "ikaros_progress_final_preview": "",
         "loading_frame_index": 0,
     }
-    manager_progress_steps: list[dict[str, Any]] = []
-    pending_manager_files: list[dict[str, str]] = []
-    manager_progress_event_names = {
+    ikaros_progress_steps: list[dict[str, Any]] = []
+    pending_ikaros_files: list[dict[str, str]] = []
+    ikaros_progress_event_names = {
         "tool_call_started",
         "tool_call_finished",
         "retry_after_failure",
@@ -897,16 +897,16 @@ async def handle_ai_chat(
         "tool_budget_guard",
         "final_response",
     }
-    manager_progress_thread_id = None
+    ikaros_progress_thread_id = None
     raw_message_data = getattr(ctx.message, "raw_data", {}) or {}
     if isinstance(raw_message_data, dict):
         thread_candidate = raw_message_data.get("message_thread_id")
         if thread_candidate not in (None, ""):
             with contextlib.suppress(Exception):
-                manager_progress_thread_id = int(thread_candidate)
+                ikaros_progress_thread_id = int(thread_candidate)
 
     can_update = getattr(ctx._adapter, "can_update_message", True)
-    manager_progress_stream_enabled = _env_flag(
+    ikaros_progress_stream_enabled = _env_flag(
         "AI_MANAGER_PROGRESS_STREAM_ENABLED",
         False,
     )
@@ -937,10 +937,10 @@ async def handle_ai_chat(
         thinking_msg = await ctx.reply(text)
         return thinking_msg
 
-    async def _push_manager_progress_update(*, force: bool) -> None:
-        if not manager_progress_stream_enabled:
+    async def _push_ikaros_progress_update(*, force: bool) -> None:
+        if not ikaros_progress_stream_enabled:
             return
-        progress_text = str(state.get("manager_progress_text") or "").strip()
+        progress_text = str(state.get("ikaros_progress_text") or "").strip()
         if not progress_text:
             return
         if state["final_text"] and not force:
@@ -949,29 +949,29 @@ async def handle_ai_chat(
         now = time.time()
         if (
             not force
-            and progress_text == str(state.get("manager_progress_last_rendered") or "")
-            and now - float(state.get("manager_progress_last_sent_at") or 0.0) < 3.0
+            and progress_text == str(state.get("ikaros_progress_last_rendered") or "")
+            and now - float(state.get("ikaros_progress_last_sent_at") or 0.0) < 3.0
         ):
             return
 
         adapter = getattr(ctx, "_adapter", None)
         send_draft = getattr(adapter, "send_message_draft", None)
         if callable(send_draft) and str(platform_name or "").lower() == "telegram":
-            task_id = str(state.get("manager_progress_task_id") or "").strip()
-            draft_id = int(state.get("manager_progress_draft_id") or 0)
+            task_id = str(state.get("ikaros_progress_task_id") or "").strip()
+            draft_id = int(state.get("ikaros_progress_draft_id") or 0)
             if not draft_id:
                 seed = task_id or f"{chat_id}:{user_id}:{ctx.message.id or 'incoming'}"
                 draft_id = max(1, zlib.crc32(seed.encode("utf-8")) & 0x7FFFFFFF)
-                state["manager_progress_draft_id"] = draft_id
+                state["ikaros_progress_draft_id"] = draft_id
             await send_draft(
                 chat_id=chat_id,
                 draft_id=draft_id,
                 text=progress_text,
-                message_thread_id=manager_progress_thread_id,
+                message_thread_id=ikaros_progress_thread_id,
                 fallback_to_message=False,
             )
-            state["manager_progress_last_rendered"] = progress_text
-            state["manager_progress_last_sent_at"] = now
+            state["ikaros_progress_last_rendered"] = progress_text
+            state["ikaros_progress_last_sent_at"] = now
             return
 
         if can_update and not thinking_deleted and not state["response_visible"]:
@@ -980,10 +980,10 @@ async def handle_ai_chat(
             if msg_id is None:
                 return
             await ctx.edit_message(msg_id, progress_text)
-            state["manager_progress_last_rendered"] = progress_text
-            state["manager_progress_last_sent_at"] = now
+            state["ikaros_progress_last_rendered"] = progress_text
+            state["ikaros_progress_last_sent_at"] = now
 
-    async def _manager_progress_callback(snapshot: dict[str, Any]) -> None:
+    async def _ikaros_progress_callback(snapshot: dict[str, Any]) -> None:
         payload = dict(snapshot or {})
         event_name = str(payload.get("event") or "").strip().lower()
         if not event_name:
@@ -992,9 +992,9 @@ async def handle_ai_chat(
         turn = max(0, int(payload.get("turn") or 0))
         task_id_text = str(payload.get("task_id") or "").strip()
         if task_id_text:
-            state["manager_progress_task_id"] = task_id_text
-            if not int(state.get("manager_progress_draft_id") or 0):
-                state["manager_progress_draft_id"] = max(
+            state["ikaros_progress_task_id"] = task_id_text
+            if not int(state.get("ikaros_progress_draft_id") or 0):
+                state["ikaros_progress_draft_id"] = max(
                     1, zlib.crc32(task_id_text.encode("utf-8")) & 0x7FFFFFFF
                 )
 
@@ -1003,11 +1003,11 @@ async def handle_ai_chat(
             return
 
         if event_name == "tool_call_started":
-            detail_label, detail_value = _summarize_manager_tool_args(
+            detail_label, detail_value = _summarize_ikaros_tool_args(
                 str(payload.get("name") or ""),
                 payload.get("args") if isinstance(payload.get("args"), dict) else {},
             )
-            manager_progress_steps.append(
+            ikaros_progress_steps.append(
                 {
                     "name": str(payload.get("name") or "").strip(),
                     "status": "running",
@@ -1024,16 +1024,16 @@ async def handle_ai_chat(
             history_visibility = str(payload.get("history_visibility") or "").strip()
             terminal_payload = payload.get("terminal_payload")
             if isinstance(terminal_payload, dict):
-                pending_manager_files[:] = merge_file_rows(
-                    pending_manager_files,
+                pending_ikaros_files[:] = merge_file_rows(
+                    pending_ikaros_files,
                     normalize_file_rows(terminal_payload.get("files")),
                     extract_saved_file_rows(
                         str(terminal_payload.get("text") or "").strip()
                     ),
                 )
             updated = False
-            for idx in range(len(manager_progress_steps) - 1, -1, -1):
-                row = manager_progress_steps[idx]
+            for idx in range(len(ikaros_progress_steps) - 1, -1, -1):
+                row = ikaros_progress_steps[idx]
                 if str(row.get("name") or "") != tool_name:
                     continue
                 if str(row.get("status") or "") != "running":
@@ -1047,7 +1047,7 @@ async def handle_ai_chat(
                 updated = True
                 break
             if not updated and tool_name:
-                manager_progress_steps.append(
+                ikaros_progress_steps.append(
                     {
                         "name": tool_name,
                         "status": "done" if tool_ok else "failed",
@@ -1059,21 +1059,21 @@ async def handle_ai_chat(
                     }
                 )
         elif event_name == "final_response":
-            state["manager_progress_final_preview"] = str(
+            state["ikaros_progress_final_preview"] = str(
                 payload.get("text_preview") or ""
             )[:180]
 
-        manager_progress_steps[:] = manager_progress_steps[-20:]
+        ikaros_progress_steps[:] = ikaros_progress_steps[-20:]
         progress_snapshot = dict(payload)
-        progress_snapshot["recent_steps"] = manager_progress_steps[-6:]
+        progress_snapshot["recent_steps"] = ikaros_progress_steps[-6:]
         progress_snapshot["final_preview"] = str(
-            state.get("manager_progress_final_preview") or ""
+            state.get("ikaros_progress_final_preview") or ""
         )[:180]
-        state["manager_progress_text"] = _build_manager_progress_text(progress_snapshot)
+        state["ikaros_progress_text"] = _build_ikaros_progress_text(progress_snapshot)
         state["last_update_time"] = time.time()
 
-        if manager_progress_stream_enabled and event_name in manager_progress_event_names:
-            await _push_manager_progress_update(force=True)
+        if ikaros_progress_stream_enabled and event_name in ikaros_progress_event_names:
+            await _push_ikaros_progress_update(force=True)
 
     async def loading_animation() -> None:
         while state["running"]:
@@ -1087,39 +1087,39 @@ async def handle_ai_chat(
             if now - state["last_update_time"] <= 2.5:
                 continue
 
-            manager_progress_text = str(state.get("manager_progress_text") or "").strip()
+            ikaros_progress_text = str(state.get("ikaros_progress_text") or "").strip()
             if (
-                manager_progress_text
+                ikaros_progress_text
                 and not state["final_text"]
             ):
                 try:
-                    if manager_progress_stream_enabled:
-                        await _push_manager_progress_update(force=False)
+                    if ikaros_progress_stream_enabled:
+                        await _push_ikaros_progress_update(force=False)
                     else:
-                        target = await _ensure_thinking_message(manager_progress_text)
+                        target = await _ensure_thinking_message(ikaros_progress_text)
                         msg_id = _message_id_of(target)
                         if (
                             can_update
                             and msg_id is not None
                             and (
-                                manager_progress_text
+                                ikaros_progress_text
                                 != str(
-                                    state.get("manager_progress_last_rendered") or ""
+                                    state.get("ikaros_progress_last_rendered") or ""
                                 )
                                 or now
                                 - float(
-                                    state.get("manager_progress_last_sent_at") or 0.0
+                                    state.get("ikaros_progress_last_sent_at") or 0.0
                                 )
                                 >= 3.0
                             )
                         ):
-                            await ctx.edit_message(msg_id, manager_progress_text)
-                            state["manager_progress_last_rendered"] = (
-                                manager_progress_text
+                            await ctx.edit_message(msg_id, ikaros_progress_text)
+                            state["ikaros_progress_last_rendered"] = (
+                                ikaros_progress_text
                             )
-                            state["manager_progress_last_sent_at"] = now
+                            state["ikaros_progress_last_sent_at"] = now
                 except Exception as exc:
-                    logger.debug("Manager progress update failed: %s", exc)
+                    logger.debug("Ikaros progress update failed: %s", exc)
                 continue
 
             if state["final_text"]:
@@ -1172,7 +1172,7 @@ async def handle_ai_chat(
 
     current_task = asyncio.current_task()
     await task_manager.register_task(user_id, current_task, description="AI 对话")
-    set_runtime_callback(ctx, "manager_progress_callback", _manager_progress_callback)
+    set_runtime_callback(ctx, "ikaros_progress_callback", _ikaros_progress_callback)
 
     try:
         message_history = []
@@ -1232,7 +1232,7 @@ async def handle_ai_chat(
         if final_text_response:
             ui_payload = _pop_pending_ui_payload(ctx.user_data)
             pending_result_files = merge_file_rows(
-                pending_manager_files,
+                pending_ikaros_files,
                 extract_saved_file_rows(final_text_response),
             )
             streamed_delivery = (
@@ -1350,7 +1350,7 @@ async def handle_ai_chat(
             else:
                 await ctx.reply(error_text)
     finally:
-        pop_runtime_callback(ctx, "manager_progress_callback")
+        pop_runtime_callback(ctx, "ikaros_progress_callback")
         task_manager.unregister_task(user_id)
 
 
@@ -1629,7 +1629,7 @@ async def handle_sticker_message(ctx: UnifiedContext) -> None:
                     platform=str(getattr(ctx.message, "platform", "") or ""),
                     tools=[],
                     runtime_policy_ctx={
-                        "agent_kind": "core-manager",
+                        "agent_kind": "core-ikaros",
                         "policy": {"tools": {"allow": [], "deny": []}},
                     },
                     mode="media_meme",

@@ -16,8 +16,8 @@ def test_tool_registry_builds_skill_tools_from_loader_metadata(monkeypatch):
                 "name": "queue_status",
                 "description": "Query queue status",
                 "parameters": {"type": "object", "properties": {}},
-                "handler": "manager.queue.status",
-                "allowed_roles": ["manager"],
+                "handler": "ikaros.queue.status",
+                "allowed_roles": ["ikaros"],
             },
             {
                 "name": "subagent_only_demo",
@@ -35,25 +35,25 @@ def test_tool_registry_builds_skill_tools_from_loader_metadata(monkeypatch):
                 "name": "queue_status",
                 "description": "Query queue status",
                 "parameters": {"type": "object", "properties": {}},
-                "handler": "manager.queue.status",
-                "allowed_roles": ["manager"],
+                "handler": "ikaros.queue.status",
+                "allowed_roles": ["ikaros"],
             }
         }.get(name),
     )
 
     registry = ToolRegistry()
 
-    manager_tools = registry.get_skill_tools(runtime_role="manager")
+    ikaros_tools = registry.get_skill_tools(runtime_role="ikaros")
     subagent_tools = registry.get_skill_tools(runtime_role="subagent")
-    binding = registry.get_skill_tool_binding("queue_status", runtime_role="manager")
+    binding = registry.get_skill_tool_binding("queue_status", runtime_role="ikaros")
 
-    assert [item["name"] for item in manager_tools] == ["queue_status"]
+    assert [item["name"] for item in ikaros_tools] == ["queue_status"]
     assert [item["name"] for item in subagent_tools] == ["subagent_only_demo"]
-    assert binding["handler"] == "manager.queue.status"
+    assert binding["handler"] == "ikaros.queue.status"
 
 
 @pytest.mark.asyncio
-async def test_runtime_tool_assembler_injects_manager_skill_tools():
+async def test_runtime_tool_assembler_injects_ikaros_skill_tools():
     assembler = RuntimeToolAssembler(
         runtime_user_id="u-1",
         platform_name="telegram",
@@ -78,7 +78,7 @@ async def test_runtime_tool_assembler_injects_manager_skill_tools():
 
 
 @pytest.mark.asyncio
-async def test_runtime_tool_assembler_keeps_subagent_surface_without_manager_control_plane_tools():
+async def test_runtime_tool_assembler_keeps_subagent_surface_without_ikaros_control_plane_tools():
     assembler = RuntimeToolAssembler(
         runtime_user_id="subagent::subagent-main::u-1",
         platform_name="subagent_kernel",
@@ -93,7 +93,7 @@ async def test_runtime_tool_assembler_keeps_subagent_surface_without_manager_con
 
 
 @pytest.mark.asyncio
-async def test_dispatcher_accepts_manager_runtime_only_tools_after_skill_load(
+async def test_dispatcher_accepts_ikaros_runtime_only_tools_after_skill_load(
     monkeypatch,
 ):
     captured = {}
@@ -266,7 +266,7 @@ async def test_load_skill_sets_bash_cwd_for_relative_entrypoint(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_load_skill_blocks_manager_only_skill_for_subagent(monkeypatch):
+async def test_load_skill_blocks_ikaros_only_skill_for_subagent(monkeypatch):
     async def append_event(_event: str):
         return None
 
@@ -275,9 +275,9 @@ async def test_load_skill_blocks_manager_only_skill_for_subagent(monkeypatch):
         "get_skill",
         lambda _skill_name: {
             "name": "skill_manager",
-            "allowed_roles": ["manager"],
-            "contract": {"runtime_target": "manager"},
-            "skill_md_content": "# Skill Manager",
+            "allowed_roles": ["ikaros"],
+            "contract": {"runtime_target": "ikaros"},
+            "skill_md_content": "# Skill Ikaros",
             "skill_dir": "/tmp/extension/skills/skill_manager",
             "entrypoint": "scripts/execute.py",
         },

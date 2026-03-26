@@ -30,7 +30,7 @@ from core.skill_cli import (
 prepare_default_env(REPO_ROOT)
 
 from extension.skills.registry import skill_registry as skill_loader
-from manager.dev.codex_session_service import codex_session_service
+from ikaros.dev.codex_session_service import codex_session_service
 
 project_root = str(REPO_ROOT)
 
@@ -546,7 +546,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
         )
         return {
             "text": (
-                f"🔇🔇🔇❌ manager 调用 `codex_session` 技能修改流程失败 "
+                f"🔇🔇🔇❌ ikaros 调用 `codex_session` 技能修改流程失败 "
                 f"(backend=`{backend}`): {summary}"
             ),
             "ui": {},
@@ -608,7 +608,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
                 }
             return {
                 "text": (
-                    f"🔇🔇🔇✅ manager 通过 `codex_session` 技能创建流程 "
+                    f"🔇🔇🔇✅ ikaros 通过 `codex_session` 技能创建流程 "
                     f"(backend=`{used_backend}`) 完成技能创建，但未识别到技能名。"
                     "请执行 `list skills` 确认。"
                 ),
@@ -621,7 +621,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
         )
         return {
             "text": (
-                f"🔇🔇🔇❌ manager 调用 `codex_session` 技能创建流程失败 "
+                f"🔇🔇🔇❌ ikaros 调用 `codex_session` 技能创建流程失败 "
                 f"(backend=`{backend}`): {summary}"
             ),
             "ui": {},

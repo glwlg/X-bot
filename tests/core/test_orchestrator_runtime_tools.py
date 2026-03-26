@@ -73,7 +73,7 @@ def test_runtime_tool_retry_policy_uses_structured_error_codes_only():
 
 
 @pytest.mark.asyncio
-async def test_manager_allows_bash_for_coding_requests_without_legacy_pipeline(
+async def test_ikaros_allows_bash_for_coding_requests_without_legacy_pipeline(
     monkeypatch,
 ):
     async def append_event(_event: str):
@@ -114,7 +114,7 @@ async def test_manager_allows_bash_for_coding_requests_without_legacy_pipeline(
 
 
 @pytest.mark.asyncio
-async def test_manager_can_send_local_file_via_dispatcher(tmp_path, monkeypatch):
+async def test_ikaros_can_send_local_file_via_dispatcher(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCAL_FILE_DELIVERY_ALLOWED_ROOTS", str(tmp_path))
     target = (tmp_path / "README.md").resolve()
     target.write_text("# demo\n", encoding="utf-8")
@@ -151,7 +151,7 @@ async def test_manager_can_send_local_file_via_dispatcher(tmp_path, monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_manager_allows_loaded_skill_cli_bash_when_request_mentions_code():
+async def test_ikaros_allows_loaded_skill_cli_bash_when_request_mentions_code():
     captured = {}
 
     async def append_event(_event: str):
@@ -241,7 +241,7 @@ async def test_subagent_allows_bash_even_when_request_mentions_code(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_manager_allows_bash_for_non_coding_ops(monkeypatch):
+async def test_ikaros_allows_bash_for_non_coding_ops(monkeypatch):
     async def append_event(_event: str):
         return None
 
@@ -280,7 +280,7 @@ async def test_manager_allows_bash_for_non_coding_ops(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_manager_allows_write_to_repo_code_path_when_policy_allows():
+async def test_ikaros_allows_write_to_repo_code_path_when_policy_allows():
     async def append_event(_event: str):
         return None
 
@@ -319,7 +319,7 @@ async def test_manager_allows_write_to_repo_code_path_when_policy_allows():
 
 
 @pytest.mark.asyncio
-async def test_manager_passes_current_runtime_data_path_through_unchanged():
+async def test_ikaros_passes_current_runtime_data_path_through_unchanged():
     captured = {}
 
     async def append_event(_event: str):
@@ -363,7 +363,7 @@ async def test_manager_passes_current_runtime_data_path_through_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_manager_keeps_current_memory_path_for_read_tool(monkeypatch):
+async def test_ikaros_keeps_current_memory_path_for_read_tool(monkeypatch):
     async def append_event(_event: str):
         return None
 

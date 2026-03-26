@@ -21,7 +21,7 @@ class TestLocationWeatherIntegration:
         self, mock_ctx, mock_fetch_memory
     ):
         # Scenario: User asks "How is the weather?"
-        # Manager decides to include memory summary because it's location dependent.
+        # Ikaros decides to include memory summary because it's location dependent.
 
         mock_fetch_memory.return_value = "- User lives in Beijing"
 

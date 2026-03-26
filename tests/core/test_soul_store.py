@@ -22,21 +22,21 @@ def _redirect_audit_paths(tmp_path):
 def test_soul_store_load_update_and_rollback(tmp_path):
     _redirect_audit_paths(tmp_path)
     store = SoulStore()
-    store.kernel_root = (tmp_path / "kernel" / "core-manager").resolve()
+    store.kernel_root = (tmp_path / "kernel" / "core-ikaros").resolve()
     store.userland_root = (tmp_path / "userland" / "subagents").resolve()
     store.kernel_root.mkdir(parents=True, exist_ok=True)
     store.userland_root.mkdir(parents=True, exist_ok=True)
 
     core = store.load_core()
-    assert "Core Manager SOUL" in core.content
+    assert "Ikaros Core SOUL" in core.content
 
     update = store.update_core(
-        "# Core Manager SOUL\n- test: true\n",
+        "# Ikaros Core SOUL\n- test: true\n",
         actor="tester",
         reason="unit_test_update",
     )
     assert update["path"]
-    versions = store.list_versions(agent_kind="core-manager", limit=5)
+    versions = store.list_versions(agent_kind="core-ikaros", limit=5)
     assert versions
     version_id = str(versions[0].get("version_id", ""))
     assert version_id
@@ -49,13 +49,13 @@ def test_soul_store_load_update_and_rollback(tmp_path):
 def test_soul_store_migrates_legacy_core_soul_to_data_root(tmp_path):
     _redirect_audit_paths(tmp_path)
     store = SoulStore()
-    store.kernel_root = (tmp_path / "kernel" / "core-manager").resolve()
+    store.kernel_root = (tmp_path / "kernel" / "core-ikaros").resolve()
     store.userland_root = (tmp_path / "userland" / "subagents").resolve()
     store.kernel_root.mkdir(parents=True, exist_ok=True)
     store.userland_root.mkdir(parents=True, exist_ok=True)
 
     legacy_path = store.kernel_root / "SOUL.MD"
-    legacy_path.write_text("# Core Manager SOUL\n- legacy: true\n", encoding="utf-8")
+    legacy_path.write_text("# Ikaros Core SOUL\n- legacy: true\n", encoding="utf-8")
 
     core = store.load_core()
 

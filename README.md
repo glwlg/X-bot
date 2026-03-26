@@ -1,8 +1,8 @@
 # Ikaros
 
-Ikaros 是一个 Python 多平台 AI Bot，当前采用 `Core Manager + API Service + Extension Runtime` 架构。
+Ikaros 是一个 Python 多平台 AI Bot，当前采用 `Ikaros Core + API Service + Extension Runtime` 架构。
 
-- `ikaros`：唯一用户可见的 Core Manager，负责请求编排、任务治理、模型路由、心跳、状态访问和 extension runtime
+- `ikaros`：唯一用户可见的 Ikaros Core，负责请求编排、任务治理、模型路由、心跳、状态访问和 extension runtime
 - `ikaros-api`：FastAPI + SPA，提供 Web/API 能力
 
 运行时状态统一落在 `data/` 下，主体仍是文件系统优先；需要聚合查询的部分使用 `data/bot_data.db` 做 SQLite 存储。
@@ -21,13 +21,13 @@ Ikaros 是一个 Python 多平台 AI Bot，当前采用 `Core Manager + API Serv
 - 任务治理：真实任务具备 task/session/heartbeat 闭环，普通闲聊不写入 `task_inbox`
 - 模型配置：统一使用 `config/models.json`，支持在聊天内通过 `/model` 查看和切换
 - LLM 用量统计：通过 `/usage` 查看按天 + 会话 + 模型聚合的 token 使用；数据持久化到 `data/bot_data.db`
-- Manager 开发链路：仓库类任务优先使用 `repo_workspace`、`codex_session`、`git_ops`、`gh_cli`
+- Ikaros 开发链路：仓库类任务优先使用 `repo_workspace`、`codex_session`、`git_ops`、`gh_cli`
 
 ## 架构概览
 
-### 1. Core Manager
+### 1. Ikaros Core
 
-Manager 是系统统一入口，负责：
+Ikaros 是系统统一入口，负责：
 
 - 接收平台消息、命令和回调
 - 组装提示词、SOUL、上下文和工具面
@@ -109,7 +109,7 @@ Core 只暴露运行时基础设施，不再在 core 里硬编码 channel / memo
 │   ├── api/              # FastAPI + SPA
 │   ├── core/             # orchestrator、runtime、state、task、platform 抽象、extension runtime
 │   ├── handlers/         # 可复用的命令/消息处理逻辑
-│   ├── manager/          # manager 侧开发/规划/闭环服务
+│   ├── ikaros/          # ikaros 侧开发/规划/闭环服务
 │   ├── platforms/
 │   │   └── web/          # Web 前端与静态资源
 │   ├── services/         # AI、下载、搜索等外部服务集成
@@ -195,7 +195,7 @@ uv sync
 
 ### 4. 启动
 
-本地直接运行 Manager：
+本地直接运行 Ikaros：
 
 ```bash
 uv run python src/main.py
@@ -295,7 +295,7 @@ docker compose logs -f ikaros-api
 ## 当前维护原则
 
 - 文档以当前实现为准，不保留未落地的旧架构描述
-- 普通用户执行统一走 Core Manager，不重新引入独立 Worker 执行面
+- 普通用户执行统一走 Ikaros Core，不重新引入独立 Worker 执行面
 - 新的用户侧业务注册，不要写回 `src/main.py` 或 core 特化逻辑，优先通过 extension runtime 注入
 - skill 真源始终是 `extension/skills/**/SKILL.md`
 - channel / memory / plugin 扩展保持代码优先，不额外引入 manifest

@@ -1,12 +1,12 @@
 # CORE TESTS KNOWLEDGE BASE
 
 ## OVERVIEW
-`tests/core/` validates manager orchestration loops, tool dispatch contracts, subagent/background runtime behavior, and core reliability boundaries.
+`tests/core/` validates ikaros orchestration loops, tool dispatch contracts, subagent/background runtime behavior, and core reliability boundaries.
 
 ## WHERE TO LOOK
 | Behavior | Location | Notes |
 |----------|----------|-------|
-| Orchestrator loop semantics | `tests/core/test_orchestrator_single_loop.py`, `tests/core/test_orchestrator_delivery_closure.py`, `tests/core/test_orchestrator_runtime_tools.py`, `tests/core/test_orchestrator_context.py` | primary regression suites for manager loop behavior and closure |
+| Orchestrator loop semantics | `tests/core/test_orchestrator_single_loop.py`, `tests/core/test_orchestrator_delivery_closure.py`, `tests/core/test_orchestrator_runtime_tools.py`, `tests/core/test_orchestrator_context.py` | primary regression suites for ikaros loop behavior and closure |
 | AI loop guardrails and retry | `tests/core/test_ai_service_loop_guard.py`, `tests/core/test_ai_service_retry_loop.py` | repetition control, recovery, and retry boundaries |
 | Extension and runtime contracts | `tests/core/test_extension_router.py`, `tests/core/test_extension_executor.py`, `tests/core/test_skill_arg_planner.py`, `tests/core/test_skill_loader_schema_inference.py` | tool-call and skill execution compatibility |
 | Handler-level routing guarantees | `tests/core/test_ai_handlers_dispatch.py`, `tests/core/test_heartbeat_handlers.py`, `tests/core/test_start_handlers_stop.py`, `tests/core/test_unified_context_reply.py` | command/message routing and control-path behavior |

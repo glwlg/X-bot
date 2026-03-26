@@ -145,7 +145,7 @@ async def reload_skills_command(ctx: UnifiedContext) -> None:
 def _visible_skill_items() -> list[tuple[str, dict]]:
     output: list[tuple[str, dict]] = []
     for name, info in sorted(skill_loader.get_skill_index().items(), key=lambda item: item[0]):
-        if bool(info.get("manager_only")):
+        if bool(info.get("ikaros_only")):
             continue
         output.append((name, dict(info)))
     return output

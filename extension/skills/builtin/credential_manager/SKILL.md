@@ -38,7 +38,7 @@ entrypoint: scripts/execute.py
 
 - `--data` 支持 JSON 字符串，例如：`--data '{"username":"alice","password":"secret"}'`
 - 也支持空格分隔的 `key=value`，例如：`--data 'username=alice password=secret mfa_secret=BASE32'`
-- 对于 `wechat_official_account` 这类服务，可以附加自定义字段；例如统一配置公众号文章作者：`--data 'app_id=xxx app_secret=yyy author=炜煜'`。`news_article_writer` 会把它同时用于文章作者和配图水印（自动变成 `@炜煜`）。
+- 对于 `wechat_official_account` 这类服务，可以附加自定义字段；例如统一配置公众号文章作者：`--data 'app_id=xxx app_secret=yyy author=炜煜'`。`article_publisher` 会把它同时用于文章作者和配图水印（自动变成 `@炜煜`）。
 
 ## Rules
 

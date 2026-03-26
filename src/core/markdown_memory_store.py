@@ -103,13 +103,13 @@ class MarkdownMemoryStore:
         target_day = day or date.today()
         return (self.daily_dir(user_id) / f"{target_day.isoformat()}.md").resolve()
 
-    def manager_memory_path(self) -> Path:
-        return (self._system_root() / "MANAGER_MEMORY.md").resolve()
+    def ikaros_memory_path(self) -> Path:
+        return (self._system_root() / "IKAROS_MEMORY.md").resolve()
 
-    def manager_daily_path(self, day: date | None = None) -> Path:
+    def ikaros_daily_path(self, day: date | None = None) -> Path:
         target_day = day or date.today()
         return (
-            self._system_root() / "manager_memory" / f"{target_day.isoformat()}.md"
+            self._system_root() / "ikaros_memory" / f"{target_day.isoformat()}.md"
         ).resolve()
 
     def _rollup_marker_path(self, user_id: str, day: date) -> Path:
@@ -151,20 +151,20 @@ class MarkdownMemoryStore:
             category="memory",
         )
 
-    def _ensure_manager_memory_file(self) -> None:
-        path = self.manager_memory_path()
+    def _ensure_ikaros_memory_file(self) -> None:
+        path = self.ikaros_memory_path()
         if path.exists() and self._read_text(path).strip():
             return
         content = "# MANAGER MEMORY\n\n## 经验记忆\n\n"
         try:
             self._write_text(
-                path, content, actor="system", reason="init_manager_memory"
+                path, content, actor="system", reason="init_ikaros_memory"
             )
         except Exception:
             return
 
     async def initialize(self) -> None:
-        self._ensure_manager_memory_file()
+        self._ensure_ikaros_memory_file()
 
     def list_user_items_sync(self, user_id: str) -> List[dict[str, Any]]:
         self.ensure_migrated(user_id)
@@ -214,10 +214,10 @@ class MarkdownMemoryStore:
         )
         return [{"text": text, "metadata": {}, "created_at": ""} for text in cleaned]
 
-    def list_manager_items_sync(self) -> List[dict[str, Any]]:
-        self._ensure_manager_memory_file()
+    def list_ikaros_items_sync(self) -> List[dict[str, Any]]:
+        self._ensure_ikaros_memory_file()
         items: List[dict[str, Any]] = []
-        for line in self._read_text(self.manager_memory_path()).splitlines():
+        for line in self._read_text(self.ikaros_memory_path()).splitlines():
             stripped = line.strip()
             if not stripped.startswith("- "):
                 continue
@@ -233,14 +233,14 @@ class MarkdownMemoryStore:
             items.append({"text": text, "metadata": metadata, "created_at": ""})
         return items
 
-    async def list_manager_items(self) -> List[dict[str, Any]]:
-        return self.list_manager_items_sync()
+    async def list_ikaros_items(self) -> List[dict[str, Any]]:
+        return self.list_ikaros_items_sync()
 
-    async def add_manager_items(
+    async def add_ikaros_items(
         self, items: List[dict[str, Any]]
     ) -> List[dict[str, Any]]:
-        self._ensure_manager_memory_file()
-        path = self.manager_memory_path()
+        self._ensure_ikaros_memory_file()
+        path = self.ikaros_memory_path()
         current = self._read_text(path)
         cleaned: List[dict[str, Any]] = []
         for item in items:
@@ -274,7 +274,7 @@ class MarkdownMemoryStore:
             path,
             merged,
             actor="system",
-            reason="provider_add_manager_memory",
+            reason="provider_add_ikaros_memory",
         )
         return cleaned
 
@@ -610,21 +610,21 @@ class MarkdownMemoryStore:
     ) -> dict[str, List[str]]:
         rendered = self._render_transcripts_for_ai(transcripts)
         if not rendered:
-            return {"user_facts": [], "manager_experiences": []}
+            return {"user_facts": [], "ikaros_experiences": []}
 
         model_to_use = get_current_model()
         client = _resolve_memory_client(model_to_use)
         if client is None:
-            return {"user_facts": [], "manager_experiences": []}
+            return {"user_facts": [], "ikaros_experiences": []}
 
         messages = [
             {
                 "role": "system",
                 "content": (
                     "You extract structured long-term memory from conversation transcripts. "
-                    "Return JSON only with keys `user_facts` and `manager_experiences`, both arrays of strings. "
+                    "Return JSON only with keys `user_facts` and `ikaros_experiences`, both arrays of strings. "
                     "`user_facts` should contain only durable user facts explicitly stated by the user and useful for future personalization. "
-                    "`manager_experiences` should contain only reusable operator or engineering lessons from assistant outputs, not user-specific wording. "
+                    "`ikaros_experiences` should contain only reusable operator or engineering lessons from assistant outputs, not user-specific wording. "
                     "Do not infer. Do not keep temporary tasks, transient requests, or duplicates. "
                     "Keep each item concise."
                 ),
@@ -649,11 +649,11 @@ class MarkdownMemoryStore:
                 response = await client.chat.completions.create(**request_kwargs)
             except Exception as exc:
                 logger.debug("Daily memory rollup extraction failed: %s", exc)
-                return {"user_facts": [], "manager_experiences": []}
+                return {"user_facts": [], "ikaros_experiences": []}
 
         payload = _extract_json_object(_extract_response_text(response))
         user_facts = payload.get("user_facts")
-        manager_experiences = payload.get("manager_experiences")
+        ikaros_experiences = payload.get("ikaros_experiences")
         return {
             "user_facts": self._dedupe(
                 [str(item or "").strip() for item in user_facts]
@@ -661,15 +661,15 @@ class MarkdownMemoryStore:
                 else [],
                 limit=6,
             ),
-            "manager_experiences": self._dedupe(
-                [str(item or "").strip() for item in manager_experiences]
-                if isinstance(manager_experiences, list)
+            "ikaros_experiences": self._dedupe(
+                [str(item or "").strip() for item in ikaros_experiences]
+                if isinstance(ikaros_experiences, list)
                 else [],
                 limit=5,
             ),
         }
 
-    def add_manager_experiences(
+    def add_ikaros_experiences(
         self,
         experiences: List[str],
         *,
@@ -682,8 +682,8 @@ class MarkdownMemoryStore:
         if not records:
             return 0
 
-        self._ensure_manager_memory_file()
-        path = self.manager_memory_path()
+        self._ensure_ikaros_memory_file()
+        path = self.ikaros_memory_path()
         current = self._read_text(path)
         if not current and not path.exists():
             return 0
@@ -711,12 +711,12 @@ class MarkdownMemoryStore:
             merged += f"- [{day.isoformat()}] {item}\n"
         try:
             self._write_text(
-                path, merged, actor="system", reason="daily_rollup_manager_memory"
+                path, merged, actor="system", reason="daily_rollup_ikaros_memory"
             )
         except Exception:
             return 0
 
-        day_path = self.manager_daily_path(day)
+        day_path = self.ikaros_daily_path(day)
         daily_existing = self._read_text(day_path)
         if not daily_existing.strip():
             daily_existing = f"# {day.isoformat()}\n\n"
@@ -726,14 +726,14 @@ class MarkdownMemoryStore:
                 day_path,
                 daily_existing.rstrip() + f"\n{detail}\n",
                 actor="system",
-                reason="daily_rollup_manager_daily",
+                reason="daily_rollup_ikaros_daily",
             )
         except Exception:
             pass
         return len(added)
 
-    def load_manager_snapshot(self, *, max_chars: int = 1600) -> str:
-        content = self._read_text(self.manager_memory_path()).strip()
+    def load_ikaros_snapshot(self, *, max_chars: int = 1600) -> str:
+        content = self._read_text(self.ikaros_memory_path()).strip()
         if not content:
             return ""
         if len(content) <= max_chars:
@@ -746,7 +746,7 @@ class MarkdownMemoryStore:
         *,
         target_day: date | None = None,
     ) -> dict[str, Any]:
-        """Daily memory rollup: extract high-value user memory + manager experience."""
+        """Daily memory rollup: extract high-value user memory + ikaros experience."""
         day = target_day or date.today()
         marker = self._rollup_marker_path(user_id, day)
         if marker.exists():
@@ -769,12 +769,12 @@ class MarkdownMemoryStore:
             source="daily_session_rollup",
         )
 
-        manager_experiences = self._dedupe(
-            extracted.get("manager_experiences") or [],
+        ikaros_experiences = self._dedupe(
+            extracted.get("ikaros_experiences") or [],
             limit=5,
         )
-        added_manager_count = self.add_manager_experiences(
-            manager_experiences,
+        added_ikaros_count = self.add_ikaros_experiences(
+            ikaros_experiences,
             day=day,
             source_user_id=str(user_id),
         )
@@ -782,7 +782,7 @@ class MarkdownMemoryStore:
         marker.parent.mkdir(parents=True, exist_ok=True)
         try:
             marker.write_text(
-                f"rolled_at: {_now_iso()}\nuser_memory_added: {added_user_count}\nmanager_exp_added: {added_manager_count}\n",
+                f"rolled_at: {_now_iso()}\nuser_memory_added: {added_user_count}\nikaros_exp_added: {added_ikaros_count}\n",
                 encoding="utf-8",
             )
         except Exception:
@@ -792,7 +792,7 @@ class MarkdownMemoryStore:
             "ok": True,
             "skipped": False,
             "user_memory_added": added_user_count,
-            "manager_experience_added": added_manager_count,
+            "ikaros_experience_added": added_ikaros_count,
             "sessions": len(transcripts),
         }
 

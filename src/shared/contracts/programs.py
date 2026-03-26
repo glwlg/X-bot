@@ -16,7 +16,7 @@ class ProgramManifest:
     entrypoint: str = "program.py"
     checksum: str = ""
     created_at: str = field(default_factory=now_iso)
-    created_by: str = "manager"
+    created_by: str = "ikaros"
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -26,7 +26,7 @@ class ProgramManifest:
             "entrypoint": str(self.entrypoint or "program.py").strip(),
             "checksum": str(self.checksum or "").strip(),
             "created_at": str(self.created_at or now_iso()),
-            "created_by": str(self.created_by or "manager"),
+            "created_by": str(self.created_by or "ikaros"),
             "metadata": dict(self.metadata or {}),
         }
 
@@ -40,7 +40,7 @@ class ProgramManifest:
             entrypoint=str(data.get("entrypoint") or "program.py").strip(),
             checksum=str(data.get("checksum") or "").strip(),
             created_at=str(data.get("created_at") or now_iso()),
-            created_by=str(data.get("created_by") or "manager").strip(),
+            created_by=str(data.get("created_by") or "ikaros").strip(),
             metadata=dict(raw_metadata) if isinstance(raw_metadata, dict) else {},
         )
 

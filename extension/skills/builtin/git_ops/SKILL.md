@@ -1,7 +1,7 @@
 ---
 api_version: v3
 name: git_ops
-description: Manager-side Git operations for checking status, diffing, committing, and pushing development workspaces.
+description: Ikaros-side Git operations for checking status, diffing, committing, and pushing development workspaces.
 triggers:
 - git ops
 - git status
@@ -10,7 +10,7 @@ triggers:
 - git push
 - push branch
 allowed_roles:
-- manager
+- ikaros
 policy_groups:
 - management
 - coding
@@ -18,7 +18,7 @@ platform_handlers: false
 tool_exports:
 - name: git_ops
   description: Inspect, diff, commit, and push prepared repository workspaces with fork-aware push fallback.
-  handler: manager.git_ops
+  handler: ikaros.git_ops
   prompt_hint: 在工作区里查看代码变更、提交 commit、push 分支时优先直接用 `git_ops`；不要再用原始 `bash` 手工串联 `git status/add/commit/push`。需要开 PR 时再结合 `gh_cli`。
   policy_groups:
   - management
@@ -68,7 +68,7 @@ entrypoint: scripts/execute.py
 
 # Git Ops
 
-Manager 用这个技能直接处理工作区内的 git 读写操作。它默认对 fork 场景友好，适合作为 `repo_workspace` 和 `gh_cli` 之间的代码提交桥梁。
+Ikaros 用这个技能直接处理工作区内的 git 读写操作。它默认对 fork 场景友好，适合作为 `repo_workspace` 和 `gh_cli` 之间的代码提交桥梁。
 
 ## CLI
 

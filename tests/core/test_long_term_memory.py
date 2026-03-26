@@ -36,7 +36,7 @@ def _reset_long_term_memory_state():
     long_term_memory_module.long_term_memory._provider_name = ""
     long_term_memory_module.long_term_memory._initialized = False
     long_term_memory_module.long_term_memory._init_lock = None
-    long_term_memory_module.long_term_memory._manager_snapshot_cache = ""
+    long_term_memory_module.long_term_memory._ikaros_snapshot_cache = ""
 
 
 def _write_memory_config(path, payload):
@@ -160,12 +160,12 @@ async def test_long_term_memory_mem0_provider_reads_and_writes_without_file_stor
         include_daily=True,
         max_chars=2000,
     )
-    added = await long_term_memory_module.long_term_memory.add_manager_experiences(
+    added = await long_term_memory_module.long_term_memory.add_ikaros_experiences(
         ["优先验证配置"],
         day=date(2026, 3, 19),
         source_user_id="u-mem0",
     )
-    manager_snapshot = long_term_memory_module.long_term_memory.load_manager_snapshot(
+    ikaros_snapshot = long_term_memory_module.long_term_memory.load_ikaros_snapshot(
         max_chars=2000
     )
 
@@ -174,12 +174,12 @@ async def test_long_term_memory_mem0_provider_reads_and_writes_without_file_stor
     assert "【长期记忆】" in user_snapshot
     assert "偏好称呼：老王" in user_snapshot
     assert added == 1
-    assert "- [2026-03-19] 优先验证配置" in manager_snapshot
+    assert "- [2026-03-19] 优先验证配置" in ikaros_snapshot
     assert _FakeAsyncMemory.instances[0].kwargs == {"project": "demo"}
     assert not (data_dir / "user" / "MEMORY.md").exists()
-    assert not (data_dir / "system" / "MANAGER_MEMORY.md").exists()
+    assert not (data_dir / "system" / "IKAROS_MEMORY.md").exists()
     assert (data_dir / "user" / "memory").exists()
-    assert (data_dir / "system" / "manager_memory" / "2026-03-19.md").exists()
+    assert (data_dir / "system" / "ikaros_memory" / "2026-03-19.md").exists()
 
 
 @pytest.mark.asyncio
@@ -211,7 +211,7 @@ async def test_long_term_memory_rollup_uses_ai_structured_extraction(
         assert transcripts
         return {
             "user_facts": ["居住地：北京"],
-            "manager_experiences": ["优先验证配置再部署"],
+            "ikaros_experiences": ["优先验证配置再部署"],
         }
 
     monkeypatch.setattr(
@@ -230,15 +230,15 @@ async def test_long_term_memory_rollup_uses_ai_structured_extraction(
     )
 
     assert result["user_memory_added"] == 1
-    assert result["manager_experience_added"] == 1
+    assert result["ikaros_experience_added"] == 1
     memory_text = (
         data_dir / "user" / "MEMORY.md"
     ).read_text(encoding="utf-8")
-    manager_text = (
-        data_dir / "system" / "MANAGER_MEMORY.md"
+    ikaros_text = (
+        data_dir / "system" / "IKAROS_MEMORY.md"
     ).read_text(encoding="utf-8")
     assert "居住地：北京" in memory_text
-    assert "优先验证配置再部署" in manager_text
+    assert "优先验证配置再部署" in ikaros_text
 
 
 @pytest.mark.asyncio

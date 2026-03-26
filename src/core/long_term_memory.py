@@ -24,9 +24,9 @@ class LongTermMemoryProvider(Protocol):
         self, user_id: str, items: list[MemoryItem]
     ) -> list[MemoryItem]: ...
 
-    async def list_manager_items(self) -> list[MemoryItem]: ...
+    async def list_ikaros_items(self) -> list[MemoryItem]: ...
 
-    async def add_manager_items(self, items: list[MemoryItem]) -> list[MemoryItem]: ...
+    async def add_ikaros_items(self, items: list[MemoryItem]) -> list[MemoryItem]: ...
 
 
 class LongTermMemoryService:
@@ -35,7 +35,7 @@ class LongTermMemoryService:
         self._provider_name = ""
         self._init_lock: asyncio.Lock | None = None
         self._initialized = False
-        self._manager_snapshot_cache = ""
+        self._ikaros_snapshot_cache = ""
 
     async def initialize(self) -> None:
         if self._initialized:
@@ -52,7 +52,7 @@ class LongTermMemoryService:
             self._provider_name = provider_name
             self._initialized = True
             if provider_name == "mem0":
-                await self._refresh_manager_snapshot_cache()
+                await self._refresh_ikaros_snapshot_cache()
 
     def get_provider_name(self) -> str:
         if self._provider_name:
@@ -131,7 +131,7 @@ class LongTermMemoryService:
             return content
         return content[-max_chars:]
 
-    def _render_manager_snapshot(self, items: list[MemoryItem], *, max_chars: int) -> str:
+    def _render_ikaros_snapshot(self, items: list[MemoryItem], *, max_chars: int) -> str:
         lines: list[str] = []
         for item in self._dedupe_items(items):
             text = str(item.get("text") or "").strip()
@@ -147,10 +147,10 @@ class LongTermMemoryService:
                 lines.append(f"- {text}")
         return self._truncate("\n".join(lines).strip(), max_chars=max_chars)
 
-    async def _refresh_manager_snapshot_cache(self) -> None:
+    async def _refresh_ikaros_snapshot_cache(self) -> None:
         provider = await self._get_provider()
-        items = await provider.list_manager_items()
-        self._manager_snapshot_cache = self._render_manager_snapshot(
+        items = await provider.list_ikaros_items()
+        self._ikaros_snapshot_cache = self._render_ikaros_snapshot(
             items,
             max_chars=100000,
         )
@@ -281,20 +281,20 @@ class LongTermMemoryService:
         )
         return len(added)
 
-    def load_manager_snapshot(self, *, max_chars: int = 1600) -> str:
+    def load_ikaros_snapshot(self, *, max_chars: int = 1600) -> str:
         provider_name = self.get_provider_name()
         if provider_name == "file":
-            return self._render_manager_snapshot(
-                markdown_memory_store.list_manager_items_sync(),
+            return self._render_ikaros_snapshot(
+                markdown_memory_store.list_ikaros_items_sync(),
                 max_chars=max_chars,
             )
         if not self._initialized:
             raise RuntimeError(
                 f"long-term memory provider '{provider_name}' must be initialized before sync access"
             )
-        return self._truncate(self._manager_snapshot_cache, max_chars=max_chars)
+        return self._truncate(self._ikaros_snapshot_cache, max_chars=max_chars)
 
-    async def add_manager_experiences(
+    async def add_ikaros_experiences(
         self,
         experiences: list[str],
         *,
@@ -309,7 +309,7 @@ class LongTermMemoryService:
             return 0
 
         provider = await self._get_provider()
-        existing_items = await provider.list_manager_items()
+        existing_items = await provider.list_ikaros_items()
         existing_norms = {
             _norm_text(str(item.get("text") or "").strip()) for item in existing_items
         }
@@ -317,7 +317,7 @@ class LongTermMemoryService:
         if not added:
             return 0
 
-        await provider.add_manager_items(
+        await provider.add_ikaros_items(
             [
                 {
                     "text": item,
@@ -328,7 +328,7 @@ class LongTermMemoryService:
             ]
         )
 
-        day_path = markdown_memory_store.manager_daily_path(day)
+        day_path = markdown_memory_store.ikaros_daily_path(day)
         daily_existing = markdown_memory_store._read_text(day_path)
         if not daily_existing.strip():
             daily_existing = f"# {day.isoformat()}\n\n"
@@ -337,11 +337,11 @@ class LongTermMemoryService:
             day_path,
             daily_existing.rstrip() + f"\n{detail}\n",
             actor="system",
-            reason="daily_rollup_manager_daily",
+            reason="daily_rollup_ikaros_daily",
         )
 
         if self.get_provider_name() == "mem0":
-            await self._refresh_manager_snapshot_cache()
+            await self._refresh_ikaros_snapshot_cache()
         return len(added)
 
     async def rollup_today_sessions(
@@ -375,12 +375,12 @@ class LongTermMemoryService:
             source="daily_session_rollup",
         )
 
-        manager_experiences = markdown_memory_store._dedupe(
-            extracted.get("manager_experiences") or [],
+        ikaros_experiences = markdown_memory_store._dedupe(
+            extracted.get("ikaros_experiences") or [],
             limit=5,
         )
-        added_manager_count = await self.add_manager_experiences(
-            manager_experiences,
+        added_ikaros_count = await self.add_ikaros_experiences(
+            ikaros_experiences,
             day=day,
             source_user_id=str(user_id),
         )
@@ -391,7 +391,7 @@ class LongTermMemoryService:
                 (
                     f"rolled_at: {_now_iso()}\n"
                     f"user_memory_added: {added_user_count}\n"
-                    f"manager_exp_added: {added_manager_count}\n"
+                    f"ikaros_exp_added: {added_ikaros_count}\n"
                 ),
                 encoding="utf-8",
             )
@@ -402,7 +402,7 @@ class LongTermMemoryService:
             "ok": True,
             "skipped": False,
             "user_memory_added": added_user_count,
-            "manager_experience_added": added_manager_count,
+            "ikaros_experience_added": added_ikaros_count,
             "sessions": len(transcripts),
         }
 

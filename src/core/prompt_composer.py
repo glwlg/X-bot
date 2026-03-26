@@ -8,7 +8,7 @@ from core.channel_user_store import channel_user_store
 from core.config import is_user_admin
 from core.prompts import (
     DEFAULT_SYSTEM_PROMPT,
-    MANAGER_CORE_PROMPT,
+    IKAROS_CORE_PROMPT,
     SUBAGENT_CORE_PROMPT,
 )
 from core.long_term_memory import long_term_memory
@@ -57,7 +57,7 @@ class PromptComposer:
     """
     Build minimal runtime instruction:
     1) default system prompt
-    2) manager AGENTS (manager only)
+    2) ikaros AGENTS (ikaros only)
     3) SOUL
     4) USER
     5) tool inventory
@@ -91,14 +91,14 @@ class PromptComposer:
         except Exception:
             return ""
 
-    def _load_manager_agents_doc(self) -> str:
+    def _load_ikaros_agents_doc(self) -> str:
         return self._read_cached_text_file(
             (Path(__file__).resolve().parents[2] / "config" / "AGENTS.md").resolve()
         )
 
-    def _load_manager_memory_snapshot(self, *, max_chars: int = 1200) -> str:
+    def _load_ikaros_memory_snapshot(self, *, max_chars: int = 1200) -> str:
         try:
-            return long_term_memory.load_manager_snapshot(max_chars=max_chars)
+            return long_term_memory.load_ikaros_snapshot(max_chars=max_chars)
         except Exception:
             return ""
 
@@ -131,7 +131,7 @@ class PromptComposer:
         )
 
     @staticmethod
-    def _build_manager_session_context_contract() -> str:
+    def _build_ikaros_session_context_contract() -> str:
         return (
             "【当前会话上下文约束】\n"
             "- 私聊会话中的用户长期记忆会在新会话开始时通过隐藏 system 消息 `【会话记忆种子】` 注入；长会话还可能携带 `【会话压缩摘要】`。\n"
@@ -157,11 +157,11 @@ class PromptComposer:
         if not soul_payload:
             parts.append(DEFAULT_SYSTEM_PROMPT.strip())
 
-        if runtime_role == "manager":
-            agents_doc = self._load_manager_agents_doc()
+        if runtime_role == "ikaros":
+            agents_doc = self._load_ikaros_agents_doc()
             if agents_doc:
                 parts.append("【AGENTS】\n" + agents_doc)
-            parts.append(self._build_manager_session_context_contract())
+            parts.append(self._build_ikaros_session_context_contract())
 
         parts.append("【SOUL】\n" + soul_payload.content.strip())
         user_identity_doc = self._load_user_identity_doc(
@@ -171,20 +171,20 @@ class PromptComposer:
         if user_identity_doc:
             parts.append("【USER】\n" + user_identity_doc.strip())
 
-        # 如果是 manager 模式，添加 Manager 核心 Prompt
-        if str(mode or "").strip().lower() == "manager":
-            manager_memory = self._load_manager_memory_snapshot(max_chars=1200)
-            if manager_memory:
-                parts.append("【MANAGER 经验记忆】\n" + manager_memory)
-            management_tool_guidance = self._build_manager_tool_guidance(
+        # 如果是 ikaros 模式，添加 Ikaros 核心 Prompt
+        if str(mode or "").strip().lower() == "ikaros":
+            ikaros_memory = self._load_ikaros_memory_snapshot(max_chars=1200)
+            if ikaros_memory:
+                parts.append("【IKAROS 经验记忆】\n" + ikaros_memory)
+            management_tool_guidance = self._build_ikaros_tool_guidance(
                 runtime_user_id=runtime_user_id,
                 platform=platform,
             )
-            manager_prompt = MANAGER_CORE_PROMPT.format(
+            ikaros_prompt = IKAROS_CORE_PROMPT.format(
                 management_tool_guidance=management_tool_guidance,
             )
-            logger.debug("Manager Prompt: \n" + manager_prompt)
-            parts.append("\n" + manager_prompt)
+            logger.debug("Ikaros Prompt: \n" + ikaros_prompt)
+            parts.append("\n" + ikaros_prompt)
         elif str(mode or "").strip().lower() == "subagent":
             parts.append("\n" + SUBAGENT_CORE_PROMPT)
         elif str(mode or "").strip().lower() == "media_image":
@@ -239,7 +239,7 @@ class PromptComposer:
         platform_name = str(platform or "").strip().lower()
         if uid.startswith("subagent::") or platform_name == "subagent_kernel":
             return "subagent"
-        return "manager"
+        return "ikaros"
 
     def _build_skill_catalog(
         self,
@@ -309,7 +309,7 @@ class PromptComposer:
         except Exception:
             return ""
 
-    def _build_manager_tool_guidance(
+    def _build_ikaros_tool_guidance(
         self,
         *,
         runtime_user_id: str,
@@ -323,7 +323,7 @@ class PromptComposer:
                 "- 需要并发分解或隔离高风险执行时，直接调用 `spawn_subagent`，并把 `allowed_tools` / `allowed_skills` 收紧到完成子任务所需的最小集合。",
                 "- 需要汇总已启动的子任务结果时，调用 `await_subagents`；subagent 失败后先由你决定重试、降级或改方案，不要直接把原始失败暴露给用户。",
             ]
-            for tool in tool_registry.get_skill_tools(runtime_role="manager"):
+            for tool in tool_registry.get_skill_tools(runtime_role="ikaros"):
                 tool_name = str(tool.get("name") or "").strip()
                 if not tool_name:
                     continue
@@ -345,10 +345,10 @@ class PromptComposer:
                 lines.append(f"- {prompt_hint}")
 
             if not lines:
-                return "优先使用当前可见的 manager 直连工具，不要自行猜测隐藏能力。"
+                return "优先使用当前可见的 ikaros 直连工具，不要自行猜测隐藏能力。"
             return "\n".join(lines)
         except Exception:
-            return "优先使用当前可见的 manager 直连工具，不要自行猜测隐藏能力。"
+            return "优先使用当前可见的 ikaros 直连工具，不要自行猜测隐藏能力。"
 
 
 prompt_composer = PromptComposer()

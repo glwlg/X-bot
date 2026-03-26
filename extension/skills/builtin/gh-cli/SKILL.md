@@ -10,14 +10,14 @@ triggers:
 - gh auth
 - device code
 allowed_roles:
-- manager
+- ikaros
 policy_groups:
 - management
 platform_handlers: false
 tool_exports:
 - name: gh_cli
-  description: Manager-side GitHub CLI bridge with waitable device-code login and non-interactive gh execution.
-  handler: manager.gh_cli
+  description: Ikaros-side GitHub CLI bridge with waitable device-code login and non-interactive gh execution.
+  handler: ikaros.gh_cli
   prompt_hint: 仅在 GitHub CLI 登录、认证状态检查，或用户明确要求执行具体 `gh` 命令时调用 `gh_cli`。`auth_status` 只是一个快速预检：成功时不要向用户汇报“已登录”，直接继续后续开发步骤；只有认证异常、未登录或用户明确询问状态时，才需要显式告知。若任务涉及仓库代码修改、README 驱动实现、处理 issue/PR 后改代码并提交 PR，优先组合使用 `repo_workspace`、`codex_session`、`git_ops` 和 `gh_cli`。
   policy_groups:
   - management
@@ -64,7 +64,7 @@ Comprehensive reference for GitHub CLI (gh) - work seamlessly with GitHub from t
 
 ## Skill CLI
 
-Manager-side direct execution example:
+Ikaros-side direct execution example:
 
 `python scripts/execute.py --action auth_status`
 

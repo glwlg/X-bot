@@ -186,7 +186,7 @@ class TaskEnvelope:
     status: str = "pending"
     executor_id: str = ""
     assignment_reason: str = ""
-    manager_id: str = "core-manager"
+    ikaros_id: str = "core-ikaros"
     result: Dict[str, Any] = field(default_factory=dict)
     final_output: str = ""
     output: Dict[str, Any] = field(default_factory=dict)
@@ -210,7 +210,7 @@ class TaskEnvelope:
 
 
 class TaskInbox:
-    """Unified inbox for manager-facing tasks."""
+    """Unified inbox for ikaros-facing tasks."""
 
     def __init__(self) -> None:
         self.persist = os.getenv("TASK_INBOX_PERSIST", "true").strip().lower() == "true"
@@ -631,7 +631,7 @@ class TaskInbox:
         *,
         executor_id: str,
         reason: str = "",
-        manager_id: str = "core-manager",
+        ikaros_id: str = "core-ikaros",
     ) -> bool:
         return await self.update_status(
             task_id,
@@ -640,7 +640,7 @@ class TaskInbox:
             detail=f"executor={executor_id}; reason={reason[:120]}",
             executor_id=str(executor_id or "").strip(),
             assignment_reason=str(reason or "").strip(),
-            manager_id=str(manager_id or "core-manager").strip() or "core-manager",
+            ikaros_id=str(ikaros_id or "core-ikaros").strip() or "core-ikaros",
         )
 
     async def complete(

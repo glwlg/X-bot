@@ -132,7 +132,7 @@ async def test_heartbeat_worker_delivers_tool_files_from_terminal_payload(
 
     async def fake_handle_message(ctx, message_history):
         _ = message_history
-        callback = get_runtime_callback(ctx, "manager_progress_callback")
+        callback = get_runtime_callback(ctx, "ikaros_progress_callback")
         if callable(callback):
             await callback(
                 {
@@ -503,7 +503,7 @@ async def test_heartbeat_worker_readonly_action_does_not_dispatch_to_worker(
     result = await worker.run_user_now("worker_u3")
     assert "检测到需要修复的配置异常" in result
     assert "heartbeat readonly 模式" not in result
-    assert "Core Manager 治理提醒" not in result
+    assert "Ikaros Core 治理提醒" not in result
     assert sent and sent[0][0] == "100"
 
 

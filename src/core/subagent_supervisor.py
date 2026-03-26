@@ -534,7 +534,7 @@ class SubagentSupervisor:
                     diagnostic_summary=_safe_text(message, limit=12000),
                     task_outcome="blocked",
                     failure_mode=latest_terminal_failure_mode or "recoverable",
-                    manager_followup_required=True,
+                    ikaros_followup_required=True,
                 )
             else:
                 result = SubagentResult(
@@ -546,7 +546,7 @@ class SubagentSupervisor:
                     diagnostic_summary=summary_text,
                     task_outcome="done",
                     failure_mode="",
-                    manager_followup_required=False,
+                    ikaros_followup_required=False,
                 )
         except asyncio.CancelledError:
             result = SubagentResult(
@@ -558,7 +558,7 @@ class SubagentSupervisor:
                 diagnostic_summary="subagent cancelled",
                 task_outcome="cancelled",
                 failure_mode="recoverable",
-                manager_followup_required=False,
+                ikaros_followup_required=False,
             )
         except asyncio.TimeoutError:
             message = f"subagent timeout after {int(run.timeout_sec)}s"
@@ -571,7 +571,7 @@ class SubagentSupervisor:
                 diagnostic_summary=message,
                 task_outcome="blocked",
                 failure_mode="recoverable",
-                manager_followup_required=True,
+                ikaros_followup_required=True,
             )
         except Exception as exc:
             message = f"subagent failed: {exc}"
@@ -588,7 +588,7 @@ class SubagentSupervisor:
                 ),
                 task_outcome="blocked",
                 failure_mode="recoverable",
-                manager_followup_required=True,
+                ikaros_followup_required=True,
             )
         finally:
             pop_runtime_callback(ctx, "subagent_progress_callback")
@@ -615,7 +615,7 @@ class SubagentSupervisor:
                 "failure_mode": _safe_text(result.failure_mode, limit=40).lower(),
                 "closure_reason": (
                     "subagent_failed"
-                    if result.manager_followup_required and not result.ok
+                    if result.ikaros_followup_required and not result.ok
                     else ""
                 ),
             },
@@ -631,7 +631,7 @@ class SubagentSupervisor:
             return self._build_delivery_text(run, result), normalize_file_rows(result.files)
 
         try:
-            from manager.relay.closure_service import manager_closure_service
+            from ikaros.relay.closure_service import ikaros_closure_service
             from shared.contracts.dispatch import TaskEnvelope as DispatchTaskEnvelope
 
             attempt_task = DispatchTaskEnvelope(
@@ -641,7 +641,7 @@ class SubagentSupervisor:
                 source="subagent",
                 metadata=dict(run.task_metadata or {}),
             )
-            decision = await manager_closure_service.resolve_attempt(
+            decision = await ikaros_closure_service.resolve_attempt(
                 task=attempt_task,
                 result=self._as_attempt_result(result),
                 platform=run.notify_platform,
@@ -699,7 +699,7 @@ class SubagentSupervisor:
             }
             if run.task_metadata:
                 metadata.update(dict(run.task_metadata))
-            if result.ok and not result.manager_followup_required:
+            if result.ok and not result.ikaros_followup_required:
                 await task_inbox.complete(
                     task_id,
                     result={"payload": result_dict, "summary": result.summary},
@@ -715,7 +715,7 @@ class SubagentSupervisor:
                 )
             await task_inbox.update_status(
                 task_id,
-                "completed" if result.ok and not result.manager_followup_required else "failed",
+                "completed" if result.ok and not result.ikaros_followup_required else "failed",
                 event="subagent_finished",
                 detail=result.summary[:180],
                 metadata=metadata,
@@ -747,7 +747,7 @@ class SubagentSupervisor:
         if task_id:
             await task_inbox.update_status(
                 task_id,
-                "completed" if result.ok and not result.manager_followup_required else "failed",
+                "completed" if result.ok and not result.ikaros_followup_required else "failed",
                 event="delivery_finished" if delivered else "delivery_skipped",
                 detail=("background delivery sent" if delivered else "background delivery unavailable"),
                 metadata={"delivery_state": "delivered" if delivered else "skipped"},
@@ -755,7 +755,7 @@ class SubagentSupervisor:
 
     @staticmethod
     def _build_delivery_text(run: _SubagentRun, result: SubagentResult) -> str:
-        if result.ok and not result.manager_followup_required:
+        if result.ok and not result.ikaros_followup_required:
             body = _safe_text(result.text or result.summary, limit=12000)
             return (
                 f"后台任务 `{run.detached_task_id or run.subagent_id}` 已完成。\n\n{body}"

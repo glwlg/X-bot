@@ -235,11 +235,11 @@ def _as_float(value: str, default: float) -> float:
 AUTO_RECOVERY_MAX_ATTEMPTS = int(os.getenv("AUTO_RECOVERY_MAX_ATTEMPTS", "3"))
 
 # Core chat execution policy:
-# - manager_only: manager handles the request directly
-# - manager_with_subagents: manager may launch internal subagents when needed
+# - ikaros_only: ikaros handles the request directly
+# - ikaros_with_subagents: ikaros may launch internal subagents when needed
 CORE_CHAT_EXECUTION_MODE = (
-    os.getenv("CORE_CHAT_EXECUTION_MODE", "manager_with_subagents").strip().lower()
-    or "manager_with_subagents"
+    os.getenv("CORE_CHAT_EXECUTION_MODE", "ikaros_with_subagents").strip().lower()
+    or "ikaros_with_subagents"
 )
 
 # Kernel-protected source roots (comma-separated absolute/relative paths)

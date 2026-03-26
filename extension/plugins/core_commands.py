@@ -41,7 +41,7 @@ class CoreCommandsPlugin(PluginExtension):
         runtime.register_command("compact", compact_command, description="压缩当前对话")
         runtime.register_command("stop", stop_command, description="停止当前任务")
         runtime.register_command("heartbeat", heartbeat_command, description="管理心跳")
-        runtime.register_command("task", task_command, description="查看 Manager 任务")
+        runtime.register_command("task", task_command, description="查看 ikaros 任务")
         runtime.register_command("model", model_command, description="查看和切换模型")
         runtime.register_command("usage", usage_command, description="查看 LLM 用量")
 

@@ -12,28 +12,28 @@ def test_prompt_composer_minimal_shape():
             {"name": "ext_web_search", "description": "Search web results"},
         ],
         runtime_policy_ctx={
-            "agent_kind": "core-manager",
+            "agent_kind": "core-ikaros",
             "policy": {"tools": {"allow": ["group:all"], "deny": []}},
         },
-        mode="manager",
+        mode="ikaros",
     )
 
     assert "【SOUL】" in text
 
 
-def test_prompt_composer_includes_manager_agents_before_soul(monkeypatch):
+def test_prompt_composer_includes_ikaros_agents_before_soul(monkeypatch):
     monkeypatch.setattr(
         prompt_composer,
-        "_load_manager_agents_doc",
-        lambda: "# Manager Manual\n- first read this",
+        "_load_ikaros_agents_doc",
+        lambda: "# Ikaros Manual\n- first read this",
     )
     monkeypatch.setattr(
         "core.prompt_composer.soul_store.resolve_for_runtime_user",
         lambda _user_id: SoulPayload(
-            agent_kind="core-manager",
-            agent_id="core-manager",
+            agent_kind="core-ikaros",
+            agent_id="core-ikaros",
             path="/tmp/SOUL.MD",
-            content="# Core Manager SOUL\n- tone: warm",
+            content="# Ikaros Core SOUL\n- tone: warm",
             updated_at="2026-03-13T00:00:00+08:00",
             latest_version_id="",
         ),
@@ -49,16 +49,16 @@ def test_prompt_composer_includes_manager_agents_before_soul(monkeypatch):
 def test_prompt_composer_includes_user_identity_doc(monkeypatch):
     monkeypatch.setattr(
         prompt_composer,
-        "_load_manager_agents_doc",
+        "_load_ikaros_agents_doc",
         lambda: "",
     )
     monkeypatch.setattr(
         "core.prompt_composer.soul_store.resolve_for_runtime_user",
         lambda _user_id: SoulPayload(
-            agent_kind="core-manager",
-            agent_id="core-manager",
+            agent_kind="core-ikaros",
+            agent_id="core-ikaros",
             path="/tmp/SOUL.MD",
-            content="# Core Manager SOUL\n- tone: warm",
+            content="# Ikaros Core SOUL\n- tone: warm",
             updated_at="2026-03-13T00:00:00+08:00",
             latest_version_id="",
         ),
@@ -79,14 +79,14 @@ def test_prompt_composer_includes_user_identity_doc(monkeypatch):
 
 
 def test_prompt_composer_media_image_hides_accounting_hint_when_disabled(monkeypatch):
-    monkeypatch.setattr(prompt_composer, "_load_manager_agents_doc", lambda: "")
+    monkeypatch.setattr(prompt_composer, "_load_ikaros_agents_doc", lambda: "")
     monkeypatch.setattr(
         "core.prompt_composer.soul_store.resolve_for_runtime_user",
         lambda _user_id: SoulPayload(
-            agent_kind="core-manager",
-            agent_id="core-manager",
+            agent_kind="core-ikaros",
+            agent_id="core-ikaros",
             path="/tmp/SOUL.MD",
-            content="# Core Manager SOUL\n- tone: warm",
+            content="# Ikaros Core SOUL\n- tone: warm",
             updated_at="2026-03-13T00:00:00+08:00",
             latest_version_id="",
         ),
@@ -111,11 +111,11 @@ def test_prompt_composer_media_image_hides_accounting_hint_when_disabled(monkeyp
     assert "quick_accounting" not in text
 
 
-def test_prompt_composer_does_not_inject_manager_agents_for_subagent(monkeypatch):
+def test_prompt_composer_does_not_inject_ikaros_agents_for_subagent(monkeypatch):
     monkeypatch.setattr(
         prompt_composer,
-        "_load_manager_agents_doc",
-        lambda: "# Manager Manual\n- manager only",
+        "_load_ikaros_agents_doc",
+        lambda: "# Ikaros Manual\n- ikaros only",
     )
     monkeypatch.setattr(
         "core.prompt_composer.soul_store.resolve_for_runtime_user",
@@ -150,7 +150,7 @@ def test_prompt_composer_filters_skill_catalog_by_runtime_policy(monkeypatch):
             {
                 "name": "deployment_manager",
                 "description": "部署管理",
-                "allowed_roles": ["manager"],
+                "allowed_roles": ["ikaros"],
             },
             {
                 "name": "skill_manager",
@@ -182,7 +182,7 @@ def test_prompt_composer_filters_skill_catalog_by_runtime_policy(monkeypatch):
     assert "以 SOP 为准" in text
 
 
-def test_prompt_composer_hides_manager_only_roles_from_subagent(monkeypatch):
+def test_prompt_composer_hides_ikaros_only_roles_from_subagent(monkeypatch):
     monkeypatch.setattr(
         "extension.skills.registry.skill_registry.get_skills_summary",
         lambda: [
@@ -194,12 +194,12 @@ def test_prompt_composer_hides_manager_only_roles_from_subagent(monkeypatch):
             {
                 "name": "deployment_manager",
                 "description": "部署管理",
-                "allowed_roles": ["manager"],
+                "allowed_roles": ["ikaros"],
             },
             {
                 "name": "skill_manager",
                 "description": "技能治理",
-                "allowed_roles": ["manager"],
+                "allowed_roles": ["ikaros"],
             },
         ],
     )
@@ -249,7 +249,7 @@ def test_prompt_composer_filters_skill_catalog_by_allowed_skill_names(monkeypatc
     assert "stock_watch" not in text
 
 
-def test_prompt_composer_builds_manager_tool_guidance_from_skill_metadata(
+def test_prompt_composer_builds_ikaros_tool_guidance_from_skill_metadata(
     monkeypatch,
 ):
     monkeypatch.setattr(
@@ -281,7 +281,7 @@ def test_prompt_composer_builds_manager_tool_guidance_from_skill_metadata(
         lambda **_kwargs: (True, {}),
     )
 
-    text = prompt_composer._build_manager_tool_guidance(
+    text = prompt_composer._build_ikaros_tool_guidance(
         runtime_user_id="u-1",
         platform="telegram",
     )
@@ -290,15 +290,15 @@ def test_prompt_composer_builds_manager_tool_guidance_from_skill_metadata(
     assert "codex_session" in text
 
 
-def test_prompt_composer_manager_prompt_emphasizes_direct_dev_toolchain(monkeypatch):
-    monkeypatch.setattr(prompt_composer, "_load_manager_agents_doc", lambda: "")
+def test_prompt_composer_ikaros_prompt_emphasizes_direct_dev_toolchain(monkeypatch):
+    monkeypatch.setattr(prompt_composer, "_load_ikaros_agents_doc", lambda: "")
     monkeypatch.setattr(
         "core.prompt_composer.soul_store.resolve_for_runtime_user",
         lambda _user_id: SoulPayload(
-            agent_kind="core-manager",
-            agent_id="core-manager",
+            agent_kind="core-ikaros",
+            agent_id="core-ikaros",
             path="/tmp/SOUL.MD",
-            content="# Core Manager SOUL\n- tone: warm",
+            content="# Ikaros Core SOUL\n- tone: warm",
             updated_at="2026-03-13T00:00:00+08:00",
             latest_version_id="",
         ),
@@ -306,14 +306,14 @@ def test_prompt_composer_manager_prompt_emphasizes_direct_dev_toolchain(monkeypa
     monkeypatch.setattr(prompt_composer, "_build_skill_catalog", lambda **_kwargs: "")
     monkeypatch.setattr(
         prompt_composer,
-        "_build_manager_tool_guidance",
+        "_build_ikaros_tool_guidance",
         lambda **_kwargs: "- 开发任务先准备 `repo_workspace`。\n- 代码实现优先走 `codex_session`。",
     )
 
     text = prompt_composer.compose_base(
         runtime_user_id="u-1",
         platform="telegram",
-        mode="manager",
+        mode="ikaros",
     )
 
     assert "当用户已经给出足够的创意或风格方向时，不要先追问风格偏好" in text
@@ -325,14 +325,14 @@ def test_prompt_composer_manager_prompt_emphasizes_direct_dev_toolchain(monkeypa
 
 
 def test_prompt_composer_mentions_waiting_external_and_task_tracker(monkeypatch):
-    monkeypatch.setattr(prompt_composer, "_load_manager_agents_doc", lambda: "")
+    monkeypatch.setattr(prompt_composer, "_load_ikaros_agents_doc", lambda: "")
     monkeypatch.setattr(
         "core.prompt_composer.soul_store.resolve_for_runtime_user",
         lambda _user_id: SoulPayload(
-            agent_kind="core-manager",
-            agent_id="core-manager",
+            agent_kind="core-ikaros",
+            agent_id="core-ikaros",
             path="/tmp/SOUL.MD",
-            content="# Core Manager SOUL\n- tone: warm",
+            content="# Ikaros Core SOUL\n- tone: warm",
             updated_at="2026-03-13T00:00:00+08:00",
             latest_version_id="",
         ),
@@ -340,14 +340,14 @@ def test_prompt_composer_mentions_waiting_external_and_task_tracker(monkeypatch)
     monkeypatch.setattr(prompt_composer, "_build_skill_catalog", lambda **_kwargs: "")
     monkeypatch.setattr(
         prompt_composer,
-        "_build_manager_tool_guidance",
+        "_build_ikaros_tool_guidance",
         lambda **_kwargs: "- 用 `task_tracker` 查看和更新未完成任务。",
     )
 
     text = prompt_composer.compose_base(
         runtime_user_id="u-1",
         platform="telegram",
-        mode="manager",
+        mode="ikaros",
     )
 
     assert "waiting_external" in text
@@ -355,19 +355,19 @@ def test_prompt_composer_mentions_waiting_external_and_task_tracker(monkeypatch)
     assert "events.jsonl" in text
 
 
-def test_prompt_composer_manager_contract_blocks_default_memory_file_reads(monkeypatch):
+def test_prompt_composer_ikaros_contract_blocks_default_memory_file_reads(monkeypatch):
     monkeypatch.setattr(
         prompt_composer,
-        "_load_manager_agents_doc",
+        "_load_ikaros_agents_doc",
         lambda: "旧说明：先读 `data/user/MEMORY.md`。",
     )
     monkeypatch.setattr(
         "core.prompt_composer.soul_store.resolve_for_runtime_user",
         lambda _user_id: SoulPayload(
-            agent_kind="core-manager",
-            agent_id="core-manager",
+            agent_kind="core-ikaros",
+            agent_id="core-ikaros",
             path="/tmp/SOUL.MD",
-            content="# Core Manager SOUL\n- tone: warm",
+            content="# Ikaros Core SOUL\n- tone: warm",
             updated_at="2026-03-17T00:00:00+08:00",
             latest_version_id="",
         ),
@@ -375,14 +375,14 @@ def test_prompt_composer_manager_contract_blocks_default_memory_file_reads(monke
     monkeypatch.setattr(prompt_composer, "_build_skill_catalog", lambda **_kwargs: "")
     monkeypatch.setattr(
         prompt_composer,
-        "_build_manager_tool_guidance",
+        "_build_ikaros_tool_guidance",
         lambda **_kwargs: "- 用当前工具完成任务。",
     )
 
     text = prompt_composer.compose_base(
         runtime_user_id="u-1",
         platform="telegram",
-        mode="manager",
+        mode="ikaros",
     )
 
     assert "【当前会话上下文约束】" in text
@@ -390,7 +390,7 @@ def test_prompt_composer_manager_contract_blocks_default_memory_file_reads(monke
     assert "本块优先级高于旧文档里任何“先读长期记忆文件”" in text
 
 
-def test_manager_agents_doc_does_not_expose_auto_loaded_core_files():
+def test_ikaros_agents_doc_does_not_expose_auto_loaded_core_files():
     agents_path = Path(__file__).resolve().parents[2] / "config" / "AGENTS.md"
     text = agents_path.read_text(encoding="utf-8")
 

@@ -36,7 +36,7 @@ class OrchestratorEventHandler:
         task_inbox_id: str,
         ctx: Any,
         todo_session: Any,
-        manager_runtime: bool,
+        ikaros_runtime: bool,
         session_state_active: bool,
         max_recovery_attempts: int,
         sanitize_preview: SanitizePreview,
@@ -50,7 +50,7 @@ class OrchestratorEventHandler:
         self.task_inbox_id = str(task_inbox_id or "").strip()
         self.ctx = ctx
         self.todo_session = todo_session
-        self.manager_runtime = bool(manager_runtime)
+        self.ikaros_runtime = bool(ikaros_runtime)
         self.session_state_active = bool(session_state_active)
         self.max_recovery_attempts = max(1, int(max_recovery_attempts or 1))
         self.sanitize_preview = sanitize_preview
@@ -328,7 +328,7 @@ class OrchestratorEventHandler:
         self.todo_session.mark_step("verify", "done", "Model produced final response.")
         self.todo_session.mark_step("deliver", "done", "Final response streaming.")
         preview = str(payload.get("text_preview", "")).strip()
-        if self.manager_runtime:
+        if self.ikaros_runtime:
             preview = self.sanitize_preview(preview)
 
         auto_followup = self._maybe_pr_followup_metadata(preview)
@@ -340,7 +340,7 @@ class OrchestratorEventHandler:
                 detail=(auto_followup.get("detail") or preview)[:180],
                 metadata={"followup": auto_followup["followup"]},
                 result={
-                    "manager_mode": "final_response",
+                    "ikaros_mode": "final_response",
                     "summary": preview[:500],
                 },
                 output={"text": preview},
@@ -397,7 +397,7 @@ class OrchestratorEventHandler:
                     event="final_response_kept_open",
                     detail=preview[:180],
                     result={
-                        "manager_mode": "final_response",
+                        "ikaros_mode": "final_response",
                         "summary": preview[:500],
                     },
                     output={"text": preview},
@@ -406,7 +406,7 @@ class OrchestratorEventHandler:
                 await task_inbox.complete(
                     self.task_inbox_id,
                     result={
-                        "manager_mode": "final_response",
+                        "ikaros_mode": "final_response",
                         "summary": preview[:500],
                     },
                     final_output=preview,
@@ -452,7 +452,7 @@ class OrchestratorEventHandler:
                 await task_inbox.complete(
                     self.task_inbox_id,
                     result={
-                        "manager_mode": "max_turn_terminal",
+                        "ikaros_mode": "max_turn_terminal",
                         "summary": summary,
                     },
                     final_output=summary,

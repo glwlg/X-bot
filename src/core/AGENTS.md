@@ -1,12 +1,12 @@
 # CORE KNOWLEDGE BASE
 
 ## OVERVIEW
-`src/core/` owns manager orchestration, tool/runtime composition, canonical state I/O, prompt policy, memory, and heartbeat governance.
+`src/core/` owns ikaros orchestration, tool/runtime composition, canonical state I/O, prompt policy, memory, and heartbeat governance.
 
 ## WHERE TO LOOK
 | Task | Location | Notes |
 |------|----------|-------|
-| Tool assembly and execution loop | `src/core/agent_orchestrator.py`, `src/core/orchestrator_runtime_tools.py`, `src/core/primitive_runtime.py` | merges core/manager/extension tools and drives call loop |
+| Tool assembly and execution loop | `src/core/agent_orchestrator.py`, `src/core/orchestrator_runtime_tools.py`, `src/core/primitive_runtime.py` | merges core/ikaros/extension tools and drives call loop |
 | Tool definitions, broker, and access gating | `src/core/tool_registry.py`, `src/core/tool_broker.py`, `src/core/tool_access_store.py` | runtime-visible tool set, access policy, compatibility surface |
 | Extension execution pipeline | `src/core/extension_router.py`, `src/core/extension_executor.py`, `src/core/tools/extension_tools.py`, `src/core/skill_loader.py` | skill routing, execution, and contract adaptation |
 | Prompt policy and personality chain | `src/core/prompt_composer.py`, `src/core/prompts.py`, `src/core/soul_store.py`, `src/core/model_config.py` | system constraints + SOUL + model choices |
@@ -17,14 +17,14 @@
 | Platform abstraction layer | `src/core/platform/adapter.py`, `src/core/platform/registry.py`, `src/core/platform/models.py` | unified adapter API for multi-platform handlers |
 
 ## CONVENTIONS
-- Keep Core Manager as orchestrator/governor; do not execute user business workflows directly in core loops.
+- Keep Ikaros Core as orchestrator/governor; do not execute user business workflows directly in core loops.
 - Add tools via `tool_registry` + runtime merge path; keep tool names/signatures stable when possible.
 - Use `storage_service`/`state_paths`/`state_io` for persistence; keep extension business stores in each skill's `scripts/store.py`.
 - Preserve explicit task source/state transitions and loop guardrails across orchestration modules.
 
 ## ANTI-PATTERNS
 - Don't bypass `orchestrator_runtime_tools`/`tool_registry` with direct tool wiring.
-- Don't mix legacy multi-runtime concerns into manager/subagent orchestration control paths.
+- Don't mix legacy multi-runtime concerns into ikaros/subagent orchestration control paths.
 - Don't weaken retry boundaries, timeout handling, or loop guards in agent/tool loops.
 - Don't read/write state payloads outside canonical helpers (`state_file.py`, `state_io.py`).
 

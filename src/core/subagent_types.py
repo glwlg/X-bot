@@ -22,7 +22,7 @@ class SubagentResult:
     diagnostic_summary: str = ""
     task_outcome: str = ""
     failure_mode: str = ""
-    manager_followup_required: bool = False
+    ikaros_followup_required: bool = False
     created_at: str = field(default_factory=_now_iso)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -36,6 +36,6 @@ class SubagentResult:
             "diagnostic_summary": str(self.diagnostic_summary or "").strip(),
             "task_outcome": str(self.task_outcome or "").strip().lower(),
             "failure_mode": str(self.failure_mode or "").strip().lower(),
-            "manager_followup_required": bool(self.manager_followup_required),
+            "ikaros_followup_required": bool(self.ikaros_followup_required),
             "created_at": str(self.created_at or _now_iso()),
         }

@@ -441,7 +441,7 @@ class HeartbeatWorker:
         if self.mode == "readonly":
             ctx.user_data["execution_policy"] = "heartbeat_readonly_policy"
         else:
-            ctx.user_data["execution_policy"] = "manager_execution_policy"
+            ctx.user_data["execution_policy"] = "ikaros_execution_policy"
 
         sections: list[str] = []
         routed_sections: dict[tuple[str, str], list[str]] = {}
@@ -559,7 +559,7 @@ class HeartbeatWorker:
             chunks: list[str] = []
             pending_spec_files: list[dict[str, str]] = []
 
-            async def _manager_progress_callback(snapshot: dict[str, Any]) -> None:
+            async def _ikaros_progress_callback(snapshot: dict[str, Any]) -> None:
                 payload = dict(snapshot or {})
                 if str(payload.get("event") or "").strip().lower() != "tool_call_finished":
                     return
@@ -574,7 +574,7 @@ class HeartbeatWorker:
                     ),
                 )
 
-            set_runtime_callback(ctx, "manager_progress_callback", _manager_progress_callback)
+            set_runtime_callback(ctx, "ikaros_progress_callback", _ikaros_progress_callback)
             try:
                 stream = self._create_orchestrator_stream(ctx, message_history)
                 async for chunk in stream:
@@ -582,7 +582,7 @@ class HeartbeatWorker:
                         chunks.append(str(chunk))
                     await heartbeat_store.refresh_lock(user_id, owner=owner)
             finally:
-                pop_runtime_callback(ctx, "manager_progress_callback")
+                pop_runtime_callback(ctx, "ikaros_progress_callback")
 
             stream_text = "\n".join(chunks).strip()
 

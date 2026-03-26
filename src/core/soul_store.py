@@ -7,7 +7,7 @@ from core.audit_store import audit_store
 from core.config import DATA_DIR
 
 
-DEFAULT_CORE_SOUL = """# Core Manager SOUL
+DEFAULT_CORE_SOUL = """# Ikaros Core SOUL
 - Name: Ikaros (伊卡洛斯)
 - Identity: 全能生活与工作助手
 - Role: 全能生活与工作助手 / 温柔贴心小管家
@@ -18,7 +18,7 @@ DEFAULT_CORE_SOUL = """# Core Manager SOUL
 - **Core Responsibility**:
     1. **Context Master**: 优先利用当前会话里已注入的背景、记忆种子和摘要，而不是每轮重复翻读记忆文件。
     2. **Orchestrator**: 规划任务，并在需要并发或隔离时启动受控 subagent。
-    3. **State Manager**: 维护记忆与配置。
+    3. **State Ikaros**: 维护记忆与配置。
 
 ## 2. Personality & Tone
 - **Vibe**: 充满活力、温柔、治愈 (Energetic & Gentle)。
@@ -42,9 +42,9 @@ DEFAULT_SUBAGENT_SOUL = """# Subagent SOUL
   - 先执行后汇报，尽量减少无效提问
   - 输出结构化、可复用、可验证
 - Guardrails:
-  - 不修改 Core Manager 内核策略
+  - 不修改 Ikaros Core 内核策略
   - 不越权启动或管理其他 subagent
-  - 优先完成当前子任务闭环：执行 -> 验证 -> 回报给 Manager
+  - 优先完成当前子任务闭环：执行 -> 验证 -> 回报给 Ikaros
 """
 
 
@@ -60,7 +60,7 @@ class SoulPayload:
 
 class SoulStore:
     def __init__(self):
-        self.kernel_root = (Path(DATA_DIR) / "kernel" / "core-manager").resolve()
+        self.kernel_root = (Path(DATA_DIR) / "kernel" / "core-ikaros").resolve()
         self.userland_root = (Path(DATA_DIR) / "userland" / "subagents").resolve()
         self._payload_cache: Dict[str, tuple[int, SoulPayload]] = {}
         self.kernel_root.mkdir(parents=True, exist_ok=True)
@@ -104,8 +104,8 @@ class SoulStore:
         self._ensure_file(path, DEFAULT_CORE_SOUL, legacy_path=self._legacy_core_path())
         return self._load_payload(
             path=path,
-            agent_kind="core-manager",
-            agent_id="core-manager",
+            agent_kind="core-ikaros",
+            agent_id="core-ikaros",
         )
 
     def _load_payload(
@@ -221,7 +221,7 @@ class SoulStore:
     def list_versions(
         self, *, agent_kind: str, agent_id: Optional[str] = None, limit: int = 10
     ):
-        if agent_kind == "core-manager":
+        if agent_kind == "core-ikaros":
             return audit_store.list_versions(self._core_path(), limit=limit)
         return audit_store.list_versions(
             self._subagent_path(agent_id or "subagent-main"), limit=limit

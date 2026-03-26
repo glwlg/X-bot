@@ -15,9 +15,9 @@ def _runtime_context(**overrides) -> OrchestratorRuntimeContext:
         "subagent_runtime_user": False,
         "heartbeat_runtime_user": False,
         "session_state_enabled": True,
-        "runtime_policy_ctx": {"agent_kind": "core-manager"},
-        "runtime_agent_kind": "core-manager",
-        "manager_runtime": True,
+        "runtime_policy_ctx": {"agent_kind": "core-ikaros"},
+        "runtime_agent_kind": "core-ikaros",
+        "ikaros_runtime": True,
         "task_id": "task-1",
         "task_inbox_id": "",
         "session_id": "",
@@ -67,7 +67,7 @@ async def test_ensure_task_inbox_skips_when_session_state_disabled(monkeypatch):
         platform_name="subagent_kernel",
         subagent_runtime_user=True,
         session_state_enabled=False,
-        manager_runtime=False,
+        ikaros_runtime=False,
         runtime_agent_kind="subagent",
     )
     task_inbox_id = await runtime_ctx.ensure_task_inbox(task_goal="后台任务")
@@ -100,7 +100,7 @@ async def test_ensure_task_inbox_uses_heartbeat_source_when_enabled(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_mark_manager_loop_started_updates_task_inbox(monkeypatch):
+async def test_mark_ikaros_loop_started_updates_task_inbox(monkeypatch):
     calls = []
 
     async def fake_update_status(task_id, status, **kwargs):
@@ -110,14 +110,14 @@ async def test_mark_manager_loop_started_updates_task_inbox(monkeypatch):
     monkeypatch.setattr(context_module.task_inbox, "update_status", fake_update_status)
 
     runtime_ctx = _runtime_context(task_inbox_id="inbox-1")
-    await runtime_ctx.mark_manager_loop_started("请求摘要")
+    await runtime_ctx.mark_ikaros_loop_started("请求摘要")
 
     assert len(calls) == 1
     task_id, status, kwargs = calls[0]
     assert task_id == "inbox-1"
     assert status == "running"
-    assert kwargs["event"] == "manager_loop_started"
-    assert kwargs["manager_id"] == "core-manager"
+    assert kwargs["event"] == "ikaros_loop_started"
+    assert kwargs["ikaros_id"] == "core-ikaros"
 
 
 @pytest.mark.asyncio

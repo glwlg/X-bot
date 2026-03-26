@@ -449,9 +449,9 @@ async def test_immediate_session_does_not_write_task_entries_to_heartbeat_md(
 
 
 @pytest.mark.asyncio
-async def test_manager_progress_callback_receives_tool_events(monkeypatch, tmp_path):
+async def test_ikaros_progress_callback_receives_tool_events(monkeypatch, tmp_path):
     orchestrator = AgentOrchestrator()
-    user_id = "u_manager_progress"
+    user_id = "u_ikaros_progress"
 
     runtime_root = (tmp_path / "runtime_tasks").resolve()
     runtime_root.mkdir(parents=True, exist_ok=True)
@@ -502,12 +502,12 @@ async def test_manager_progress_callback_receives_tool_events(monkeypatch, tmp_p
     )
 
     ctx = DummyContext(user_id=user_id)
-    manager_events: list[dict[str, str]] = []
+    ikaros_events: list[dict[str, str]] = []
 
     async def _progress_callback(snapshot):
-        manager_events.append(dict(snapshot or {}))
+        ikaros_events.append(dict(snapshot or {}))
 
-    ctx.user_data["manager_progress_callback"] = _progress_callback
+    ctx.user_data["ikaros_progress_callback"] = _progress_callback
     message_history = [{"role": "user", "parts": [{"text": "停止 uptime-kuma"}]}]
 
     chunks = [
@@ -520,17 +520,17 @@ async def test_manager_progress_callback_receives_tool_events(monkeypatch, tmp_p
         and event.get("name") == "bash"
         and dict(event.get("args") or {}).get("command") == "docker stop uptime-kuma"
         and str(event.get("task_id") or "").strip()
-        for event in manager_events
+        for event in ikaros_events
     )
     assert any(
         event.get("event") == "tool_call_finished"
         and event.get("summary") == "Command executed with code 0"
-        for event in manager_events
+        for event in ikaros_events
     )
     assert any(
         event.get("event") == "final_response"
         and event.get("text_preview") == "已停止 uptime-kuma。"
-        for event in manager_events
+        for event in ikaros_events
     )
 
 

@@ -26,7 +26,7 @@ class OrchestratorRuntimeContext:
     session_state_enabled: bool
     runtime_policy_ctx: Dict[str, Any]
     runtime_agent_kind: str
-    manager_runtime: bool
+    ikaros_runtime: bool
     task_id: str
     task_inbox_id: str
     session_id: str = ""
@@ -72,7 +72,7 @@ class OrchestratorRuntimeContext:
         runtime_agent_kind = (
             str(runtime_policy_ctx.get("agent_kind") or "").strip().lower()
         )
-        manager_runtime = runtime_agent_kind == "core-manager"
+        ikaros_runtime = runtime_agent_kind == "core-ikaros"
 
         task_info = task_manager.get_task_info(user_id)
         runtime_task_id = str(user_data.get("runtime_task_id") or "").strip()
@@ -94,7 +94,7 @@ class OrchestratorRuntimeContext:
             session_state_enabled=session_state_enabled,
             runtime_policy_ctx=runtime_policy_ctx,
             runtime_agent_kind=runtime_agent_kind,
-            manager_runtime=manager_runtime,
+            ikaros_runtime=ikaros_runtime,
             task_id=str(task_id),
             task_inbox_id=task_inbox_id,
             session_id=session_id,
@@ -140,7 +140,7 @@ class OrchestratorRuntimeContext:
                 user_id=self.user_id,
                 payload=payload,
                 priority="normal",
-                requires_reply=bool(self.manager_runtime),
+                requires_reply=bool(self.ikaros_runtime),
                 metadata=metadata,
             )
         except Exception as exc:
@@ -205,14 +205,14 @@ class OrchestratorRuntimeContext:
             **fields,
         )
 
-    async def mark_manager_loop_started(self, task_goal: str) -> None:
+    async def mark_ikaros_loop_started(self, task_goal: str) -> None:
         if not self.task_inbox_id:
             return
         await self.update_task_inbox_status(
             status="running",
-            event="manager_loop_started",
+            event="ikaros_loop_started",
             detail=(task_goal or "")[:180],
-            manager_id="core-manager",
+            ikaros_id="core-ikaros",
         )
 
     async def activate_session(

@@ -10,10 +10,10 @@ def test_tool_registry_exposes_only_primitives_by_default():
     assert "call_skill" not in names
 
 
-def test_tool_registry_exposes_task_tracker_for_manager_runtime():
+def test_tool_registry_exposes_task_tracker_for_ikaros_runtime():
     registry = ToolRegistry()
 
-    names = [tool["name"] for tool in registry.get_manager_tools()]
+    names = [tool["name"] for tool in registry.get_ikaros_tools()]
 
     assert "task_tracker" in names
     assert "analyze_video" not in names

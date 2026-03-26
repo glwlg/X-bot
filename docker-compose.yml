@@ -1,11 +1,11 @@
 name: ikaros
 services:
   # ikaros:
-  #   image: ikaros-manager
+  #   image: ikaros-core
   #   build:
   #     context: .
   #     dockerfile: Dockerfile
-  #     target: manager-runtime
+  #     target: ikaros-runtime
   #   container_name: ikaros
   #   env_file:
   #     - .env

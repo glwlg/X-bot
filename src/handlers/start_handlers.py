@@ -488,7 +488,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
         if data in {"task_continue", "task_stop"}:
             from core.channel_runtime_store import channel_runtime_store
             from core.heartbeat_store import heartbeat_store
-            from manager.relay.closure_service import manager_closure_service
+            from ikaros.relay.closure_service import ikaros_closure_service
 
             hb_user_id = str(ctx.callback_user_id or ctx.message.user.id)
             active_task = channel_runtime_store.get_active_task(
@@ -503,7 +503,7 @@ async def button_callback(ctx: UnifiedContext) -> int:
 
             task_id = str(active_task.get("id"))
             if data == "task_continue":
-                resume = await manager_closure_service.resume_waiting_task(
+                resume = await ikaros_closure_service.resume_waiting_task(
                     user_id=hb_user_id,
                     user_message="",
                     source="button",

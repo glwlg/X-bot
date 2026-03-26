@@ -4,7 +4,7 @@ from unittest.mock import patch, MagicMock
 
 
 class TestIdentity:
-    def test_manager_identity_prompt(self):
+    def test_ikaros_identity_prompt(self):
         # Mock soul store to return a specific SOUL content
         with patch(
             "core.soul_store.soul_store.resolve_for_runtime_user"
@@ -14,9 +14,9 @@ class TestIdentity:
             mock_resolve.return_value = mock_soul
 
             base = prompt_composer.compose_base(
-                runtime_user_id="core-manager",
-                mode="manager",
-                runtime_policy_ctx={"agent_kind": "core-manager"},
+                runtime_user_id="core-ikaros",
+                mode="ikaros",
+                runtime_policy_ctx={"agent_kind": "core-ikaros"},
             )
 
             assert "SOUL" in base

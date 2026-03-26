@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from manager.dev.git_ops_service import git_ops_service
+from ikaros.dev.git_ops_service import git_ops_service
 
 
 class GitTools:

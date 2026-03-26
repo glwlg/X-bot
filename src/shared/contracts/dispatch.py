@@ -40,7 +40,7 @@ class TaskEnvelope:
             "task_id": str(self.task_id or "").strip(),
             "executor_id": str(self.executor_id or "").strip(),
             "instruction": str(self.instruction or "").strip(),
-            "source": str(self.source or "manager").strip(),
+            "source": str(self.source or "ikaros").strip(),
             "backend": str(self.backend or "").strip(),
             "priority": int(self.priority or 0),
             "status": str(self.status or "pending").strip().lower(),
@@ -61,7 +61,7 @@ class TaskEnvelope:
         task_id = str(data.get("task_id") or "").strip() or new_task_id()
         executor_id = str(data.get("executor_id") or "subagent").strip()
         instruction = str(data.get("instruction") or "").strip()
-        source = str(data.get("source") or "manager").strip()
+        source = str(data.get("source") or "ikaros").strip()
         backend = str(data.get("backend") or "").strip()
         priority = int(data.get("priority") or 0)
         raw_status = str(data.get("status") or "pending").strip().lower()

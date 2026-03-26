@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 PROJECT_DIR="$(cd "${SCRIPT_DIR}/.." >/dev/null 2>&1 && pwd)"
-RUNNER_PATH="${PROJECT_DIR}/scripts/run_manager.sh"
+RUNNER_PATH="${PROJECT_DIR}/scripts/run_ikaros.sh"
 
 SERVICE_NAME="ikaros"
 INSTALL_MODE="system"
@@ -80,7 +80,7 @@ render_system_unit() {
 
     cat <<EOF
 [Unit]
-Description=Ikaros Manager
+Description=Ikaros Ikaros
 After=network-online.target docker.service
 Wants=network-online.target
 
@@ -102,7 +102,7 @@ EOF
 render_user_unit() {
     cat <<EOF
 [Unit]
-Description=Ikaros Manager
+Description=Ikaros Ikaros
 After=network-online.target
 Wants=network-online.target
 

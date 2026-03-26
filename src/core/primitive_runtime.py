@@ -192,7 +192,7 @@ class PrimitiveRuntime:
         mode: str = "overwrite",
         create_parents: bool = True,
         encoding: str = "utf-8",
-        execution_policy: str = "manager_execution_policy",
+        execution_policy: str = "ikaros_execution_policy",
     ) -> Dict[str, Any]:
         try:
             target = self._resolve_path(path)
@@ -240,7 +240,7 @@ class PrimitiveRuntime:
         edits: List[Dict[str, Any]],
         dry_run: bool = False,
         encoding: str = "utf-8",
-        execution_policy: str = "manager_execution_policy",
+        execution_policy: str = "ikaros_execution_policy",
     ) -> Dict[str, Any]:
         try:
             target = self._resolve_path(path)
@@ -336,7 +336,7 @@ class PrimitiveRuntime:
         command: str,
         cwd: str | None = None,
         timeout_sec: int = DEFAULT_BASH_TIMEOUT_SEC,
-        execution_policy: str = "manager_execution_policy",
+        execution_policy: str = "ikaros_execution_policy",
     ) -> Dict[str, Any]:
         if not command or not command.strip():
             return self._err("invalid_args", "command is required")

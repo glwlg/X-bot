@@ -11,11 +11,11 @@ triggers:
 - draw
 - paint
 - imagine
-runtime_target: manager
+runtime_target: ikaros
 change_level: learned
-allow_manager_modify: true
+allow_ikaros_modify: true
 allow_auto_publish: true
-rollout_target: manager
+rollout_target: ikaros
 preflight_commands:
 - python scripts/execute.py --help
 policy_groups:

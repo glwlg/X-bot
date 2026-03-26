@@ -9,17 +9,17 @@
 
 Ikaros 当前的主运行形态是两类进程：
 
-- `ikaros`：唯一用户可见的 Core Manager
+- `ikaros`：唯一用户可见的 Ikaros Core
 - `ikaros-api`：FastAPI + SPA
 
-Manager 运行在宿主机或单容器内，必要时在同进程内启动受控 `subagent` 做并发执行。  
+Ikaros 运行在宿主机或单容器内，必要时在同进程内启动受控 `subagent` 做并发执行。  
 `subagent` 不是独立部署单元，也不是直接对用户交付结果的 agent。
 
 ## 2. 职责边界
 
-### 2.1 Core Manager
+### 2.1 Ikaros Core
 
-Manager 负责：
+Ikaros 负责：
 
 - 平台无关的消息上下文、提示词、SOUL、工具面组装
 - 请求路由、skill 缩圈、任务治理、heartbeat、记忆、权限控制
@@ -29,7 +29,7 @@ Manager 负责：
 - 统一接收 `subagent` 结果并决定继续、降级、重试、等待用户或最终交付
 - 编码会话、仓库工作区、git/gh 发布与本地 rollout
 
-Manager 的基础原语：
+Ikaros 的基础原语：
 
 - `read`
 - `write`
@@ -37,12 +37,12 @@ Manager 的基础原语：
 - `bash`
 - `load_skill`
 
-Manager 内部控制面工具：
+Ikaros 内部控制面工具：
 
 - `spawn_subagent`
 - `await_subagents`
 
-Manager 侧常用 direct tool：
+Ikaros 侧常用 direct tool：
 
 - `repo_workspace`
 - `codex_session`
@@ -52,10 +52,10 @@ Manager 侧常用 direct tool：
 
 约束：
 
-- 用户最终只和 Manager 对话
+- 用户最终只和 Ikaros 对话
 - `subagent` 不能直接向平台发消息
-- `subagent` 只能使用 Manager 显式分配的工具与技能
-- `subagent` 失败后必须先回 Manager 决策，不能直接把原始失败结果当作最终交付
+- `subagent` 只能使用 Ikaros 显式分配的工具与技能
+- `subagent` 失败后必须先回 Ikaros 决策，不能直接把原始失败结果当作最终交付
 - Core 不再直接写 channel / memory / skill 的业务注册分支；应通过 extension runtime 暴露的统一注册函数完成扩展注入
 
 ### 2.2 Internal Subagent
@@ -87,7 +87,7 @@ src/
 ├── api/               # FastAPI + SPA
 ├── core/              # orchestrator、runtime、state/task/subagent、platform 抽象、extension runtime
 ├── handlers/          # 可复用的命令与消息处理逻辑
-├── manager/           # manager 侧开发/规划/闭环服务
+├── ikaros/           # ikaros 侧开发/规划/闭环服务
 ├── platforms/
 │   └── web/           # Web 前端与静态资源
 ├── services/          # LLM、下载、搜索、统一路由等外部服务
@@ -108,7 +108,7 @@ extension/
 
 关键入口：
 
-- `src/main.py`：Manager 主程序，负责 extension runtime 启动顺序
+- `src/main.py`：Ikaros 主程序，负责 extension runtime 启动顺序
 - `src/api/main.py`：API 主程序
 - `src/core/extension_runtime.py`：统一注册函数、生命周期和 active memory 挂载
 - `src/core/extension_base.py`：`BaseExtension` / `SkillExtension` / `ChannelExtension` / `MemoryExtension` / `PluginExtension`
@@ -282,7 +282,7 @@ extension/
 
 约束：
 
-- 普通请求默认仍由 Manager 直接处理
+- 普通请求默认仍由 Ikaros 直接处理
 - 只有存在并发收益或隔离需求时才启动 `subagent`
 - `subagent` 运行在同进程内，由 `SubagentSupervisor` 托管
 
@@ -293,7 +293,7 @@ extension/
 当 `request_mode=chat` 时，orchestrator 必须跳过：
 
 - `ensure_task_inbox`
-- `mark_manager_loop_started`
+- `mark_ikaros_loop_started`
 - `activate_session`
 - session event 写入
 - task 状态写入
@@ -389,7 +389,7 @@ Skill 仍是一等运行时扩展，但物理位置已迁到：
 3. 按 SOP 用 `bash` 执行 `python scripts/execute.py ...`
 
 若 skill frontmatter 声明 `tool_exports`，则可以被动态注入为 direct tool。  
-Manager 是否给 `subagent` 分配某个 skill，由 `allowed_skills` 决定。
+Ikaros 是否给 `subagent` 分配某个 skill，由 `allowed_skills` 决定。
 
 约束：
 
@@ -408,6 +408,6 @@ Manager 是否给 `subagent` 分配某个 skill，由 `allowed_skills` 决定。
 - 不要为 channel / memory / plugin 重新设计一套额外 manifest
 - 不要绕过 `storage_service` / `state_paths` 使用 ad-hoc 文件路径
 - 不要把 extension 的业务存储文件路径或业务存储实现重新定义回 `src/core/state_store.py`
-- 不要重新引入独立 Worker 执行面或过时的 manager/worker 分裂架构
+- 不要重新引入独立 Worker 执行面或过时的 ikaros/worker 分裂架构
 - 不要把新的聚合型运行时数据写回无界 JSONL
 - 不要在语义判定上回退到 regex/关键词硬编码路由

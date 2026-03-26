@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from manager.dev.codex_session_service import codex_session_service
+from ikaros.dev.codex_session_service import codex_session_service
 
 
 class CodexTools:

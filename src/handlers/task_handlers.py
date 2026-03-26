@@ -150,7 +150,7 @@ async def _build_task_list_payload(
                 {"text": "未完成任务", "callback_data": make_callback(TASK_MENU_NS, "open", 0)},
             ]
         )
-        return f"{title}\n\n当前没有 manager 任务记录。", {"actions": actions}
+        return f"{title}\n\n当前没有 ikaros 任务记录。", {"actions": actions}
 
     page_size = 10
     total_pages = max(1, (len(rows) + page_size - 1) // page_size)

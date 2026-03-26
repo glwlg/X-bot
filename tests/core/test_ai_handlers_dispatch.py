@@ -29,7 +29,7 @@ async def test_should_include_memory_summary_for_task_requires_nonempty_request(
 
 
 @pytest.mark.asyncio
-async def test_build_subagent_instruction_with_context_uses_manager_memory(monkeypatch):
+async def test_build_subagent_instruction_with_context_uses_ikaros_memory(monkeypatch):
     async def _fake_collect(
         _ctx, *, user_id, current_user_message, max_messages=6, max_chars=1200
     ):
@@ -54,7 +54,7 @@ async def test_build_subagent_instruction_with_context_uses_manager_memory(monke
         user_message="我住哪",
         subagent_has_memory=False,
     )
-    assert "【用户记忆摘要（由 Manager 提供）】" in instruction
+    assert "【用户记忆摘要（由 Ikaros 提供）】" in instruction
     assert meta["memory_summary_requested"] is True
     assert meta["memory_summary_included"] is True
 
@@ -86,7 +86,7 @@ async def test_build_subagent_instruction_skips_memory_in_group_session(monkeypa
         user_message="我住哪",
         subagent_has_memory=False,
     )
-    assert "【用户记忆摘要（由 Manager 提供）】" not in instruction
+    assert "【用户记忆摘要（由 Ikaros 提供）】" not in instruction
     assert meta["private_session"] is False
     assert meta["memory_summary_requested"] is False
 
@@ -119,7 +119,7 @@ async def test_build_subagent_instruction_with_context_skips_memory_when_subagen
         user_message="按我偏好推荐新闻",
         subagent_has_memory=True,
     )
-    assert "【用户记忆摘要（由 Manager 提供）】" not in instruction
+    assert "【用户记忆摘要（由 Ikaros 提供）】" not in instruction
     assert meta["memory_summary_requested"] is True
     assert meta["memory_summary_included"] is False
 
@@ -147,7 +147,7 @@ async def test_build_subagent_instruction_with_context_skips_memory_when_request
         subagent_has_memory=False,
     )
     assert "【近期对话上下文】" in instruction
-    assert "【用户记忆摘要（由 Manager 提供）】" not in instruction
+    assert "【用户记忆摘要（由 Ikaros 提供）】" not in instruction
     assert meta["memory_summary_requested"] is False
     assert meta["memory_summary_included"] is False
 
@@ -190,8 +190,8 @@ def test_stream_cut_index_falls_back_to_limit_without_boundary():
     assert cut == 10
 
 
-def test_summarize_manager_tool_args_for_bash_command():
-    label, value = ai_handlers._summarize_manager_tool_args(
+def test_summarize_ikaros_tool_args_for_bash_command():
+    label, value = ai_handlers._summarize_ikaros_tool_args(
         "bash",
         {"command": "docker stop uptime-kuma"},
     )
@@ -200,8 +200,8 @@ def test_summarize_manager_tool_args_for_bash_command():
     assert value == "docker stop uptime-kuma"
 
 
-def test_build_manager_progress_text_includes_command_and_result():
-    text = ai_handlers._build_manager_progress_text(
+def test_build_ikaros_progress_text_includes_command_and_result():
+    text = ai_handlers._build_ikaros_progress_text(
         {
             "event": "tool_call_finished",
             "task_id": "mgr-1",
@@ -224,8 +224,8 @@ def test_build_manager_progress_text_includes_command_and_result():
     assert "结果：Command executed with code 0" in text
 
 
-def test_build_manager_progress_text_hides_verbose_tool_output():
-    text = ai_handlers._build_manager_progress_text(
+def test_build_ikaros_progress_text_hides_verbose_tool_output():
+    text = ai_handlers._build_ikaros_progress_text(
         {
             "event": "tool_call_finished",
             "task_id": "mgr-verbose",
@@ -247,8 +247,8 @@ def test_build_manager_progress_text_hides_verbose_tool_output():
     assert "Daily Query" not in text
 
 
-def test_build_manager_progress_text_hides_internal_preflight_success():
-    text = ai_handlers._build_manager_progress_text(
+def test_build_ikaros_progress_text_hides_internal_preflight_success():
+    text = ai_handlers._build_ikaros_progress_text(
         {
             "event": "tool_call_finished",
             "task_id": "mgr-auth-probe",
@@ -271,8 +271,8 @@ def test_build_manager_progress_text_hides_internal_preflight_success():
     assert "结果：" not in text
 
 
-def test_build_manager_progress_text_omits_final_response_action_line():
-    text = ai_handlers._build_manager_progress_text(
+def test_build_ikaros_progress_text_omits_final_response_action_line():
+    text = ai_handlers._build_ikaros_progress_text(
         {
             "event": "final_response",
             "task_id": "mgr-final",
@@ -319,7 +319,7 @@ async def test_try_handle_waiting_confirmation_treats_text_as_adjustment(monkeyp
     fake_service = _FakeClosureService()
     monkeypatch.setattr("core.heartbeat_store.heartbeat_store", _FakeHeartbeatStore())
     monkeypatch.setattr(
-        "manager.relay.closure_service.manager_closure_service",
+        "ikaros.relay.closure_service.ikaros_closure_service",
         fake_service,
     )
 
@@ -512,7 +512,7 @@ async def test_handle_ai_chat_does_not_attach_plain_path_from_final_text(
 
 
 @pytest.mark.asyncio
-async def test_handle_ai_chat_slow_manager_path_does_not_send_dot_placeholder(
+async def test_handle_ai_chat_slow_ikaros_path_does_not_send_dot_placeholder(
     monkeypatch,
 ):
     import core.config as config_module

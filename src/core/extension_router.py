@@ -44,7 +44,7 @@ class ExtensionRouter:
                 # Core primitives already provide direct read/write/edit/bash access.
                 continue
 
-            if bool(skill.get("manager_only")):
+            if bool(skill.get("ikaros_only")):
                 continue
 
             description = skill.get("description", "")

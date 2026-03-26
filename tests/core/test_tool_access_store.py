@@ -80,7 +80,7 @@ def test_tool_access_ext_skill_prefers_frontmatter_policy_groups(tmp_path, monke
     assert "group:media" in groups
 
 
-def test_regular_user_runtime_uses_core_manager_policy(tmp_path):
+def test_regular_user_runtime_uses_core_ikaros_policy(tmp_path):
     store = ToolAccessStore()
     store.path = (tmp_path / "tool_access.json").resolve()
     store._payload = store._default_payload()
@@ -89,7 +89,7 @@ def test_regular_user_runtime_uses_core_manager_policy(tmp_path):
     resolved = store.resolve_runtime_policy(
         runtime_user_id="u-plain-user", platform="telegram"
     )
-    assert resolved["agent_kind"] == "core-manager"
+    assert resolved["agent_kind"] == "core-ikaros"
 
     allowed, detail = store.is_tool_allowed(
         runtime_user_id="u-plain-user",
@@ -118,14 +118,14 @@ def test_regular_user_runtime_uses_core_manager_policy(tmp_path):
     assert allowed_primitive is True
     assert "group:primitives" in primitive_detail["groups"]
 
-    allowed_manager_skill, manager_skill_detail = store.is_tool_allowed(
+    allowed_ikaros_skill, ikaros_skill_detail = store.is_tool_allowed(
         runtime_user_id="u-plain-user",
         platform="telegram",
         tool_name="ext_skill_manager",
         kind="tool",
     )
-    assert allowed_manager_skill is True
-    assert "group:skill-admin" in manager_skill_detail["groups"]
+    assert allowed_ikaros_skill is True
+    assert "group:skill-admin" in ikaros_skill_detail["groups"]
 
     denied_finance_skill, finance_skill_detail = store.is_tool_allowed(
         runtime_user_id="u-plain-user",
@@ -137,7 +137,7 @@ def test_regular_user_runtime_uses_core_manager_policy(tmp_path):
     assert finance_skill_detail["reason"] == "channel_feature_disabled:stock"
 
 
-def test_subagent_runtime_uses_manager_policy_without_management_loops(tmp_path):
+def test_subagent_runtime_uses_ikaros_policy_without_management_loops(tmp_path):
     store = ToolAccessStore()
     store.path = (tmp_path / "tool_access.json").resolve()
     store._payload = store._default_payload()

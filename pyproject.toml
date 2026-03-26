@@ -23,7 +23,7 @@ bot-runtime = [
     "ddgs>=9.10.0",
     "exa-py>=2.4.0",
 ]
-manager-runtime = [
+ikaros-runtime = [
     { include-group = "bot-runtime" },
     "python-telegram-bot[job-queue]>=22.6",
     "PyMuPDF>=1.24.0",
@@ -37,7 +37,7 @@ manager-runtime = [
     "dingtalk-stream>=0.24.3",
 ]
 # Heavy or currently-unused skill packs stay opt-in so the default
-# manager image remains lean. Install `optional-skill-runtime`
+# ikaros image remains lean. Install `optional-skill-runtime`
 # when you need a full capability image.
 skill-web-optional = [
     "googlenewsdecoder>=0.1.5",
@@ -75,8 +75,8 @@ optional-skill-runtime = [
     { include-group = "skill-analysis-optional" },
     { include-group = "skill-integration-optional" },
 ]
-manager = [
-    { include-group = "manager-runtime" },
+ikaros = [
+    { include-group = "ikaros-runtime" },
 ]
 api = [
     # API 会直接复用 AiService / core.config 做图片记账等能力，
@@ -106,6 +106,6 @@ packages = ["src"]
 [tool.uv]
 default-groups = [
     "dev",
-    "manager",
+    "ikaros",
     "api",
 ]

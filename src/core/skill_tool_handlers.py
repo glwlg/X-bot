@@ -194,22 +194,22 @@ async def _task_tracker_handler(
 
 skill_tool_handler_registry = SkillToolHandlerRegistry()
 skill_tool_handler_registry.register(
-    "manager.gh_cli",
+    "ikaros.gh_cli",
     _gh_cli_handler,
 )
 skill_tool_handler_registry.register(
-    "manager.repo_workspace",
+    "ikaros.repo_workspace",
     _repo_workspace_handler,
 )
 skill_tool_handler_registry.register(
-    "manager.codex_session",
+    "ikaros.codex_session",
     _codex_session_handler,
 )
 skill_tool_handler_registry.register(
-    "manager.git_ops",
+    "ikaros.git_ops",
     _git_ops_handler,
 )
 skill_tool_handler_registry.register(
-    "manager.task_tracker",
+    "ikaros.task_tracker",
     _task_tracker_handler,
 )

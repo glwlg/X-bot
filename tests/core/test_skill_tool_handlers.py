@@ -6,7 +6,7 @@ from core.skill_tool_handlers import skill_tool_handler_registry
 
 
 @pytest.mark.asyncio
-async def test_manager_gh_cli_handler_forwards_notify_target(monkeypatch):
+async def test_ikaros_gh_cli_handler_forwards_notify_target(monkeypatch):
     captured = {}
 
     async def fake_gh_cli(**kwargs):
@@ -27,7 +27,7 @@ async def test_manager_gh_cli_handler_forwards_notify_target(monkeypatch):
     )
 
     result = await skill_tool_handler_registry.dispatch(
-        "manager.gh_cli",
+        "ikaros.gh_cli",
         dispatcher=dispatcher,
         args={"action": "auth_start", "hostname": "github.com"},
     )
@@ -41,7 +41,7 @@ async def test_manager_gh_cli_handler_forwards_notify_target(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_manager_repo_workspace_handler_routes_prepare(monkeypatch):
+async def test_ikaros_repo_workspace_handler_routes_prepare(monkeypatch):
     captured = {}
 
     async def fake_repo_workspace(**kwargs):
@@ -58,7 +58,7 @@ async def test_manager_repo_workspace_handler_routes_prepare(monkeypatch):
     )
 
     result = await skill_tool_handler_registry.dispatch(
-        "manager.repo_workspace",
+        "ikaros.repo_workspace",
         dispatcher=dispatcher,
         args={"action": "prepare", "repo_url": "https://github.com/acme/project.git"},
     )
@@ -69,7 +69,7 @@ async def test_manager_repo_workspace_handler_routes_prepare(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_manager_codex_session_handler_uses_user_request_as_instruction(
+async def test_ikaros_codex_session_handler_uses_user_request_as_instruction(
     monkeypatch,
 ):
     captured = {}
@@ -92,7 +92,7 @@ async def test_manager_codex_session_handler_uses_user_request_as_instruction(
     )
 
     result = await skill_tool_handler_registry.dispatch(
-        "manager.codex_session",
+        "ikaros.codex_session",
         dispatcher=dispatcher,
         args={"action": "start", "workspace_id": "ws-1", "instruction": ""},
     )
@@ -104,7 +104,7 @@ async def test_manager_codex_session_handler_uses_user_request_as_instruction(
 
 
 @pytest.mark.asyncio
-async def test_manager_git_ops_handler_routes_commit(monkeypatch):
+async def test_ikaros_git_ops_handler_routes_commit(monkeypatch):
     captured = {}
 
     async def fake_git_ops(**kwargs):
@@ -118,7 +118,7 @@ async def test_manager_git_ops_handler_routes_commit(monkeypatch):
     )
 
     result = await skill_tool_handler_registry.dispatch(
-        "manager.git_ops",
+        "ikaros.git_ops",
         dispatcher=dispatcher,
         args={"action": "commit", "workspace_id": "ws-1", "message": "feat: update"},
     )
@@ -136,7 +136,7 @@ async def test_skill_tool_handler_registry_rejects_unknown_handler():
     )
 
     result = await skill_tool_handler_registry.dispatch(
-        "manager.analyze_video",
+        "ikaros.analyze_video",
         dispatcher=dispatcher,
         args={},
     )

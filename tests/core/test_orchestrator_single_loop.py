@@ -35,7 +35,7 @@ class DummyContext:
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_manager_tool_surface_matches_current_runtime(monkeypatch):
+async def test_orchestrator_ikaros_tool_surface_matches_current_runtime(monkeypatch):
     orchestrator = AgentOrchestrator()
     captured = {}
 

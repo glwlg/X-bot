@@ -240,26 +240,26 @@ def _normalize_tool_exports(
 def _build_skill_contract(
     *,
     source: str,
-    manager_only: bool,
+    ikaros_only: bool,
     allowed_roles: List[str],
     frontmatter: Dict[str, Any],
     permissions: Dict[str, Any],
 ) -> Dict[str, Any]:
     runtime_target = str(frontmatter.get("runtime_target") or "").strip().lower()
-    if runtime_target not in {"manager", "subagent"}:
-        if manager_only or allowed_roles == ["manager"]:
-            runtime_target = "manager"
+    if runtime_target not in {"ikaros", "subagent"}:
+        if ikaros_only or allowed_roles == ["ikaros"]:
+            runtime_target = "ikaros"
         elif allowed_roles == ["subagent"]:
             runtime_target = "subagent"
         else:
-            runtime_target = "manager"
+            runtime_target = "ikaros"
 
     change_level = str(frontmatter.get("change_level") or "").strip().lower()
     if change_level not in {"learned", "builtin"}:
         change_level = "learned" if source == "learned" else "builtin"
 
-    allow_manager_modify = _as_bool(
-        frontmatter.get("allow_manager_modify"),
+    allow_ikaros_modify = _as_bool(
+        frontmatter.get("allow_ikaros_modify"),
         default=change_level in {"learned", "builtin"},
     )
     allow_auto_publish = _as_bool(
@@ -267,13 +267,13 @@ def _build_skill_contract(
         default=change_level == "learned",
     )
     rollout_target = str(frontmatter.get("rollout_target") or "").strip().lower()
-    if rollout_target not in {"manager", "subagent", "api", "none"}:
-        rollout_target = runtime_target if runtime_target == "subagent" else "manager"
+    if rollout_target not in {"ikaros", "subagent", "api", "none"}:
+        rollout_target = runtime_target if runtime_target == "subagent" else "ikaros"
 
     return {
         "runtime_target": runtime_target,
         "change_level": change_level,
-        "allow_manager_modify": allow_manager_modify,
+        "allow_ikaros_modify": allow_ikaros_modify,
         "allow_auto_publish": allow_auto_publish,
         "rollout_target": rollout_target,
         "dependencies": _normalize_text_list(frontmatter.get("dependencies")),
@@ -427,18 +427,18 @@ class SkillRegistry:
             frontmatter.get("allowed-tools") or frontmatter.get("allowed_tools") or []
         )
 
-        manager_only_raw: Any = frontmatter.get("manager_only")
-        if manager_only_raw is None:
-            manager_only_raw = frontmatter.get("internal_only")
-        if manager_only_raw is None:
+        ikaros_only_raw: Any = frontmatter.get("ikaros_only")
+        if ikaros_only_raw is None:
+            ikaros_only_raw = frontmatter.get("internal_only")
+        if ikaros_only_raw is None:
             visibility = str(frontmatter.get("visibility") or "").strip().lower()
-            manager_only_raw = visibility == "manager_only"
+            ikaros_only_raw = visibility == "ikaros_only"
 
-        if isinstance(manager_only_raw, bool):
-            manager_only = manager_only_raw
+        if isinstance(ikaros_only_raw, bool):
+            ikaros_only = ikaros_only_raw
         else:
-            manager_only_text = str(manager_only_raw or "").strip().lower()
-            manager_only = manager_only_text in {"1", "true", "yes", "on"}
+            ikaros_only_text = str(ikaros_only_raw or "").strip().lower()
+            ikaros_only = ikaros_only_text in {"1", "true", "yes", "on"}
 
         api_version = str(frontmatter.get("api_version") or "v3")
         allowed_roles = [
@@ -451,7 +451,7 @@ class SkillRegistry:
         permissions_obj = dict(permissions) if isinstance(permissions, dict) else {}
         contract = _build_skill_contract(
             source=source,
-            manager_only=manager_only,
+            ikaros_only=ikaros_only,
             allowed_roles=allowed_roles,
             frontmatter=frontmatter,
             permissions=permissions_obj,
@@ -478,7 +478,7 @@ class SkillRegistry:
             "platform_handlers": platform_handlers,
             "scheduled_jobs": scheduled_jobs,
             "permissions": permissions_obj,
-            "manager_only": manager_only,
+            "ikaros_only": ikaros_only,
             "allowed_roles": allowed_roles,
             "contract": contract,
             "cron_instruction": frontmatter.get("cron_instruction"),
@@ -510,7 +510,7 @@ class SkillRegistry:
                     "policy_groups": list(info.get("policy_groups") or []),
                     "platform_handlers": bool(info.get("platform_handlers")),
                     "permissions": dict(info.get("permissions") or {}),
-                    "manager_only": bool(info.get("manager_only")),
+                    "ikaros_only": bool(info.get("ikaros_only")),
                     "allowed_roles": list(info.get("allowed_roles") or []),
                     "input_schema": info.get("input_schema", {}),
                     "contract": dict(info.get("contract") or {}),
@@ -589,7 +589,7 @@ class SkillRegistry:
                 exported = dict(item or {})
                 exported.setdefault("skill_name", str(info.get("name") or "").strip())
                 exported.setdefault("allowed_roles", list(allowed_roles))
-                exported.setdefault("manager_only", bool(info.get("manager_only")))
+                exported.setdefault("ikaros_only", bool(info.get("ikaros_only")))
                 exported.setdefault(
                     "policy_groups",
                     list(info.get("policy_groups") or []),

@@ -142,11 +142,11 @@ entrypoint: scripts/execute.py
     indexed = loader.scan_skills()
     contract = indexed["demo_contract"]["contract"]
 
-    assert contract["runtime_target"] == "manager"
+    assert contract["runtime_target"] == "ikaros"
     assert contract["change_level"] == "learned"
-    assert contract["allow_manager_modify"] is True
+    assert contract["allow_ikaros_modify"] is True
     assert contract["allow_auto_publish"] is True
-    assert contract["rollout_target"] == "manager"
+    assert contract["rollout_target"] == "ikaros"
 
 
 def test_skill_loader_respects_explicit_contract_fields(tmp_path: Path):
@@ -167,10 +167,10 @@ permissions:
   filesystem: workspace
   shell: true
 allowed_roles:
-  - manager
-runtime_target: manager
+  - ikaros
+runtime_target: ikaros
 change_level: builtin
-allow_manager_modify: true
+allow_ikaros_modify: true
 allow_auto_publish: false
 rollout_target: api
 dependencies:
@@ -189,7 +189,7 @@ entrypoint: scripts/execute.py
     indexed = loader.scan_skills()
     contract = indexed["ops_contract"]["contract"]
 
-    assert contract["runtime_target"] == "manager"
+    assert contract["runtime_target"] == "ikaros"
     assert contract["change_level"] == "builtin"
     assert contract["allow_auto_publish"] is False
     assert contract["rollout_target"] == "api"
@@ -198,20 +198,20 @@ entrypoint: scripts/execute.py
 
 
 def test_skill_loader_parses_tool_exports(tmp_path: Path):
-    skill_dir = tmp_path / "skills" / "builtin" / "manager_ops"
+    skill_dir = tmp_path / "skills" / "builtin" / "ikaros_ops"
     skill_dir.mkdir(parents=True, exist_ok=True)
     skill_file = skill_dir / "SKILL.md"
     skill_file.write_text(
         """---
 api_version: v3
-name: manager_ops
-description: manager tool demo
+name: ikaros_ops
+description: ikaros tool demo
 allowed_roles:
-  - manager
+  - ikaros
 tool_exports:
   - name: queue_status
     description: Query queue status
-    handler: manager.queue.status
+    handler: ikaros.queue.status
     parameters:
       type: object
       properties:
@@ -219,19 +219,19 @@ tool_exports:
           type: string
 ---
 
-# Manager Ops
+# Ikaros Ops
 """,
         encoding="utf-8",
     )
 
     loader = SkillRegistry(skills_dir=str(tmp_path / "skills"))
     indexed = loader.scan_skills()
-    exports = indexed["manager_ops"]["tool_exports"]
+    exports = indexed["ikaros_ops"]["tool_exports"]
 
     assert len(exports) == 1
     assert exports[0]["name"] == "queue_status"
-    assert exports[0]["handler"] == "manager.queue.status"
-    assert exports[0]["skill_name"] == "manager_ops"
+    assert exports[0]["handler"] == "ikaros.queue.status"
+    assert exports[0]["skill_name"] == "ikaros_ops"
     assert exports[0]["parameters"]["properties"]["executor_id"]["type"] == "string"
 
 

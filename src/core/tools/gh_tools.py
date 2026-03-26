@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from manager.integrations.gh_cli_service import gh_cli_service
+from ikaros.integrations.gh_cli_service import gh_cli_service
 
 
 class GhTools:

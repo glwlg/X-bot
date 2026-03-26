@@ -2,7 +2,7 @@ import pytest
 from types import SimpleNamespace
 
 import api.api.accounting_router as accounting_router_module
-import manager.dispatch.web_accounting_auto_image as web_accounting_module
+import ikaros.dispatch.web_accounting_auto_image as web_accounting_module
 from shared.contracts.dispatch import TaskEnvelope
 
 
@@ -50,7 +50,7 @@ async def test_run_web_accounting_auto_image_task_returns_accounting_draft(
 
     task = TaskEnvelope(
         task_id="tsk-web-1",
-        executor_id="manager-main",
+        executor_id="ikaros-main",
         instruction="请先识别这张交易图片，再调用 submit_accounting_draft 提交结构化记账草稿。",
         source="web_accounting_auto_image",
         metadata={
@@ -123,7 +123,7 @@ async def test_run_web_image_quick_accounting_marks_task_delivered_for_api_poll(
     assert captured["task_id"].startswith("web-accounting-")
 
 
-def test_record_create_from_draft_maps_manager_payload():
+def test_record_create_from_draft_maps_ikaros_payload():
     record = accounting_router_module._record_create_from_draft(
         {
             "type": "支出",

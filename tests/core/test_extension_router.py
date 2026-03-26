@@ -98,9 +98,9 @@ def test_extension_router_news_intent_prefers_search_tools(monkeypatch):
                 "input_schema": {"type": "object", "properties": {}},
             },
             {
-                "name": "news_article_writer",
-                "description": "搜索最新新闻并撰写公众号文章",
-                "triggers": ["写公众号文章", "生成新闻文章"],
+                "name": "article_publisher",
+                "description": "搜索资料并撰写公众号文章或发布稿",
+                "triggers": ["写公众号文章", "文章发布"],
                 "input_schema": {"type": "object", "properties": {}},
             },
         ],
@@ -125,9 +125,9 @@ def test_extension_router_news_writing_intent_keeps_writer_candidate(monkeypatch
                 "input_schema": {"type": "object", "properties": {}},
             },
             {
-                "name": "news_article_writer",
-                "description": "搜索最新新闻并撰写公众号文章",
-                "triggers": ["写公众号文章", "生成新闻文章"],
+                "name": "article_publisher",
+                "description": "搜索资料并撰写公众号文章或发布稿",
+                "triggers": ["写公众号文章", "文章发布"],
                 "input_schema": {"type": "object", "properties": {}},
             },
         ],
@@ -137,19 +137,19 @@ def test_extension_router_news_writing_intent_keeps_writer_candidate(monkeypatch
     candidates = router.route("写一篇今天AI新闻文章并给出摘要", max_candidates=3)
     names = [item.name for item in candidates]
 
-    assert "news_article_writer" in names
+    assert "article_publisher" in names
 
 
-def test_extension_router_skips_manager_only_skill(monkeypatch):
+def test_extension_router_skips_ikaros_only_skill(monkeypatch):
     monkeypatch.setattr(
         extension_router_module.skill_loader,
         "get_skills_summary",
         lambda: [
             {
                 "name": "internal_dev_tool",
-                "description": "internal manager development capability",
+                "description": "internal ikaros development capability",
                 "triggers": ["internal dev"],
-                "manager_only": True,
+                "ikaros_only": True,
                 "input_schema": {"type": "object", "properties": {}},
             },
             {

@@ -1060,7 +1060,7 @@ dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
-manager = [
+ikaros = [
     { name = "aiofiles" },
     { name = "aiosqlite" },
     { name = "cryptography" },
@@ -1083,7 +1083,7 @@ manager = [
     { name = "sqlalchemy", extra = ["asyncio"] },
     { name = "yt-dlp" },
 ]
-manager-runtime = [
+ikaros-runtime = [
     { name = "aiofiles" },
     { name = "aiosqlite" },
     { name = "cryptography" },
@@ -1202,7 +1202,7 @@ dev = [
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", specifier = ">=0.23.0" },
 ]
-manager = [
+ikaros = [
     { name = "aiofiles", specifier = ">=23.0.0" },
     { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "cryptography", specifier = ">=46.0.3" },
@@ -1225,7 +1225,7 @@ manager = [
     { name = "sqlalchemy", extras = ["asyncio"], specifier = ">=2.0.0,<2.1.0" },
     { name = "yt-dlp", specifier = ">=2024.0.0" },
 ]
-manager-runtime = [
+ikaros-runtime = [
     { name = "aiofiles", specifier = ">=23.0.0" },
     { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "cryptography", specifier = ">=46.0.3" },

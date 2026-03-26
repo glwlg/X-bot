@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from manager.dev.workspace_session_service import workspace_session_service
+from ikaros.dev.workspace_session_service import workspace_session_service
 
 
 class RepoWorkspaceTools:
