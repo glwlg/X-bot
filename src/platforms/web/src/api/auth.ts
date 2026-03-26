@@ -21,6 +21,13 @@ export interface UserPermissions {
     is_superuser: boolean
 }
 
+export interface BootstrapStatus {
+    needs_bootstrap: boolean
+    users_count: number
+    admin_count: number
+    public_registration_enabled: boolean
+}
+
 // 获取当前用户信息
 export const getCurrentUser = () => {
     return request.get<UserInfo>('/auth/me')
@@ -43,21 +50,22 @@ export const login = (email: string, password: string) => {
     })
 }
 
-// 注册
-export const register = (email: string, password: string) => {
-    return request.post('/auth/register', {
-        email,
-        password,
-        is_active: true,
-        is_superuser: true,
-        is_verified: true,
-        role: "admin"
-    })
-}
-
 // 登出
 export const logout = () => {
     return request.post('/auth/jwt/logout')
+}
+
+export const getBootstrapStatus = () => {
+    return request.get<BootstrapStatus>('/auth/bootstrap/status')
+}
+
+export const bootstrapAdmin = (payload: {
+    email: string
+    password: string
+    username?: string
+    display_name?: string
+}) => {
+    return request.post<UserInfo>('/auth/bootstrap/admin', payload)
 }
 
 // 获取 GitLab OAuth 授权 URL 并重定向

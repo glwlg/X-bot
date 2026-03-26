@@ -47,8 +47,13 @@ async def get_or_create_session_id(
         setattr(context, "user_data", {})
         store = getattr(context, "user_data", {})
 
+    explicit_session_id = _context_session_hint(context)
+
     if SESSION_ID_KEY in store:
         session_id = str(store[SESSION_ID_KEY])
+        if explicit_session_id and explicit_session_id != session_id:
+            session_id = explicit_session_id
+            store[SESSION_ID_KEY] = session_id
         platform = _context_platform(context)
         if platform and str(user_id or "").strip():
             channel_runtime_store.set_session_id(
@@ -59,7 +64,7 @@ async def get_or_create_session_id(
         set_current_llm_usage_session_id(session_id)
         return session_id
 
-    session_id = await _resolve_preferred_session_id(context, user_id)
+    session_id = explicit_session_id or await _resolve_preferred_session_id(context, user_id)
     store[SESSION_ID_KEY] = session_id
     set_current_llm_usage_session_id(session_id)
     return session_id
@@ -68,6 +73,21 @@ async def get_or_create_session_id(
 def _context_platform(context: TelegramContext | UnifiedContext) -> str:
     message = getattr(context, "message", None)
     return str(getattr(message, "platform", "") or "").strip().lower()
+
+
+def _context_session_hint(context: TelegramContext | UnifiedContext) -> str:
+    message = getattr(context, "message", None)
+    raw_data = getattr(message, "raw_data", None)
+    if isinstance(raw_data, dict):
+        session_id = str(raw_data.get("session_id") or "").strip()
+        if session_id:
+            return session_id
+    chat = getattr(message, "chat", None)
+    platform = _context_platform(context)
+    chat_id = str(getattr(chat, "id", "") or "").strip()
+    if platform == "web" and chat_id:
+        return chat_id
+    return ""
 
 
 async def _resolve_preferred_session_id(

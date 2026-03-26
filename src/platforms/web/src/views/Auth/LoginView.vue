@@ -1,79 +1,72 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
-import { Loader2 } from 'lucide-vue-next'
-import { login, register, getCurrentUser } from '@/api/auth'
+import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
+import { Bot, Loader2, ShieldUser } from 'lucide-vue-next'
+
+import { bootstrapAdmin, getBootstrapStatus, getCurrentUser, login, type BootstrapStatus } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
-import logoPng from '@/assets/images/logo.png'
 
 const router = useRouter()
-const route = useRoute()
 const authStore = useAuthStore()
 
 const loading = ref(false)
+const checking = ref(true)
 const error = ref('')
-const checkingAuth = ref(true)
+const bootstrapStatus = ref<BootstrapStatus | null>(null)
 
 const email = ref('')
 const password = ref('')
-const isRegister = ref(false)
+const displayName = ref('')
 
-// 检查是否已登录
+const bootstrapMode = computed(() => bootstrapStatus.value?.needs_bootstrap === true)
+
 onMounted(async () => {
     const token = localStorage.getItem('access_token')
     if (token) {
         try {
             await getCurrentUser()
-            // 已登录，跳转到首页
-            router.push('/')
+            await authStore.fetchUser()
+            await router.push('/chat')
+            return
         } catch {
-            // Token 无效，清除
             localStorage.removeItem('access_token')
         }
     }
-    checkingAuth.value = false
-    
-    // 检查 OAuth 回调参数
-    const accessToken = route.query.access_token as string
-    if (accessToken) {
-        localStorage.setItem('access_token', accessToken)
-        router.push('/')
-    }
-    
-    // 检查错误
-    const errorMsg = route.query.error as string
-    if (errorMsg) {
-        error.value = `登录失败: ${errorMsg}`
+
+    try {
+        const response = await getBootstrapStatus()
+        bootstrapStatus.value = response.data
+    } catch (err: any) {
+        error.value = err?.response?.data?.detail || '无法获取初始化状态'
+    } finally {
+        checking.value = false
     }
 })
 
-const handleAuth = async () => {
-    if (!email.value || !password.value) {
+const handleSubmit = async () => {
+    if (!email.value.trim() || !password.value.trim()) {
         error.value = '请输入邮箱和密码'
         return
     }
-    
+
     loading.value = true
     error.value = ''
     try {
-        if (isRegister.value) {
-            // 注册流程
-            await register(email.value, password.value)
+        if (bootstrapMode.value) {
+            await bootstrapAdmin({
+                email: email.value.trim(),
+                password: password.value,
+                display_name: displayName.value.trim() || undefined,
+                username: email.value.split('@')[0],
+            })
         }
-        
-        // 登录流程
-        const res = await login(email.value, password.value)
-        authStore.setToken(res.data.access_token)
+
+        const response = await login(email.value.trim(), password.value)
+        authStore.setToken(response.data.access_token)
         await authStore.fetchUser()
-        
-        // 成功，跳转
-        router.push('/')
+        await router.push(bootstrapMode.value && authStore.isAdmin ? '/admin/setup' : '/chat')
     } catch (err: any) {
-        if (isRegister.value) {
-            error.value = err?.response?.data?.detail || '注册失败，可能邮箱已被占用'
-        } else {
-            error.value = err?.response?.data?.detail || '登录失败，请检查账号和密码'
-        }
+        error.value = err?.response?.data?.detail || (bootstrapMode.value ? '初始化失败' : '登录失败')
     } finally {
         loading.value = false
     }
@@ -81,80 +74,112 @@ const handleAuth = async () => {
 </script>
 
 <template>
-    <div class="min-h-screen bg-slate-900 flex items-center justify-center p-4">
-        <div class="w-full max-w-md">
-            <!-- Logo & Title -->
-            <div class="text-center mb-8">
-                <img :src="logoPng" alt="Ikaros Logo" class="w-20 h-20 rounded-2xl mb-4 mx-auto shadow-lg bg-slate-800 object-contain p-2" />
-                <h1 class="text-3xl font-bold text-white mb-2 shadow-sm">Ikaros</h1>
-                <p class="text-gray-200 font-medium shadow-sm">多平台私人智能助理</p>
-            </div>
-
-            <!-- Login/Register Card -->
-            <div class="bg-white/10 backdrop-blur-lg rounded-2xl p-8 border border-white/10 shadow-2xl">
-                <div v-if="checkingAuth" class="flex justify-center py-8">
-                    <Loader2 class="w-8 h-8 text-indigo-400 animate-spin" />
-                </div>
-                
-                <template v-else>
-                    <div v-if="error" class="mb-6 p-4 bg-red-500/20 border border-red-500/30 rounded-lg">
-                        <p class="text-red-300 text-sm">{{ error }}</p>
-                    </div>
-
-                    <form @submit.prevent="handleAuth" class="space-y-6">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-200 mb-1">账号 (邮箱)</label>
-                            <input 
-                                v-model="email" 
-                                type="text"
-                                class="w-full px-4 py-3 rounded-xl bg-slate-800/50 border border-slate-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
-                                placeholder="请输入账号"
-                                required
-                            />
-                        </div>
-                        
-                        <div>
-                            <label class="block text-sm font-medium text-gray-200 mb-1">密码</label>
-                            <input 
-                                v-model="password" 
-                                type="password"
-                                class="w-full px-4 py-3 rounded-xl bg-slate-800/50 border border-slate-700 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-colors"
-                                placeholder="请输入密码"
-                                required
-                                minlength="8"
-                            />
-                            <p v-if="isRegister" class="text-xs text-gray-400 mt-2">密码长度不能少于 8 位</p>
-                        </div>
-
-                        <button
-                            type="submit"
-                            :disabled="loading"
-                            class="w-full flex items-center justify-center gap-3 px-6 py-4 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white font-medium rounded-xl transition-all shadow-lg hover:shadow-indigo-500/25 mt-4"
-                        >
-                            <span v-if="loading" class="flex items-center gap-2">
-                                <Loader2 class="w-5 h-5 animate-spin" />
-                                {{ isRegister ? '注册中...' : '登录中...' }}
-                            </span>
-                            <span v-else>{{ isRegister ? '注册并登录' : '登录' }}</span>
-                        </button>
-
-                        <div class="mt-4 text-center">
-                            <button 
-                                type="button" 
-                                @click="isRegister = !isRegister; error = ''" 
-                                class="text-indigo-400 hover:text-indigo-300 text-sm transition-colors"
-                            >
-                                {{ isRegister ? '已有账号？去登录' : '没有账号？去注册' }}
-                            </button>
-                        </div>
-                    </form>
-                </template>
-            </div>
-
-            <!-- Footer -->
-            <p class="text-center text-slate-400 text-xs mt-8 opacity-60">
-                &copy; 2026 Ikaros. All rights reserved.
-            </p>
+  <div class="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(8,145,178,0.24),_transparent_26%),linear-gradient(180deg,_#020617_0%,_#0f172a_50%,_#082f49_100%)] px-4 py-10 text-slate-100">
+    <div class="mx-auto grid max-w-6xl gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+      <section class="overflow-hidden rounded-[36px] border border-white/10 bg-white/6 p-8 shadow-[0_36px_90px_rgba(2,6,23,0.42)] backdrop-blur">
+        <div class="inline-flex items-center gap-2 rounded-full border border-cyan-300/20 bg-cyan-300/10 px-3 py-1 text-xs uppercase tracking-[0.24em] text-cyan-200">
+          <Bot class="h-4 w-4" />
+          Web Channel Console
         </div>
+        <h1 class="mt-6 max-w-3xl text-4xl font-semibold leading-tight text-white md:text-5xl">
+          Ikaros 现在在 Web 上也有正式对话入口了。
+        </h1>
+        <p class="mt-5 max-w-2xl text-base leading-8 text-slate-300">
+          统一会话、命令、菜单回调、文件、语音、管理员控制台都在一个终端里完成。
+          这次登录页也不再提供开放注册，而是明确区分首个管理员初始化与后续登录。
+        </p>
+
+        <div class="mt-8 grid gap-4 md:grid-cols-2">
+          <div class="rounded-[28px] border border-white/10 bg-slate-950/40 p-5">
+            <div class="text-sm font-medium text-white">安全基线</div>
+            <p class="mt-2 text-sm leading-7 text-slate-400">
+              公开注册提权链路已经关闭。首个管理员初始化完成后，后续账号只能由管理员在后台创建。
+            </p>
+          </div>
+          <div class="rounded-[28px] border border-white/10 bg-white/5 p-5">
+            <div class="text-sm font-medium text-white">工作台能力</div>
+            <p class="mt-2 text-sm leading-7 text-slate-400">
+              Chat 页面支持文字、语音、文件、命令、菜单动作；Admin 页面负责用户、模型和平台开关。
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="rounded-[36px] border border-white/10 bg-white p-8 text-slate-900 shadow-[0_36px_90px_rgba(2,6,23,0.3)]">
+        <div v-if="checking" class="flex min-h-[440px] items-center justify-center">
+          <Loader2 class="h-8 w-8 animate-spin text-cyan-600" />
+        </div>
+
+        <template v-else>
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <div class="text-xs uppercase tracking-[0.24em] text-slate-400">
+                {{ bootstrapMode ? 'Bootstrap' : 'Sign In' }}
+              </div>
+              <h2 class="mt-2 text-3xl font-semibold">
+                {{ bootstrapMode ? '初始化首个管理员' : '登录 Ikaros' }}
+              </h2>
+            </div>
+            <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-100 text-cyan-700">
+              <ShieldUser class="h-6 w-6" />
+            </div>
+          </div>
+
+          <p class="mt-4 text-sm leading-7 text-slate-500">
+            {{ bootstrapMode
+              ? '当前系统还没有管理员。完成一次初始化后，将自动进入普通登录流。'
+              : '请输入管理员创建的账号。Web 端不再提供开放注册。' }}
+          </p>
+
+          <div v-if="error" class="mt-5 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-600">
+            {{ error }}
+          </div>
+
+          <form class="mt-8 space-y-5" @submit.prevent="handleSubmit">
+            <div v-if="bootstrapMode">
+              <label class="mb-2 block text-sm font-medium text-slate-700">显示名称</label>
+              <input
+                v-model="displayName"
+                type="text"
+                class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-cyan-400 focus:bg-white"
+                placeholder="例如：系统管理员"
+              >
+            </div>
+
+            <div>
+              <label class="mb-2 block text-sm font-medium text-slate-700">邮箱</label>
+              <input
+                v-model="email"
+                type="email"
+                class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-cyan-400 focus:bg-white"
+                placeholder="admin@example.com"
+                required
+              >
+            </div>
+
+            <div>
+              <label class="mb-2 block text-sm font-medium text-slate-700">密码</label>
+              <input
+                v-model="password"
+                type="password"
+                minlength="8"
+                class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-cyan-400 focus:bg-white"
+                placeholder="至少 8 位"
+                required
+              >
+            </div>
+
+            <button
+              type="submit"
+              :disabled="loading"
+              class="inline-flex w-full items-center justify-center gap-3 rounded-2xl bg-slate-950 px-5 py-3.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <Loader2 v-if="loading" class="h-4 w-4 animate-spin" />
+              <span>{{ bootstrapMode ? '初始化并登录' : '登录' }}</span>
+            </button>
+          </form>
+        </template>
+      </section>
     </div>
+  </div>
 </template>

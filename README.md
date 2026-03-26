@@ -124,6 +124,7 @@ Core 只暴露运行时基础设施，不再在 core 里硬编码 channel / memo
 ├── tests/                # pytest 测试
 ├── docker-compose.yml
 ├── README.md
+├── DEPLOYMENT.md
 └── DEVELOPMENT.md
 ```
 
@@ -133,87 +134,11 @@ Core 只暴露运行时基础设施，不再在 core 里硬编码 channel / memo
 - `src/core/platform/` 只保留平台无关抽象、统一消息模型和 adapter registry
 - `src/platforms/web/` 保留 Web 前端与静态资源，不属于 bot 渠道扩展
 
-## 快速开始
+## 部署与初始化
 
-### 1. 准备配置
+部署、启动、平台脚本、Docker / 非 Docker、systemd / launchd / Windows 计划任务，以及 `Wispaper` 接入说明统一收口在 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
-```bash
-cp .env.example .env
-cp config/models.example.json config/models.json
-```
-
-`.env` 里至少按需填写：
-
-- `TELEGRAM_BOT_TOKEN`
-- `DISCORD_BOT_TOKEN`
-- `DINGTALK_CLIENT_ID`
-- `DINGTALK_CLIENT_SECRET`
-- `WEIXIN_ENABLE`
-- `WEIXIN_CDN_BASE_URL`
-- `ADMIN_USER_IDS`
-- `SEARXNG_URL`
-
-如需自定义模型配置文件位置，可设置：
-
-```bash
-MODELS_CONFIG_PATH="/absolute/path/to/models.json"
-```
-
-### 2. 配置模型
-
-模型配置统一使用 `config/models.json`，主要包含三部分：
-
-1. 当前角色模型
-   - `model.primary`
-   - `model.routing`
-   - `model.vision`
-   - `model.image_generation`
-   - `model.voice`
-2. 角色模型池
-   - `models.primary`
-   - `models.routing`
-   - `models.vision`
-   - `models.image_generation`
-   - `models.voice`
-3. provider 连接信息
-   - `providers.<provider>.baseUrl`
-   - `providers.<provider>.apiKey`
-   - `providers.<provider>.api`
-   - `providers.<provider>.models[]`
-
-其中：
-
-- `vision` 用于看图、看视频、识别表情包等多模态理解
-- `image_generation` 用于文生图
-- 旧键 `model.image` 仍保留兼容，但新配置应优先使用 `model.vision`
-
-### 3. 安装依赖
-
-```bash
-uv sync
-```
-
-### 4. 启动
-
-本地直接运行 Ikaros：
-
-```bash
-uv run python src/main.py
-```
-
-本地运行 API：
-
-```bash
-uv run uvicorn api.main:app --host 0.0.0.0 --port 8764
-```
-
-Docker 方式：
-
-```bash
-docker compose up --build -d
-docker compose logs -f ikaros
-docker compose logs -f ikaros-api
-```
+首次部署完成后，打开 Web 的 `/login` 完成首个管理员初始化，再进入 `/admin/setup` 继续配置模型、`SOUL.MD`、`USER.md` 和渠道凭证。
 
 ## 聊天内管理命令
 
@@ -304,3 +229,4 @@ docker compose logs -f ikaros-api
 ## 开发文档
 
 - 架构与边界约束：[DEVELOPMENT.md](DEVELOPMENT.md)
+- 部署与运维说明：[DEPLOYMENT.md](DEPLOYMENT.md)

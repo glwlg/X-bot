@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.core.database import get_async_session
 from api.auth.models import User, OAuthAccount
 from api.core.config import settings
+from api.services.user_access_sync import sync_user_core_access
 
 
 # ============== 用户数据库适配器 ==============
@@ -47,6 +48,7 @@ class UserManager(IntegerIDMixin, BaseUserManager[User, int]):
         """登录后更新最后登录时间"""
         # 注意：需要通过 session 更新
         print(f"User {user.id} ({user.email}) logged in.")
+        await sync_user_core_access(user, actor="auth_login")
 
     async def on_after_forgot_password(
         self, user: User, token: str, request: Optional[Request] = None
@@ -65,7 +67,7 @@ async def get_user_manager(user_db=Depends(get_user_db)):
 
 # ============== 认证策略 ==============
 
-bearer_transport = BearerTransport(tokenUrl="/ops/api/v1/auth/jwt/login")
+bearer_transport = BearerTransport(tokenUrl="/api/v1/auth/jwt/login")
 
 
 def get_jwt_strategy() -> JWTStrategy:

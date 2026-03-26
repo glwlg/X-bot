@@ -76,6 +76,7 @@ RUN npm install -g \
     fi
 
 COPY src/ .
+COPY extension/ ./extension/
 
 CMD ["python", "main.py"]
 

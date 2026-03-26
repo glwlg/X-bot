@@ -10,6 +10,7 @@ from core.config import (
     is_user_admin,
 )
 from core.extension_base import ChannelExtension
+from core.runtime_config_store import runtime_config_store
 
 from .adapter import WeixinAdapter
 from ..common import COMMON_CALLBACK_PATTERN, button_callback, route_message_by_type
@@ -46,7 +47,10 @@ class WeixinChannelExtension(ChannelExtension):
 
     def enabled(self, runtime) -> bool:
         _ = runtime
-        return bool(WEIXIN_ENABLE)
+        return bool(WEIXIN_ENABLE) and runtime_config_store.is_platform_enabled(
+            "weixin",
+            default=True,
+        )
 
     async def _cmd_wxbind(self, ctx):
         user = getattr(getattr(ctx, "message", None), "user", None)

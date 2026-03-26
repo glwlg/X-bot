@@ -1,10 +1,12 @@
 import importlib
 import logging
+import os
 import re
 import uuid
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 _state_io = importlib.import_module("core.state_io")
 init_db = _state_io.init_db
@@ -15,6 +17,8 @@ write_json = _state_io.write_json
 _state_paths = importlib.import_module("core.state_paths")
 system_path = _state_paths.system_path
 user_path = _state_paths.user_path
+SINGLE_USER_SCOPE = _state_paths.SINGLE_USER_SCOPE
+DATA_DIR = importlib.import_module("core.config").DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +35,41 @@ def _safe_session_id(value: str) -> str:
     return safe or str(uuid.uuid4())
 
 
+def _safe_user_scope(user_id: int | str) -> str:
+    raw = str(user_id or "").strip()
+    if not raw:
+        return SINGLE_USER_SCOPE
+    safe = quote(raw, safe="._-:")
+    return safe or SINGLE_USER_SCOPE
+
+
+def _legacy_chat_root() -> Path:
+    return user_path(SINGLE_USER_SCOPE, "chat")
+
+
+def _scoped_chat_root(user_id: int | str) -> Path:
+    scope = _safe_user_scope(user_id)
+    root = (
+        Path(os.getenv("DATA_DIR", DATA_DIR)).resolve()
+        / "user"
+        / "chat_scoped"
+        / scope
+    ).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def _chat_root(user_id: int | str) -> Path:
-    return user_path(user_id, "chat")
+    scope = _safe_user_scope(user_id)
+    if scope == SINGLE_USER_SCOPE:
+        root = _legacy_chat_root()
+        root.mkdir(parents=True, exist_ok=True)
+        return root
+    return _scoped_chat_root(user_id)
 
 
 def _session_path(user_id: int | str, day: str, session_id: str) -> Path:
-    return user_path(user_id, "chat", day, f"{_safe_session_id(session_id)}.md")
+    return (_chat_root(user_id) / day / f"{_safe_session_id(session_id)}.md").resolve()
 
 
 def _entry_block(role: str, content: str) -> str:
@@ -255,6 +288,70 @@ async def get_latest_session_id(user_id: int | str) -> str:
     except Exception as e:
         logger.error(f"Error getting latest session: {e}")
         return str(uuid.uuid4())
+
+
+async def create_chat_session(
+    user_id: int | str,
+    session_id: str,
+) -> dict[str, Any]:
+    uid = str(user_id)
+    sid = _safe_session_id(session_id)
+    session_file = await _resolve_session_file(uid, sid)
+    if session_file is None:
+        session_file = _session_path(uid, date.today().isoformat(), sid)
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    if not session_file.exists():
+        session_file.write_text(
+            _render_session(_extract_day_from_path(session_file), sid, []),
+            encoding="utf-8",
+        )
+    stat = session_file.stat()
+    return {
+        "session_id": sid,
+        "path": str(session_file),
+        "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+        "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+    }
+
+
+async def list_chat_sessions(
+    user_id: int | str,
+    *,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    try:
+        uid = str(user_id)
+        files = await _list_session_files(uid)
+        sessions: list[dict[str, Any]] = []
+        for path in files[: max(1, int(limit))]:
+            rows = _parse_entries(path.read_text(encoding="utf-8"))
+            visible_rows = [
+                row
+                for row in rows
+                if str(row.get("role") or "").strip().lower() in _VISIBLE_CHAT_ROLES
+            ]
+            preview = str((visible_rows[-1] if visible_rows else {}).get("content") or "").strip()
+            title = ""
+            for item in visible_rows:
+                if str(item.get("role") or "").strip().lower() == "user":
+                    title = str(item.get("content") or "").strip()
+                    break
+            stat = path.stat()
+            sessions.append(
+                {
+                    "session_id": _extract_session_from_path(path),
+                    "title": (title[:48] if title else "新对话"),
+                    "preview": preview[:120],
+                    "message_count": len(visible_rows),
+                    "created_at": datetime.fromtimestamp(stat.st_ctime).isoformat(),
+                    "updated_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                    "path": str(path),
+                }
+            )
+        return sessions
+    except Exception as e:
+        logger.error(f"Error listing chat sessions: {e}")
+        return []
 
 
 async def search_messages(

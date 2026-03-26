@@ -1,33 +1,33 @@
 name: ikaros
 services:
-  # ikaros:
-  #   image: ikaros-core
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfile
-  #     target: ikaros-runtime
-  #   container_name: ikaros
-  #   env_file:
-  #     - .env
-  #   restart: unless-stopped
-  #   environment:
-  #     - TZ=Asia/Shanghai
-  #     - SEARXNG_URL=http://127.0.0.1:28080
-  #   network_mode: "host"
-  #   volumes:
-  #     - ./downloads:/app/downloads
-  #     - ./data:/app/data
-  #     - ~/.codex:/root/.codex
-  #     - ~/.gemini:/root/.gemini
-  #     - ~/.local/share/opencode:/root/.local/share/opencode
-  #     - ./config:/app/config
-  #     # Deployment Staging: 宿主机路径必须与容器内路径一致
-  #     # 这是因为 Ikaros 调度的是宿主机 Docker，docker compose 会使用宿主机路径
-  #     # 必须在 .env 中设置 X_DEPLOYMENT_STAGING_PATH 为绝对路径！
-  #     - ${X_DEPLOYMENT_STAGING_PATH}:${X_DEPLOYMENT_STAGING_PATH}
-  #     - ./extension:/app/extension # 持久化技能与扩展
-  #     - /mnt/d/media/dlp:/app/media
-  #     - /var/run/docker.sock:/var/run/docker.sock # MCP: 允许启动 MCP 服务容器
+  ikaros:
+    image: ikaros-core
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: ikaros-runtime
+    container_name: ikaros
+    env_file:
+      - .env
+    restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
+      - SEARXNG_URL=${SEARXNG_URL:-http://127.0.0.1:28080}
+    network_mode: "host"
+    command: ["python", "main.py"]
+    volumes:
+      - ./downloads:/app/downloads
+      - ./data:/app/data
+      - ~/.codex:/root/.codex
+      - ~/.gemini:/root/.gemini
+      - ~/.local/share/opencode:/root/.local/share/opencode
+      - ./config:/app/config
+      # Deployment Staging: 宿主机路径必须与容器内路径一致
+      # 这是因为 Ikaros 调度的是宿主机 Docker，docker compose 会使用宿主机路径
+      - ${X_DEPLOYMENT_STAGING_PATH:-/tmp}:${X_DEPLOYMENT_STAGING_PATH:-/tmp}
+      - ./extension:/app/extension
+      - /mnt/d/media/dlp:/app/media
+      - /var/run/docker.sock:/var/run/docker.sock
   ikaros-api:
     image: ikaros-api
     build:
@@ -35,9 +35,13 @@ services:
       dockerfile: Dockerfile
       target: api-runtime
     container_name: ikaros-api
+    depends_on:
+      - ikaros
     env_file:
       - .env
     restart: unless-stopped
+    environment:
+      - TZ=Asia/Shanghai
     network_mode: "host"
     command: [ "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8764" ]
     volumes:

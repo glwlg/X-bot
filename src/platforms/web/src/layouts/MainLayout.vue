@@ -1,11 +1,143 @@
 <script setup lang="ts">
-import { RouterView } from 'vue-router'
+import { computed } from 'vue'
+import { RouterLink, RouterView, useRoute } from 'vue-router'
+import {
+    Activity,
+    Bot,
+    Cable,
+    Gauge,
+    HeartPulse,
+    Home,
+    LayoutGrid,
+    Link2,
+    LogOut,
+    Radio,
+    Rocket,
+    Settings2,
+    ShieldUser,
+    WalletCards
+} from 'lucide-vue-next'
+
+import { useAuthStore } from '@/stores/auth'
+
+const route = useRoute()
+const authStore = useAuthStore()
+
+const identityPrimary = computed(() =>
+    authStore.user?.display_name || authStore.user?.username || authStore.user?.email || '未登录'
+)
+
+const showIdentityEmail = computed(() =>
+    Boolean(authStore.user?.email) && authStore.user?.email !== identityPrimary.value
+)
+
+const handleLogout = async () => {
+    await authStore.logout()
+    window.location.href = '/login'
+}
+
+const primaryNav = computed(() => [
+    { label: '总览', to: '/home', icon: Home },
+    { label: 'Chat', to: '/chat', icon: Bot },
+    { label: '绑定', to: '/bindings', icon: Link2 },
+    { label: 'RSS', to: '/modules/rss', icon: Radio },
+    { label: '调度', to: '/modules/scheduler', icon: Cable },
+    { label: '心跳', to: '/modules/monitor', icon: HeartPulse },
+    { label: '自选股', to: '/modules/watchlist', icon: Activity },
+    { label: '记账', to: '/accounting', icon: WalletCards },
+])
+
+const adminNav = computed(() => {
+    const items = []
+    if (authStore.isOperator) {
+        items.push({ label: '用户', to: '/admin/users', icon: ShieldUser })
+        items.push({ label: '诊断', to: '/admin/diagnostics', icon: Gauge })
+    }
+    if (authStore.isAdmin) {
+        items.unshift({ label: '初始化', to: '/admin/setup', icon: Rocket })
+        items.push({ label: '运行配置', to: '/admin/runtime', icon: Settings2 })
+    }
+    return items
+})
+
+const currentTitle = computed(() => String(route.meta.title || 'Ikaros'))
 </script>
 
 <template>
-  <div class="h-screen bg-theme-primary">
-    <main class="h-full overflow-auto">
-      <RouterView />
-    </main>
+  <div class="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.20),_transparent_28%),linear-gradient(180deg,_#07111f_0%,_#0f172a_38%,_#f8fafc_100%)] md:h-screen md:overflow-hidden">
+    <div class="mx-auto flex min-h-screen w-full max-w-[1680px] flex-col gap-4 p-3 md:h-full md:min-h-0 md:flex-row md:p-5">
+      <aside class="flex w-full flex-col rounded-[28px] border border-white/10 bg-slate-950/70 p-4 text-slate-100 shadow-[0_24px_80px_rgba(2,8,23,0.45)] backdrop-blur md:sticky md:top-5 md:h-[calc(100vh-2.5rem)] md:w-[300px] md:overflow-y-auto">
+        <div class="flex items-center gap-3 border-b border-white/10 pb-4">
+          <div class="flex h-12 w-12 items-center justify-center rounded-2xl bg-cyan-400/20 text-cyan-200">
+            <LayoutGrid class="h-6 w-6" />
+          </div>
+          <div>
+            <div class="text-lg font-semibold tracking-wide">Ikaros</div>
+            <div class="text-xs text-slate-400">Web Channel Console</div>
+          </div>
+        </div>
+
+        <div class="mt-6 space-y-6">
+          <div class="space-y-2">
+            <div class="mb-2 text-[11px] uppercase tracking-[0.24em] text-slate-500">Workspace</div>
+            <RouterLink
+              v-for="item in primaryNav"
+              :key="item.to"
+              :to="item.to"
+              class="group flex items-center gap-3 rounded-2xl px-3 py-3 transition"
+              :class="route.path === item.to || route.path.startsWith(`${item.to}/`)
+                ? 'bg-cyan-400/15 text-white shadow-[inset_0_0_0_1px_rgba(34,211,238,0.28)]'
+                : 'text-slate-300 hover:bg-white/5 hover:text-white'"
+            >
+              <component :is="item.icon" class="h-4 w-4" />
+              <span class="text-sm font-medium">{{ item.label }}</span>
+            </RouterLink>
+          </div>
+
+          <div v-if="adminNav.length" class="space-y-2">
+            <div class="mb-2 text-[11px] uppercase tracking-[0.24em] text-slate-500">Admin</div>
+            <RouterLink
+              v-for="item in adminNav"
+              :key="item.to"
+              :to="item.to"
+              class="group flex items-center gap-3 rounded-2xl px-3 py-3 transition"
+              :class="route.path === item.to
+                ? 'bg-amber-300/15 text-white shadow-[inset_0_0_0_1px_rgba(252,211,77,0.25)]'
+                : 'text-slate-300 hover:bg-white/5 hover:text-white'"
+            >
+              <component :is="item.icon" class="h-4 w-4" />
+              <span class="text-sm font-medium">{{ item.label }}</span>
+            </RouterLink>
+          </div>
+        </div>
+
+        <div class="mt-8 rounded-3xl border border-white/10 bg-white/5 p-4 md:mt-auto">
+          <div class="text-xs uppercase tracking-[0.24em] text-slate-500">Identity</div>
+          <div class="mt-3 text-base font-semibold text-white">{{ identityPrimary }}</div>
+          <div v-if="showIdentityEmail" class="mt-1 break-all text-sm text-slate-300">{{ authStore.user?.email }}</div>
+          <div class="mt-2 text-sm text-slate-400">{{ authStore.user?.role || 'viewer' }}</div>
+          <button
+            type="button"
+            class="mt-4 inline-flex items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-200 transition hover:bg-white/10"
+            @click="handleLogout"
+          >
+            <LogOut class="h-4 w-4" />
+            退出
+          </button>
+        </div>
+      </aside>
+
+      <div class="flex min-h-[calc(100vh-2.5rem)] flex-1 flex-col overflow-hidden rounded-[32px] border border-slate-200/70 bg-white/92 shadow-[0_24px_80px_rgba(15,23,42,0.18)] md:h-[calc(100vh-2.5rem)] md:min-h-0">
+        <header class="border-b border-slate-200/70 px-6 py-5">
+          <div>
+            <div class="text-xs uppercase tracking-[0.28em] text-slate-400">Command Center</div>
+            <h1 class="mt-1 text-2xl font-semibold text-slate-900">{{ currentTitle }}</h1>
+          </div>
+        </header>
+        <main class="min-h-0 flex-1 overflow-x-hidden overflow-y-auto [scrollbar-gutter:stable]">
+          <RouterView />
+        </main>
+      </div>
+    </div>
   </div>
 </template>

@@ -8,7 +8,6 @@
   },
   "models": {
     "primary": {
-      "openai/gpt-4.1-mini": {},
       "openai/gpt-4.1": {}
     },
     "routing": {
@@ -28,7 +27,7 @@
   "providers": {
     "openai": {
       "baseUrl": "https://api.openai.com/v1",
-      "apiKey": "YOUR_API_KEY_HERE",
+      "apiKey": "",
       "api": "openai-completions",
       "models": [
         {
@@ -65,22 +64,6 @@
           },
           "contextWindow": 128000,
           "maxTokens": 32768
-        },
-        {
-          "id": "gpt-image-1",
-          "name": "gpt-image-1",
-          "reasoning": false,
-          "input": [
-            "text"
-          ],
-          "cost": {
-            "input": 0,
-            "output": 0,
-            "cacheRead": 0,
-            "cacheWrite": 0
-          },
-          "contextWindow": 0,
-          "maxTokens": 0
         }
       ]
     }

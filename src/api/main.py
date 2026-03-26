@@ -12,6 +12,36 @@ from api.auth.router import router as auth_router
 from api.api.binding_router import router as binding_router
 from api.api.accounting_router import router as accounting_router
 from api.core.database import init_db
+from api.core.database import get_session_maker
+from api.services.bootstrap_admin import ensure_bootstrap_admin
+from core.runtime_config_store import runtime_config_store
+
+
+def _allowed_origins() -> list[str]:
+    configured = str(os.getenv("CORS_ALLOW_ORIGINS", "")).strip()
+    origins: list[str] = []
+    if configured:
+        origins.extend(
+            [item.strip() for item in configured.split(",") if item.strip()]
+        )
+    runtime_origins = (
+        ((runtime_config_store.read().get("cors") or {}).get("allowed_origins"))
+        or []
+    )
+    if isinstance(runtime_origins, list):
+        origins.extend([str(item).strip() for item in runtime_origins if str(item).strip()])
+    if not origins:
+        origins = [
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "http://localhost:8000",
+            "http://127.0.0.1:8000",
+        ]
+    deduped: list[str] = []
+    for origin in origins:
+        if origin not in deduped:
+            deduped.append(origin)
+    return deduped
 
 
 @asynccontextmanager
@@ -19,6 +49,10 @@ async def lifespan(app: FastAPI):
     # 初始化数据库
     print("Initializing database...")
     await init_db()
+    session_maker = get_session_maker()
+    async with session_maker() as session:
+        await ensure_bootstrap_admin(session, reason="startup")
+        await session.commit()
     yield
     print("Shutting down...")
 
@@ -34,7 +68,7 @@ app = FastAPI(
 # CORS 配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 开发阶段允许所有源，生产环境请修改
+    allow_origins=_allowed_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -55,6 +89,12 @@ os.makedirs(os.path.join(static_dir, "assets"), exist_ok=True)
 app.mount(
     "/assets", StaticFiles(directory=os.path.join(static_dir, "assets")), name="assets"
 )
+
+SPA_HTML_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
 
 
 def _serve_spa_html(full_path: str) -> FileResponse | HTMLResponse:
@@ -83,11 +123,11 @@ def _serve_spa_html(full_path: str) -> FileResponse | HTMLResponse:
   <link rel="apple-touch-icon" href="/logo.png" />
 </head>"""
             html = html.replace("</head>", apple_tags)
-            return HTMLResponse(content=html)
+            return HTMLResponse(content=html, headers=SPA_HTML_HEADERS)
         except Exception:
             pass
 
-    return FileResponse(index_path)
+    return FileResponse(index_path, headers=SPA_HTML_HEADERS)
 
 
 @app.exception_handler(StarletteHTTPException)

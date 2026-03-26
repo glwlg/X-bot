@@ -15,28 +15,40 @@ const router = createRouter({
             meta: { title: '首页' },
         },
         {
+            path: '/chat',
+            name: 'Chat',
+            component: () => import('@/views/Chat/ChatView.vue'),
+            meta: { title: '对话工作台' },
+        },
+        {
+            path: '/bindings',
+            name: 'Bindings',
+            component: () => import('@/views/Account/BindingsView.vue'),
+            meta: { title: '渠道绑定' },
+        },
+        {
             path: '/modules/rss',
             name: 'ModuleRss',
             component: () => import('@/views/Modules/RssView.vue'),
-            meta: { title: 'RSS 订阅', fullscreen: true },
+            meta: { title: 'RSS 订阅' },
         },
         {
             path: '/modules/scheduler',
             name: 'ModuleScheduler',
             component: () => import('@/views/Modules/SchedulerView.vue'),
-            meta: { title: '定时任务', fullscreen: true },
+            meta: { title: '定时任务' },
         },
         {
             path: '/modules/monitor',
             name: 'ModuleMonitor',
             component: () => import('@/views/Modules/MonitorView.vue'),
-            meta: { title: '心跳监控', fullscreen: true },
+            meta: { title: '心跳监控' },
         },
         {
             path: '/modules/watchlist',
             name: 'ModuleWatchlist',
             component: () => import('@/views/Modules/WatchlistView.vue'),
-            meta: { title: '自选股管理', fullscreen: true },
+            meta: { title: '自选股管理' },
         },
         {
             path: '/accounting',
@@ -174,6 +186,30 @@ const router = createRouter({
             component: () => import('@/views/Auth/LoginView.vue'),
             meta: { title: '登录', public: true },
         },
+        {
+            path: '/admin/setup',
+            name: 'AdminSetup',
+            component: () => import('@/views/Admin/SetupView.vue'),
+            meta: { title: '初始化配置', requiresAdmin: true },
+        },
+        {
+            path: '/admin/users',
+            name: 'AdminUsers',
+            component: () => import('@/views/Admin/UsersView.vue'),
+            meta: { title: '用户管理', requiresOperator: true },
+        },
+        {
+            path: '/admin/runtime',
+            name: 'AdminRuntime',
+            component: () => import('@/views/Admin/RuntimeView.vue'),
+            meta: { title: '运行配置', requiresAdmin: true },
+        },
+        {
+            path: '/admin/diagnostics',
+            name: 'AdminDiagnostics',
+            component: () => import('@/views/Admin/DiagnosticsView.vue'),
+            meta: { title: '诊断中心', requiresOperator: true },
+        },
     ]
 })
 
@@ -196,6 +232,14 @@ router.beforeEach(async (to, _from, next) => {
         } catch {
             return next('/login')
         }
+    }
+
+    if (to.meta.requiresAdmin && !authStore.isAdmin) {
+        return next('/chat')
+    }
+
+    if (to.meta.requiresOperator && !authStore.isOperator) {
+        return next('/chat')
     }
 
     next()

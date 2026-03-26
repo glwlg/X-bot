@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 from pathlib import Path
 
+from core.audit_store import audit_store
+
 logger = logging.getLogger(__name__)
 
 _MODEL_POOL_ALIASES: dict[str, tuple[str, ...]] = {
@@ -512,6 +514,8 @@ def update_configured_model(
     model_key: str,
     *,
     config_path: Optional[str] = None,
+    actor: str = "system",
+    reason: str = "update_configured_model",
 ) -> dict[str, str]:
     """更新指定角色的模型配置并写回 models.json。"""
     normalized_role = normalize_model_role(role)
@@ -547,9 +551,14 @@ def update_configured_model(
     raw_model_section[storage_key] = normalized_model_key
     data["model"] = raw_model_section
 
-    with open(config_file, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    rendered = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    audit_store.write_versioned(
+        config_file,
+        rendered,
+        actor=actor,
+        reason=reason,
+        category="models_config",
+    )
 
     reload_models_config(str(config_file))
     return {

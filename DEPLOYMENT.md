@@ -10,6 +10,9 @@
 
 | 脚本 | 用途 |
 |---|---|
+| `scripts/deploy_wizard.sh` | Linux / macOS 交互式部署向导：初始化 `.env` / `models.json`、可选完整设置 Primary / Routing 的 provider、baseUrl、apiKey 与模型绑定，并按选择自动部署 Core / API |
+| `scripts/deploy_wizard_macos.sh` | macOS 一键部署入口，内部复用 `deploy_wizard.sh` 并限制只在 macOS 运行 |
+| `scripts/deploy_wizard.ps1` | Windows PowerShell 一键部署向导：初始化 `.env` / `models.json`、可选完整设置 Primary / Routing，并按选择自动部署 Core / API |
 | `scripts/build_web.sh` | 构建 Web 前端到 `src/api/static/dist` |
 | `scripts/run_api.sh` | 非 Docker 方式启动 API |
 | `scripts/deploy_api_compose.sh` | 用 `docker-compose.yml` 部署 API |
@@ -21,6 +24,43 @@
 | `scripts/install_windows_task.ps1` | Windows 计划任务方式常驻运行 |
 
 ## 1. 通用准备
+
+### 1.0 一键向导（推荐）
+
+如果你是第一次部署，或者不想手动拼装多个脚本，建议优先使用一键向导：
+
+```bash
+./scripts/deploy_wizard.sh
+```
+
+macOS 也可以直接使用平台入口：
+
+```bash
+./scripts/deploy_wizard_macos.sh
+```
+
+Windows PowerShell 使用：
+
+```powershell
+.\scripts\deploy_wizard.ps1
+```
+
+它会交互式完成这些事情：
+
+- 自动补齐缺失的 `.env` 和 `config/models.json`
+- 让你选择 `Ikaros Core` 和 `Ikaros API` 各自的部署方式
+- 可选直接写入 `Primary` / `Routing` 的 provider、`baseUrl`、`apiKey`、模型绑定；也可以留到 Web 初始化页再配置
+- 按你的选择自动执行 `uv sync`、前端构建和部署
+- 最后直接提示你打开 Web 地址完成首个管理员初始化与 `/admin/setup`
+
+说明：
+
+- `deploy_wizard.sh` 面向 Linux / macOS Bash 环境
+- `deploy_wizard_macos.sh` 是 macOS 包装入口
+- `deploy_wizard.ps1` 面向 Windows PowerShell
+- 如果 API 选的是宿主机脚本 / systemd / launchd，向导会自动先构建 Web
+- 如果 API 选的是 Docker Compose，镜像构建阶段会自动打包 Web
+- 渠道凭证、`ADMIN_USER_IDS`、`SOUL.MD`、`USER.md` 仍建议在 Web 初始化页完成
 
 ### 1.1 运行环境
 
@@ -179,6 +219,12 @@ journalctl -u ikaros-api -f
 
 macOS 推荐使用宿主机直接运行，服务化采用 `launchd`。
 
+如果你想直接走交互式一键部署，优先使用：
+
+```bash
+./scripts/deploy_wizard_macos.sh
+```
+
 ### 3.1 初始化
 
 ```bash
@@ -222,6 +268,12 @@ data/logs/com.ikaros.api.err.log
 ## 4. Windows 部署
 
 Windows 推荐用 PowerShell + 计划任务常驻。
+
+如果你想直接走交互式一键部署，优先使用：
+
+```powershell
+.\scripts\deploy_wizard.ps1
+```
 
 ### 4.1 初始化
 

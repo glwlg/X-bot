@@ -12,6 +12,7 @@ from telegram.ext import (
 
 from core.config import LOG_LEVEL, TELEGRAM_BOT_TOKEN
 from core.extension_base import ChannelExtension
+from core.runtime_config_store import runtime_config_store
 
 from .adapter import TelegramAdapter
 from ..common import COMMON_CALLBACK_PATTERN, button_callback, route_message_by_type
@@ -45,7 +46,10 @@ class TelegramChannelExtension(ChannelExtension):
 
     def enabled(self, runtime) -> bool:
         _ = runtime
-        return bool(TELEGRAM_BOT_TOKEN)
+        return bool(TELEGRAM_BOT_TOKEN) and runtime_config_store.is_platform_enabled(
+            "telegram",
+            default=True,
+        )
 
     def register(self, runtime) -> None:
         logging.getLogger("httpx").setLevel(logging.WARNING)

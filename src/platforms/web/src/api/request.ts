@@ -17,7 +17,7 @@ const request: AxiosInstance = axios.create({
  * 获取夜莺认证 Token
  * 从父级 iframe 获取
  */
-function getAuthToken(): string | null {
+export function getAuthToken(): string | null {
     try {
         // 尝试从父窗口获取 token (iframe 嵌入场景)
         if (window.parent && window.parent !== window) {
@@ -64,8 +64,8 @@ request.interceptors.response.use(
                     console.error('登录已过期，请重新登录')
                     // 清除 token 并跳转到登录页
                     localStorage.removeItem('access_token')
-                    if (window.location.hash !== '#/login') {
-                        window.location.href = '#/login'
+                    if (window.location.pathname !== '/login') {
+                        window.location.href = '/login'
                     }
                     break
                 case 403:
