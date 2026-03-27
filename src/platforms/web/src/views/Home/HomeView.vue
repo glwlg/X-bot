@@ -142,8 +142,8 @@ const spotlightActions = computed(() => {
     })
 
     actions.push({
-        title: '计费',
-        label: '计费',
+        title: '记账',
+        label: '记账',
         to: '/accounting',
         icon: WalletCards,
         tone: 'silver',

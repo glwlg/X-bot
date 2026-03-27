@@ -45,6 +45,9 @@ export const createUser = (payload: Record<string, unknown>) =>
 export const updateUser = (userId: number, payload: Record<string, unknown>) =>
     request.patch<UserInfo>(`/auth/users/${userId}`, payload)
 
+export const deleteUser = (userId: number) =>
+    request.delete(`/auth/users/${userId}`)
+
 export const getRuntimeSnapshot = () =>
     request.get<RuntimeSnapshot>('/admin/runtime')
 

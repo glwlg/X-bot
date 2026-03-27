@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import axios from 'axios'
 import { computed, onMounted, ref } from 'vue'
-import { CheckCircle2, Loader2, PencilLine, Plus, ShieldUser, TriangleAlert } from 'lucide-vue-next'
+import { CheckCircle2, Loader2, PencilLine, Plus, ShieldUser, Trash2, TriangleAlert } from 'lucide-vue-next'
 
-import { createUser, listUsers, updateUser } from '@/api/admin'
+import { createUser, deleteUser, listUsers, updateUser } from '@/api/admin'
 import type { UserInfo } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
 
@@ -107,6 +107,18 @@ const toggleActive = async (user: UserInfo) => {
     await load()
 }
 
+const removeUser = async (user: UserInfo) => {
+    if (!confirm(`确定要删除用户 "${user.display_name || user.username || user.email}" 吗？此操作不可撤销。`)) {
+        return
+    }
+    try {
+        await deleteUser(user.id)
+        await load()
+    } catch (error) {
+        listError.value = parseErrorMessage(error, '删除用户失败')
+    }
+}
+
 onMounted(load)
 </script>
 
@@ -200,7 +212,7 @@ onMounted(load)
               </td>
               <td class="px-4 py-4 text-slate-600">{{ user.role }}</td>
               <td class="px-4 py-4">
-                <span class="rounded-full px-2.5 py-1 text-xs" :class="user.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'">
+                <span class="rounded-full px-2.5 py-1 text-xs" :class="user.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-600'">
                   {{ user.is_active ? 'active' : 'disabled' }}
                 </span>
               </td>
@@ -212,6 +224,15 @@ onMounted(load)
                   </button>
                   <button class="rounded-full border border-slate-200 px-3 py-1.5 text-xs text-slate-700 transition hover:bg-slate-50" @click="toggleActive(user)">
                     {{ user.is_active ? '停用' : '启用' }}
+                  </button>
+                  <button
+                    class="inline-flex items-center gap-1.5 rounded-full border border-rose-200 px-3 py-1.5 text-xs text-rose-600 transition hover:bg-rose-50"
+                    :disabled="authStore.user?.id === user.id"
+                    :class="{ 'opacity-50 cursor-not-allowed': authStore.user?.id === user.id }"
+                    @click="removeUser(user)"
+                  >
+                    <Trash2 class="h-3.5 w-3.5" />
+                    删除
                   </button>
                 </div>
               </td>

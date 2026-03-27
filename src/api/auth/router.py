@@ -241,6 +241,42 @@ async def create_user(
     return created
 
 
+@router.delete("/users/{user_id}", tags=["users"])
+async def delete_user(
+    user_id: int,
+    request: Request,
+    admin_user: User = Depends(require_admin),
+    session: AsyncSession = Depends(get_async_session),
+):
+    result = await session.execute(select(User).where(User.id == user_id))
+    target = result.unique().scalar_one_or_none()
+    if target is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    if target.id == admin_user.id:
+        raise HTTPException(status_code=400, detail="不能删除当前管理员自身")
+
+    if target.role == UserRole.ADMIN:
+        remaining_admins = await count_admin_users(session, exclude_user_id=target.id)
+        if remaining_admins == 0:
+            raise HTTPException(status_code=400, detail="至少保留一个管理员")
+
+    await session.delete(target)
+    await session.flush()
+
+    await record_admin_audit(
+        {
+            "action": "delete_user",
+            "actor": _actor_label(admin_user),
+            "target": f"user:{target.id}",
+            "summary": f"deleted user {target.email}",
+            "ip": _client_ip(request),
+            "status": "success",
+        }
+    )
+    return {"success": True}
+
+
 @router.patch("/users/{user_id}", response_model=UserRead, tags=["users"])
 async def update_user(
     user_id: int,
