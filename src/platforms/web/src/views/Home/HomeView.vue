@@ -2,273 +2,647 @@
 import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 import {
-    Bot,
     Cable,
     Gauge,
     HeartPulse,
     Link2,
+    MessageSquareText,
     Radio,
-    Rocket,
     Settings2,
     ShieldCheck,
     TrendingUp,
     WalletCards,
+    Zap,
 } from 'lucide-vue-next'
 
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
 
+const roleLabel = computed(() => {
+    if (authStore.isAdmin) return '管理员'
+    if (authStore.isOperator) return '运营员'
+    return '观察者'
+})
+
 const workspaceCards = computed(() => [
     {
         title: 'Chat',
-        label: '对话',
+        description: 'Primary AI interaction portal with conversational memory.',
         to: '/chat',
-        icon: Bot,
-        tone: 'linear-gradient(90deg, rgba(244, 184, 205, 0.26) 0%, rgba(255, 255, 255, 0.95) 54%, rgba(214, 220, 229, 0.28) 100%)',
-        iconClass: 'border-slate-200/90 bg-[linear-gradient(180deg,_rgba(255,255,255,0.96),_rgba(239,243,248,0.92))] text-rose-500 shadow-[0_12px_30px_rgba(210,198,209,0.16)]',
-        badgeClass: 'border-rose-100 bg-rose-50/90 text-rose-500',
+        icon: MessageSquareText,
+        tone: 'pink',
     },
     {
-        title: '绑定',
-        label: '渠道',
+        title: 'Bind',
+        description: 'Manage external service connections and API hooks.',
         to: '/bindings',
         icon: Link2,
-        tone: 'linear-gradient(90deg, rgba(168, 211, 159, 0.24) 0%, rgba(255, 255, 255, 0.95) 52%, rgba(216, 222, 231, 0.22) 100%)',
-        iconClass: 'border-slate-200/90 bg-[linear-gradient(180deg,_rgba(255,255,255,0.96),_rgba(239,243,248,0.92))] text-emerald-500 shadow-[0_12px_30px_rgba(198,209,198,0.16)]',
-        badgeClass: 'border-emerald-100 bg-emerald-50/90 text-emerald-600',
+        tone: 'cyan',
     },
     {
         title: 'RSS',
-        label: '订阅',
+        description: 'Automated news harvesting and ethereal intelligence feeds.',
         to: '/modules/rss',
         icon: Radio,
-        tone: 'linear-gradient(90deg, rgba(244, 184, 205, 0.18) 0%, rgba(255, 255, 255, 0.96) 52%, rgba(170, 215, 163, 0.18) 100%)',
-        iconClass: 'border-slate-200/90 bg-[linear-gradient(180deg,_rgba(255,255,255,0.96),_rgba(239,243,248,0.92))] text-rose-400 shadow-[0_12px_30px_rgba(214,206,201,0.16)]',
-        badgeClass: 'border-rose-100 bg-rose-50/90 text-rose-400',
+        tone: 'silver',
     },
     {
-        title: '调度',
-        label: '任务',
+        title: 'Scheduling',
+        description: 'Temporal management and automated task execution.',
         to: '/modules/scheduler',
         icon: Cable,
-        tone: 'linear-gradient(90deg, rgba(236, 165, 188, 0.22) 0%, rgba(255, 255, 255, 0.95) 54%, rgba(214, 220, 229, 0.24) 100%)',
-        iconClass: 'border-slate-200/90 bg-[linear-gradient(180deg,_rgba(255,255,255,0.96),_rgba(239,243,248,0.92))] text-rose-500 shadow-[0_12px_30px_rgba(210,199,200,0.16)]',
-        badgeClass: 'border-rose-100 bg-rose-50/90 text-rose-500',
+        tone: 'silver',
     },
     {
-        title: '心跳',
-        label: '监控',
+        title: 'Heartbeat',
+        description: 'Real-time system health and pulse monitoring metrics.',
         to: '/modules/monitor',
         icon: HeartPulse,
-        tone: 'linear-gradient(90deg, rgba(240, 151, 181, 0.22) 0%, rgba(255, 249, 252, 0.96) 50%, rgba(214, 220, 229, 0.24) 100%)',
-        iconClass: 'border-slate-200/90 bg-[linear-gradient(180deg,_rgba(255,255,255,0.96),_rgba(239,243,248,0.92))] text-pink-500 shadow-[0_12px_30px_rgba(212,198,210,0.16)]',
-        badgeClass: 'border-pink-100 bg-pink-50/90 text-pink-500',
+        tone: 'silver',
     },
     {
-        title: '自选股',
-        label: '行情',
+        title: 'Stocks',
+        description: 'Market analysis and ethereal financial forecasting.',
         to: '/modules/watchlist',
         icon: TrendingUp,
-        tone: 'linear-gradient(90deg, rgba(176, 220, 167, 0.22) 0%, rgba(255, 255, 255, 0.96) 50%, rgba(244, 184, 205, 0.16) 100%)',
-        iconClass: 'border-slate-200/90 bg-[linear-gradient(180deg,_rgba(255,255,255,0.96),_rgba(239,243,248,0.92))] text-rose-500 shadow-[0_12px_30px_rgba(200,209,198,0.16)]',
-        badgeClass: 'border-rose-100 bg-rose-50/90 text-rose-500',
+        tone: 'silver',
     },
     {
-        title: '记账',
-        label: '资产',
+        title: 'Billing',
+        description: 'Usage quotas and resource allocation accounting.',
         to: '/accounting',
         icon: WalletCards,
-        tone: 'linear-gradient(90deg, rgba(223, 228, 236, 0.30) 0%, rgba(255, 255, 255, 0.96) 52%, rgba(244, 184, 205, 0.18) 100%)',
-        iconClass: 'border-slate-200/90 bg-[linear-gradient(180deg,_rgba(255,255,255,0.96),_rgba(239,243,248,0.92))] text-slate-500 shadow-[0_12px_30px_rgba(210,203,211,0.16)]',
-        badgeClass: 'border-slate-200 bg-slate-50/90 text-slate-500',
+        tone: 'silver',
     },
 ])
 
 const adminCards = computed(() => {
     const cards = []
 
+    if (authStore.isAdmin) {
+        cards.push({
+            title: 'Setup',
+            description: 'Initialize models, channels and runtime orchestration.',
+            to: '/admin/setup',
+            icon: Zap,
+            tone: 'pink',
+        })
+    }
+
     if (authStore.isOperator) {
         cards.push({
-            title: '用户',
-            label: '账号',
+            title: 'Users',
+            description: 'Control operator identities, roles and channel access.',
             to: '/admin/users',
             icon: ShieldCheck,
-            tone: 'linear-gradient(90deg, rgba(168, 211, 159, 0.24) 0%, rgba(255, 255, 255, 0.95) 52%, rgba(214, 220, 229, 0.22) 100%)',
-            iconClass: 'border-slate-200/90 bg-[linear-gradient(180deg,_rgba(255,255,255,0.96),_rgba(239,243,248,0.92))] text-emerald-500 shadow-[0_12px_30px_rgba(198,209,198,0.16)]',
-            badgeClass: 'border-emerald-100 bg-emerald-50/90 text-emerald-600',
+            tone: 'cyan',
         })
         cards.push({
-            title: '诊断',
-            label: '状态',
+            title: 'Diagnostics',
+            description: 'Inspect service state, queues and runtime health telemetry.',
             to: '/admin/diagnostics',
             icon: Gauge,
-            tone: 'linear-gradient(90deg, rgba(222, 228, 236, 0.30) 0%, rgba(255, 255, 255, 0.96) 50%, rgba(176, 220, 167, 0.18) 100%)',
-            iconClass: 'border-slate-200/90 bg-[linear-gradient(180deg,_rgba(255,255,255,0.96),_rgba(239,243,248,0.92))] text-lime-600 shadow-[0_12px_30px_rgba(204,213,199,0.16)]',
-            badgeClass: 'border-lime-100 bg-lime-50/90 text-lime-600',
+            tone: 'silver',
         })
     }
 
     if (authStore.isAdmin) {
-        cards.unshift({
-            title: '初始化',
-            label: 'Setup',
-            to: '/admin/setup',
-            icon: Rocket,
-            tone: 'linear-gradient(90deg, rgba(244, 184, 205, 0.24) 0%, rgba(255, 255, 255, 0.95) 52%, rgba(214, 220, 229, 0.24) 100%)',
-            iconClass: 'border-slate-200/90 bg-[linear-gradient(180deg,_rgba(255,255,255,0.96),_rgba(239,243,248,0.92))] text-rose-500 shadow-[0_12px_30px_rgba(208,198,205,0.16)]',
-            badgeClass: 'border-rose-100 bg-rose-50/90 text-rose-500',
-        })
         cards.push({
-            title: '配置',
-            label: '模型',
+            title: 'Runtime',
+            description: 'Tune providers, models and system execution parameters.',
             to: '/admin/runtime',
             icon: Settings2,
-            tone: 'linear-gradient(90deg, rgba(222, 228, 236, 0.30) 0%, rgba(255, 255, 255, 0.95) 52%, rgba(244, 184, 205, 0.18) 100%)',
-            iconClass: 'border-slate-200/90 bg-[linear-gradient(180deg,_rgba(255,255,255,0.96),_rgba(239,243,248,0.92))] text-rose-500 shadow-[0_12px_30px_rgba(208,199,208,0.16)]',
-            badgeClass: 'border-rose-100 bg-rose-50/90 text-rose-500',
+            tone: 'pink',
         })
     }
 
     return cards
 })
 
-const focusCards = computed(() => {
-    const cards = [
-        { title: 'Chat', to: '/chat', icon: Bot },
-        { title: '绑定', to: '/bindings', icon: Link2 },
-        { title: '记账', to: '/accounting', icon: WalletCards },
-    ]
-
-    if (authStore.isOperator) {
-        cards.push({ title: '诊断', to: '/admin/diagnostics', icon: Gauge })
-    }
+const spotlightActions = computed(() => {
+    const actions = []
 
     if (authStore.isAdmin) {
-        cards.unshift({ title: '初始化', to: '/admin/setup', icon: Rocket })
-        cards.push({ title: '配置', to: '/admin/runtime', icon: Settings2 })
+        actions.push({
+            title: '初始化',
+            label: '初始化',
+            to: '/admin/setup',
+            icon: Zap,
+            tone: 'pink',
+        })
     }
 
-    return cards
+    actions.push({
+        title: '助手对话',
+        label: '助手对话',
+        to: '/chat',
+        icon: MessageSquareText,
+        tone: 'pink',
+    })
+
+    actions.push({
+        title: '计费',
+        label: '计费',
+        to: '/accounting',
+        icon: WalletCards,
+        tone: 'silver',
+    })
+
+    if (authStore.isAdmin) {
+        actions.push({
+            title: '配置',
+            label: '配置',
+            to: '/admin/runtime',
+            icon: Settings2,
+            tone: 'pink',
+        })
+    } else if (authStore.isOperator) {
+        actions.push({
+            title: '诊断',
+            label: '诊断',
+            to: '/admin/diagnostics',
+            icon: Gauge,
+            tone: 'cyan',
+        })
+    }
+
+    return actions
 })
 
 const statusCards = computed(() => [
-    { label: 'Channel', value: 'Web' },
-    { label: 'Role', value: authStore.user?.role || 'viewer' },
-    { label: 'Modules', value: String(workspaceCards.value.length) },
-    { label: 'Security', value: 'RBAC' },
+    { label: '渠道', value: 'Web', tone: 'cyan' },
+    { label: '角色', value: roleLabel.value, tone: 'pink' },
+    { label: '模块', value: String(workspaceCards.value.length).padStart(2, '0'), tone: 'silver' },
+    { label: '安全', value: 'RBAC', tone: 'cyan' },
 ])
 </script>
 
 <template>
-  <div class="space-y-6 p-6 md:p-8">
-    <section class="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]">
-      <div class="rounded-[32px] border border-slate-200/80 bg-[radial-gradient(circle_at_14%_18%,_rgba(244,184,205,0.26),_transparent_30%),radial-gradient(circle_at_86%_80%,_rgba(133,181,128,0.10),_transparent_24%),linear-gradient(135deg,_rgba(255,255,255,0.96),_rgba(236,240,246,0.90)_48%,_rgba(251,243,247,0.95)_100%)] p-6 shadow-[inset_0_1px_0_rgba(255,255,255,0.82),0_18px_40px_rgba(205,193,205,0.12)] md:p-8">
-        <div class="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <div class="text-xs uppercase tracking-[0.28em] text-rose-400/80">Workspace</div>
-            <h2 class="mt-3 text-4xl font-semibold tracking-tight text-stone-950">Ikaros</h2>
-          </div>
-          <div class="inline-flex items-center rounded-full border border-emerald-100 bg-[linear-gradient(180deg,_rgba(255,255,255,0.92),_rgba(240,246,241,0.88))] px-4 py-2 text-sm font-medium text-emerald-700 shadow-sm">
-            Web Channel
-          </div>
-        </div>
+  <div class="home-dashboard">
+    <section class="home-hero">
+      <div class="home-hero-copy">
+        <div class="home-ai-pulse" />
+        <div class="home-hero-kicker font-body">工作空间 <span>- Ikaros</span></div>
+        <p class="home-hero-text">
+          系统核心已激活。Sentinel 正在监控 {{ workspaceCards.length }} 个带有 RBAC 高级安全权限的活动模块。
+        </p>
 
-        <div class="mt-8 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-          <div
+        <div class="home-status-grid">
+          <article
             v-for="card in statusCards"
             :key="card.label"
-            class="rounded-[24px] border border-slate-200/80 bg-[linear-gradient(180deg,_rgba(255,255,255,0.86),_rgba(245,247,250,0.82))] p-4 shadow-[0_16px_36px_rgba(201,194,202,0.10)] backdrop-blur"
+            class="home-status-pill"
+            :class="`tone-${card.tone}`"
           >
-            <div class="text-xs uppercase tracking-[0.24em] text-rose-400/75">{{ card.label }}</div>
-            <div class="mt-3 text-2xl font-semibold text-stone-950">{{ card.value }}</div>
-          </div>
+            <div class="home-status-label">{{ card.label }}</div>
+            <div class="home-status-value font-display">{{ card.value }}</div>
+          </article>
         </div>
       </div>
 
-      <div class="rounded-[32px] border border-white/45 bg-[linear-gradient(180deg,_rgba(86,78,92,0.98),_rgba(120,114,127,0.92))] p-6 text-slate-50 shadow-[0_24px_70px_rgba(96,87,101,0.24)]">
-        <div class="flex items-center gap-2 text-xs uppercase tracking-[0.24em] text-slate-200/55">
-          <ShieldCheck class="h-4 w-4 text-emerald-300" />
-          Focus
+      <aside class="home-spotlight">
+        <div class="home-spotlight-head">
+          <div class="home-spotlight-kicker">重点操作</div>
+          <div class="home-spotlight-badge">+</div>
         </div>
-        <div class="mt-5 grid gap-3">
+
+        <div class="home-spotlight-list">
           <RouterLink
-            v-for="card in focusCards"
-            :key="card.to"
-            :to="card.to"
-            class="flex items-center justify-between rounded-2xl border border-white/18 bg-[linear-gradient(90deg,_rgba(255,255,255,0.08),_rgba(226,230,236,0.04))] px-4 py-3 text-sm font-medium text-slate-50 transition hover:bg-white/12"
+            v-for="action in spotlightActions"
+            :key="action.to"
+            :to="action.to"
+            class="home-spotlight-item"
+            :class="`tone-${action.tone}`"
           >
-            <span>{{ card.title }}</span>
-            <component :is="card.icon" class="h-4 w-4 text-emerald-200" />
+            <div class="home-spotlight-item-left">
+              <div class="home-spotlight-icon">
+                <component :is="action.icon" class="h-5 w-5" />
+              </div>
+              <span>{{ action.title }}</span>
+            </div>
+            <span class="home-spotlight-label">{{ action.label }}</span>
           </RouterLink>
         </div>
-      </div>
+      </aside>
     </section>
 
-    <section class="space-y-3">
-      <div class="text-xs uppercase tracking-[0.24em] text-rose-400/80">Workspace</div>
-      <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+    <section class="home-section">
+      <div class="home-section-head">
+        <h2 class="home-section-title font-display">工作空间</h2>
+        <div class="home-section-rule" />
+      </div>
+
+      <div class="home-card-grid">
         <RouterLink
           v-for="card in workspaceCards"
           :key="card.to"
           :to="card.to"
-          class="group overflow-hidden rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,_rgba(255,255,255,0.96),_rgba(248,246,248,0.98))] p-6 shadow-[0_18px_42px_rgba(207,198,206,0.10)] transition hover:-translate-y-0.5 hover:border-rose-200 hover:shadow-[0_24px_60px_rgba(189,178,188,0.18)]"
+          class="home-card"
+          :class="`tone-${card.tone}`"
         >
-          <div class="relative">
-            <div class="absolute inset-x-0 top-0 h-24 rounded-3xl" :style="{ background: card.tone }" />
-            <div class="relative">
-              <div
-                class="inline-flex h-12 w-12 items-center justify-center rounded-2xl border shadow-sm"
-                :class="card.iconClass"
-              >
-                <component :is="card.icon" class="h-5 w-5" />
-              </div>
-              <div class="mt-5 flex items-end justify-between gap-3">
-                <h3 class="text-2xl font-semibold text-slate-950">{{ card.title }}</h3>
-                <span
-                  class="rounded-full border px-3 py-1 text-xs uppercase tracking-[0.2em]"
-                  :class="card.badgeClass"
-                >
-                  {{ card.label }}
-                </span>
-              </div>
-            </div>
+          <div class="home-card-icon">
+            <component :is="card.icon" class="h-6 w-6" />
+          </div>
+
+          <div class="home-card-copy">
+            <h3 class="home-card-title font-display">{{ card.title }}</h3>
+            <p class="home-card-description">{{ card.description }}</p>
           </div>
         </RouterLink>
       </div>
     </section>
 
-    <section v-if="adminCards.length" class="space-y-3">
-      <div class="text-xs uppercase tracking-[0.24em] text-rose-400/80">Admin</div>
-      <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+    <section v-if="adminCards.length" class="home-section">
+      <div class="home-section-head">
+        <h2 class="home-section-title font-display">管理员</h2>
+        <div class="home-section-rule" />
+      </div>
+
+      <div class="home-card-grid admin-grid">
         <RouterLink
           v-for="card in adminCards"
           :key="card.to"
           :to="card.to"
-          class="group overflow-hidden rounded-[28px] border border-slate-200/80 bg-[linear-gradient(180deg,_rgba(255,255,255,0.96),_rgba(248,246,248,0.98))] p-6 shadow-[0_18px_42px_rgba(207,198,206,0.10)] transition hover:-translate-y-0.5 hover:border-rose-200 hover:shadow-[0_24px_60px_rgba(189,178,188,0.18)]"
+          class="home-card"
+          :class="`tone-${card.tone}`"
         >
-          <div class="relative">
-            <div class="absolute inset-x-0 top-0 h-24 rounded-3xl" :style="{ background: card.tone }" />
-            <div class="relative">
-              <div
-                class="inline-flex h-12 w-12 items-center justify-center rounded-2xl border shadow-sm"
-                :class="card.iconClass"
-              >
-                <component :is="card.icon" class="h-5 w-5" />
-              </div>
-              <div class="mt-5 flex items-end justify-between gap-3">
-                <h3 class="text-2xl font-semibold text-slate-950">{{ card.title }}</h3>
-                <span
-                  class="rounded-full border px-3 py-1 text-xs uppercase tracking-[0.2em]"
-                  :class="card.badgeClass"
-                >
-                  {{ card.label }}
-                </span>
-              </div>
-            </div>
+          <div class="home-card-icon">
+            <component :is="card.icon" class="h-6 w-6" />
+          </div>
+
+          <div class="home-card-copy">
+            <h3 class="home-card-title font-display">{{ card.title }}</h3>
+            <p class="home-card-description">{{ card.description }}</p>
           </div>
         </RouterLink>
       </div>
     </section>
   </div>
 </template>
+
+<style scoped>
+.home-dashboard {
+  --surface: #10131a;
+  --surface-low: #191c22;
+  --surface-high: #272a31;
+  --primary: #ffcbd5;
+  --secondary: #c6c6c6;
+  --tertiary: #66eaff;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4.25rem;
+  padding: 1.6rem 0 4rem;
+  color: #f5f7fb;
+}
+
+.home-dashboard::before {
+  content: '';
+  position: absolute;
+  top: 1rem;
+  left: 6%;
+  width: 30rem;
+  height: 16rem;
+  background: radial-gradient(circle, rgba(102, 234, 255, 0.14) 0%, rgba(255, 203, 213, 0.12) 36%, transparent 72%);
+  filter: blur(88px);
+  opacity: 0.56;
+  pointer-events: none;
+}
+
+.home-hero {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 330px;
+  gap: 2.5rem;
+  align-items: start;
+}
+
+.home-hero-copy {
+  position: relative;
+  padding-top: 2.75rem;
+}
+
+.home-ai-pulse {
+  position: absolute;
+  top: -1.2rem;
+  left: -3rem;
+  width: 28rem;
+  height: 16rem;
+  background: radial-gradient(circle, rgba(102, 234, 255, 0.18) 0%, rgba(255, 203, 213, 0.14) 35%, transparent 72%);
+  filter: blur(82px);
+  opacity: 0.58;
+  pointer-events: none;
+}
+
+.home-hero-kicker {
+  position: relative;
+  z-index: 1;
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.88);
+}
+
+.home-hero-kicker span {
+  color: var(--primary);
+}
+
+.home-hero-text {
+  position: relative;
+  z-index: 1;
+  margin: 1.15rem 0 0;
+  max-width: 52rem;
+  font-size: 1.4rem;
+  line-height: 1.75;
+  color: rgba(255, 255, 255, 0.76);
+}
+
+.home-status-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1.35rem;
+  margin-top: 2.75rem;
+}
+
+.home-status-pill {
+  min-height: 7rem;
+  padding: 1.25rem 1.45rem;
+  border-radius: 2rem;
+  background: rgba(25, 28, 34, 0.92);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04), 0 24px 48px rgba(0, 0, 0, 0.18);
+}
+
+.home-status-label {
+  font-size: 0.82rem;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.46);
+}
+
+.home-status-value {
+  margin-top: 0.68rem;
+  font-size: 2.45rem;
+  line-height: 1;
+  font-weight: 700;
+}
+
+.home-spotlight {
+  padding: 1.7rem;
+  border-radius: 2.4rem;
+  background: rgba(25, 28, 34, 0.9);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04), 0 32px 80px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(28px);
+}
+
+.home-spotlight-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.home-spotlight-kicker {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+
+.home-spotlight-badge {
+  display: grid;
+  place-items: center;
+  width: 1.6rem;
+  height: 1.6rem;
+  border-radius: 999px;
+  background: rgba(255, 203, 213, 0.12);
+  color: var(--primary);
+  font-weight: 700;
+}
+
+.home-spotlight-list {
+  display: grid;
+  gap: 0.85rem;
+  margin-top: 1.15rem;
+}
+
+.home-spotlight-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.1rem;
+  border-radius: 1.35rem;
+  background: rgba(16, 19, 26, 0.72);
+  color: #fff;
+  text-decoration: none;
+  transition: transform 0.2s ease, background-color 0.2s ease;
+}
+
+.home-spotlight-item:hover {
+  transform: translateY(-2px);
+  background: rgba(39, 42, 49, 0.96);
+}
+
+.home-spotlight-item-left {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  font-size: 1.08rem;
+  font-weight: 700;
+}
+
+.home-spotlight-icon {
+  display: grid;
+  place-items: center;
+  width: 2.75rem;
+  height: 2.75rem;
+  border-radius: 1.1rem;
+  background: rgba(39, 42, 49, 0.95);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.home-spotlight-label {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 1rem;
+}
+
+.home-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1.65rem;
+}
+
+.home-section-head {
+  display: flex;
+  align-items: center;
+  gap: 1.2rem;
+}
+
+.home-section-title {
+  margin: 0;
+  font-size: 3rem;
+  line-height: 1;
+}
+
+.home-section-rule {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(255, 203, 213, 0.32), rgba(255, 203, 213, 0));
+  opacity: 0.7;
+}
+
+.home-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1.5rem;
+}
+
+.home-card {
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  min-height: 18.25rem;
+  padding: 1.9rem;
+  border-radius: 2rem;
+  background: rgba(25, 28, 34, 0.94);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04), 0 30px 60px rgba(0, 0, 0, 0.18);
+  color: #fff;
+  text-decoration: none;
+  transition: transform 0.24s ease, background-color 0.24s ease, box-shadow 0.24s ease;
+}
+
+.home-card:hover {
+  transform: translateY(-4px);
+  background: rgba(31, 35, 43, 0.98);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 34px 68px rgba(0, 0, 0, 0.24);
+}
+
+.home-card::after {
+  content: '';
+  position: absolute;
+  inset: auto -20% -28% 38%;
+  height: 52%;
+  background: radial-gradient(circle, rgba(102, 234, 255, 0.08), transparent 68%);
+  pointer-events: none;
+}
+
+.home-card-icon {
+  display: grid;
+  place-items: center;
+  width: 4rem;
+  height: 4rem;
+  border-radius: 1.35rem;
+  background: rgba(39, 42, 49, 0.96);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.home-card-copy {
+  margin-top: auto;
+}
+
+.home-card-title {
+  margin: 0;
+  font-size: 2.05rem;
+  line-height: 1.05;
+}
+
+.home-card-description {
+  margin: 0.95rem 0 0;
+  font-size: 1rem;
+  line-height: 1.6;
+  color: rgba(255, 255, 255, 0.62);
+}
+
+.tone-pink .home-status-value {
+  color: var(--primary);
+  text-shadow: 0 0 18px rgba(255, 203, 213, 0.16);
+}
+
+.tone-cyan .home-status-value {
+  color: var(--tertiary);
+  text-shadow: 0 0 18px rgba(102, 234, 255, 0.18);
+}
+
+.tone-silver .home-status-value {
+  color: #f2f4f7;
+}
+
+.tone-pink .home-spotlight-icon,
+.tone-pink .home-card-icon {
+  color: var(--primary);
+  background: rgba(255, 203, 213, 0.12);
+}
+
+.tone-cyan .home-spotlight-icon,
+.tone-cyan .home-card-icon {
+  color: var(--tertiary);
+  background: rgba(102, 234, 255, 0.12);
+}
+
+.tone-silver .home-spotlight-icon,
+.tone-silver .home-card-icon {
+  color: var(--secondary);
+  background: rgba(198, 198, 198, 0.1);
+}
+
+.tone-pink.home-card::after {
+  background: radial-gradient(circle, rgba(255, 203, 213, 0.12), transparent 68%);
+}
+
+.tone-cyan.home-card::after {
+  background: radial-gradient(circle, rgba(102, 234, 255, 0.12), transparent 68%);
+}
+
+.admin-grid .home-card {
+  min-height: 16.5rem;
+}
+
+@media (max-width: 1460px) {
+  .home-card-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1180px) {
+  .home-hero {
+    grid-template-columns: 1fr;
+  }
+
+  .home-status-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .home-card-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 760px) {
+  .home-dashboard {
+    gap: 3rem;
+    padding-bottom: 2rem;
+  }
+
+  .home-hero-copy {
+    padding-top: 1.5rem;
+  }
+
+  .home-hero-text {
+    font-size: 1.08rem;
+  }
+
+  .home-section-title {
+    font-size: 2.2rem;
+  }
+
+  .home-status-grid,
+  .home-card-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .home-card {
+    min-height: 15rem;
+  }
+}
+</style>

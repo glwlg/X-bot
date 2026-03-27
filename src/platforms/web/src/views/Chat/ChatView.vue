@@ -401,8 +401,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="grid h-full min-h-0 gap-0 xl:grid-cols-[300px_minmax(0,1fr)_320px]">
-    <aside class="border-r border-slate-200 bg-slate-50/80 p-4">
+  <div class="chat-workbench grid h-full min-h-0 gap-0 xl:grid-cols-[300px_minmax(0,1fr)_320px]">
+    <aside class="chat-panel chat-sessions-rail border-r border-slate-200 bg-slate-50/80 p-4">
       <div class="flex items-center justify-between">
         <div>
           <div class="text-xs uppercase tracking-[0.24em] text-slate-400">Sessions</div>
@@ -453,8 +453,8 @@ onBeforeUnmount(() => {
       </div>
     </aside>
 
-    <section class="flex min-h-0 flex-col bg-[linear-gradient(180deg,_#ffffff_0%,_#f8fafc_100%)]" @drop="onDrop" @dragover.prevent>
-      <header class="flex items-center justify-between border-b border-slate-200 px-5 py-4">
+    <section class="chat-panel chat-canvas flex min-h-0 flex-col bg-[linear-gradient(180deg,_#ffffff_0%,_#f8fafc_100%)]" @drop="onDrop" @dragover.prevent>
+      <header class="chat-canvas-header flex items-center justify-between border-b border-slate-200 px-5 py-4">
         <div>
           <div class="text-sm font-semibold text-slate-900">{{ currentSession?.title || '准备开始新的对话' }}</div>
           <div class="mt-1 text-xs text-slate-500">
@@ -569,7 +569,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
 
-      <footer class="border-t border-slate-200 bg-white/90 p-4">
+      <footer class="chat-canvas-footer border-t border-slate-200 bg-white/90 p-4">
         <div class="rounded-[28px] border border-slate-200 bg-slate-50 p-3">
           <textarea
             v-model="composer"
@@ -608,7 +608,7 @@ onBeforeUnmount(() => {
       </footer>
     </section>
 
-    <aside class="hidden border-l border-slate-200 bg-slate-50/70 p-5 xl:block">
+    <aside class="chat-panel chat-command-rail hidden border-l border-slate-200 bg-slate-50/70 p-5 xl:block">
       <section class="rounded-[28px] border border-slate-200 bg-white p-5 shadow-sm">
         <div class="flex items-center gap-2 text-sm font-semibold text-slate-900">
           <Command class="h-4 w-4 text-cyan-600" />
@@ -650,3 +650,36 @@ onBeforeUnmount(() => {
     </aside>
   </div>
 </template>
+
+<style scoped>
+.chat-workbench {
+  min-height: calc(100vh - 9.8rem);
+}
+
+.chat-panel {
+  position: relative;
+}
+
+.chat-sessions-rail,
+.chat-command-rail {
+  background: rgba(16, 19, 26, 0.34);
+  backdrop-filter: blur(24px);
+}
+
+.chat-canvas {
+  background:
+    linear-gradient(180deg, rgba(25, 28, 34, 0.9), rgba(16, 19, 26, 0.96));
+}
+
+.chat-canvas-header,
+.chat-canvas-footer {
+  background: rgba(16, 19, 26, 0.46);
+  backdrop-filter: blur(18px);
+}
+
+@media (max-width: 1280px) {
+  .chat-workbench {
+    min-height: auto;
+  }
+}
+</style>

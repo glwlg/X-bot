@@ -39,7 +39,6 @@ const isSubPage = computed(() => [
 
 <template>
   <div class="flex flex-col h-full bg-gradient-to-b from-indigo-50/50 to-white dark:from-slate-900 dark:to-slate-950">
-    <!-- Top bar with back button (hidden on sub-pages) -->
     <div
       v-if="!isSubPage"
       class="sticky top-0 z-20 bg-gradient-to-r from-indigo-500 to-indigo-400 dark:from-indigo-700 dark:to-indigo-600 px-4 py-3 flex items-center gap-3 shadow-sm"
@@ -55,12 +54,10 @@ const isSubPage = computed(() => [
       <span class="text-white font-semibold">智能记账</span>
     </div>
 
-    <!-- Page content -->
     <div class="flex-1 overflow-auto">
       <RouterView />
     </div>
 
-    <!-- Bottom Tab Bar (hidden on sub-pages) -->
     <nav
       v-if="!isSubPage"
       class="sticky bottom-0 z-20 flex border-t border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-[0_-2px_10px_rgba(0,0,0,0.05)]"
