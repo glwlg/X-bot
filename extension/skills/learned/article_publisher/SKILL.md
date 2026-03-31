@@ -1,7 +1,7 @@
 ---
 api_version: v3
 name: article_publisher
-description: 生成长文或图文发布稿，也支持直接基于本地 md/txt 素材写作；可自动搜索资料、生成配图，并支持多渠道发布，当前已支持微信公众号和小红书发布通道。
+description: 生成长文或图文发布稿，也支持直接基于本地 md/txt 素材写作；可自动搜索资料、生成配图，并支持多渠道发布，当前已支持微信公众号和小红书发布通道。支持按阶段（search/write/illustrate/publish）单独执行或全流程编排。
 triggers:
 - 文章发布
 - 写文章
@@ -46,6 +46,16 @@ input_schema:
       items:
         type: string
       description: 多个发布或导出渠道，支持 wechat、xiaohongshu
+    stage:
+      type: string
+      enum: [search, write, illustrate, publish]
+      description: 可选，指定单独执行某个阶段。不传则执行全流程。
+    source:
+      type: string
+      description: 单阶段模式下的输入文件路径（research.json / article.json / article_with_images.json）。
+    word_count:
+      type: integer
+      description: 正文目标字数，默认为 1000。
   anyOf:
   - required:
     - topic
@@ -53,6 +63,8 @@ input_schema:
     - source_path
   - required:
     - source_paths
+  - required:
+    - stage
 permissions:
   filesystem: workspace
   shell: true
@@ -64,14 +76,50 @@ entrypoint: scripts/execute.py
 
 这是长文写作与多渠道发布 skill。入口固定是 `scripts/execute.py`；搜索阶段内部复用 `web_search`，正文抓取继续走 `fetch_webpage_content`，不要在外部手工拆成多个 skill。
 
+## Architecture
+
+内部拆分为 4 个可组合阶段：
+
+```
+[search] ──research.json──► [write] ──article.json──► [illustrate] ──article_with_images.json──► [publish]
+```
+
+目录结构：
+```
+scripts/
+├── execute.py           # 编排器 + CLI 入口
+├── stages/
+│   ├── __init__.py      # StageResult 数据类
+│   ├── search.py        # 搜索阶段
+│   ├── write.py         # 写作阶段
+│   ├── illustrate.py    # 配图阶段
+│   └── publish.py       # 发布阶段
+└── utils/
+    ├── __init__.py      # ArticleData、JSON 解析、通用工具
+    ├── wechat.py        # WeChatPublisher 类
+    └── xiaohongshu.py   # 小红书发布逻辑
+```
+
 ## Command
+
+### 全流程
 
 - `python scripts/execute.py "OpenAI 最新模型发布"`
 - `python scripts/execute.py "DeepSeek 新进展" --publish`
 - `python scripts/execute.py "AI 工作流" --publish-channel xiaohongshu`
 - `python scripts/execute.py "AI 工作流" --publish --publish-channel wechat --publish-channel xiaohongshu`
 - `python scripts/execute.py --source-path /abs/path/to/video_text.md "基于素材写一篇教程"`
-- 机器调用时使用：`python scripts/execute.py "OpenAI 最新模型发布" --raw-json`
+
+### 单阶段执行
+
+- `python scripts/execute.py "OpenAI" --stage search`
+- `python scripts/execute.py --stage write --source research.json`
+- `python scripts/execute.py --stage illustrate --source article.json`
+- `python scripts/execute.py --stage publish --source article_with_images.json --publish-channel wechat`
+
+### 机器调用
+
+- `python scripts/execute.py "OpenAI 最新模型发布" --raw-json`
 
 ## Rules
 
@@ -83,6 +131,13 @@ entrypoint: scripts/execute.py
 - 发布到小红书前，先用 `credential_manager` 配置 `xiaohongshu_publisher` 的 `endpoint=`，可选 `token=`、`api_key=`、`author=`。当前小红书走可配置发布通道，不假设存在官方公开内容发布 API。
 - `wechat_official_account` 和 `xiaohongshu_publisher` 都支持统一配置 `author=`；文章作者优先使用发布渠道账户里的这个值，图片水印自动派生为 `@author`。
 - 如果通过 `bash` 让 bot 执行 CLI，优先追加 `--raw-json`；CLI 会用 `tool_result=...` 输出最终结构化结果，避免把进度文本误当成 shell 错误。
+- 支持通过 `--stage` 参数单独执行某个阶段，中间产物通过 JSON 文件传递，支持断点续跑。
+
+## Performance & Batching Rules
+
+- **耗时警告**: `article_publisher` 的 `write` 和 `illustrate` 阶段非常耗时（单次全流程需 2-5 分钟），且包含大量内容的结构化输出。
+- **批量并发生成**: 如果用户要求生成**多篇**文章（例如切割了 3 份素材要求写 3 篇），**严禁**在同一个回合中串行多次调用 `bash`，这极易导致大模型 API 超时卡死（Timeout/Hang）或受到超长上下文截断限制！
+- **必须使用子智能体**: 遇到批量生成需求时，你**必须**使用 `spawn_subagent` 工具，将每一篇文章的生成任务分配给独立的子智能体（subagent）去并发执行。例如：为 part1, part2, part3 分别派生 3 个子智能体，赋予它们相关的工具权限让他们独立去执行对应文件的 `execute.py` 并等待其完成。
 
 ## Credential Example
 
@@ -94,3 +149,4 @@ entrypoint: scripts/execute.py
 - 成功时返回文章正文、生成的图片文件，以及可选的多渠道发布结果。
 - 当选择 `xiaohongshu` 渠道时，会额外生成 `xiaohongshu_note.txt` 和 `xiaohongshu_note.json` 作为发布草稿附件。
 - CLI 会把附件写到默认输出目录或 `--output-dir` 指定目录，并输出 `saved_file=<绝对路径>`。
+- 中间产物存放在 `{DATA_DIR}/user/skills/article_publisher/articles/{topic_slug}/` 下。
