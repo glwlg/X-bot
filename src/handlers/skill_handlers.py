@@ -144,7 +144,10 @@ async def reload_skills_command(ctx: UnifiedContext) -> None:
 
 def _visible_skill_items() -> list[tuple[str, dict]]:
     output: list[tuple[str, dict]] = []
-    for name, info in sorted(skill_loader.get_skill_index().items(), key=lambda item: item[0]):
+    for name, info in sorted(
+        skill_loader.get_enabled_skill_index().items(),
+        key=lambda item: item[0],
+    ):
         if bool(info.get("ikaros_only")):
             continue
         output.append((name, dict(info)))
@@ -244,7 +247,7 @@ def _build_skill_detail_payload(
     *,
     prefix: str = "",
 ) -> tuple[str, dict]:
-    info = skill_loader.get_skill_index().get(skill_name)
+    info = skill_loader.get_enabled_skill_index().get(skill_name)
     if not info:
         return _build_skills_home_payload(prefix="❌ 技能不存在。")
 
@@ -281,7 +284,7 @@ def _build_skill_detail_payload(
 
 
 async def _send_skill_documents(ctx: UnifiedContext, skill_name: str) -> str:
-    info = skill_loader.get_skill_index().get(skill_name)
+    info = skill_loader.get_enabled_skill_index().get(skill_name)
     if not info:
         return "❌ 技能不存在。"
 

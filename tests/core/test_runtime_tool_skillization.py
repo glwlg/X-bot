@@ -220,6 +220,21 @@ async def test_load_skill_sets_bash_cwd_for_relative_entrypoint(monkeypatch):
             "entrypoint": "scripts/execute.py",
         },
     )
+    monkeypatch.setattr(
+        runtime_tools_module.skill_loader,
+        "get_enabled_skill",
+        lambda _skill_name: {
+            "name": "daily_query",
+            "skill_md_content": "# Daily Query",
+            "skill_dir": skill_dir,
+            "entrypoint": "scripts/execute.py",
+        },
+    )
+    monkeypatch.setattr(
+        runtime_tools_module.skill_loader,
+        "is_skill_enabled",
+        lambda _skill_name: True,
+    )
 
     dispatcher = ToolCallDispatcher(
         runtime_user_id="subagent::subagent-main::u1",
@@ -282,6 +297,23 @@ async def test_load_skill_blocks_ikaros_only_skill_for_subagent(monkeypatch):
             "entrypoint": "scripts/execute.py",
         },
     )
+    monkeypatch.setattr(
+        runtime_tools_module.skill_loader,
+        "get_enabled_skill",
+        lambda _skill_name: {
+            "name": "skill_manager",
+            "allowed_roles": ["ikaros"],
+            "contract": {"runtime_target": "ikaros"},
+            "skill_md_content": "# Skill Ikaros",
+            "skill_dir": "/tmp/extension/skills/skill_manager",
+            "entrypoint": "scripts/execute.py",
+        },
+    )
+    monkeypatch.setattr(
+        runtime_tools_module.skill_loader,
+        "is_skill_enabled",
+        lambda _skill_name: True,
+    )
 
     dispatcher = ToolCallDispatcher(
         runtime_user_id="subagent::subagent-main::u1",
@@ -321,6 +353,65 @@ async def test_load_skill_blocks_ikaros_only_skill_for_subagent(monkeypatch):
 
     assert result["ok"] is False
     assert result["error_code"] == "skill_policy_blocked"
+
+
+@pytest.mark.asyncio
+async def test_load_skill_blocks_disabled_skill(monkeypatch):
+    async def append_event(_event: str):
+        return None
+
+    monkeypatch.setattr(
+        runtime_tools_module.skill_loader,
+        "get_skill",
+        lambda _skill_name: {
+            "name": "news_article_writer",
+            "skill_md_content": "# Disabled",
+            "skill_dir": "/tmp/extension/skills/news_article_writer",
+            "entrypoint": "scripts/execute.py",
+        },
+    )
+    monkeypatch.setattr(
+        runtime_tools_module.skill_loader,
+        "is_skill_enabled",
+        lambda _skill_name: False,
+    )
+    monkeypatch.setattr(
+        runtime_tools_module.skill_loader,
+        "get_enabled_skill",
+        lambda _skill_name: None,
+    )
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="u-1",
+        platform_name="telegram",
+        task_id="task-disabled",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(
+            message=SimpleNamespace(
+                text="加载被禁用技能",
+                user=SimpleNamespace(id="source-user-1"),
+                chat=SimpleNamespace(id="chat-99"),
+            ),
+            user_data={},
+        ),
+        runtime=object(),
+        tool_broker=object(),
+        runtime_tool_allowed=lambda **_kwargs: True,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"load_skill"})
+
+    result = await dispatcher.execute(
+        name="load_skill",
+        args={"skill_name": "news_article_writer"},
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert result["ok"] is False
+    assert result["error_code"] == "skill_disabled"
 
 
 @pytest.mark.asyncio

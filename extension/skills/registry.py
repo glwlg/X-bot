@@ -497,9 +497,37 @@ class SkillRegistry:
         self.refresh_if_changed()
         return self._skill_index
 
+    def get_disabled_skill_names(self) -> set[str]:
+        try:
+            from core.runtime_config_store import runtime_config_store
+
+            return {
+                str(item).strip()
+                for item in runtime_config_store.get_disabled_skills()
+                if str(item).strip()
+            }
+        except Exception:
+            return set()
+
+    def is_skill_enabled(self, skill_name: str) -> bool:
+        safe_name = str(skill_name or "").strip()
+        if not safe_name:
+            return False
+        skill_info = self.get_skill(safe_name)
+        canonical_name = str((skill_info or {}).get("name") or safe_name).strip()
+        return canonical_name not in self.get_disabled_skill_names()
+
+    def get_enabled_skill_index(self) -> Dict[str, Dict[str, Any]]:
+        disabled = self.get_disabled_skill_names()
+        return {
+            name: info
+            for name, info in self.get_skill_index().items()
+            if str(name).strip() not in disabled
+        }
+
     def get_skills_summary(self) -> List[Dict[str, Any]]:
         summary: List[Dict[str, Any]] = []
-        for info in self.get_skill_index().values():
+        for info in self.get_enabled_skill_index().values():
             summary.append(
                 {
                     "name": info.get("name", ""),
@@ -577,9 +605,18 @@ class SkillRegistry:
             return None
         return index.get(mapped)
 
+    def get_enabled_skill(self, skill_name: str) -> Optional[Dict[str, Any]]:
+        skill_info = self.get_skill(skill_name)
+        if not skill_info:
+            return None
+        skill_key = str(skill_info.get("name") or skill_name).strip()
+        if not self.is_skill_enabled(skill_key):
+            return None
+        return skill_info
+
     def get_tool_exports(self) -> List[Dict[str, Any]]:
         exports: List[Dict[str, Any]] = []
-        for info in self.get_skill_index().values():
+        for info in self.get_enabled_skill_index().values():
             allowed_roles = [
                 str(item or "").strip().lower()
                 for item in list(info.get("allowed_roles") or [])
@@ -608,10 +645,10 @@ class SkillRegistry:
 
     def get_skill_md_content(self, skill_name: str) -> str:
         """Read the full raw markdown content for a loaded skill directory without parsing"""
-        skill_info = self.get_skill(skill_name)
+        skill_info = self.get_enabled_skill(skill_name)
         if not skill_info:
             return ""
-        
+
         return skill_info.get("skill_md_content", "")
 
     def reload_skills(self):
@@ -822,17 +859,7 @@ class SkillRegistry:
         self.scan_skills()
         self._register_skill_management(runtime)
 
-        disabled_skills: set[str] = set()
-        try:
-            from core.runtime_config_store import runtime_config_store
-            disabled_skills = set(runtime_config_store.get_disabled_skills())
-        except Exception:
-            disabled_skills = set()
-
-        for skill_name, info in self.get_skill_index().items():
-            if skill_name in disabled_skills:
-                logger.info("Skipping disabled skill: %s", skill_name)
-                continue
+        for skill_name, info in self.get_enabled_skill_index().items():
             for module in self._load_skill_python_modules(skill_name, info):
                 for _, obj in inspect.getmembers(module, inspect.isclass):
                     if (
@@ -848,10 +875,19 @@ class SkillRegistry:
         self,
         skill_name: str,
         script_name: str = "execute.py",
+        *,
+        include_disabled: bool = False,
     ) -> Optional[Any]:
-        skill_info = self.get_skill(skill_name)
+        skill_info = (
+            self.get_skill(skill_name)
+            if include_disabled
+            else self.get_enabled_skill(skill_name)
+        )
         if not skill_info:
-            logger.warning("Skill not found: %s", skill_name)
+            if self.get_skill(skill_name):
+                logger.warning("Skill is disabled: %s", skill_name)
+            else:
+                logger.warning("Skill not found: %s", skill_name)
             return None
 
         module = self._load_skill_script_module(

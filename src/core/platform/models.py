@@ -410,6 +410,12 @@ class UnifiedContext:
             from extension.skills.registry import skill_registry as skill_loader
             import inspect
 
+            if not skill_loader.is_skill_enabled(skill_name):
+                return {
+                    "success": False,
+                    "error": f"Skill {skill_name} is disabled",
+                }
+
             # 1. Get Module
             module = skill_loader.import_skill_module(skill_name)
             if not module or not hasattr(module, "execute"):

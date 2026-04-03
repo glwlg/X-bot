@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
+from core.runtime_config_store import runtime_config_store
 from extension.skills.registry import SkillRegistry
 
 
@@ -450,3 +451,84 @@ def test_skill_loader_imports_relative_script_skills_and_registers_jobs():
     stock_module.StockWatchSkillExtension().register(runtime)
 
     assert scheduler.get_job("skill_stock_watch_push") is not None
+
+
+def test_skill_loader_filters_disabled_skills_from_enabled_views(tmp_path: Path, monkeypatch):
+    runtime_config_path = (tmp_path / "runtime" / "runtime-config.json").resolve()
+    runtime_config_path.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(runtime_config_store, "path", runtime_config_path)
+
+    disabled_dir = tmp_path / "skills" / "learned" / "disabled_demo"
+    disabled_dir.mkdir(parents=True, exist_ok=True)
+    (disabled_dir / "SKILL.md").write_text(
+        """---
+api_version: v3
+name: disabled_demo
+description: disabled demo
+triggers:
+  - disabled
+tool_exports:
+  - name: disabled_demo_tool
+    description: disabled tool
+    handler: demo.disabled
+input_schema:
+  type: object
+  properties: {}
+permissions:
+  filesystem: workspace
+entrypoint: scripts/execute.py
+---
+""",
+        encoding="utf-8",
+    )
+    (disabled_dir / "scripts").mkdir(parents=True, exist_ok=True)
+    (disabled_dir / "scripts" / "execute.py").write_text(
+        "VALUE = 'disabled'\n",
+        encoding="utf-8",
+    )
+
+    enabled_dir = tmp_path / "skills" / "learned" / "enabled_demo"
+    enabled_dir.mkdir(parents=True, exist_ok=True)
+    (enabled_dir / "SKILL.md").write_text(
+        """---
+api_version: v3
+name: enabled_demo
+description: enabled demo
+triggers:
+  - enabled
+input_schema:
+  type: object
+  properties: {}
+permissions:
+  filesystem: workspace
+entrypoint: scripts/execute.py
+---
+""",
+        encoding="utf-8",
+    )
+    (enabled_dir / "scripts").mkdir(parents=True, exist_ok=True)
+    (enabled_dir / "scripts" / "execute.py").write_text(
+        "VALUE = 'enabled'\n",
+        encoding="utf-8",
+    )
+
+    runtime_config_store.set_skill_enabled(
+        "disabled_demo",
+        False,
+        actor="test",
+        reason="disable_for_test",
+    )
+
+    loader = SkillRegistry(skills_dir=str(tmp_path / "skills"))
+    loader.scan_skills()
+
+    assert loader.get_skill("disabled_demo") is not None
+    assert loader.get_enabled_skill("disabled_demo") is None
+    assert set(loader.get_enabled_skill_index()) == {"enabled_demo"}
+    assert [item["name"] for item in loader.get_skills_summary()] == ["enabled_demo"]
+    assert loader.get_tool_export("disabled_demo_tool") is None
+    assert loader.import_skill_module("disabled_demo") is None
+
+    raw_module = loader.import_skill_module("disabled_demo", include_disabled=True)
+    assert raw_module is not None
+    assert getattr(raw_module, "VALUE", "") == "disabled"

@@ -556,8 +556,8 @@ class ToolCallDispatcher:
                 }
                 return result
 
-            skill_info = skill_loader.get_skill(skill_name) or {}
-            resolved_skill_name = str(skill_info.get("name") or skill_name).strip()
+            raw_skill_info = skill_loader.get_skill(skill_name) or {}
+            resolved_skill_name = str(raw_skill_info.get("name") or skill_name).strip()
             if (
                 self.allowed_skill_names is not None
                 and resolved_skill_name not in self.allowed_skill_names
@@ -571,6 +571,17 @@ class ToolCallDispatcher:
                     ),
                     "failure_mode": "recoverable",
                 }
+            if raw_skill_info and not skill_loader.is_skill_enabled(resolved_skill_name):
+                return {
+                    "ok": False,
+                    "error_code": "skill_disabled",
+                    "message": (
+                        f"Skill '{resolved_skill_name or skill_name}' is disabled "
+                        "by runtime configuration."
+                    ),
+                    "failure_mode": "recoverable",
+                }
+            skill_info = skill_loader.get_enabled_skill(resolved_skill_name) or {}
             canonical_tool_name = (
                 f"ext_{resolved_skill_name.replace('-', '_')}"
                 if resolved_skill_name
