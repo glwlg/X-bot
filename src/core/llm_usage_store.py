@@ -14,6 +14,11 @@ from typing import Any
 
 from core.config import DATA_DIR
 from core.model_config import get_model_id_for_api, get_models_config, load_models_config
+from services.openai_adapter import (
+    build_chat_completion_from_stream_chunks,
+    is_async_chat_completion_stream,
+    is_sync_chat_completion_stream,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1100,6 +1105,20 @@ class _TrackedOpenAIProxy:
                         error=exc,
                     )
                     raise
+                if is_async_chat_completion_stream(response):
+                    return _TrackedAsyncStream(
+                        response,
+                        on_success=lambda aggregated_response: self._record_success(
+                            operation=operation,
+                            request_kwargs=dict(kwargs),
+                            response=aggregated_response,
+                        ),
+                        on_failure=lambda exc: self._record_failure(
+                            operation=operation,
+                            request_kwargs=dict(kwargs),
+                            error=exc,
+                        ),
+                    )
                 self._record_success(
                     operation=operation,
                     request_kwargs=dict(kwargs),
@@ -1133,6 +1152,20 @@ class _TrackedOpenAIProxy:
                             error=exc,
                         )
                         raise
+                    if is_async_chat_completion_stream(awaited_response):
+                        return _TrackedAsyncStream(
+                            awaited_response,
+                            on_success=lambda aggregated_response: self._record_success(
+                                operation=operation,
+                                request_kwargs=request_kwargs,
+                                response=aggregated_response,
+                            ),
+                            on_failure=lambda exc: self._record_failure(
+                                operation=operation,
+                                request_kwargs=request_kwargs,
+                                error=exc,
+                            ),
+                        )
                     self._record_success(
                         operation=operation,
                         request_kwargs=request_kwargs,
@@ -1142,6 +1175,21 @@ class _TrackedOpenAIProxy:
 
                 return _awaitable_wrapper()
 
+            if is_sync_chat_completion_stream(response):
+                return _TrackedSyncStream(
+                    response,
+                    on_success=lambda aggregated_response: self._record_success(
+                        operation=operation,
+                        request_kwargs=request_kwargs,
+                        response=aggregated_response,
+                    ),
+                    on_failure=lambda exc: self._record_failure(
+                        operation=operation,
+                        request_kwargs=request_kwargs,
+                        error=exc,
+                    ),
+                )
+
             self._record_success(
                 operation=operation,
                 request_kwargs=request_kwargs,
@@ -1150,6 +1198,134 @@ class _TrackedOpenAIProxy:
             return response
 
         return _sync_wrapper
+
+
+class _TrackedAsyncStream:
+    def __init__(
+        self,
+        target: Any,
+        *,
+        on_success: Any,
+        on_failure: Any,
+    ) -> None:
+        self._target = target
+        self._on_success = on_success
+        self._on_failure = on_failure
+        self._iterator = target.__aiter__()
+        self._chunks: list[Any] = []
+        self._finalized = False
+
+    def __aiter__(self) -> "_TrackedAsyncStream":
+        return self
+
+    async def __anext__(self) -> Any:
+        try:
+            chunk = await self._iterator.__anext__()
+        except StopAsyncIteration:
+            self._finalize_success()
+            raise
+        except Exception as exc:
+            self._finalize_failure(exc)
+            raise
+        self._chunks.append(chunk)
+        return chunk
+
+    async def aclose(self) -> None:
+        close_method = getattr(self._target, "aclose", None)
+        if callable(close_method):
+            await close_method()
+
+    async def __aenter__(self) -> "_TrackedAsyncStream":
+        enter = getattr(self._target, "__aenter__", None)
+        if callable(enter):
+            await enter()
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> bool:
+        if exc is None:
+            self._finalize_success()
+        elif isinstance(exc, Exception):
+            self._finalize_failure(exc)
+        exit_method = getattr(self._target, "__aexit__", None)
+        if callable(exit_method):
+            return bool(await exit_method(exc_type, exc, tb))
+        return False
+
+    def _finalize_success(self) -> None:
+        if self._finalized:
+            return
+        self._finalized = True
+        self._on_success(build_chat_completion_from_stream_chunks(self._chunks))
+
+    def _finalize_failure(self, exc: Exception) -> None:
+        if self._finalized:
+            return
+        self._finalized = True
+        self._on_failure(exc)
+
+
+class _TrackedSyncStream:
+    def __init__(
+        self,
+        target: Any,
+        *,
+        on_success: Any,
+        on_failure: Any,
+    ) -> None:
+        self._target = target
+        self._on_success = on_success
+        self._on_failure = on_failure
+        self._iterator = iter(target)
+        self._chunks: list[Any] = []
+        self._finalized = False
+
+    def __iter__(self) -> "_TrackedSyncStream":
+        return self
+
+    def __next__(self) -> Any:
+        try:
+            chunk = next(self._iterator)
+        except StopIteration:
+            self._finalize_success()
+            raise
+        except Exception as exc:
+            self._finalize_failure(exc)
+            raise
+        self._chunks.append(chunk)
+        return chunk
+
+    def close(self) -> None:
+        close_method = getattr(self._target, "close", None)
+        if callable(close_method):
+            close_method()
+
+    def __enter__(self) -> "_TrackedSyncStream":
+        enter = getattr(self._target, "__enter__", None)
+        if callable(enter):
+            enter()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> bool:
+        if exc is None:
+            self._finalize_success()
+        elif isinstance(exc, Exception):
+            self._finalize_failure(exc)
+        exit_method = getattr(self._target, "__exit__", None)
+        if callable(exit_method):
+            return bool(exit_method(exc_type, exc, tb))
+        return False
+
+    def _finalize_success(self) -> None:
+        if self._finalized:
+            return
+        self._finalized = True
+        self._on_success(build_chat_completion_from_stream_chunks(self._chunks))
+
+    def _finalize_failure(self, exc: Exception) -> None:
+        if self._finalized:
+            return
+        self._finalized = True
+        self._on_failure(exc)
 
 
 def wrap_openai_client(client: Any, *, default_model_key: str) -> Any:

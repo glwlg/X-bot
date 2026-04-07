@@ -12,6 +12,7 @@ from core.audit_store import audit_store
 from core.config import get_client_for_model
 from core.model_config import select_model_for_role
 from core.state_paths import system_path, user_path
+from services.openai_adapter import create_chat_completion, extract_text_from_chat_completion
 
 
 logger = logging.getLogger(__name__)
@@ -50,16 +51,7 @@ def _resolve_memory_client(model_name: str) -> Any:
 
 
 def _extract_response_text(response: Any) -> str:
-    choices = list(getattr(response, "choices", []) or [])
-    if choices:
-        message = getattr(choices[0], "message", None)
-        content = getattr(message, "content", "")
-        if isinstance(content, str):
-            return content.strip()
-    direct_text = getattr(response, "text", None)
-    if isinstance(direct_text, str):
-        return direct_text.strip()
-    return ""
+    return extract_text_from_chat_completion(response)
 
 
 def _extract_json_object(text: str) -> dict[str, Any]:
@@ -584,13 +576,17 @@ class MarkdownMemoryStore:
             "temperature": 0,
         }
         try:
-            response = await client.chat.completions.create(
+            response = await create_chat_completion(
+                async_client=client,
                 **request_kwargs,
                 response_format={"type": "json_object"},
             )
         except Exception:
             try:
-                response = await client.chat.completions.create(**request_kwargs)
+                response = await create_chat_completion(
+                    async_client=client,
+                    **request_kwargs,
+                )
             except Exception as exc:
                 logger.debug("User memory extraction failed: %s", exc)
                 return []
@@ -640,13 +636,17 @@ class MarkdownMemoryStore:
             "temperature": 0,
         }
         try:
-            response = await client.chat.completions.create(
+            response = await create_chat_completion(
+                async_client=client,
                 **request_kwargs,
                 response_format={"type": "json_object"},
             )
         except Exception:
             try:
-                response = await client.chat.completions.create(**request_kwargs)
+                response = await create_chat_completion(
+                    async_client=client,
+                    **request_kwargs,
+                )
             except Exception as exc:
                 logger.debug("Daily memory rollup extraction failed: %s", exc)
                 return {"user_facts": [], "ikaros_experiences": []}

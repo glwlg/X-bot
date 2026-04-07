@@ -13,6 +13,7 @@ from services.openai_adapter import generate_text
 
 from ap_utils import (
     MAX_SEARCH_CONTEXT_CHARS,
+    derive_topic_requirements,
     normalize_article_data,
     parse_article_json,
     read_local_material_context,
@@ -30,6 +31,7 @@ async def write_stage(
     research_data: dict[str, Any] | None = None,
     output_dir: str,
     word_count: int = 1000,
+    current_date: str = "",
 ) -> StageResult:
     """Run the write stage.
 
@@ -71,6 +73,8 @@ async def write_stage(
             search_context = "\n---\n".join(parts)
         if not topic:
             topic = str(research_data.get("topic") or "").strip()
+        if not current_date:
+            current_date = str(research_data.get("current_date") or "").strip()
 
     if not search_context:
         return StageResult.fail("无写作素材输入")
@@ -80,7 +84,12 @@ async def write_stage(
 
     # -- generate article ------------------------------------------------------
     try:
-        article_data = await _generate_article_json(topic, search_context, word_count)
+        article_data = await _generate_article_json(
+            topic,
+            search_context,
+            word_count,
+            current_date=current_date,
+        )
     except Exception as exc:
         logger.error("Article generation failed: %s", exc, exc_info=True)
         return StageResult.fail(f"创作失败: {exc}")
@@ -99,7 +108,8 @@ async def write_stage(
         return StageResult.fail(f"文章正文过短 ({total_chars} 字)，生成质量不足")
 
     # -- save ------------------------------------------------------------------
-    slug = topic_slug(topic)
+    effective_topic = str(derive_topic_requirements(topic, current_date=current_date)["subject"] or topic).strip() or topic
+    slug = topic_slug(effective_topic)
     out_dir = Path(output_dir) / slug
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / "article.json"
@@ -115,25 +125,58 @@ async def write_stage(
 # LLM call
 # ---------------------------------------------------------------------------
 
-async def _generate_article_json(topic: str, search_context: str, word_count: int = 1000) -> dict[str, Any]:
+async def _generate_article_json(
+    topic: str,
+    search_context: str,
+    word_count: int = 1000,
+    *,
+    current_date: str = "",
+) -> dict[str, Any]:
+    requirements = derive_topic_requirements(topic, current_date=current_date)
+    subject = str(requirements["subject"] or topic).strip()
+
+    brief_lines = [
+        f"- 主题：{subject}",
+        "- 面向公众号普通读者，语言自然、清楚、可直接发布。",
+    ]
+    if requirements["prefer_news"]:
+        brief_lines.append("- 按新闻综述写作，先交代事实，再说明值得关注的原因。")
+    if requirements["same_day_only"] and requirements["current_date"]:
+        brief_lines.append(
+            f"- 只使用 {requirements['current_date']} 当天的信息；如果素材不足，就保持克制，不要扩写。"
+        )
+    if requirements["body_only"] or requirements["public_readers"]:
+        brief_lines.append(
+            "- 只输出正文，不要写导语说明、免责声明、END、图片来源、责编、关注提示等非正文内容。"
+        )
+    if requirements["forbidden_terms"]:
+        brief_lines.append(
+            "- 不要出现以下对象或相关内容："
+            + "、".join(requirements["forbidden_terms"])
+            + "。"
+        )
+
     structure_prompt = (
-        f"你是一位经验丰富的资深内容创作者，擅长根据主题和素材撰写高质量的深度长文。"
-        f"请基于以下素材，为主题「{topic}」撰写一篇深度文章。\n\n"
+        "你是一名资深中文公众号编辑，擅长把公开素材整理成适合直接发布的图文文章。"
+        f"请基于以下素材，围绕主题「{subject}」完成写作。\n\n"
+        "写作要求：\n"
+        + "\n".join(brief_lines)
+        + "\n\n"
         f"素材内容：\n{search_context[:MAX_SEARCH_CONTEXT_CHARS]}\n\n"
         "**风格要求**：\n"
-        "- 根据主题自动选择最合适的写作风格（科技评论、行业分析、人物故事、知识科普、观点评论等）。\n"
-        "- 文字要有洞察力和观点，拒绝平铺直叙和流水账。\n"
-        "- 语言自然流畅，像与读者对话，避免生硬的学术腔或 AI 味。\n\n"
+        "- 用中文写作，语气清楚、自然、克制，像成熟公众号编辑在向普通读者解释新闻。\n"
+        "- 观点可以有，但必须建立在素材事实之上，不要脱离素材做空泛延展。\n"
+        "- 开头直接进入主题，不绕圈子，不写自我介绍，不写创作说明。\n\n"
         "**篇幅要求**：\n"
         f"- 正文总字数要求约 {word_count} 字。\n"
         "- 拆分为 4 到 6 个 section，每个 section 有独立小标题。\n"
-        "- 每段控制在 2-3 句话（约 80-120 字），然后换段，保持阅读节奏。\n\n"
+        "- 每段控制在 2-3 句话（约 80-120 字），然后换段，保持阅读节奏。\n"
+        "- 结尾要回到读者价值，总结这些新闻对行业和普通人的实际意义，不要写空泛口号。\n\n"
         "**排版要求**：\n"
         "- 正文使用 HTML 标签排版，不要用 Markdown。\n"
         "- 每个 section 以 <h2> 小标题开头。\n"
         "- 正文段落使用 <p>，段与段之间自然分隔。\n"
-        "- 适当使用 <blockquote> 做金句或观点提炼。\n"
-        "- 可使用 <ul>/<li> 做列举，<b> 做关键词加粗。\n"
+        "- 可使用 <ul>/<li> 做列举，<b> 做关键词加粗，但不要堆砌格式。\n"
         '- 在每个 section 末尾加一行 <p style="margin-bottom:1.5em;"></p> 作为段间留白。\n\n'
         "**配图要求**：\n"
         "- 必须设计 1 张封面图 PROMPT（cover_prompt）。\n"
@@ -144,9 +187,9 @@ async def _generate_article_json(topic: str, search_context: str, word_count: in
         "- 不要 ```json 包裹，不要解释性文字。\n"
         "- JSON 必须使用双引号，结构如下：\n"
         "{\n"
-        '  "title": "吸引力强但不标题党的标题",\n'
+        '  "title": "信息明确、适合公众号的标题",\n'
         '  "author": "笔名",\n'
-        '  "digest": "100-150字摘要，概括核心观点",\n'
+        '  "digest": "100-150字摘要，概括今天这篇文章告诉读者什么",\n'
         '  "cover_prompt": "English prompt for cover image, 16:9 aspect ratio, professional editorial style",\n'
         '  "sections": [\n'
         '    { "content": "<h2>第一部分标题</h2><p>段落一正文...</p><p>段落二正文...</p>'

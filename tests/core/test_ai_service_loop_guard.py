@@ -4,8 +4,87 @@ import json
 import pytest
 
 import services.ai_service as ai_service_module
+from core.llm_usage_store import set_current_llm_usage_session_id
 from ikaros.integrations.gh_cli_service import GhCliService
 from services.ai_service import AiService
+
+
+def test_ai_service_extract_response_text_handles_object_content_parts():
+    response = SimpleNamespace(
+        text=None,
+        choices=[
+            SimpleNamespace(
+                finish_reason="stop",
+                message=SimpleNamespace(
+                    content=[
+                        SimpleNamespace(
+                            type="output_text",
+                            text=SimpleNamespace(value="来自 gpt-5.4 的正文"),
+                        )
+                    ],
+                    tool_calls=[],
+                    refusal=None,
+                ),
+            )
+        ],
+    )
+
+    assert AiService._extract_response_text(response) == "来自 gpt-5.4 的正文"
+
+
+def test_ai_service_extract_stream_text_handles_object_delta_parts():
+    chunk = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                delta=SimpleNamespace(
+                    content=[
+                        SimpleNamespace(
+                            type="text",
+                            text=SimpleNamespace(value="流式片段"),
+                        )
+                    ]
+                )
+            )
+        ]
+    )
+
+    assert AiService._extract_stream_text(chunk) == "流式片段"
+
+
+@pytest.mark.asyncio
+async def test_ai_service_upstream_requests_force_stream_and_session_id(monkeypatch):
+    service = AiService()
+    captured_kwargs = {}
+
+    class _FakeCompletions:
+        async def create(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        finish_reason="stop",
+                        message=SimpleNamespace(content="ok", tool_calls=[]),
+                    )
+                ]
+            )
+
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=_FakeCompletions())
+    )
+    monkeypatch.setattr(ai_service_module, "openai_async_client", fake_client)
+    set_current_llm_usage_session_id("chat-session")
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "hello"}]}],
+        system_instruction="test",
+    ):
+        chunks.append(chunk)
+
+    assert chunks == ["ok"]
+    assert captured_kwargs["stream"] is True
+    assert captured_kwargs["user"] == "chat-session"
+    assert captured_kwargs["extra_body"]["session_id"] == "chat-session"
 
 
 @pytest.mark.asyncio
@@ -74,6 +153,115 @@ async def test_ai_service_emits_loop_guard_on_repeated_calls(monkeypatch):
     assert "loop_guard" in events
     assert chunks
     assert "重复工具调用" in chunks[-1]
+
+
+@pytest.mark.asyncio
+async def test_ai_service_fails_over_when_first_model_returns_empty_completion(
+    monkeypatch,
+):
+    service = AiService()
+    failed_models = []
+    successful_models = []
+
+    class EmptyResponseClient:
+        class _Chat:
+            class _Completions:
+                async def create(self, **kwargs):
+                    return SimpleNamespace(
+                        text=None,
+                        choices=[
+                            SimpleNamespace(
+                                finish_reason="stop",
+                                message=SimpleNamespace(
+                                    content=None,
+                                    tool_calls=[],
+                                    refusal=None,
+                                ),
+                            )
+                        ],
+                    )
+
+            def __init__(self):
+                self.completions = self._Completions()
+
+        def __init__(self):
+            self.chat = self._Chat()
+
+    class TextResponseClient:
+        class _Chat:
+            class _Completions:
+                async def create(self, **kwargs):
+                    return SimpleNamespace(
+                        text=None,
+                        choices=[
+                            SimpleNamespace(
+                                finish_reason="stop",
+                                message=SimpleNamespace(
+                                    content="fallback ok",
+                                    tool_calls=[],
+                                    refusal=None,
+                                ),
+                            )
+                        ],
+                    )
+
+            def __init__(self):
+                self.completions = self._Completions()
+
+        def __init__(self):
+            self.chat = self._Chat()
+
+    clients = {
+        "proxy/gpt-5.4": EmptyResponseClient(),
+        "huoshan/fallback": TextResponseClient(),
+    }
+
+    monkeypatch.setattr(
+        ai_service_module,
+        "_resolve_async_client",
+        lambda model_name: clients[model_name],
+    )
+    monkeypatch.setattr(
+        ai_service_module,
+        "get_model_for_input",
+        lambda input_type, pool_type="primary": "proxy/gpt-5.4",
+    )
+    monkeypatch.setattr(
+        ai_service_module,
+        "get_model_id_for_api",
+        lambda model_key: str(model_key or "").split("/", 1)[-1],
+    )
+    monkeypatch.setattr(
+        ai_service_module,
+        "get_model_candidates_for_input",
+        lambda input_type, pool_type="primary", preferred_model=None: [
+            "proxy/gpt-5.4",
+            "huoshan/fallback",
+        ],
+    )
+    monkeypatch.setattr(
+        ai_service_module,
+        "mark_model_failed",
+        lambda model_key: failed_models.append(model_key),
+    )
+    monkeypatch.setattr(
+        ai_service_module,
+        "mark_model_success",
+        lambda model_key: successful_models.append(model_key),
+    )
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "test"}]}],
+        tools=[{"name": "read", "description": "", "parameters": {"type": "object"}}],
+        tool_executor=lambda _name, _args: None,
+        system_instruction="test",
+    ):
+        chunks.append(chunk)
+
+    assert failed_models == ["proxy/gpt-5.4"]
+    assert successful_models == ["huoshan/fallback"]
+    assert chunks == ["fallback ok"]
 
 
 @pytest.mark.asyncio

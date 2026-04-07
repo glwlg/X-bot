@@ -1,9 +1,10 @@
 """用户相关 Schema"""
 
-from typing import Optional
 from datetime import datetime
+from typing import Any, Optional
+
 from fastapi_users import schemas
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from api.auth.models import UserRole
 
@@ -102,3 +103,39 @@ class WebInboundEventCreate(BaseModel):
     caption: Optional[str] = None
     callback_data: Optional[str] = None
     metadata: Optional[dict[str, Any]] = None
+
+
+class CredentialEntryRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    service: str
+    id: str
+    name: str
+    data: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = ""
+    updated_at: str = ""
+    is_default: bool = False
+
+
+class CredentialServiceRead(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    service: str
+    default_entry_id: str = ""
+    entries: list[CredentialEntryRead] = Field(default_factory=list)
+
+
+class CredentialEntryCreate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    data: dict[str, Any] = Field(default_factory=dict)
+    is_default: bool = False
+
+
+class CredentialEntryUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = None
+    data: Optional[dict[str, Any]] = None
+    is_default: Optional[bool] = None

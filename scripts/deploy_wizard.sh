@@ -807,7 +807,7 @@ print_next_steps() {
         echo "Next:"
         echo "1. Open http://${display_host}:${API_PORT}/login"
         echo "2. Complete the first admin bootstrap"
-        echo "3. Enter /admin/setup to finish models / SOUL / USER / channels initialization"
+        echo "3. Enter /admin/runtime to finish runtime setup, then /admin/models to finish model setup"
         echo
     else
         echo "API was not deployed in this run, so Web bootstrap is not available yet."

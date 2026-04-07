@@ -10,7 +10,9 @@ import argparse
 import asyncio
 import json
 import logging
+import re
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -35,7 +37,10 @@ from core.app_paths import data_dir
 
 prepare_default_env(REPO_ROOT)
 
-from extension.skills.builtin.credential_manager.scripts.store import get_credential
+from extension.skills.builtin.credential_manager.scripts.store import (
+    get_credential,
+    get_credential_entry,
+)
 
 from ap_stages.illustrate import illustrate_stage
 from ap_stages.publish import publish_stage
@@ -44,6 +49,7 @@ from ap_stages.write import write_stage
 from ap_utils import (
     as_bool,
     build_article_preview,
+    derive_topic_requirements,
     primary_author_account,
     resolve_article_author,
     resolve_local_material_paths,
@@ -57,6 +63,11 @@ from ap_utils.xiaohongshu import (
 )
 
 logger = logging.getLogger(__name__)
+TIME_TEXT_DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
+WECHAT_ACCOUNT_NAME_RE = re.compile(
+    r"(?:发布到|发到|投递到|同步到)(?P<name>[\w\-\u4e00-\u9fff]{2,32})公众号"
+)
+GENERIC_WECHAT_ACCOUNT_NAMES = {"微信", "公众", "官方", "这个", "该", "默认", "目标"}
 
 
 # ---------------------------------------------------------------------------
@@ -75,6 +86,60 @@ def _resolve_article_output_dir(params: dict[str, Any]) -> str:
     )
 
 
+async def _resolve_current_date(ctx: UnifiedContext, topic: str) -> str:
+    requirements = derive_topic_requirements(topic)
+    if not requirements["same_day_only"]:
+        return ""
+
+    fallback = datetime.now().strftime("%Y-%m-%d")
+    try:
+        result = await ctx.run_skill("daily_query", {"query_type": "time"})
+    except Exception as exc:
+        logger.warning("daily_query skill call failed: %s", exc)
+        return fallback
+
+    if isinstance(result, dict):
+        match = TIME_TEXT_DATE_RE.search(str(result.get("text") or ""))
+        if match:
+            return match.group(1)
+    return fallback
+
+
+def _resolve_wechat_account_selector(params: dict[str, Any], topic: str) -> str:
+    for key in ("wechat_account", "wechat_account_name", "official_account", "official_account_name"):
+        value = str(params.get(key) or "").strip()
+        if value:
+            return value
+
+    match = WECHAT_ACCOUNT_NAME_RE.search(str(topic or "").strip())
+    if match:
+        candidate = str(match.group("name") or "").strip()
+        if candidate not in GENERIC_WECHAT_ACCOUNT_NAMES:
+            return candidate
+    return ""
+
+
+async def _resolve_wechat_account(
+    user_id: int | str,
+    *,
+    params: dict[str, Any],
+    topic: str,
+) -> tuple[dict[str, Any] | None, str]:
+    selector = _resolve_wechat_account_selector(params, topic)
+    entry = await get_credential_entry(
+        user_id,
+        "wechat_official_account",
+        selector or None,
+    )
+    if not entry:
+        return None, selector
+
+    account = dict(entry.get("data") or {})
+    account["credential_name"] = str(entry.get("name") or "").strip()
+    account["credential_id"] = str(entry.get("id") or "").strip()
+    return account, selector
+
+
 # ---------------------------------------------------------------------------
 # Full-flow orchestrator
 # ---------------------------------------------------------------------------
@@ -84,6 +149,7 @@ async def _run_full_flow(
     params: dict[str, Any],
     *,
     topic: str,
+    current_date: str,
     publish: bool,
     publish_channels: list[str],
     accounts: dict[str, dict[str, Any] | None],
@@ -95,7 +161,11 @@ async def _run_full_flow(
     # Stage 1: Search
     yield "🔍 正在搜索并整理素材..."
     search_result = await search_stage(
-        ctx, topic=topic, params=params, output_dir=output_dir,
+        ctx,
+        topic=topic,
+        params=params,
+        output_dir=output_dir,
+        current_date=current_date,
     )
     if not search_result.ok:
         yield {
@@ -113,6 +183,7 @@ async def _run_full_flow(
         research_data=search_result.data,
         output_dir=output_dir,
         word_count=word_count,
+        current_date=current_date,
     )
     if not write_result.ok:
         yield {
@@ -233,6 +304,7 @@ async def _run_single_stage(
     *,
     stage: str,
     topic: str,
+    current_date: str,
     publish_channels: list[str],
     accounts: dict[str, dict[str, Any] | None],
     output_dir: str,
@@ -244,13 +316,21 @@ async def _run_single_stage(
     if stage == "search":
         yield f"🔍 正在搜索 `{topic}` ..."
         result = await search_stage(
-            ctx, topic=topic, params=params, output_dir=output_dir,
+            ctx,
+            topic=topic,
+            params=params,
+            output_dir=output_dir,
+            current_date=current_date,
         )
 
     elif stage == "write":
         yield "✍️ 正在写作..."
         result = await write_stage(
-            topic=topic, source_path=source or None, output_dir=output_dir, word_count=word_count,
+            topic=topic,
+            source_path=source or None,
+            output_dir=output_dir,
+            word_count=word_count,
+            current_date=current_date,
         )
 
     elif stage == "illustrate":
@@ -332,7 +412,11 @@ async def execute(ctx: UnifiedContext, params: dict[str, Any], runtime=None):
     except (ValueError, TypeError):
         word_count = 1000
 
-    wechat_account = await get_credential(ctx.message.user.id, "wechat_official_account")
+    wechat_account, wechat_selector = await _resolve_wechat_account(
+        ctx.message.user.id,
+        params=params,
+        topic=topic,
+    )
     xiaohongshu_account = await get_credential(ctx.message.user.id, "xiaohongshu_publisher")
     accounts = {
         "wechat": wechat_account,
@@ -348,6 +432,16 @@ async def execute(ctx: UnifiedContext, params: dict[str, Any], runtime=None):
         }
         return
 
+    if wechat_selector and not wechat_account and (publish or "wechat" in publish_channels):
+        yield {
+            "ok": False,
+            "failure_mode": "recoverable",
+            "text": f"❌ 未找到公众号凭据：`{wechat_selector}`。",
+            "ui": {},
+        }
+        return
+
+    current_date = await _resolve_current_date(ctx, topic) if topic else ""
     output_dir = _resolve_article_output_dir(params)
 
     if stage:
@@ -356,6 +450,7 @@ async def execute(ctx: UnifiedContext, params: dict[str, Any], runtime=None):
             ctx, params,
             stage=stage,
             topic=topic,
+            current_date=current_date,
             publish_channels=publish_channels,
             accounts=accounts,
             output_dir=output_dir,
@@ -367,6 +462,7 @@ async def execute(ctx: UnifiedContext, params: dict[str, Any], runtime=None):
         async for item in _run_full_flow(
             ctx, params,
             topic=topic,
+            current_date=current_date,
             publish=publish,
             publish_channels=publish_channels,
             accounts=accounts,
@@ -412,6 +508,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Publish/output channel. Supported: wechat, xiaohongshu. Can be passed multiple times.",
     )
     parser.add_argument(
+        "--wechat-account",
+        default="",
+        help="Wechat official account credential name/id to use for publishing.",
+    )
+    parser.add_argument(
         "--source-path",
         action="append",
         default=[],
@@ -443,6 +544,7 @@ def _params_from_args(args: argparse.Namespace) -> dict[str, Any]:
         "topic": topic or None,
         "publish": bool(getattr(args, "publish", False)),
         "publish_channels": publish_channels or None,
+        "wechat_account": str(getattr(args, "wechat_account", "") or "").strip() or None,
         "source_paths": source_paths or None,
         "stage": getattr(args, "stage", None),
         "source": str(getattr(args, "source", "") or "").strip() or None,

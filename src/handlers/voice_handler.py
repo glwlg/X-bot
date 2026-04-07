@@ -19,7 +19,11 @@ from telegram.error import BadRequest
 from core.config import is_user_allowed, get_client_for_model
 from core.model_config import select_model_for_role
 from core.platform.exceptions import MediaProcessingError
-from services.openai_adapter import build_messages
+from services.openai_adapter import (
+    build_messages,
+    create_chat_completion,
+    extract_text_from_chat_completion,
+)
 from user_context import add_message, bind_delivery_target, get_user_context
 from core.platform.models import MessageType, UnifiedContext
 from .ai_handlers import _acknowledge_received
@@ -156,46 +160,7 @@ def _normalize_transcribed_text(raw_text: str) -> str:
 
 
 def _extract_model_text(response) -> str:
-    if response is None:
-        return ""
-
-    try:
-        direct_text = getattr(response, "text", None)
-    except Exception:
-        direct_text = None
-    if direct_text is not None:
-        text = str(direct_text).strip()
-        if text:
-            return text
-
-    choices = getattr(response, "choices", None) or []
-    for choice in choices:
-        message = getattr(choice, "message", None)
-        content = getattr(message, "content", "")
-        if isinstance(content, str) and content.strip():
-            return content.strip()
-        if isinstance(content, list):
-            chunks = []
-            for part in content:
-                if isinstance(part, dict) and part.get("type") == "text":
-                    chunks.append(str(part.get("text") or ""))
-            merged = "\n".join([item for item in chunks if item]).strip()
-            if merged:
-                return merged
-
-    candidates = getattr(response, "candidates", None) or []
-    for candidate in candidates:
-        content = getattr(candidate, "content", None)
-        parts = getattr(content, "parts", None) or []
-        chunks = []
-        for part in parts:
-            part_text = getattr(part, "text", None)
-            if part_text:
-                chunks.append(str(part_text))
-        merged = "\n".join(chunks).strip()
-        if merged:
-            return merged
-    return ""
+    return extract_text_from_chat_completion(response)
 
 
 def _parse_audio_response_payload(raw_text: str) -> tuple[str, str]:
@@ -421,7 +386,8 @@ async def _run_audio_prompt(prompt: str, voice_bytes: bytes, mime_type: str) -> 
 
     for candidate_mime, candidate_bytes, source in attempts:
         try:
-            response = await cast(Any, client).chat.completions.create(
+            response = await create_chat_completion(
+                async_client=cast(Any, client),
                 model=voice_model,
                 messages=build_messages(
                     contents=_build_audio_contents(
@@ -432,7 +398,8 @@ async def _run_audio_prompt(prompt: str, voice_bytes: bytes, mime_type: str) -> 
             )
         except Exception as exc:
             try:
-                response = await cast(Any, client).chat.completions.create(
+                response = await create_chat_completion(
+                    async_client=cast(Any, client),
                     model=voice_model,
                     messages=build_messages(
                         contents=_build_audio_contents(

@@ -3,7 +3,14 @@ import axios from 'axios'
 import { computed, onMounted, ref, watch } from 'vue'
 import { Bot, Loader2, Plus, Save, Trash2 } from 'lucide-vue-next'
 
-import { getModelsSnapshot, patchModelsSnapshot, type ModelsQuickRoleSnapshot, type ModelsSnapshot } from '@/api/models'
+import {
+    getModelsSnapshot,
+    patchModelsSnapshot,
+    postModelsLatencyCheck,
+    type ModelsLatencyCheckResponse,
+    type ModelsQuickRoleSnapshot,
+    type ModelsSnapshot,
+} from '@/api/models'
 
 const snapshot = ref<ModelsSnapshot | null>(null)
 const modelConfigForm = ref<ModelConfigForm | null>(null)
@@ -143,28 +150,28 @@ const selectionStrategyLabels: Record<SelectionStrategy, string> = {
 }
 
 let uidCounter = 0
-const quickRoles = ref<Record<QuickRoleKey, QuickRoleForm>>({
-    primary: {
-        providerName: '',
-        baseUrl: '',
-        apiKey: '',
-        apiStyle: 'openai-completions',
-        modelId: '',
-        displayName: '',
-        reasoning: false,
-        inputTypes: ['text', 'image', 'voice'],
-    },
-    routing: {
-        providerName: '',
-        baseUrl: '',
-        apiKey: '',
-        apiStyle: 'openai-completions',
-        modelId: '',
-        displayName: '',
-        reasoning: false,
-        inputTypes: ['text'],
-    },
+const createDefaultQuickRole = (role: QuickRoleKey): QuickRoleForm => ({
+    providerName: '',
+    baseUrl: '',
+    apiKey: '',
+    apiStyle: 'openai-completions',
+    modelId: '',
+    displayName: '',
+    reasoning: false,
+    inputTypes: role === 'primary' ? ['text', 'image', 'voice'] : ['text'],
 })
+
+const quickRoles = ref<Record<QuickRoleKey, QuickRoleForm>>({
+    primary: createDefaultQuickRole('primary'),
+    routing: createDefaultQuickRole('routing'),
+})
+const quickRoleDirty = ref<Record<QuickRoleKey, boolean>>({
+    primary: false,
+    routing: false,
+})
+const routingLatencyChecking = ref(false)
+const routingLatencyError = ref('')
+const routingLatencyResult = ref<ModelsLatencyCheckResponse | null>(null)
 
 const nextUid = (prefix: string) => `${prefix}-${uidCounter++}`
 
@@ -307,6 +314,17 @@ const availableModelMap = computed<Record<string, ModelOption>>(() =>
     Object.fromEntries(availableModelOptions.value.map(option => [option.uid, option]))
 )
 
+const sameQuickRole = (left: QuickRoleForm, right: QuickRoleForm) =>
+    left.providerName === right.providerName
+    && left.baseUrl === right.baseUrl
+    && left.apiKey === right.apiKey
+    && left.apiStyle === right.apiStyle
+    && left.modelId === right.modelId
+    && left.displayName === right.displayName
+    && left.reasoning === right.reasoning
+    && left.inputTypes.length === right.inputTypes.length
+    && left.inputTypes.every((item, index) => item === right.inputTypes[index])
+
 const hydrateQuickRole = (role: QuickRoleKey, payload: ModelsQuickRoleSnapshot) => {
     quickRoles.value[role] = {
         providerName: payload.provider_name || '',
@@ -317,6 +335,11 @@ const hydrateQuickRole = (role: QuickRoleKey, payload: ModelsQuickRoleSnapshot) 
         displayName: payload.display_name || '',
         reasoning: Boolean(payload.reasoning),
         inputTypes: ((payload.input_types || []) as InputType[]).filter(item => inputTypeOptions.includes(item)),
+    }
+    quickRoleDirty.value[role] = false
+    if (role === 'routing') {
+        routingLatencyError.value = ''
+        routingLatencyResult.value = null
     }
 }
 
@@ -383,6 +406,83 @@ const rolePoolOptions = (role: RoleKey) => {
     return roleConfig.poolUids
         .map(uid => availableModelMap.value[uid])
         .filter((option): option is ModelOption => roleCompatibilityStatus(role, option) !== 'ineligible')
+}
+
+const findModelEntryByUid = (modelUid: string) => {
+    const form = modelConfigForm.value
+    if (!form) {
+        return null
+    }
+    for (const provider of form.providers) {
+        const model = provider.models.find(item => item.uid === modelUid)
+        if (model) {
+            return { provider, model }
+        }
+    }
+    return null
+}
+
+const syncQuickRoleFromModelConfigForm = (role: QuickRoleKey) => {
+    if (quickRoleDirty.value[role]) {
+        return
+    }
+    const bindingUid = modelConfigForm.value?.roles[role].bindingUid || ''
+    const entry = bindingUid ? findModelEntryByUid(bindingUid) : null
+    const nextValue: QuickRoleForm = entry
+        ? {
+            providerName: entry.provider.name,
+            baseUrl: entry.provider.baseUrl,
+            apiKey: entry.provider.apiKey,
+            apiStyle: entry.provider.api || 'openai-completions',
+            modelId: entry.model.id,
+            displayName: entry.model.name,
+            reasoning: Boolean(entry.model.reasoning),
+            inputTypes: entry.model.input.length
+                ? [...entry.model.input]
+                : [...createDefaultQuickRole(role).inputTypes],
+        }
+        : createDefaultQuickRole(role)
+    if (!sameQuickRole(quickRoles.value[role], nextValue)) {
+        quickRoles.value[role] = nextValue
+    }
+}
+
+const syncQuickRolesFromModelConfigForm = () => {
+    for (const role of quickRoleOrder) {
+        syncQuickRoleFromModelConfigForm(role)
+    }
+}
+
+const markQuickRoleDirty = (role: QuickRoleKey) => {
+    quickRoleDirty.value[role] = true
+    if (role === 'routing') {
+        routingLatencyError.value = ''
+        routingLatencyResult.value = null
+    }
+}
+
+const testRoutingLatency = async () => {
+    const routing = quickRoles.value.routing
+    routingLatencyChecking.value = true
+    routingLatencyError.value = ''
+    routingLatencyResult.value = null
+    errorText.value = ''
+    successText.value = ''
+    try {
+        const response = await postModelsLatencyCheck({
+            role: 'routing',
+            provider_name: routing.providerName.trim(),
+            base_url: routing.baseUrl.trim(),
+            api_key: routing.apiKey,
+            api_style: routing.apiStyle.trim() || 'openai-completions',
+            model_id: routing.modelId.trim(),
+        })
+        routingLatencyResult.value = response.data
+    } catch (error) {
+        routingLatencyError.value = parseErrorMessage(error, 'Routing 模型延迟测试失败')
+    } finally {
+        routingLatencyChecking.value = false
+    }
 }
 
 const normalizeRoleSelections = () => {
@@ -675,6 +775,9 @@ const applyQuickRolesToModelConfigForm = () => {
     }
 
     for (const role of quickRoleOrder) {
+        if (!quickRoleDirty.value[role]) {
+            continue
+        }
         const quick = quickRoles.value[role]
         const providerName = quick.providerName.trim()
         const modelId = quick.modelId.trim()
@@ -719,8 +822,8 @@ const buildModelsConfigSubmission = () => {
         return null
     }
 
-    applyQuickRolesToModelConfigForm()
     modelsConfigError.value = ''
+    applyQuickRolesToModelConfigForm()
     const providersPayload: Record<string, unknown> = {}
     const modelKeyByUid: Record<string, string> = {}
     const seenProviderNames = new Set<string>()
@@ -870,6 +973,14 @@ watch(
     { deep: true }
 )
 
+watch(
+    modelConfigForm,
+    () => {
+        syncQuickRolesFromModelConfigForm()
+    },
+    { deep: true }
+)
+
 onMounted(load)
 </script>
 
@@ -940,6 +1051,8 @@ onMounted(load)
             v-for="role in quickRoleOrder"
             :key="role"
             class="rounded-[24px] border border-slate-200 bg-slate-50 p-5"
+            @input="markQuickRoleDirty(role)"
+            @change="markQuickRoleDirty(role)"
           >
             <div class="flex items-center justify-between gap-3">
               <div class="flex items-center gap-3">
@@ -994,6 +1107,35 @@ onMounted(load)
                 <input v-model="quickRoles[role].inputTypes" type="checkbox" :value="inputType" class="h-4 w-4">
                 {{ inputType }}
               </label>
+            </div>
+
+            <div v-if="role === 'routing'" class="mt-5 rounded-2xl border border-slate-200 bg-white px-4 py-4">
+              <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <div class="text-sm font-medium text-slate-800">延迟测试</div>
+                  <div class="mt-1 text-xs leading-6 text-slate-500">
+                    只发送短提示词 <code class="rounded bg-slate-100 px-1.5 py-0.5 text-[11px]">Reply with pong.</code>，用于比较 Routing 模型响应速度，不会保存当前配置。
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  class="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-2.5 text-sm font-medium text-slate-700 transition hover:bg-slate-100 disabled:opacity-60"
+                  :disabled="routingLatencyChecking || loading || saving"
+                  @click="testRoutingLatency"
+                >
+                  <Loader2 v-if="routingLatencyChecking" class="h-4 w-4 animate-spin" />
+                  <span>{{ routingLatencyChecking ? '测试中' : '测试延迟' }}</span>
+                </button>
+              </div>
+
+              <div v-if="routingLatencyError" class="mt-3 rounded-2xl border border-rose-200 bg-rose-50 px-3 py-2.5 text-sm text-rose-700">
+                {{ routingLatencyError }}
+              </div>
+
+              <div v-else-if="routingLatencyResult" class="mt-3 rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-sm text-emerald-800">
+                <div class="font-medium">{{ routingLatencyResult.model_key }} · {{ routingLatencyResult.elapsed_ms }} ms</div>
+                <div class="mt-1 text-xs leading-6 text-emerald-700">响应预览：{{ routingLatencyResult.response_preview || '空响应' }}</div>
+              </div>
             </div>
           </article>
         </div>

@@ -138,7 +138,7 @@ Core 只暴露运行时基础设施，不再在 core 里硬编码 channel / memo
 
 部署、启动、平台脚本、Docker / 非 Docker、systemd / launchd / Windows 计划任务，以及 `Wispaper` 接入说明统一收口在 [DEPLOYMENT.md](DEPLOYMENT.md)。
 
-首次部署完成后，打开 Web 的 `/login` 完成首个管理员初始化，再进入 `/admin/setup` 继续配置模型、`SOUL.MD`、`USER.md` 和渠道凭证。
+首次部署完成后，打开 Web 的 `/login` 完成首个管理员初始化，然后进入 `/admin/runtime` 完成管理员、`SOUL.MD`、`USER.md`、渠道和运行项配置，再到 `/admin/models` 配置模型。
 
 ## 聊天内管理命令
 

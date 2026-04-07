@@ -122,6 +122,7 @@ async def publish_to_wechat(
     article_data: dict[str, Any],
     cover_bytes: bytes | None,
     section_images: dict[int, bytes],
+    account_name: str = "",
 ) -> str:
     thumb_media_id = None
     if cover_bytes:
@@ -154,6 +155,8 @@ async def publish_to_wechat(
         author=article_data["author"],
         digest=digest_text,
     )
+    if str(account_name or "").strip():
+        return f"✅ 已发布到公众号草稿箱（{account_name}），MediaID: `{draft_id}`"
     return f"✅ 已发布到公众号草稿箱，MediaID: `{draft_id}`"
 
 

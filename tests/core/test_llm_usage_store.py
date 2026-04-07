@@ -283,6 +283,71 @@ async def test_wrap_openai_client_estimates_output_tokens_from_response_fallback
     assert summary["output_tokens"] > 0
 
 
+@pytest.mark.asyncio
+async def test_wrap_openai_client_records_stream_after_consumption(
+    tmp_path, monkeypatch
+):
+    _reset_llm_usage_store(tmp_path, monkeypatch)
+    llm_usage_module.set_current_llm_usage_session_id("session-stream")
+
+    class _FakeAsyncStream:
+        def __init__(self):
+            self._chunks = [
+                SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content="你好"),
+                            finish_reason=None,
+                        )
+                    ]
+                ),
+                SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content="，世界"),
+                            finish_reason="stop",
+                        )
+                    ]
+                ),
+            ]
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if not self._chunks:
+                raise StopAsyncIteration
+            return self._chunks.pop(0)
+
+    class _FakeAsyncCompletions:
+        async def create(self, **kwargs):
+            assert kwargs["stream"] is True
+            return _FakeAsyncStream()
+
+    wrapped = llm_usage_module.wrap_openai_client(
+        SimpleNamespace(chat=SimpleNamespace(completions=_FakeAsyncCompletions())),
+        default_model_key="demo/text",
+    )
+
+    stream = await wrapped.chat.completions.create(
+        model="text",
+        messages=[{"role": "user", "content": "你好"}],
+        stream=True,
+    )
+
+    assert llm_usage_module.llm_usage_store.summarize()["requests"] == 0
+
+    received = []
+    async for chunk in stream:
+        received.append(chunk)
+
+    assert len(received) == 2
+    summary = llm_usage_module.llm_usage_store.summarize()
+    assert summary["requests"] == 1
+    assert summary["estimated_token_requests"] == 1
+    assert summary["output_tokens"] > 0
+
+
 def test_wrap_openai_client_records_sync_image_requests_without_usage(
     tmp_path, monkeypatch
 ):

@@ -46,6 +46,9 @@ input_schema:
       items:
         type: string
       description: 多个发布或导出渠道，支持 wechat、xiaohongshu
+    wechat_account:
+      type: string
+      description: 可选，指定用于发布的公众号凭据别名或 ID；未传时优先用默认项，否则回退第一条公众号凭据。
     stage:
       type: string
       enum: [search, write, illustrate, publish]
@@ -106,6 +109,7 @@ scripts/
 
 - `python scripts/execute.py "OpenAI 最新模型发布"`
 - `python scripts/execute.py "DeepSeek 新进展" --publish`
+- `python scripts/execute.py "AI 应用观察" --publish --wechat-account 主号`
 - `python scripts/execute.py "AI 工作流" --publish-channel xiaohongshu`
 - `python scripts/execute.py "AI 工作流" --publish --publish-channel wechat --publish-channel xiaohongshu`
 - `python scripts/execute.py --source-path /abs/path/to/video_text.md "基于素材写一篇教程"`
@@ -124,10 +128,13 @@ scripts/
 ## Rules
 
 - 适用于文章写作、热点综述、公众号长文和图文发布稿，不适用于普通网页摘要。
-- 内部搜索调用保持 `ctx.run_skill("web_search", {"query": topic, "num_results": 8})`；这是当前 `web_search` skill 支持的正确参数形式。
+- 内部搜索统一走 `ctx.run_skill("web_search", {...})`；查询词应从用户指令里提炼主题，必要时附带新闻分类、时间范围和排除对象，不要把整段长指令原样塞进搜索词。
+- 面向公众号读者的文章默认按“可直接发布的正文”生成，不应夹带“以下是文章 / 免责声明 / 责编 / END / 图片来源”等非正文信息。
+- 只有当用户明确要求“新闻 / 快讯 / 资讯 / 当天新闻”这类时效内容时，技能才应切到新闻综述模式；普通文章、教程、观点稿或基于本地材料改写时，不要强行按新闻稿写。
 - 当提供 `source_path/source_paths` 时，不进行搜索，也不抓网页；直接基于本地 md/txt 素材写作，但仍然生成配图。
 - `publish=true` 且未显式指定渠道时，默认按 `wechat` 兼容旧行为。
-- 发布到公众号前，先用 `credential_manager` 配置 `wechat_official_account` 的 `app_id` 与 `app_secret`。
+- 发布到公众号前，先用 `credential_manager` 配置 `wechat_official_account` 的 `app_id` 与 `app_secret`；同一用户下可保存多条公众号凭据。
+- 指定 `wechat_account` 时，按别名或凭据 ID 选择对应公众号；未指定时优先使用默认项，没有默认项则回退第一条公众号凭据。
 - 发布到小红书前，先用 `credential_manager` 配置 `xiaohongshu_publisher` 的 `endpoint=`，可选 `token=`、`api_key=`、`author=`。当前小红书走可配置发布通道，不假设存在官方公开内容发布 API。
 - `wechat_official_account` 和 `xiaohongshu_publisher` 都支持统一配置 `author=`；文章作者优先使用发布渠道账户里的这个值，图片水印自动派生为 `@author`。
 - 如果通过 `bash` 让 bot 执行 CLI，优先追加 `--raw-json`；CLI 会用 `tool_result=...` 输出最终结构化结果，避免把进度文本误当成 shell 错误。

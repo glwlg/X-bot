@@ -49,9 +49,9 @@ Windows PowerShell 使用：
 
 - 自动补齐缺失的 `.env` 和 `~/.ikaros/config/models.json`
 - 让你选择 `Ikaros Core` 和 `Ikaros API` 各自的部署方式
-- 可选直接写入 `Primary` / `Routing` 的 provider、`baseUrl`、`apiKey`、模型绑定；也可以留到 Web 初始化页再配置
+- 可选直接写入 `Primary` / `Routing` 的 provider、`baseUrl`、`apiKey`、模型绑定；也可以留到 Web 配置页再配置
 - 按你的选择自动执行 `uv sync`、前端构建和部署
-- 最后直接提示你打开 Web 地址完成首个管理员初始化与 `/admin/setup`
+- 最后直接提示你打开 Web 地址完成首个管理员初始化，并进入 `/admin/runtime` / `/admin/models`
 
 说明：
 
@@ -60,7 +60,7 @@ Windows PowerShell 使用：
 - `deploy_wizard.ps1` 面向 Windows PowerShell
 - 如果 API 选的是宿主机脚本 / systemd / launchd，向导会自动先构建 Web
 - 如果 API 选的是 Docker Compose，镜像构建阶段会自动打包 Web
-- 渠道凭证、`ADMIN_USER_IDS`、`SOUL.MD`、`USER.md` 仍建议在 Web 初始化页完成
+- 渠道凭证、`ADMIN_USER_IDS`、`SOUL.MD`、`USER.md` 仍建议在 Web 的运行配置页完成
 
 ### 1.1 运行环境
 
@@ -69,7 +69,7 @@ Windows PowerShell 使用：
 - Node.js：建议 `22.x`，至少 `20+`
 - Docker / Docker Compose：仅 API 的 Docker 部署需要
 
-### 1.2 初始化配置
+### 1.2 初始配置准备
 
 在仓库根目录执行：
 
@@ -88,7 +88,8 @@ cp config/models.example.json ~/.ikaros/config/models.json
 - `DISCORD_BOT_TOKEN`
 - `DINGTALK_CLIENT_ID`
 - `DINGTALK_CLIENT_SECRET`
-- `WEIXIN_ENABLE`
+- `WEIXIN_BASE_URL`
+- `WEIXIN_CDN_BASE_URL`
 
 如果只部署 API，不跑 Bot 通道，可以暂时不填写各平台 Token。
 

@@ -9,7 +9,7 @@ from typing import Any
 
 from core.platform.models import UnifiedContext
 
-from ap_utils import topic_slug
+from ap_utils import derive_topic_requirements, topic_slug
 from ap_utils.wechat import (
     prepare_wechat_publisher,
     publish_to_wechat,
@@ -96,6 +96,7 @@ async def publish_stage(
                     article_data=article_data,
                     cover_bytes=cover_bytes,
                     section_images=section_images,
+                    account_name=str((wechat_account or {}).get("credential_name") or ""),
                 )
                 publish_statuses.append(status)
             except Exception as exc:
@@ -134,7 +135,8 @@ async def publish_stage(
                 publish_statuses.append(f"❌ 小红书发布失败: {exc}")
 
     # -- save result -----------------------------------------------------------
-    slug = topic_slug(topic)
+    effective_topic = str(derive_topic_requirements(topic)["subject"] or topic).strip() or topic
+    slug = topic_slug(effective_topic)
     out_dir = Path(output_dir) / slug
     out_dir.mkdir(parents=True, exist_ok=True)
     result_data = {

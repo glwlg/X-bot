@@ -13,6 +13,7 @@ from api.auth.users import get_user_manager
 from api.core.database import get_async_session
 from api.schemas.admin_config import (
     ModelsConfigPatchRequest,
+    ModelsLatencyCheckRequest,
     RuntimeConfigPatchRequest,
     RuntimeDocGenerateRequest,
 )
@@ -26,6 +27,7 @@ from api.services.admin_config_service import (
     build_models_snapshot,
     build_runtime_config_snapshot,
     generate_runtime_doc,
+    run_models_latency_check,
     update_memory_provider,
 )
 from api.services.env_config import read_managed_env
@@ -271,6 +273,28 @@ async def patch_models_snapshot(
     return {
         "snapshot": build_models_snapshot(),
     }
+
+
+@router.post("/models/latency-check")
+async def models_latency_check(
+    payload: ModelsLatencyCheckRequest,
+    request: Request,
+    admin_user: User = Depends(require_admin),
+):
+    result = await run_models_latency_check(payload)
+    await record_admin_audit(
+        {
+            "action": "models_latency_check",
+            "actor": _actor(admin_user),
+            "target": f"models:{result.get('role')}",
+            "summary": (
+                f"checked {result.get('model_key')} latency={result.get('elapsed_ms')}ms"
+            ),
+            "ip": _client_ip(request),
+            "status": "success",
+        }
+    )
+    return result
 
 
 @router.get("/diagnostics")

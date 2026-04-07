@@ -39,8 +39,28 @@ export interface ModelsPatchResponse {
     snapshot: ModelsSnapshot
 }
 
+export interface ModelsLatencyCheckPayload {
+    role: 'primary' | 'routing'
+    provider_name: string
+    base_url?: string
+    api_key?: string
+    api_style?: string
+    model_id: string
+}
+
+export interface ModelsLatencyCheckResponse {
+    role: 'primary' | 'routing'
+    model_key: string
+    elapsed_ms: number
+    response_preview: string
+    prompt: string
+}
+
 export const getModelsSnapshot = () =>
     request.get<ModelsSnapshot>('/admin/models')
 
 export const patchModelsSnapshot = (payload: ModelsPatchPayload) =>
     request.patch<ModelsPatchResponse>('/admin/models', payload)
+
+export const postModelsLatencyCheck = (payload: ModelsLatencyCheckPayload) =>
+    request.post<ModelsLatencyCheckResponse>('/admin/models/latency-check', payload)

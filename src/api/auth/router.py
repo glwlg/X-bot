@@ -15,6 +15,10 @@ from api.auth.users import (
 )
 from api.auth.schemas import (
     BootstrapStatus,
+    CredentialEntryCreate,
+    CredentialEntryRead,
+    CredentialEntryUpdate,
+    CredentialServiceRead,
     UserAdminCreate,
     UserAdminUpdate,
     UserBootstrapCreate,
@@ -28,6 +32,14 @@ from api.services.bootstrap_admin import count_admin_users, ensure_bootstrap_adm
 from api.services.env_config import ensure_admin_user_id_present
 from api.services.user_access_sync import sync_user_core_access
 from core.runtime_config_store import runtime_config_store
+from extension.skills.builtin.credential_manager.scripts.store import (
+    delete_credential_entry,
+    get_credential_entry,
+    list_credential_entries,
+    list_credentials_detailed,
+    set_default_credential_entry,
+    upsert_credential_entry,
+)
 
 router = APIRouter()
 
@@ -58,6 +70,87 @@ async def get_current_user_permissions(user: User = Depends(current_active_user)
         "is_operator": user.has_permission(UserRole.OPERATOR),
         "is_superuser": user.is_superuser,
     }
+
+
+@router.get("/me/credentials", response_model=list[CredentialServiceRead], tags=["auth"])
+async def list_my_credentials(
+    user: User = Depends(current_active_user),
+):
+    return await list_credentials_detailed(user.id)
+
+
+@router.get("/me/credentials/{service}", response_model=list[CredentialEntryRead], tags=["auth"])
+async def list_my_credentials_by_service(
+    service: str,
+    user: User = Depends(current_active_user),
+):
+    return await list_credential_entries(user.id, service)
+
+
+@router.post("/me/credentials/{service}", response_model=CredentialEntryRead, tags=["auth"])
+async def create_my_credential(
+    service: str,
+    payload: CredentialEntryCreate,
+    user: User = Depends(current_active_user),
+):
+    created = await upsert_credential_entry(
+        user.id,
+        service,
+        name=payload.name,
+        data=payload.data,
+        set_default=payload.is_default,
+    )
+    if created is None:
+        raise HTTPException(status_code=400, detail="凭据保存失败")
+    return created
+
+
+@router.patch("/me/credentials/{service}/{credential_id}", response_model=CredentialEntryRead, tags=["auth"])
+async def update_my_credential(
+    service: str,
+    credential_id: str,
+    payload: CredentialEntryUpdate,
+    user: User = Depends(current_active_user),
+):
+    existing = await get_credential_entry(user.id, service, credential_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="凭据不存在")
+
+    updated = await upsert_credential_entry(
+        user.id,
+        service,
+        credential_id=credential_id,
+        name=str(payload.name or existing["name"]).strip() or str(existing["name"]),
+        data=dict(payload.data if payload.data is not None else existing["data"]),
+        set_default=bool(payload.is_default),
+    )
+    if updated is None:
+        raise HTTPException(status_code=400, detail="凭据更新失败")
+    return updated
+
+
+@router.post("/me/credentials/{service}/{credential_id}/default", response_model=CredentialEntryRead, tags=["auth"])
+async def set_my_default_credential(
+    service: str,
+    credential_id: str,
+    user: User = Depends(current_active_user),
+):
+    updated = await set_default_credential_entry(user.id, service, credential_id)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="凭据不存在")
+    return updated
+
+
+@router.delete("/me/credentials/{service}/{credential_id}", tags=["auth"])
+async def delete_my_credential(
+    service: str,
+    credential_id: str,
+    user: User = Depends(current_active_user),
+):
+    deleted = await delete_credential_entry(user.id, service, credential_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="凭据不存在")
+    return {"success": True}
 
 
 async def _counts(session: AsyncSession) -> tuple[int, int]:
@@ -346,5 +439,4 @@ async def update_user(
         )
     await sync_user_core_access(target, actor=_actor_label(admin_user))
     return target
-
 

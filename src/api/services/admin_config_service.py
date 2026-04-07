@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.auth.models import User, UserRole
 from api.schemas.admin_config import (
     AdminProfilePatch,
+    ModelsLatencyCheckRequest,
     RuntimeChannelsPatch,
     RuntimeDocGenerateRequest,
     RuntimeDocsPatch,
@@ -26,7 +29,7 @@ from api.services.user_access_sync import sync_user_core_access
 from core.app_paths import memory_config_path
 from core.audit_store import audit_store
 from core.channel_user_store import DEFAULT_USER_MD, channel_user_store
-from core.config import get_client_for_model
+from core.config import AsyncOpenAI, get_client_for_model
 from core.memory_config import (
     get_memory_provider_name,
     load_memory_config,
@@ -43,10 +46,13 @@ from core.model_config import (
 )
 from core.runtime_config_store import runtime_config_store
 from core.soul_store import soul_store
+from services.openai_adapter import create_chat_completion, extract_text_from_chat_completion
 
 
 SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 MANAGED_MODEL_ROLES = ("primary", "routing", "vision", "image_generation", "voice")
+LATENCY_CHECK_TIMEOUT_SEC = 20.0
+LATENCY_CHECK_PROMPT = "Reply with pong."
 DEFAULT_ROLE_INPUTS: dict[str, list[str]] = {
     "primary": ["text", "image", "voice"],
     "routing": ["text"],
@@ -593,6 +599,83 @@ def build_models_snapshot() -> dict[str, Any]:
     }
 
 
+def _preview_text(text: Any, *, limit: int = 120) -> str:
+    payload = str(text or "").replace("\r", " ").replace("\n", " ").strip()
+    if len(payload) <= limit:
+        return payload
+    return payload[: max(0, limit - 1)] + "…"
+
+
+async def run_models_latency_check(
+    payload: ModelsLatencyCheckRequest,
+) -> dict[str, Any]:
+    role = _normalize_managed_role_key(payload.role, field_name="role")
+    provider_name = _normalize_provider_name(payload.provider_name)
+    model_id = _normalize_model_id(payload.model_id)
+    api_style = _safe_text(payload.api_style) or "openai-completions"
+    base_url = _safe_text(payload.base_url)
+    api_key = str(payload.api_key or "").strip()
+
+    if api_style != "openai-completions":
+        raise HTTPException(
+            status_code=400,
+            detail="延迟测试当前只支持 openai-completions",
+        )
+    if AsyncOpenAI is None:
+        raise HTTPException(status_code=500, detail="OpenAI 客户端不可用")
+    if not api_key:
+        raise HTTPException(status_code=400, detail="api_key 不能为空")
+
+    client_kwargs: dict[str, Any] = {
+        "api_key": api_key,
+    }
+    if base_url:
+        client_kwargs["base_url"] = base_url
+    client = AsyncOpenAI(**client_kwargs)
+
+    started = time.perf_counter()
+    try:
+        response = await asyncio.wait_for(
+            create_chat_completion(
+                async_client=client,
+                session_id=f"admin-model-latency:{role}",
+                model=model_id,
+                messages=[{"role": "user", "content": LATENCY_CHECK_PROMPT}],
+                temperature=0,
+                max_tokens=8,
+            ),
+            timeout=LATENCY_CHECK_TIMEOUT_SEC,
+        )
+    except asyncio.TimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail=f"延迟测试超时（{int(LATENCY_CHECK_TIMEOUT_SEC)} 秒）",
+        ) from exc
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"延迟测试失败: {exc}") from exc
+    finally:
+        close_method = getattr(client, "close", None)
+        if callable(close_method):
+            maybe_coro = close_method()
+            if asyncio.iscoroutine(maybe_coro):
+                await maybe_coro
+
+    elapsed_ms = max(1, int(round((time.perf_counter() - started) * 1000)))
+    response_text = extract_text_from_chat_completion(response)
+    if not response_text:
+        raise HTTPException(status_code=502, detail="模型返回为空")
+
+    return {
+        "role": role,
+        "model_key": f"{provider_name}/{model_id}",
+        "elapsed_ms": elapsed_ms,
+        "response_preview": _preview_text(response_text),
+        "prompt": LATENCY_CHECK_PROMPT,
+    }
+
+
 def _channels_ready(payload: dict[str, Any]) -> bool:
     channel_keys = ("telegram", "discord", "dingtalk", "weixin", "web")
     enabled_channels = [
@@ -755,7 +838,7 @@ def apply_runtime_docs_patch(
         results["soul"] = soul_store.update_core(
             patch.soul_content,
             actor=actor,
-            reason="setup_update_soul",
+            reason="runtime_update_soul",
         )
     if patch.user_content is not None:
         user_doc_path = _admin_user_md_path(admin_user.id)
@@ -763,7 +846,7 @@ def apply_runtime_docs_patch(
             user_doc_path,
             patch.user_content.strip() + "\n",
             actor=actor,
-            reason="setup_update_admin_user_md",
+            reason="runtime_update_admin_user_md",
             category="user_doc",
         )
         results["user"] = {
@@ -827,7 +910,7 @@ def apply_runtime_channels_patch(
         ensure_admin_user_id_present(
             current_admin_user_id,
             actor=actor,
-            reason="setup_preserve_admin_user",
+            reason="runtime_preserve_admin_user",
         )
 
     env_result = None
@@ -976,15 +1059,14 @@ async def generate_runtime_doc(payload: RuntimeDocGenerateRequest) -> dict[str, 
         }
         if payload.kind == "user":
             request_payload["max_tokens"] = 260
-        response = await client.chat.completions.create(**request_payload)
+        response = await create_chat_completion(
+            async_client=client,
+            **request_payload,
+        )
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"调用模型生成文档失败: {exc}") from exc
 
-    choices = getattr(response, "choices", None) or []
-    if not choices:
-        raise HTTPException(status_code=502, detail="模型没有返回可用内容")
-    message = getattr(choices[0], "message", None)
-    content = _strip_markdown_fence(_extract_message_text(getattr(message, "content", "")))
+    content = _strip_markdown_fence(extract_text_from_chat_completion(response))
     if not content:
         raise HTTPException(status_code=502, detail="模型返回为空")
     return {

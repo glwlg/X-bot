@@ -17,6 +17,27 @@ MAX_SOCIAL_CONTEXT_CHARS = 6000
 SUPPORTED_LOCAL_MATERIAL_SUFFIXES = {".md", ".markdown", ".txt"}
 AUTHOR_ACCOUNT_KEYS = ("author", "auther", "article_author")
 SUPPORTED_PUBLISH_CHANNELS = ("wechat", "xiaohongshu")
+NEWS_TOPIC_KEYWORDS = ("新闻", "快讯", "资讯", "时讯", "要闻", "报道", "动态")
+SAME_DAY_NEWS_PATTERNS = (
+    r"当天的?新闻",
+    r"今天的?新闻",
+    r"今日新闻",
+    r"当日新闻",
+    r"当天的?(?:快讯|资讯|动态|报道)",
+    r"今天的?(?:快讯|资讯|动态|报道)",
+    r"今日(?:快讯|资讯|动态|报道)",
+    r"确保新闻是当天的新闻",
+    r"只写当天新闻",
+    r"只看当天新闻",
+)
+PUBLIC_READER_KEYWORDS = ("公众号", "读者", "公众", "面向公众", "面向读者")
+BODY_ONLY_KEYWORDS = ("非正文", "只输出正文", "仅输出正文", "不要包含非正文", "不要写非正文")
+IGNORED_FORBIDDEN_TERMS = {"子任务", "非正文", "正文", "内容", "公众号", "文章"}
+NON_BODY_HTML_PATTERNS = (
+    r"(?is)<p[^>]*>\s*(?:以下(?:是|为).{0,40}?|正文如下|下面进入正文|以下内容由.*?生成)\s*</p>",
+    r"(?is)<p[^>]*>\s*(?:免责声明[:：]?.*?|责编[:：]?.*?|责任编辑[:：]?.*?|图片来源[:：]?.*?|封面来源[:：]?.*?|欢迎在评论区.*?|欢迎留言.*?|欢迎关注.*?|感谢阅读.*?|END)\s*</p>",
+    r"(?is)<h[1-6][^>]*>\s*(?:以下是.*?|以下为.*?|正文如下)\s*</h[1-6]>",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -67,6 +88,9 @@ def normalize_article_data(data: dict[str, Any], topic: str) -> dict[str, Any]:
             content = sec.get("content")
             if not isinstance(content, str) or not content.strip():
                 continue
+            content = strip_non_body_html(str(content))
+            if not content:
+                continue
             image_prompt = sec.get("image_prompt")
             if image_prompt is not None:
                 image_prompt = str(image_prompt).strip() or None
@@ -108,6 +132,16 @@ def html_to_plain_text(content: str) -> str:
     return text.strip()
 
 
+def strip_non_body_html(content: str) -> str:
+    text = str(content or "").strip()
+    if not text:
+        return ""
+    for pattern in NON_BODY_HTML_PATTERNS:
+        text = re.sub(pattern, "", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def article_plain_text(article_data: dict[str, Any]) -> str:
     parts: list[str] = []
     digest = str(article_data.get("digest") or "").strip()
@@ -118,6 +152,112 @@ def article_plain_text(article_data: dict[str, Any]) -> str:
         if plain:
             parts.append(plain)
     return "\n\n".join(parts).strip()
+
+
+def _clean_subject_text(text: str) -> str:
+    cleaned = str(text or "").strip()
+    cleaned = cleaned.strip("“”\"'《》<>[]（）() ")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    return cleaned.strip("，,。；;：: ")
+
+
+def extract_primary_subject(topic: str) -> str:
+    raw = str(topic or "").strip()
+    if not raw:
+        return ""
+
+    patterns = (
+        r"(?:写|生成|整理|创作)(?:一篇)?关于(?P<subject>.+?)的(?:公众号|推文|长文|文章)",
+        r"关于(?P<subject>.+?)的(?:公众号|推文|长文|文章)",
+        r"围绕(?P<subject>.+?)(?:写|生成|整理|创作)(?:一篇)?(?:公众号|推文|长文|文章)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, raw)
+        if not match:
+            continue
+        subject = _clean_subject_text(match.group("subject"))
+        if subject:
+            return subject
+
+    cleaned = raw
+    for pattern in (
+        r"^用daily_query获取今天日期[，,、 ]*(?:然后)?",
+        r"(?:然后)?用article_publisher技能",
+        r"写好之后发布到公众号.*$",
+        r"发布到公众号.*$",
+        r"注意不要用子任务.*$",
+    ):
+        cleaned = re.sub(pattern, "", cleaned)
+    return _clean_subject_text(cleaned)
+
+
+def extract_forbidden_terms(topic: str) -> list[str]:
+    raw = str(topic or "").strip()
+    if not raw:
+        return []
+
+    patterns = (
+        r"不要(?:用)?(?:涉及|提及|包含|写|出现)?(?P<terms>[^，。,；;\n]+?)(?:的内容|相关内容|相关报道|相关信息|相关素材|[，。,；;\n]|$)",
+        r"避免(?:使用|提及|包含)?(?P<terms>[^，。,；;\n]+?)(?:[，。,；;\n]|$)",
+        r"排除(?P<terms>[^，。,；;\n]+?)(?:[，。,；;\n]|$)",
+    )
+
+    forbidden_terms: list[str] = []
+    for pattern in patterns:
+        for match in re.finditer(pattern, raw):
+            chunk = str(match.group("terms") or "").strip()
+            chunk = re.sub(r"^(?:涉及|提及|包含|写|出现|关于|有关|相关|使用|用)", "", chunk)
+            chunk = re.sub(r"(?:的内容|相关内容|相关报道|相关信息|相关素材)$", "", chunk)
+            chunk = chunk.strip("“”\"' ")
+            for part in re.split(r"[、,，/和及与]", chunk):
+                token = part.strip()
+                if len(token) < 2:
+                    continue
+                if token in IGNORED_FORBIDDEN_TERMS:
+                    continue
+                if token not in forbidden_terms:
+                    forbidden_terms.append(token)
+    return forbidden_terms
+
+
+def derive_topic_requirements(topic: str, *, current_date: str = "") -> dict[str, Any]:
+    raw = str(topic or "").strip()
+    subject = extract_primary_subject(raw) or raw
+    forbidden_terms = extract_forbidden_terms(raw)
+    explicit_news_request = any(keyword in raw for keyword in NEWS_TOPIC_KEYWORDS)
+    same_day_only = any(re.search(pattern, raw) for pattern in SAME_DAY_NEWS_PATTERNS)
+    prefer_news = explicit_news_request or same_day_only
+    public_readers = any(keyword in raw for keyword in PUBLIC_READER_KEYWORDS)
+    body_only = any(keyword in raw for keyword in BODY_ONLY_KEYWORDS)
+
+    search_parts = [subject]
+    if same_day_only and current_date:
+        search_parts.append(current_date)
+    search_query = " ".join(part for part in search_parts if str(part).strip()).strip()
+
+    return {
+        "raw_topic": raw,
+        "subject": subject,
+        "search_query": search_query or raw,
+        "explicit_news_request": explicit_news_request,
+        "prefer_news": prefer_news,
+        "same_day_only": same_day_only,
+        "public_readers": public_readers,
+        "body_only": body_only,
+        "forbidden_terms": forbidden_terms,
+        "current_date": str(current_date or "").strip(),
+    }
+
+
+def filter_lines_by_forbidden_terms(text: str, forbidden_terms: list[str]) -> str:
+    raw = str(text or "").strip()
+    if not raw or not forbidden_terms:
+        return raw
+    lines = [
+        line for line in raw.splitlines()
+        if not any(term and term in line for term in forbidden_terms)
+    ]
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(lines)).strip()
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict
 
 
 class AdminProfilePatch(BaseModel):
@@ -85,10 +85,21 @@ class RuntimeDocGenerateRequest(BaseModel):
     kind: Literal["soul", "user"]
     brief: str | None = None
     current_content: str | None = None
-    model_key: str = Field(min_length=1)
+    model_key: str | None = None
 
 
 class ModelsConfigPatchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     models_config: dict[str, Any]
+
+
+class ModelsLatencyCheckRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: Literal["primary", "routing"]
+    provider_name: str
+    base_url: str | None = None
+    api_key: str | None = None
+    api_style: str | None = None
+    model_id: str

@@ -27,6 +27,12 @@ const router = createRouter({
             meta: { title: '渠道绑定' },
         },
         {
+            path: '/credentials',
+            name: 'Credentials',
+            component: () => import('@/views/Account/CredentialsView.vue'),
+            meta: { title: '凭据管理' },
+        },
+        {
             path: '/modules/rss',
             name: 'ModuleRss',
             component: () => import('@/views/Modules/RssView.vue'),

@@ -507,7 +507,7 @@ onMounted(load)
           <article class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
             <div class="text-sm font-semibold text-slate-900">功能开关</div>
             <div class="mt-4 space-y-3">
-              <label v-for="[name, enabled] in Object.entries(form.features)" :key="name" class="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+              <label v-for="name in Object.keys(form.features)" :key="name" class="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
                 <div>
                   <div class="text-sm text-slate-700">{{ name }}</div>
                   <div class="text-xs text-slate-500">控制 Web console 与后台功能入口</div>

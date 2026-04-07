@@ -9,6 +9,7 @@ from typing import Any, Dict, List, cast
 from core.config import get_client_for_model
 from core.model_config import select_model_for_role
 from extension.skills.registry import skill_registry as skill_loader
+from services.openai_adapter import create_chat_completion, extract_text_from_chat_completion
 
 logger = logging.getLogger(__name__)
 
@@ -203,25 +204,22 @@ class SkillArgPlanner:
             "temperature": 0,
         }
         try:
-            response = await client.chat.completions.create(
+            response = await create_chat_completion(
+                async_client=client,
                 **request_kwargs,
                 response_format={"type": "json_object"},
             )
         except Exception:
             try:
-                response = await client.chat.completions.create(
+                response = await create_chat_completion(
+                    async_client=client,
                     **request_kwargs,
                 )
             except Exception as exc:
                 logger.debug("Skill arg planner failed for %s: %s", skill_name, exc)
                 return {}
 
-        content = ""
-        choices = list(getattr(response, "choices", []) or [])
-        if choices:
-            message = getattr(choices[0], "message", None)
-            content = str(getattr(message, "content", "") or "")
-        return _extract_json_object(content)
+        return _extract_json_object(extract_text_from_chat_completion(response))
 
 
 skill_arg_planner = SkillArgPlanner()

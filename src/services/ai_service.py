@@ -15,7 +15,14 @@ from core.model_config import (
     mark_model_success,
     resolve_models_config_path,
 )
-from services.openai_adapter import build_messages
+from services.openai_adapter import (
+    build_messages,
+    collect_chat_completion_response,
+    extract_text_from_chat_completion,
+    extract_text_from_chat_completion_stream_delta,
+    is_async_chat_completion_stream,
+    prepare_chat_completion_kwargs,
+)
 
 # 初始化模型配置（如果存在配置文件）
 load_models_config()
@@ -219,9 +226,12 @@ class AiService:
                     payload = dict(request_kwargs)
                     payload["model"] = get_model_id_for_api(candidate_model)
                     try:
+                        upstream_payload = prepare_chat_completion_kwargs(payload)
                         response = await cast(
                             Any, model_client
-                        ).chat.completions.create(**payload)
+                        ).chat.completions.create(**upstream_payload)
+                        if not request_kwargs.get("stream"):
+                            response = await collect_chat_completion_response(response)
                     except asyncio.CancelledError:
                         raise
                     except Exception as exc:
@@ -241,6 +251,33 @@ class AiService:
                             )
                             continue
                         raise
+
+                    if not payload.get("stream"):
+                        has_text = bool(self._extract_response_text(response).strip())
+                        has_tool_calls = bool(self._extract_tool_calls(response))
+                        if not has_text and not has_tool_calls:
+                            last_error = RuntimeError(
+                                "Model returned empty completion payload"
+                            )
+                            mark_model_failed(candidate_model)
+                            next_model = (
+                                candidate_models[index + 1]
+                                if index + 1 < len(candidate_models)
+                                else ""
+                            )
+                            if next_model:
+                                logger.warning(
+                                    "[AiService] Model returned empty completion via %s; details=%s; trying %s",
+                                    candidate_model,
+                                    self._response_debug_summary(response),
+                                    next_model,
+                                )
+                                continue
+                            logger.warning(
+                                "[AiService] Model returned empty completion via %s; details=%s",
+                                candidate_model,
+                                self._response_debug_summary(response),
+                            )
 
                     mark_model_success(candidate_model)
                     if candidate_model != current_model:
@@ -879,7 +916,10 @@ class AiService:
                             else:
                                 yield model_text
                         else:
-                            logger.warning("[AiService] Empty text response.")
+                            logger.warning(
+                                "[AiService] Empty text response. details=%s",
+                                self._response_debug_summary(response),
+                            )
                             await _emit(
                                 "final_response",
                                 {
@@ -895,14 +935,19 @@ class AiService:
                     logger.debug(
                         f"🤖 [AiService] Sending prompt to AI (Stream Mode):\n{current_history}"
                     )
-                    stream = await _create_chat_completion(
+                    stream_or_response = await _create_chat_completion(
                         {
                             "messages": current_history,
                             "stream": True,
                         }
                     )
-                    async for chunk in stream:
-                        chunk_text = self._extract_stream_text(chunk)
+                    if is_async_chat_completion_stream(stream_or_response):
+                        async for chunk in stream_or_response:
+                            chunk_text = self._extract_stream_text(chunk)
+                            if chunk_text:
+                                yield chunk_text
+                    else:
+                        chunk_text = self._extract_response_text(stream_or_response)
                         if chunk_text:
                             yield chunk_text
                     completed = True
@@ -1043,20 +1088,7 @@ class AiService:
 
     @staticmethod
     def _extract_response_text(response: Any) -> str:
-        choices = list(getattr(response, "choices", []) or [])
-        if not choices:
-            return ""
-        message = getattr(choices[0], "message", None)
-        content = getattr(message, "content", "")
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            chunks: list[str] = []
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    chunks.append(str(item.get("text") or ""))
-            return "".join(chunks).strip()
-        return ""
+        return extract_text_from_chat_completion(response)
 
     @staticmethod
     def _extract_stream_text(chunk: Any) -> str:
@@ -1064,20 +1096,33 @@ class AiService:
         if not choices:
             return ""
         delta = getattr(choices[0], "delta", None)
-        content = getattr(delta, "content", None)
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            chunks: list[str] = []
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    chunks.append(str(item.get("text") or ""))
-                    continue
-                text = getattr(item, "text", None)
-                if text:
-                    chunks.append(str(text))
-            return "".join(chunks)
-        return ""
+        return extract_text_from_chat_completion_stream_delta(delta)
+
+    @staticmethod
+    def _response_debug_summary(response: Any) -> dict[str, Any]:
+        choices = list(getattr(response, "choices", []) or [])
+        if not choices:
+            return {
+                "choices": 0,
+                "response_text_type": type(getattr(response, "text", None)).__name__,
+            }
+        choice = choices[0]
+        message = getattr(choice, "message", None)
+        content = getattr(message, "content", None)
+        refusal = getattr(message, "refusal", None)
+        tool_calls = getattr(message, "tool_calls", None) or []
+        return {
+            "choices": len(choices),
+            "finish_reason": str(getattr(choice, "finish_reason", "") or ""),
+            "content_type": type(content).__name__,
+            "content_items": len(content) if isinstance(content, list) else 0,
+            "first_content_item_type": (
+                type(content[0]).__name__ if isinstance(content, list) and content else ""
+            ),
+            "refusal_type": type(refusal).__name__,
+            "tool_calls": len(tool_calls),
+            "response_text_type": type(getattr(response, "text", None)).__name__,
+        }
 
     @staticmethod
     def _tool_result_ok(tool_result) -> bool:

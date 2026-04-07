@@ -1,12 +1,21 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
 import core.model_config as model_config_module
-from api.api.endpoints import admin as admin_endpoint
-from api.services import setup_service
+from api.auth.models import User, UserRole
+from api.schemas.admin_config import (
+    ModelsLatencyCheckRequest,
+    RuntimeChannelsPatch,
+    RuntimeDocGenerateRequest,
+    RuntimeTelegramChannelPatch,
+    RuntimeWebChannelPatch,
+    RuntimeWeixinChannelPatch,
+)
+from api.services import admin_config_service
 from core.audit_store import audit_store
 
 
@@ -116,7 +125,21 @@ def _models_payload() -> dict:
     }
 
 
-def test_runtime_snapshot_reloads_current_models_config_and_includes_editor_payload(
+def _build_admin_user() -> User:
+    return User(
+        id=7,
+        email="admin@example.com",
+        hashed_password="hashed",
+        is_active=True,
+        is_superuser=True,
+        is_verified=True,
+        username="admin",
+        display_name="Admin",
+        role=UserRole.ADMIN,
+    )
+
+
+def test_runtime_snapshot_uses_runtime_shape_and_models_snapshot_includes_editor_payload(
     tmp_path, monkeypatch
 ):
     config_path = (tmp_path / "models.json").resolve()
@@ -137,30 +160,55 @@ def test_runtime_snapshot_reloads_current_models_config_and_includes_editor_payl
         def get_provider_settings():
             return {"path": "memory.json"}
 
+    user_doc_path = (tmp_path / "USER.md").resolve()
+    user_doc_path.write_text("# User\n", encoding="utf-8")
+
     monkeypatch.setattr(
-        admin_endpoint.runtime_config_store,
+        admin_config_service.runtime_config_store,
         "read",
         lambda: {
-            "platforms": {"web": True},
+            "platforms": {"web": True, "weixin": False},
             "features": {"admin": True},
             "cors": {"allowed_origins": ["http://127.0.0.1:8764"]},
         },
     )
-    monkeypatch.setattr(admin_endpoint, "load_memory_config", lambda: _MemoryConfig())
-    monkeypatch.setattr(admin_endpoint, "get_memory_provider_name", lambda: "file")
-    monkeypatch.setattr(admin_endpoint, "_platform_env_summary", lambda: {"web": {"configured": True}})
-    monkeypatch.setattr(admin_endpoint, "_git_head", lambda: "deadbeef")
-    monkeypatch.setattr(admin_endpoint, "memory_config_path", lambda: (tmp_path / "memory.json").resolve())
-    monkeypatch.setattr(admin_endpoint, "env_path", lambda: (tmp_path / ".env").resolve())
+    monkeypatch.setattr(admin_config_service, "load_memory_config", lambda: _MemoryConfig())
+    monkeypatch.setattr(admin_config_service, "get_memory_provider_name", lambda: "file")
+    monkeypatch.setattr(
+        admin_config_service,
+        "read_managed_env",
+        lambda: {
+            "ADMIN_USER_IDS": "7",
+            "TELEGRAM_BOT_TOKEN": "test-token",
+            "WEIXIN_BASE_URL": "https://wx.example.invalid",
+            "WEIXIN_CDN_BASE_URL": "https://cdn.example.invalid",
+        },
+    )
+    monkeypatch.setattr(
+        admin_config_service.soul_store,
+        "load_core",
+        lambda: type(
+            "SoulPayload",
+            (),
+            {"path": str((tmp_path / "SOUL.MD").resolve()), "content": "# Soul\n"},
+        )(),
+    )
+    monkeypatch.setattr(admin_config_service, "_admin_user_md_path", lambda admin_id: user_doc_path)
 
-    snapshot = admin_endpoint._runtime_snapshot(include_models_config=True)
+    runtime_snapshot = admin_config_service.build_runtime_config_snapshot(_build_admin_user())
+    models_snapshot = admin_config_service.build_models_snapshot()
 
-    assert snapshot["config_files"]["models"] == str(config_path)
-    assert snapshot["model_roles"]["primary"] == "demo/text"
-    assert snapshot["model_catalog"]["all"] == ["demo/text", "demo/vision"]
-    assert snapshot["model_catalog"]["pools"]["vision"] == ["demo/vision"]
-    assert snapshot["models_config"]["path"] == str(config_path)
-    assert snapshot["models_config"]["payload"] == payload
+    assert "models_config" not in runtime_snapshot
+    assert runtime_snapshot["paths"]["models"] == str(config_path)
+    assert runtime_snapshot["model_status"]["primary"]["model_key"] == "demo/text"
+    assert runtime_snapshot["model_status"]["routing"]["model_key"] == "demo/text"
+    assert runtime_snapshot["channels"]["web"]["enabled"] is True
+    assert runtime_snapshot["channels"]["weixin"]["enabled"] is False
+    assert runtime_snapshot["status"]["channels_ready"] is True
+    assert models_snapshot["quick_roles"]["primary"]["model_key"] == "demo/text"
+    assert models_snapshot["quick_roles"]["routing"]["model_key"] == "demo/text"
+    assert models_snapshot["models_config"]["path"] == str(config_path)
+    assert models_snapshot["models_config"]["payload"] == payload
 
 
 def test_apply_models_document_patch_persists_full_document_and_preserves_extra_fields(
@@ -172,7 +220,7 @@ def test_apply_models_document_patch_persists_full_document_and_preserves_extra_
     _redirect_audit_paths(tmp_path)
 
     payload = _models_payload()
-    result = setup_service.apply_models_document_patch(payload, actor="tester")
+    result = admin_config_service.apply_models_document_patch(payload, actor="tester")
     saved = json.loads(config_path.read_text(encoding="utf-8"))
 
     assert result["path"] == str(config_path)
@@ -208,7 +256,7 @@ def test_apply_models_document_patch_rejects_unknown_model_reference(
     payload["model"]["primary"] = "demo/missing"
 
     with pytest.raises(HTTPException) as exc:
-        setup_service.apply_models_document_patch(payload, actor="tester")
+        admin_config_service.apply_models_document_patch(payload, actor="tester")
 
     assert exc.value.status_code == 400
     assert "未定义模型" in str(exc.value.detail)
@@ -227,7 +275,7 @@ def test_apply_models_document_patch_rejects_image_generation_model_without_imag
     payload["models"]["image_generation"] = {"demo/vision": {}}
 
     with pytest.raises(HTTPException) as exc:
-        setup_service.apply_models_document_patch(payload, actor="tester")
+        admin_config_service.apply_models_document_patch(payload, actor="tester")
 
     assert exc.value.status_code == 400
     assert "必须支持 image 输出" in str(exc.value.detail)
@@ -254,9 +302,158 @@ def test_apply_models_document_patch_accepts_image_generation_model_with_image_o
         }
     )
 
-    result = setup_service.apply_models_document_patch(payload, actor="tester")
+    result = admin_config_service.apply_models_document_patch(payload, actor="tester")
     saved = json.loads(config_path.read_text(encoding="utf-8"))
 
     assert result["path"] == str(config_path)
     assert saved["model"]["image_generation"] == "demo/image-gen"
     assert saved["providers"]["demo"]["models"][-1]["output"] == ["image"]
+
+
+def test_apply_runtime_channels_patch_writes_only_credentials_to_env(tmp_path, monkeypatch):
+    _redirect_audit_paths(tmp_path)
+    runtime_updates = []
+    env_updates = {}
+
+    monkeypatch.setattr(
+        admin_config_service.runtime_config_store,
+        "update_patch",
+        lambda patch, actor, reason: runtime_updates.append(
+            {"patch": patch, "actor": actor, "reason": reason}
+        ),
+    )
+    monkeypatch.setattr(
+        admin_config_service,
+        "write_managed_env",
+        lambda updates, actor, reason: env_updates.update(updates)
+        or {"path": str((tmp_path / ".env").resolve())},
+    )
+    monkeypatch.setattr(
+        admin_config_service,
+        "ensure_admin_user_id_present",
+        lambda *_args, **_kwargs: None,
+    )
+
+    result = admin_config_service.apply_runtime_channels_patch(
+        RuntimeChannelsPatch(
+            admin_user_ids=["1001"],
+            telegram=RuntimeTelegramChannelPatch(enabled=True, bot_token="telegram-token"),
+            weixin=RuntimeWeixinChannelPatch(
+                enabled=True,
+                base_url="https://wx.example.invalid",
+                cdn_base_url="https://cdn.example.invalid",
+            ),
+            web=RuntimeWebChannelPatch(enabled=False),
+        ),
+        actor="tester",
+        current_admin_user_id=42,
+    )
+
+    assert result["restart_required"] is True
+    assert runtime_updates == [
+        {
+            "patch": {"platforms": {"telegram": True, "weixin": True, "web": False}},
+            "actor": "tester",
+            "reason": "runtime_update_platforms",
+        }
+    ]
+    assert env_updates["ADMIN_USER_IDS"] == "1001,42"
+    assert env_updates["TELEGRAM_BOT_TOKEN"] == "telegram-token"
+    assert env_updates["WEIXIN_BASE_URL"] == "https://wx.example.invalid"
+    assert env_updates["WEIXIN_CDN_BASE_URL"] == "https://cdn.example.invalid"
+    assert "WEIXIN_ENABLE" not in env_updates
+    assert "WEB_CHANNEL_ENABLE" not in env_updates
+
+
+@pytest.mark.asyncio
+async def test_generate_runtime_doc_requires_model_key():
+    with pytest.raises(HTTPException) as exc:
+        await admin_config_service.generate_runtime_doc(
+            RuntimeDocGenerateRequest(kind="soul")
+        )
+
+    assert exc.value.status_code == 400
+    assert "model_key" in str(exc.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_run_models_latency_check_uses_short_prompt_and_returns_elapsed(
+    monkeypatch,
+):
+    init_kwargs = {}
+    request_kwargs = {}
+    perf_values = iter([10.0, 10.321])
+
+    class _FakeAsyncOpenAI:
+        def __init__(self, **kwargs):
+            init_kwargs.update(kwargs)
+
+    async def _fake_create_chat_completion(**kwargs):
+        request_kwargs.update(kwargs)
+        return SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="pong"),
+                )
+            ]
+        )
+
+    monkeypatch.setattr(admin_config_service, "AsyncOpenAI", _FakeAsyncOpenAI)
+    monkeypatch.setattr(
+        admin_config_service,
+        "create_chat_completion",
+        _fake_create_chat_completion,
+    )
+    monkeypatch.setattr(
+        admin_config_service.time,
+        "perf_counter",
+        lambda: next(perf_values),
+    )
+
+    result = await admin_config_service.run_models_latency_check(
+        ModelsLatencyCheckRequest(
+            role="routing",
+            provider_name="proxy",
+            base_url="https://example.invalid/v1",
+            api_key="test-key",
+            api_style="openai-completions",
+            model_id="qwen3.5-flash",
+        )
+    )
+
+    assert init_kwargs == {
+        "api_key": "test-key",
+        "base_url": "https://example.invalid/v1",
+    }
+    assert request_kwargs["session_id"] == "admin-model-latency:routing"
+    assert request_kwargs["model"] == "qwen3.5-flash"
+    assert request_kwargs["messages"] == [
+        {"role": "user", "content": "Reply with pong."}
+    ]
+    assert request_kwargs["temperature"] == 0
+    assert request_kwargs["max_tokens"] == 8
+    assert result == {
+        "role": "routing",
+        "model_key": "proxy/qwen3.5-flash",
+        "elapsed_ms": 321,
+        "response_preview": "pong",
+        "prompt": "Reply with pong.",
+    }
+
+
+@pytest.mark.asyncio
+async def test_run_models_latency_check_rejects_unsupported_api_style():
+    with pytest.raises(HTTPException) as exc:
+        await admin_config_service.run_models_latency_check(
+            ModelsLatencyCheckRequest(
+                role="routing",
+                provider_name="proxy",
+                base_url="https://example.invalid/v1",
+                api_key="test-key",
+                api_style="responses",
+                model_id="qwen3.5-flash",
+            )
+        )
+
+    assert exc.value.status_code == 400
+    assert "openai-completions" in str(exc.value.detail)

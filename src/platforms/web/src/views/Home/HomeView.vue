@@ -5,6 +5,7 @@ import {
     Cable,
     Gauge,
     HeartPulse,
+    KeyRound,
     Link2,
     MessageSquareText,
     Radio,
@@ -38,6 +39,13 @@ const workspaceCards = computed(() => [
         description: 'Manage external service connections and API hooks.',
         to: '/bindings',
         icon: Link2,
+        tone: 'cyan',
+    },
+    {
+        title: 'Keys',
+        description: 'Manage publishing credentials and multi-account delivery targets.',
+        to: '/credentials',
+        icon: KeyRound,
         tone: 'cyan',
     },
     {

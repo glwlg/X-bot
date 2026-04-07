@@ -10,7 +10,7 @@ from typing import Any
 
 from core.platform.models import UnifiedContext
 
-from ap_utils import augment_image_prompt, topic_slug
+from ap_utils import augment_image_prompt, derive_topic_requirements, topic_slug
 from ap_stages import StageResult
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,8 @@ async def illustrate_stage(
         return StageResult.fail("封面图生成失败，可重试")
 
     # -- save images to disk ---------------------------------------------------
-    slug = topic_slug(topic)
+    effective_topic = str(derive_topic_requirements(topic)["subject"] or topic).strip() or topic
+    slug = topic_slug(effective_topic)
     images_dir = Path(output_dir) / slug / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
 

@@ -711,7 +711,7 @@ function Print-NextSteps {
         Write-Host "Next:"
         Write-Host "1. Open http://$DisplayHost`:$ApiPort/login"
         Write-Host "2. Complete the first admin bootstrap"
-        Write-Host "3. Enter /admin/setup to finish models / SOUL / USER / channels initialization"
+        Write-Host "3. Enter /admin/runtime to finish runtime setup, then /admin/models to finish model setup"
         Write-Host
     }
     else {

@@ -3,6 +3,7 @@ from types import SimpleNamespace
 import pytest
 
 import core.skill_arg_planner as planner_module
+from core.llm_usage_store import set_current_llm_usage_session_id
 
 
 @pytest.mark.asyncio
@@ -59,8 +60,11 @@ async def test_skill_arg_planner_falls_back_to_model_when_required_missing(monke
         },
     )
 
+    captured_kwargs = {}
+
     class _FakeCompletions:
-        async def create(self, **_kwargs):
+        async def create(self, **kwargs):
+            captured_kwargs.update(kwargs)
             return SimpleNamespace(
                 choices=[
                     SimpleNamespace(
@@ -73,6 +77,7 @@ async def test_skill_arg_planner_falls_back_to_model_when_required_missing(monke
 
     fake_client = SimpleNamespace(chat=SimpleNamespace(completions=_FakeCompletions()))
     monkeypatch.setattr(planner_module, "openai_async_client", fake_client)
+    set_current_llm_usage_session_id("planner-session")
 
     plan = await planner_module.skill_arg_planner.plan(
         skill_name="demo_skill",
@@ -83,3 +88,6 @@ async def test_skill_arg_planner_falls_back_to_model_when_required_missing(monke
     assert plan["planned"] is True
     assert plan["source"] == "llm"
     assert plan["args"]["target"] == "alice"
+    assert captured_kwargs["stream"] is True
+    assert captured_kwargs["user"] == "planner-session"
+    assert captured_kwargs["extra_body"]["session_id"] == "planner-session"

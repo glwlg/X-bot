@@ -13,7 +13,9 @@ from services.web_summary_service import fetch_webpage_content
 from ap_utils import (
     MAX_DOC_SNIPPET_CHARS,
     decode_text_file,
+    derive_topic_requirements,
     extract_urls,
+    filter_lines_by_forbidden_terms,
     read_local_material_context,
     resolve_local_material_paths,
     topic_slug,
@@ -46,15 +48,25 @@ async def _collect_search_context(
     ctx: UnifiedContext,
     *,
     topic: str,
+    current_date: str = "",
 ) -> dict[str, Any]:
+    requirements = derive_topic_requirements(topic, current_date=current_date)
+    search_params: dict[str, Any] = {
+        "query": requirements["search_query"] or topic,
+        "num_results": DEFAULT_SEARCH_RESULT_COUNT,
+    }
+    if requirements["prefer_news"]:
+        search_params["categories"] = "news"
+        search_params["time_range"] = "day" if requirements["same_day_only"] else "week"
+
     try:
         search_res = await ctx.run_skill(
             "web_search",
-            {"query": topic, "num_results": DEFAULT_SEARCH_RESULT_COUNT},
+            search_params,
         )
     except Exception as exc:
         logger.warning("web_search skill call failed: %s", exc)
-        return {"summary_text": "", "report_text": "", "urls": []}
+        return {"summary_text": "", "report_text": "", "urls": [], "query": search_params["query"]}
 
     summary_text, report_text = _extract_search_summary(search_res)
     url_source = report_text or summary_text
@@ -65,12 +77,14 @@ async def _collect_search_context(
             "summary_text": summary_text,
             "report_text": report_text,
             "urls": unique_urls,
+            "query": search_params["query"],
         }
 
     return {
         "summary_text": summary_text,
         "report_text": report_text,
         "urls": [],
+        "query": search_params["query"],
     }
 
 
@@ -84,6 +98,7 @@ async def search_stage(
     topic: str,
     params: dict[str, Any],
     output_dir: str,
+    current_date: str = "",
 ) -> StageResult:
     """Run the search/research stage.
 
@@ -92,6 +107,8 @@ async def search_stage(
     the ``research.json`` structure.
     """
     material_paths = resolve_local_material_paths(params)
+    requirements = derive_topic_requirements(topic, current_date=current_date)
+    effective_topic = str(requirements["subject"] or topic).strip() or topic
 
     # -- local material path --------------------------------------------------
     if material_paths:
@@ -102,16 +119,21 @@ async def search_stage(
 
         research_data = {
             "topic": topic,
+            "subject": effective_topic,
             "search_results": [],
             "sources": [{"url": str(p), "content": ""} for p in material_paths],
             "context": local_context,
             "source_type": "local",
         }
-        out_path = _save_research(research_data, output_dir=output_dir, topic=topic)
+        out_path = _save_research(research_data, output_dir=output_dir, topic=effective_topic)
         return StageResult.success(research_data, output_path=out_path)
 
     # -- web search path -------------------------------------------------------
-    search_payload = await _collect_search_context(ctx, topic=topic)
+    search_payload = await _collect_search_context(
+        ctx,
+        topic=topic,
+        current_date=current_date,
+    )
 
     deep_read_urls = list(search_payload.get("urls") or [])
     search_context = ""
@@ -120,26 +142,39 @@ async def search_stage(
         for url in deep_read_urls:
             content = await fetch_webpage_content(url)
             if content:
+                if any(term and (term in url or term in content) for term in requirements["forbidden_terms"]):
+                    continue
                 docs.append(f"Src: {url}\n{content[:MAX_DOC_SNIPPET_CHARS]}")
         if docs:
             search_context = "\n---\n".join(docs)
 
     if not search_context:
-        search_context = str(search_payload.get("report_text") or "").strip()
+        search_context = filter_lines_by_forbidden_terms(
+            str(search_payload.get("report_text") or "").strip(),
+            requirements["forbidden_terms"],
+        )
     if not search_context:
-        search_context = str(search_payload.get("summary_text") or "").strip()
+        search_context = filter_lines_by_forbidden_terms(
+            str(search_payload.get("summary_text") or "").strip(),
+            requirements["forbidden_terms"],
+        )
 
     if not search_context:
+        if requirements["forbidden_terms"]:
+            return StageResult.fail("排除指定内容后未找到合适资料，请调整主题")
         return StageResult.fail("未找到相关资料，请调整主题")
 
     research_data = {
         "topic": topic,
+        "subject": effective_topic,
+        "current_date": current_date,
+        "search_query": str(search_payload.get("query") or requirements["search_query"] or "").strip(),
         "search_results": [],
         "sources": [{"url": u, "content": ""} for u in deep_read_urls],
         "context": search_context,
         "source_type": "web",
     }
-    out_path = _save_research(research_data, output_dir=output_dir, topic=topic)
+    out_path = _save_research(research_data, output_dir=output_dir, topic=effective_topic)
     return StageResult.success(research_data, output_path=out_path)
 
 

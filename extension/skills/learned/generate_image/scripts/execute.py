@@ -6,6 +6,7 @@ import base64
 import logging
 import sys
 import time
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -96,6 +97,48 @@ def _extract_image_bytes(response: Any) -> bytes:
         if payload:
             return base64.b64decode(payload)
 
+    if data:
+        for item in data:
+            image_url = getattr(item, "image_url", None)
+            if isinstance(image_url, dict):
+                url = str(image_url.get("url", "") or "")
+            else:
+                url = str(getattr(image_url, "url", "") or "")
+            if url.startswith("data:image/") and "," in url:
+                _, encoded = url.split(",", 1)
+                if encoded:
+                    return base64.b64decode(encoded)
+            if url.startswith("http://") or url.startswith("https://"):
+                with urllib.request.urlopen(url, timeout=60) as resp:
+                    return resp.read()
+
+    if hasattr(response, "__iter__") and not getattr(response, "choices", None):
+        try:
+            for event in response:
+                if not (isinstance(event, tuple) and len(event) >= 2):
+                    continue
+                if event[0] != "data":
+                    continue
+                items = event[1] or []
+                for item in items:
+                    payload = str(getattr(item, "b64_json", "") or "")
+                    if payload:
+                        return base64.b64decode(payload)
+                    image_url = getattr(item, "image_url", None)
+                    if isinstance(image_url, dict):
+                        url = str(image_url.get("url", "") or "")
+                    else:
+                        url = str(getattr(image_url, "url", "") or "")
+                    if url.startswith("data:image/") and "," in url:
+                        _, encoded = url.split(",", 1)
+                        if encoded:
+                            return base64.b64decode(encoded)
+                    if url.startswith("http://") or url.startswith("https://"):
+                        with urllib.request.urlopen(url, timeout=60) as resp:
+                            return resp.read()
+        except Exception:
+            pass
+
     choices = getattr(response, "choices", None) or []
     for choice in choices:
         message = getattr(choice, "message", None)
@@ -113,11 +156,13 @@ def _extract_image_bytes(response: Any) -> bytes:
                 url = str(image_url.get("url", "") or "")
             else:
                 url = str(getattr(image_url, "url", "") or "")
-            if not url.startswith("data:image/") or "," not in url:
-                continue
-            _, encoded = url.split(",", 1)
-            if encoded:
-                return base64.b64decode(encoded)
+            if url.startswith("data:image/") and "," in url:
+                _, encoded = url.split(",", 1)
+                if encoded:
+                    return base64.b64decode(encoded)
+            if url.startswith("http://") or url.startswith("https://"):
+                with urllib.request.urlopen(url, timeout=60) as resp:
+                    return resp.read()
     return b""
 
 
