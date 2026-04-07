@@ -56,6 +56,15 @@ def _models_payload() -> dict:
             },
             "vision": ["demo/vision"],
         },
+        "selection": {
+            "primary": {
+                "strategy": "round_robin",
+                "sticky": False,
+            },
+            "vision": {
+                "strategy": "least_usage",
+            },
+        },
         "providers": {
             "demo": {
                 "baseUrl": "https://example.invalid/v1",
@@ -79,6 +88,11 @@ def _models_payload() -> dict:
                             "cacheWrite": 4,
                             "discount": 0.5,
                         },
+                        "limits": {
+                            "dailyTokens": 120000,
+                            "dailyImages": 0,
+                            "burst": 2,
+                        },
                         "contextWindow": 123456,
                         "maxTokens": 4096,
                     },
@@ -88,6 +102,9 @@ def _models_payload() -> dict:
                         "reasoning": True,
                         "input": ["text", "image"],
                         "output": ["text"],
+                        "limits": {
+                            "dailyTokens": 80000,
+                        },
                         "labels": ["vision"],
                     },
                 ],
@@ -164,13 +181,19 @@ def test_apply_models_document_patch_persists_full_document_and_preserves_extra_
     assert saved["providers"]["demo"]["models"][0]["temperature"] == 0.2
     assert saved["providers"]["demo"]["models"][0]["output"] == ["text"]
     assert saved["providers"]["demo"]["models"][0]["cost"]["discount"] == 0.5
+    assert saved["providers"]["demo"]["models"][0]["limits"]["dailyTokens"] == 120000
+    assert saved["providers"]["demo"]["models"][0]["limits"]["burst"] == 2
     assert saved["providers"]["demo"]["models"][1]["labels"] == ["vision"]
     assert saved["providers"]["demo"]["models"][1]["output"] == ["text"]
+    assert saved["selection"]["primary"]["strategy"] == "round_robin"
+    assert saved["selection"]["primary"]["sticky"] is False
     assert saved["providers"]["demo"]["models"][1]["contextWindow"] == 1000000
     assert saved["providers"]["demo"]["models"][1]["maxTokens"] == 65536
     assert model_config_module.get_configured_model("primary") == "demo/text"
     assert model_config_module.get_configured_model("vision") == "demo/vision"
     assert model_config_module.load_models_config().get_model("demo/text").output == ["text"]
+    assert model_config_module.load_models_config().get_model("demo/text").limits.dailyTokens == 120000
+    assert model_config_module.load_models_config().get_selection_strategy("primary") == "round_robin"
 
 
 def test_apply_models_document_patch_rejects_unknown_model_reference(

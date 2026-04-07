@@ -21,10 +21,8 @@ MANAGED_ENV_DEFAULTS: dict[str, str] = {
     "DISCORD_BOT_TOKEN": "",
     "DINGTALK_CLIENT_ID": "",
     "DINGTALK_CLIENT_SECRET": "",
-    "WEIXIN_ENABLE": "false",
     "WEIXIN_BASE_URL": "https://ilinkai.weixin.qq.com/",
     "WEIXIN_CDN_BASE_URL": "https://novac2c.cdn.weixin.qq.com/c2c",
-    "WEB_CHANNEL_ENABLE": "true",
 }
 
 
@@ -90,8 +88,6 @@ def _apply_process_env(updates: dict[str, str]) -> None:
             config_module.DINGTALK_CLIENT_ID = updates["DINGTALK_CLIENT_ID"]
         if "DINGTALK_CLIENT_SECRET" in updates:
             config_module.DINGTALK_CLIENT_SECRET = updates["DINGTALK_CLIENT_SECRET"]
-        if "WEIXIN_ENABLE" in updates:
-            config_module.WEIXIN_ENABLE = env_bool(updates["WEIXIN_ENABLE"])
         if "WEIXIN_BASE_URL" in updates:
             config_module.WEIXIN_BASE_URL = updates["WEIXIN_BASE_URL"]
         if "WEIXIN_CDN_BASE_URL" in updates:

@@ -19,10 +19,9 @@ import httpx
 from core.config import get_client_for_model, is_user_allowed
 from core.media_hooks import IncomingMediaInterceptResult, ReplyContextHookResult
 from core.model_config import (
-    get_current_model,
     get_model_candidates_for_input,
-    get_vision_model,
     get_voice_model,
+    select_model_for_role,
 )
 from core.platform.exceptions import MediaProcessingError
 from core.platform.models import MessageType, UnifiedContext, UnifiedMessage
@@ -1118,7 +1117,7 @@ async def enrich_frames(frames: list[FrameSample]) -> tuple[list[FrameSample], l
     if not frames:
         return frames, diagnostics
 
-    vision_model = get_vision_model() or get_current_model()
+    vision_model = select_model_for_role("vision") or select_model_for_role("primary")
     client = get_client_for_model(vision_model, is_async=True)
     if client is None:
         diagnostics.append("vision client unavailable, skipped frame description")

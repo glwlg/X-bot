@@ -9,45 +9,51 @@ from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.models import User, UserRole
-from api.schemas.setup import (
-    SetupAdminProfilePatch,
-    SetupChannelsPatch,
-    SetupDocsPatch,
-    SetupGenerateRequest,
-    SetupModelsPatch,
+from api.schemas.admin_config import (
+    AdminProfilePatch,
+    RuntimeChannelsPatch,
+    RuntimeDocGenerateRequest,
+    RuntimeDocsPatch,
 )
 from api.services.env_config import (
     ENV_PATH,
-    env_bool,
     env_csv_list,
     ensure_admin_user_id_present,
     read_managed_env,
     write_managed_env,
 )
 from api.services.user_access_sync import sync_user_core_access
+from core.app_paths import memory_config_path
 from core.audit_store import audit_store
 from core.channel_user_store import DEFAULT_USER_MD, channel_user_store
 from core.config import get_client_for_model
+from core.memory_config import (
+    get_memory_provider_name,
+    load_memory_config,
+    reset_memory_config_cache,
+)
 from core.model_config import (
     _parse_models_config_data,
     get_configured_model,
     get_model_id_for_api,
     load_models_config,
-    normalize_model_role,
+    normalize_selection_strategy,
     reload_models_config,
     resolve_models_config_path,
 )
 from core.runtime_config_store import runtime_config_store
-from core.soul_store import DEFAULT_CORE_SOUL, soul_store
+from core.soul_store import soul_store
 
 
 SAFE_NAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+MANAGED_MODEL_ROLES = ("primary", "routing", "vision", "image_generation", "voice")
 DEFAULT_ROLE_INPUTS: dict[str, list[str]] = {
     "primary": ["text", "image", "voice"],
     "routing": ["text"],
 }
 ALLOWED_MODEL_INPUTS = {"text", "image", "voice"}
 ALLOWED_MODEL_OUTPUTS = {"text", "image", "voice", "video"}
+ALLOWED_MODEL_SELECTION_STRATEGIES = {"priority", "round_robin", "least_usage"}
 ROLE_REQUIRED_INPUTS: dict[str, list[str]] = {
     "primary": ["text"],
     "routing": ["text"],
@@ -61,6 +67,30 @@ ROLE_REQUIRED_OUTPUTS: dict[str, list[str]] = {
 
 def _safe_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _normalize_managed_role_key(value: Any, *, field_name: str) -> str:
+    role = _safe_text(value).lower()
+    if role not in MANAGED_MODEL_ROLES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} 只支持 {', '.join(MANAGED_MODEL_ROLES)}",
+        )
+    return role
+
+
+def _redact_settings(payload: dict[str, Any]) -> dict[str, Any]:
+    redacted: dict[str, Any] = {}
+    for key, value in payload.items():
+        normalized_key = str(key or "").strip().lower()
+        if any(token in normalized_key for token in ("key", "token", "secret", "password")):
+            redacted[key] = bool(str(value or "").strip())
+            continue
+        if isinstance(value, dict):
+            redacted[key] = _redact_settings(value)
+            continue
+        redacted[key] = value
+    return redacted
 
 
 def _ensure_markdown_file(path: Path, default_content: str) -> None:
@@ -162,6 +192,7 @@ def _default_models_payload() -> dict[str, Any]:
         "models": {},
         "mode": "merge",
         "providers": {},
+        "selection": {},
     }
 
 
@@ -185,27 +216,32 @@ def _normalize_models_document(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = {
         key: value
         for key, value in payload.items()
-        if str(key).strip() and key not in {"mode", "model", "models", "providers"}
+        if str(key).strip()
+        and key not in {"mode", "model", "models", "providers", "selection"}
     }
     normalized["mode"] = _safe_text(payload.get("mode")) or "merge"
 
     raw_model_bindings = payload.get("model") or {}
     if not isinstance(raw_model_bindings, dict):
         raise HTTPException(status_code=400, detail="models_config.model 必须是对象")
-    normalized["model"] = {
-        safe_role: _safe_text(model_key)
-        for raw_role, model_key in raw_model_bindings.items()
-        if (safe_role := _safe_text(raw_role))
-    }
+    normalized_model_bindings: dict[str, str] = {}
+    for raw_role, model_key in raw_model_bindings.items():
+        role = _normalize_managed_role_key(
+            raw_role,
+            field_name=f"models_config.model.{_safe_text(raw_role) or '(empty)'}",
+        )
+        normalized_model_bindings[role] = _safe_text(model_key)
+    normalized["model"] = normalized_model_bindings
 
     raw_pools = payload.get("models") or {}
     if not isinstance(raw_pools, dict):
         raise HTTPException(status_code=400, detail="models_config.models 必须是对象")
     normalized_pools: dict[str, Any] = {}
     for raw_pool_name, pool_value in raw_pools.items():
-        pool_name = _safe_text(raw_pool_name)
-        if not pool_name:
-            continue
+        pool_name = _normalize_managed_role_key(
+            raw_pool_name,
+            field_name=f"models_config.models.{_safe_text(raw_pool_name) or '(empty)'}",
+        )
         if isinstance(pool_value, list):
             normalized_pools[pool_name] = [
                 model_key
@@ -225,6 +261,41 @@ def _normalize_models_document(payload: dict[str, Any]) -> dict[str, Any]:
             detail=f"models_config.models.{pool_name} 必须是对象或数组",
         )
     normalized["models"] = normalized_pools
+
+    raw_selection = payload.get("selection") or {}
+    if not isinstance(raw_selection, dict):
+        raise HTTPException(status_code=400, detail="models_config.selection 必须是对象")
+    normalized_selection: dict[str, Any] = {}
+    for raw_pool_name, raw_selection_value in raw_selection.items():
+        safe_pool_name = _normalize_managed_role_key(
+            raw_pool_name,
+            field_name=f"models_config.selection.{_safe_text(raw_pool_name) or '(empty)'}",
+        )
+        if isinstance(raw_selection_value, str):
+            selection_payload = {"strategy": raw_selection_value}
+        elif isinstance(raw_selection_value, dict):
+            selection_payload = dict(raw_selection_value)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"models_config.selection.{safe_pool_name} 必须是对象或字符串",
+            )
+        normalized_strategy = normalize_selection_strategy(
+            selection_payload.get("strategy")
+        )
+        if normalized_strategy not in ALLOWED_MODEL_SELECTION_STRATEGIES:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"models_config.selection.{safe_pool_name}.strategy 必须是 "
+                    "priority / round_robin / least_usage"
+                ),
+            )
+        normalized_selection[safe_pool_name] = {
+            **selection_payload,
+            "strategy": normalized_strategy,
+        }
+    normalized["selection"] = normalized_selection
 
     raw_providers = payload.get("providers") or {}
     if not isinstance(raw_providers, dict):
@@ -282,6 +353,25 @@ def _normalize_models_document(payload: dict[str, Any]) -> dict[str, Any]:
                     ),
                 }
             )
+            raw_limits = item.get("limits")
+            limits_payload = dict(raw_limits) if isinstance(raw_limits, dict) else {}
+            normalized_limits = dict(limits_payload)
+            normalized_limits.update(
+                {
+                    "dailyTokens": _coerce_int(
+                        limits_payload.get("dailyTokens"),
+                        field_name=f"providers.{provider_name}.models[{index}].limits.dailyTokens",
+                        default=0,
+                        minimum=0,
+                    ),
+                    "dailyImages": _coerce_int(
+                        limits_payload.get("dailyImages"),
+                        field_name=f"providers.{provider_name}.models[{index}].limits.dailyImages",
+                        default=0,
+                        minimum=0,
+                    ),
+                }
+            )
             normalized_model = dict(item)
             normalized_model.update(
                 {
@@ -291,6 +381,7 @@ def _normalize_models_document(payload: dict[str, Any]) -> dict[str, Any]:
                     "input": _normalize_generic_input_types(item.get("input")),
                     "output": _normalize_generic_output_types(item.get("output")),
                     "cost": normalized_cost,
+                    "limits": normalized_limits,
                     "contextWindow": _coerce_int(
                         item.get("contextWindow"),
                         field_name=f"providers.{provider_name}.models[{index}].contextWindow",
@@ -336,10 +427,9 @@ def _normalize_models_document(payload: dict[str, Any]) -> dict[str, Any]:
                 status_code=400,
                 detail=f"models_config.model.{raw_role} 引用了未定义模型: {model_key}",
             )
-        normalized_role = normalize_model_role(raw_role)
-        if normalized_role and model_key:
+        if model_key:
             _validate_role_model_capability(
-                normalized_role,
+                raw_role,
                 model_key,
                 parsed,
                 field_name=f"models_config.model.{raw_role}",
@@ -352,10 +442,9 @@ def _normalize_models_document(payload: dict[str, Any]) -> dict[str, Any]:
                     status_code=400,
                     detail=f"models_config.models.{pool_name} 引用了未定义模型: {model_key}",
                 )
-            normalized_role = normalize_model_role(pool_name)
-            if normalized_role and model_key:
+            if model_key:
                 _validate_role_model_capability(
-                    normalized_role,
+                    pool_name,
                     model_key,
                     parsed,
                     field_name=f"models_config.models.{pool_name}",
@@ -421,12 +510,22 @@ def apply_models_document_patch(
     return build_models_config_editor_snapshot()
 
 
-def _role_snapshot(role: str) -> dict[str, Any]:
-    role_key = _safe_text(role).lower()
+def _model_role_ready(payload: dict[str, Any]) -> bool:
+    return bool(
+        _safe_text(payload.get("provider_name"))
+        and _safe_text(payload.get("model_id"))
+        and _safe_text(payload.get("base_url"))
+        and _safe_text(payload.get("api_key"))
+    )
+
+
+def _model_role_editor_snapshot(role: str) -> dict[str, Any]:
+    role_key = _normalize_managed_role_key(role, field_name="role")
     models = load_models_config()
     model_key = get_configured_model(role_key)
     default_payload = {
         "configured": False,
+        "ready": False,
         "role": role_key,
         "model_key": model_key,
         "provider_name": "",
@@ -445,14 +544,6 @@ def _role_snapshot(role: str) -> dict[str, Any]:
     provider = models.providers.get(provider_name)
     model = models.get_model(model_key)
     if provider is None or model is None:
-        default_payload.update(
-            {
-                "configured": True,
-                "provider_name": provider_name,
-                "model_id": model_id,
-                "display_name": model_id,
-            }
-        )
         return default_payload
 
     default_payload.update(
@@ -468,10 +559,53 @@ def _role_snapshot(role: str) -> dict[str, Any]:
             "input_types": [str(item) for item in model.input],
         }
     )
+    default_payload["ready"] = _model_role_ready(default_payload)
     return default_payload
 
 
-def build_setup_snapshot(admin_user: User) -> dict[str, Any]:
+def _model_role_status(role: str) -> dict[str, Any]:
+    payload = _model_role_editor_snapshot(role)
+    return {
+        "role": payload["role"],
+        "configured": bool(payload["configured"]),
+        "ready": bool(payload["ready"]),
+        "model_key": payload["model_key"],
+        "provider_name": payload["provider_name"],
+        "model_id": payload["model_id"],
+        "display_name": payload["display_name"],
+    }
+
+
+def build_models_snapshot() -> dict[str, Any]:
+    reload_models_config()
+    primary = _model_role_editor_snapshot("primary")
+    routing = _model_role_editor_snapshot("routing")
+    return {
+        "quick_roles": {
+            "primary": primary,
+            "routing": routing,
+        },
+        "status": {
+            "primary_ready": bool(primary["ready"]),
+            "routing_ready": bool(routing["ready"]),
+        },
+        "models_config": build_models_config_editor_snapshot(),
+    }
+
+
+def _channels_ready(payload: dict[str, Any]) -> bool:
+    channel_keys = ("telegram", "discord", "dingtalk", "weixin", "web")
+    enabled_channels = [
+        payload[key]
+        for key in channel_keys
+        if isinstance(payload.get(key), dict) and bool(payload[key].get("enabled"))
+    ]
+    if not enabled_channels:
+        return False
+    return all(bool(channel.get("configured")) for channel in enabled_channels)
+
+
+def build_runtime_config_snapshot(admin_user: User) -> dict[str, Any]:
     reload_models_config()
     env_values = read_managed_env()
     admin_user_ids = env_csv_list(env_values.get("ADMIN_USER_IDS", ""))
@@ -479,17 +613,48 @@ def build_setup_snapshot(admin_user: User) -> dict[str, Any]:
     user_doc_path = _admin_user_md_path(admin_user.id)
     user_doc_content = _read_text(user_doc_path)
     runtime_payload = runtime_config_store.read()
-    primary = _role_snapshot("primary")
-    routing = _role_snapshot("routing")
+    features = dict(runtime_payload.get("features") or {})
+    cors_allowed_origins = list((runtime_payload.get("cors") or {}).get("allowed_origins") or [])
+    memory = load_memory_config()
+    primary = _model_role_status("primary")
+    routing = _model_role_status("routing")
     current_admin_id = str(admin_user.id)
-
-    def _role_ready(payload: dict[str, Any]) -> bool:
-        return bool(
-            _safe_text(payload.get("provider_name"))
-            and _safe_text(payload.get("model_id"))
-            and _safe_text(payload.get("base_url"))
-            and _safe_text(payload.get("api_key"))
-        )
+    platforms = dict(runtime_payload.get("platforms") or {})
+    channels = {
+        "admin_user_ids": admin_user_ids,
+        "telegram": {
+            "enabled": bool(platforms.get("telegram")),
+            "configured": bool(_safe_text(env_values.get("TELEGRAM_BOT_TOKEN"))),
+            "bot_token": env_values.get("TELEGRAM_BOT_TOKEN", ""),
+        },
+        "discord": {
+            "enabled": bool(platforms.get("discord")),
+            "configured": bool(_safe_text(env_values.get("DISCORD_BOT_TOKEN"))),
+            "bot_token": env_values.get("DISCORD_BOT_TOKEN", ""),
+        },
+        "dingtalk": {
+            "enabled": bool(platforms.get("dingtalk")),
+            "configured": bool(
+                _safe_text(env_values.get("DINGTALK_CLIENT_ID"))
+                and _safe_text(env_values.get("DINGTALK_CLIENT_SECRET"))
+            ),
+            "client_id": env_values.get("DINGTALK_CLIENT_ID", ""),
+            "client_secret": env_values.get("DINGTALK_CLIENT_SECRET", ""),
+        },
+        "weixin": {
+            "enabled": bool(platforms.get("weixin")),
+            "configured": bool(
+                _safe_text(env_values.get("WEIXIN_BASE_URL"))
+                and _safe_text(env_values.get("WEIXIN_CDN_BASE_URL"))
+            ),
+            "base_url": env_values.get("WEIXIN_BASE_URL", ""),
+            "cdn_base_url": env_values.get("WEIXIN_CDN_BASE_URL", ""),
+        },
+        "web": {
+            "enabled": bool(platforms.get("web")),
+            "configured": True,
+        },
+    }
 
     return {
         "admin_user": {
@@ -501,7 +666,7 @@ def build_setup_snapshot(admin_user: User) -> dict[str, Any]:
             "is_superuser": admin_user.is_superuser,
             "current_admin_user_id": current_admin_id,
         },
-        "models": {
+        "model_status": {
             "primary": primary,
             "routing": routing,
         },
@@ -511,36 +676,34 @@ def build_setup_snapshot(admin_user: User) -> dict[str, Any]:
             "user_path": str(user_doc_path),
             "user_content": user_doc_content,
         },
-        "channels": {
-            "platforms": dict((runtime_payload.get("platforms") or {})),
-            "admin_user_ids": admin_user_ids,
-            "telegram_bot_token": env_values.get("TELEGRAM_BOT_TOKEN", ""),
-            "discord_bot_token": env_values.get("DISCORD_BOT_TOKEN", ""),
-            "dingtalk_client_id": env_values.get("DINGTALK_CLIENT_ID", ""),
-            "dingtalk_client_secret": env_values.get("DINGTALK_CLIENT_SECRET", ""),
-            "weixin_enable": env_bool(env_values.get("WEIXIN_ENABLE"), default=False),
-            "weixin_base_url": env_values.get("WEIXIN_BASE_URL", ""),
-            "weixin_cdn_base_url": env_values.get("WEIXIN_CDN_BASE_URL", ""),
-            "web_channel_enable": env_bool(env_values.get("WEB_CHANNEL_ENABLE"), default=True),
+        "channels": channels,
+        "features": features,
+        "cors_allowed_origins": cors_allowed_origins,
+        "memory": {
+            "provider": get_memory_provider_name(),
+            "providers": sorted(memory.providers.keys()),
+            "active_settings": _redact_settings(memory.get_provider_settings()),
         },
         "status": {
             "admin_bound": current_admin_id in admin_user_ids,
-            "primary_ready": _role_ready(primary),
-            "routing_ready": _role_ready(routing),
+            "primary_ready": bool(primary["ready"]),
+            "routing_ready": bool(routing["ready"]),
             "soul_ready": bool(_safe_text(soul_payload.content)),
             "user_ready": bool(_safe_text(user_doc_content)),
+            "channels_ready": _channels_ready(channels),
         },
         "paths": {
             "env": str(ENV_PATH),
             "models": str(resolve_models_config_path()),
+            "memory": str(memory_config_path()),
         },
-        "restart_notice": "渠道启停、ADMIN_USER_IDS 和渠道凭证写入 .env 后，需要重启 ikaros core；建议同时重启 API 以避免旧进程继续持有启动时环境变量。",
+        "restart_notice": "ADMIN_USER_IDS 和渠道凭证写入 .env 后，需要重启 ikaros core；建议同时重启 API 以避免旧进程继续持有启动时环境变量。",
     }
 
 
 async def apply_admin_profile_patch(
     admin_user: User,
-    patch: SetupAdminProfilePatch,
+    patch: AdminProfilePatch,
     *,
     session: AsyncSession,
     password_hasher: Any,
@@ -581,117 +744,8 @@ async def apply_admin_profile_patch(
     return changes
 
 
-def _upsert_role_config(data: dict[str, Any], *, role: str, payload: dict[str, Any]) -> str:
-    provider_name = _normalize_provider_name(payload.get("provider_name"))
-    model_id = _normalize_model_id(payload.get("model_id"))
-    model_key = f"{provider_name}/{model_id}"
-
-    providers = data.setdefault("providers", {})
-    if not isinstance(providers, dict):
-        raise HTTPException(status_code=500, detail="models.json 中 providers 必须是对象")
-
-    provider_entry = providers.get(provider_name)
-    if not isinstance(provider_entry, dict):
-        provider_entry = {}
-    provider_models = provider_entry.get("models")
-    if not isinstance(provider_models, list):
-        provider_models = []
-
-    existing_model = None
-    existing_index = -1
-    for index, item in enumerate(provider_models):
-        if isinstance(item, dict) and _safe_text(item.get("id")) == model_id:
-            existing_model = dict(item)
-            existing_index = index
-            break
-
-    updated_model = dict(existing_model or {})
-    updated_model.update(
-        {
-            "id": model_id,
-            "name": _safe_text(payload.get("display_name")) or model_id,
-            "reasoning": bool(payload.get("reasoning")),
-            "input": _normalize_input_types(role, payload.get("input_types")),
-            "cost": dict(existing_model.get("cost") or {}) if isinstance(existing_model, dict) else {
-                "input": 0,
-                "output": 0,
-                "cacheRead": 0,
-                "cacheWrite": 0,
-            },
-            "contextWindow": int((existing_model or {}).get("contextWindow") or 1000000),
-            "maxTokens": int((existing_model or {}).get("maxTokens") or 65536),
-        }
-    )
-    if existing_index >= 0:
-        provider_models[existing_index] = updated_model
-    else:
-        provider_models.append(updated_model)
-
-    provider_entry["baseUrl"] = _safe_text(payload.get("base_url"))
-    provider_entry["apiKey"] = _safe_text(payload.get("api_key"))
-    provider_entry["api"] = _safe_text(payload.get("api_style")) or "openai-completions"
-    provider_entry["models"] = provider_models
-    providers[provider_name] = provider_entry
-
-    pools = data.setdefault("models", {})
-    if not isinstance(pools, dict):
-        raise HTTPException(status_code=500, detail="models.json 中 models 必须是对象")
-    role_pool = pools.get(role)
-    if isinstance(role_pool, list):
-        role_pool = {str(item): {} for item in role_pool if _safe_text(item)}
-    if not isinstance(role_pool, dict):
-        role_pool = {}
-    role_pool.setdefault(model_key, {})
-    pools[role] = role_pool
-
-    role_bindings = data.setdefault("model", {})
-    if not isinstance(role_bindings, dict):
-        raise HTTPException(status_code=500, detail="models.json 中 model 必须是对象")
-    role_bindings[role] = model_key
-    data.setdefault("mode", "merge")
-    return model_key
-
-
-def apply_models_patch(
-    patch: SetupModelsPatch,
-    *,
-    actor: str,
-) -> dict[str, Any]:
-    config_path, data = _load_models_payload()
-    updated_roles: dict[str, str] = {}
-    for role in ("primary", "routing"):
-        role_payload = getattr(patch, role)
-        if role_payload is None:
-            continue
-        updated_roles[role] = _upsert_role_config(
-            data,
-            role=role,
-            payload=role_payload.model_dump(),
-        )
-
-    if not updated_roles:
-        return {
-            "config_path": str(config_path),
-            "updated_roles": {},
-        }
-
-    rendered = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
-    audit_store.write_versioned(
-        config_path,
-        rendered,
-        actor=actor,
-        reason="setup_models",
-        category="models_config",
-    )
-    reload_models_config(str(config_path))
-    return {
-        "config_path": str(config_path),
-        "updated_roles": updated_roles,
-    }
-
-
-def apply_docs_patch(
-    patch: SetupDocsPatch,
+def apply_runtime_docs_patch(
+    patch: RuntimeDocsPatch,
     *,
     admin_user: User,
     actor: str,
@@ -719,22 +773,49 @@ def apply_docs_patch(
     return results
 
 
-def apply_channels_patch(
-    patch: SetupChannelsPatch,
+def apply_runtime_channels_patch(
+    patch: RuntimeChannelsPatch,
     *,
     actor: str,
     current_admin_user_id: int | str,
 ) -> dict[str, Any]:
     restart_required = False
     env_updates: dict[str, Any] = {}
+    platform_updates: dict[str, bool] = {}
 
-    if patch.platforms is not None:
+    if patch.telegram is not None:
+        if patch.telegram.enabled is not None:
+            platform_updates["telegram"] = bool(patch.telegram.enabled)
+        if patch.telegram.bot_token is not None:
+            env_updates["TELEGRAM_BOT_TOKEN"] = patch.telegram.bot_token
+    if patch.discord is not None:
+        if patch.discord.enabled is not None:
+            platform_updates["discord"] = bool(patch.discord.enabled)
+        if patch.discord.bot_token is not None:
+            env_updates["DISCORD_BOT_TOKEN"] = patch.discord.bot_token
+    if patch.dingtalk is not None:
+        if patch.dingtalk.enabled is not None:
+            platform_updates["dingtalk"] = bool(patch.dingtalk.enabled)
+        if patch.dingtalk.client_id is not None:
+            env_updates["DINGTALK_CLIENT_ID"] = patch.dingtalk.client_id
+        if patch.dingtalk.client_secret is not None:
+            env_updates["DINGTALK_CLIENT_SECRET"] = patch.dingtalk.client_secret
+    if patch.weixin is not None:
+        if patch.weixin.enabled is not None:
+            platform_updates["weixin"] = bool(patch.weixin.enabled)
+        if patch.weixin.base_url is not None:
+            env_updates["WEIXIN_BASE_URL"] = patch.weixin.base_url
+        if patch.weixin.cdn_base_url is not None:
+            env_updates["WEIXIN_CDN_BASE_URL"] = patch.weixin.cdn_base_url
+    if patch.web is not None and patch.web.enabled is not None:
+        platform_updates["web"] = bool(patch.web.enabled)
+
+    if platform_updates:
         runtime_config_store.update_patch(
-            {"platforms": dict(patch.platforms)},
+            {"platforms": platform_updates},
             actor=actor,
-            reason="setup_update_platforms",
+            reason="runtime_update_platforms",
         )
-        restart_required = True
 
     if patch.admin_user_ids is not None:
         admin_ids = [_safe_text(item) for item in patch.admin_user_ids if _safe_text(item)]
@@ -749,35 +830,75 @@ def apply_channels_patch(
             reason="setup_preserve_admin_user",
         )
 
-    if patch.telegram_bot_token is not None:
-        env_updates["TELEGRAM_BOT_TOKEN"] = patch.telegram_bot_token
-    if patch.discord_bot_token is not None:
-        env_updates["DISCORD_BOT_TOKEN"] = patch.discord_bot_token
-    if patch.dingtalk_client_id is not None:
-        env_updates["DINGTALK_CLIENT_ID"] = patch.dingtalk_client_id
-    if patch.dingtalk_client_secret is not None:
-        env_updates["DINGTALK_CLIENT_SECRET"] = patch.dingtalk_client_secret
-    if patch.weixin_enable is not None:
-        env_updates["WEIXIN_ENABLE"] = patch.weixin_enable
-    if patch.weixin_base_url is not None:
-        env_updates["WEIXIN_BASE_URL"] = patch.weixin_base_url
-    if patch.weixin_cdn_base_url is not None:
-        env_updates["WEIXIN_CDN_BASE_URL"] = patch.weixin_cdn_base_url
-    if patch.web_channel_enable is not None:
-        env_updates["WEB_CHANNEL_ENABLE"] = patch.web_channel_enable
-
     env_result = None
     if env_updates:
         env_result = write_managed_env(
             env_updates,
             actor=actor,
-            reason="setup_update_channels",
+            reason="runtime_update_channels",
         )
         restart_required = True
 
     return {
         "restart_required": restart_required,
         "env": env_result,
+    }
+
+
+def apply_runtime_settings_patch(
+    *,
+    features: dict[str, bool] | None,
+    cors_allowed_origins: list[str] | None,
+    actor: str,
+) -> list[str]:
+    changes: list[str] = []
+    if features is not None:
+        runtime_config_store.update_patch(
+            {"features": dict(features)},
+            actor=actor,
+            reason="runtime_update_features",
+        )
+        changes.append("features")
+    if cors_allowed_origins is not None:
+        runtime_config_store.update_patch(
+            {"cors": {"allowed_origins": list(cors_allowed_origins)}},
+            actor=actor,
+            reason="runtime_update_cors",
+        )
+        changes.append("cors")
+    return changes
+
+
+def update_memory_provider(provider: str, *, actor: str) -> dict[str, Any]:
+    normalized_provider = _safe_text(provider).lower()
+    if not normalized_provider:
+        raise HTTPException(status_code=400, detail="memory_provider 不能为空")
+    config_path = memory_config_path()
+    if config_path.exists():
+        try:
+            data = json.loads(config_path.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"memory 配置损坏: {exc}") from exc
+    else:
+        data = {"provider": "file", "providers": {"file": {}, "mem0": {}}}
+
+    providers = data.get("providers")
+    if not isinstance(providers, dict):
+        providers = {}
+    providers.setdefault(normalized_provider, {})
+    data["providers"] = providers
+    data["provider"] = normalized_provider
+    audit_store.write_versioned(
+        config_path,
+        json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+        actor=actor,
+        reason="update_memory_provider",
+        category="memory_config",
+    )
+    reset_memory_config_cache()
+    return {
+        "provider": normalized_provider,
+        "config_path": str(config_path),
     }
 
 
@@ -810,13 +931,13 @@ def _strip_markdown_fence(content: str) -> str:
     return text
 
 
-async def generate_setup_doc(payload: SetupGenerateRequest) -> dict[str, Any]:
-    model_key = _safe_text(payload.model_key) or get_configured_model("primary")
+async def generate_runtime_doc(payload: RuntimeDocGenerateRequest) -> dict[str, Any]:
+    model_key = _safe_text(payload.model_key)
     if not model_key:
-        raise HTTPException(status_code=400, detail="请先配置 Primary 模型，再使用 AI 生成文档")
+        raise HTTPException(status_code=400, detail="model_key 不能为空")
     client = get_client_for_model(model_key, is_async=True)
     if client is None:
-        raise HTTPException(status_code=400, detail="当前 Primary 模型没有可用客户端，请检查 base_url / api_key")
+        raise HTTPException(status_code=400, detail="当前模型没有可用客户端，请检查 base_url / api_key")
 
     if payload.kind == "soul":
         system_prompt = (

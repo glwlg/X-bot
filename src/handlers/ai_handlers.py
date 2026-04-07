@@ -26,7 +26,7 @@ from core.file_artifacts import (
     merge_file_rows,
     normalize_file_rows,
 )
-from core.model_config import get_current_model, get_vision_model
+from core.model_config import select_model_for_role
 from core.platform.exceptions import MediaProcessingError, MessageSendError
 from core.runtime_callbacks import pop_runtime_callback, set_runtime_callback
 from services.openai_adapter import generate_text
@@ -1634,7 +1634,7 @@ async def handle_sticker_message(ctx: UnifiedContext) -> None:
             }
         ]
 
-        model_to_use = get_vision_model() or get_current_model()
+        model_to_use = select_model_for_role("vision") or select_model_for_role("primary")
         client_to_use = get_client_for_model(model_to_use, is_async=True)
         if client_to_use is None:
             raise RuntimeError("OpenAI async client is not initialized")

@@ -82,9 +82,9 @@ const adminCards = computed(() => {
 
     if (authStore.isAdmin) {
         cards.push({
-            title: 'Setup',
-            description: 'Initialize models, channels and runtime orchestration.',
-            to: '/admin/setup',
+            title: 'Runtime',
+            description: 'Configure admin identity, channels, docs and runtime controls.',
+            to: '/admin/runtime',
             icon: Zap,
             tone: 'pink',
         })
@@ -109,9 +109,9 @@ const adminCards = computed(() => {
 
     if (authStore.isAdmin) {
         cards.push({
-            title: 'Runtime',
-            description: 'Tune providers, models and system execution parameters.',
-            to: '/admin/runtime',
+            title: 'Models',
+            description: 'Manage providers, bindings, model pools and execution selection.',
+            to: '/admin/models',
             icon: Settings2,
             tone: 'pink',
         })
@@ -125,9 +125,9 @@ const spotlightActions = computed(() => {
 
     if (authStore.isAdmin) {
         actions.push({
-            title: '初始化',
-            label: '初始化',
-            to: '/admin/setup',
+            title: '运行配置',
+            label: '运行配置',
+            to: '/admin/runtime',
             icon: Zap,
             tone: 'pink',
         })
@@ -151,9 +151,9 @@ const spotlightActions = computed(() => {
 
     if (authStore.isAdmin) {
         actions.push({
-            title: '配置',
-            label: '配置',
-            to: '/admin/runtime',
+            title: '模型配置',
+            label: '模型配置',
+            to: '/admin/models',
             icon: Settings2,
             tone: 'pink',
         })

@@ -13,7 +13,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from core.config import get_client_for_model
-from core.model_config import get_current_model
+from core.model_config import select_model_for_role
 from services.openai_adapter import generate_text_sync
 
 logger = logging.getLogger(__name__)
@@ -258,7 +258,7 @@ async def summarize_webpage(url: str) -> str:
             "摘要应该简洁明了，一般不超过 200 字。"
         )
 
-        model_to_use = get_current_model()
+        model_to_use = select_model_for_role("primary")
         client_to_use = get_client_for_model(model_to_use, is_async=False)
         if client_to_use is None:
             raise RuntimeError("OpenAI sync client is not initialized")

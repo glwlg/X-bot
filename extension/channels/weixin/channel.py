@@ -3,7 +3,6 @@ from __future__ import annotations
 from core.config import (
     WEIXIN_BASE_URL,
     WEIXIN_CDN_BASE_URL,
-    WEIXIN_ENABLE,
     WEIXIN_LOGIN_POLL_INTERVAL_SEC,
     WEIXIN_LOGIN_TIMEOUT_SEC,
     WEIXIN_TEXT_CHUNK_LIMIT,
@@ -47,7 +46,7 @@ class WeixinChannelExtension(ChannelExtension):
 
     def enabled(self, runtime) -> bool:
         _ = runtime
-        return bool(WEIXIN_ENABLE) and runtime_config_store.is_platform_enabled(
+        return runtime_config_store.is_platform_enabled(
             "weixin",
             default=True,
         )

@@ -1,6 +1,6 @@
 """用户相关 Schema"""
 
-from typing import Any, Optional
+from typing import Optional
 from datetime import datetime
 from fastapi_users import schemas
 from pydantic import BaseModel, ConfigDict
@@ -74,17 +74,6 @@ class BootstrapStatus(BaseModel):
     users_count: int
     admin_count: int
     public_registration_enabled: bool
-
-
-class RuntimeConfigPatch(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    platforms: Optional[dict[str, bool]] = None
-    features: Optional[dict[str, bool]] = None
-    cors_allowed_origins: Optional[list[str]] = None
-    model_roles: Optional[dict[str, str]] = None
-    models_config: Optional[dict[str, Any]] = None
-    memory_provider: Optional[str] = None
 
 
 class TtsRequest(BaseModel):

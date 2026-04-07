@@ -10,7 +10,7 @@ from typing import Any, List
 
 from core.audit_store import audit_store
 from core.config import get_client_for_model
-from core.model_config import get_current_model
+from core.model_config import select_model_for_role
 from core.state_paths import system_path, user_path
 
 
@@ -556,7 +556,7 @@ class MarkdownMemoryStore:
         if not request:
             return []
 
-        model_to_use = get_current_model()
+        model_to_use = select_model_for_role("primary")
         client = _resolve_memory_client(model_to_use)
         if client is None:
             return []
@@ -612,7 +612,7 @@ class MarkdownMemoryStore:
         if not rendered:
             return {"user_facts": [], "ikaros_experiences": []}
 
-        model_to_use = get_current_model()
+        model_to_use = select_model_for_role("primary")
         client = _resolve_memory_client(model_to_use)
         if client is None:
             return {"user_facts": [], "ikaros_experiences": []}

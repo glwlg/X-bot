@@ -92,8 +92,8 @@ const etherealAdminNav = computed(() => {
     const items = []
 
     if (authStore.isAdmin) {
-        items.push({ label: '初始化', to: '/admin/setup', icon: Zap })
-        items.push({ label: '运行配置', to: '/admin/runtime', icon: Settings2 })
+        items.push({ label: '运行配置', to: '/admin/runtime', icon: Zap })
+        items.push({ label: '模型配置', to: '/admin/models', icon: Settings2 })
     }
 
     if (authStore.isOperator) {
@@ -116,9 +116,9 @@ const routeAlias = computed(() => {
         ModuleScheduler: 'Scheduler',
         ModuleMonitor: 'Heartbeat',
         ModuleWatchlist: 'Stocks',
-        AdminSetup: 'Setup',
-        AdminUsers: 'Users',
         AdminRuntime: 'Runtime',
+        AdminModels: 'Models',
+        AdminUsers: 'Users',
         AdminDiagnostics: 'Diagnostics',
         AdminSkills: 'Skills',
     }

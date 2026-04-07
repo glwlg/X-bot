@@ -331,7 +331,7 @@ async def test_ai_service_image_request_raises_clear_error_without_image_model(
         lambda *args, **kwargs: [],
     )
 
-    with pytest.raises(RuntimeError, match="当前未配置可用的图片识别模型"):
+    with pytest.raises(RuntimeError, match="当前没有可用的图片识别模型"):
         async for _ in service.generate_response_stream(
             message_history=[
                 {

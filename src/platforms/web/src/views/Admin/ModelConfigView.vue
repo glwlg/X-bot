@@ -3,24 +3,27 @@ import axios from 'axios'
 import { computed, onMounted, ref, watch } from 'vue'
 import { Bot, Loader2, Plus, Save, Trash2 } from 'lucide-vue-next'
 
-import { getRuntimeSnapshot, patchRuntimeSnapshot, type RuntimeSnapshot } from '@/api/admin'
+import { getModelsSnapshot, patchModelsSnapshot, type ModelsQuickRoleSnapshot, type ModelsSnapshot } from '@/api/models'
 
-const snapshot = ref<RuntimeSnapshot | null>(null)
+const snapshot = ref<ModelsSnapshot | null>(null)
 const modelConfigForm = ref<ModelConfigForm | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 const errorText = ref('')
 const successText = ref('')
-const corsInput = ref('')
 const modelsConfigError = ref('')
 
 const roleOrder = ['primary', 'routing', 'vision', 'image_generation', 'voice'] as const
+const quickRoleOrder = ['primary', 'routing'] as const
 const inputTypeOptions = ['text', 'image', 'voice'] as const
 const outputTypeOptions = ['text', 'image', 'voice', 'video'] as const
+const selectionStrategyOptions = ['priority', 'round_robin', 'least_usage'] as const
 
 type RoleKey = (typeof roleOrder)[number]
+type QuickRoleKey = (typeof quickRoleOrder)[number]
 type InputType = (typeof inputTypeOptions)[number]
 type OutputType = (typeof outputTypeOptions)[number]
+type SelectionStrategy = (typeof selectionStrategyOptions)[number]
 type NumericValue = number | ''
 
 interface CostForm {
@@ -28,6 +31,12 @@ interface CostForm {
     output: NumericValue
     cacheRead: NumericValue
     cacheWrite: NumericValue
+    extras: Record<string, unknown>
+}
+
+interface LimitsForm {
+    dailyTokens: NumericValue
+    dailyImages: NumericValue
     extras: Record<string, unknown>
 }
 
@@ -39,6 +48,7 @@ interface ModelForm {
     input: InputType[]
     output: OutputType[]
     cost: CostForm
+    limits: LimitsForm
     contextWindow: NumericValue
     maxTokens: NumericValue
     extras: Record<string, unknown>
@@ -60,6 +70,8 @@ interface RoleConfigForm {
     poolKey: string
     poolUids: string[]
     poolMetaByUid: Record<string, Record<string, unknown>>
+    selectionStrategy: SelectionStrategy
+    selectionExtras: Record<string, unknown>
 }
 
 interface ModelConfigForm {
@@ -67,6 +79,7 @@ interface ModelConfigForm {
     topLevelExtras: Record<string, unknown>
     modelExtras: Record<string, unknown>
     poolExtras: Record<string, unknown>
+    selectionExtras: Record<string, unknown>
     providers: ProviderForm[]
     roles: Record<RoleKey, RoleConfigForm>
 }
@@ -82,6 +95,17 @@ interface ModelOption {
     reasoning: boolean
 }
 
+interface QuickRoleForm {
+    providerName: string
+    baseUrl: string
+    apiKey: string
+    apiStyle: string
+    modelId: string
+    displayName: string
+    reasoning: boolean
+    inputTypes: InputType[]
+}
+
 const roleLabels: Record<RoleKey, string> = {
     primary: 'Primary',
     routing: 'Routing',
@@ -90,16 +114,7 @@ const roleLabels: Record<RoleKey, string> = {
     voice: 'Voice',
 }
 
-const roleStorageKeys: Record<RoleKey, string[]> = {
-    primary: ['primary'],
-    routing: ['routing'],
-    vision: ['vision', 'image'],
-    image_generation: ['image_generation', 'image_gen'],
-    voice: ['voice'],
-}
-
-const managedRoleKeys = new Set(Object.values(roleStorageKeys).flat())
-const primaryRoleStorageKey = (role: RoleKey) => roleStorageKeys[role][0] || role
+const primaryRoleStorageKey = (role: RoleKey) => role
 const roleRequiredInputs: Record<RoleKey, InputType[]> = {
     primary: ['text'],
     routing: ['text'],
@@ -121,8 +136,35 @@ const roleCapabilityText: Record<RoleKey, string> = {
     image_generation: '至少支持 image 输出',
     voice: '至少支持 voice 输入',
 }
+const selectionStrategyLabels: Record<SelectionStrategy, string> = {
+    priority: '优先级顺序',
+    round_robin: '轮询均衡',
+    least_usage: '按今日最低用量',
+}
 
 let uidCounter = 0
+const quickRoles = ref<Record<QuickRoleKey, QuickRoleForm>>({
+    primary: {
+        providerName: '',
+        baseUrl: '',
+        apiKey: '',
+        apiStyle: 'openai-completions',
+        modelId: '',
+        displayName: '',
+        reasoning: false,
+        inputTypes: ['text', 'image', 'voice'],
+    },
+    routing: {
+        providerName: '',
+        baseUrl: '',
+        apiKey: '',
+        apiStyle: 'openai-completions',
+        modelId: '',
+        displayName: '',
+        reasoning: false,
+        inputTypes: ['text'],
+    },
+})
 
 const nextUid = (prefix: string) => `${prefix}-${uidCounter++}`
 
@@ -177,6 +219,14 @@ const normalizeOutputTypes = (value: unknown): OutputType[] => {
     return normalized
 }
 
+const normalizeSelectionStrategy = (value: unknown): SelectionStrategy => {
+    const normalized = String(value || '').trim().toLowerCase() as SelectionStrategy
+    if (selectionStrategyOptions.includes(normalized)) {
+        return normalized
+    }
+    return 'priority'
+}
+
 const coerceNumber = (value: unknown, fallback: number, minimum = 0) => {
     const parsed = Number(value)
     if (!Number.isFinite(parsed)) {
@@ -203,6 +253,11 @@ const createEmptyModel = (): ModelForm => ({
         output: 0,
         cacheRead: 0,
         cacheWrite: 0,
+        extras: {},
+    },
+    limits: {
+        dailyTokens: 0,
+        dailyImages: 0,
         extras: {},
     },
     contextWindow: 1000000,
@@ -252,8 +307,30 @@ const availableModelMap = computed<Record<string, ModelOption>>(() =>
     Object.fromEntries(availableModelOptions.value.map(option => [option.uid, option]))
 )
 
-const platformEntries = computed(() => Object.entries(snapshot.value?.runtime_config.platforms || {}))
-const featureEntries = computed(() => Object.entries(snapshot.value?.runtime_config.features || {}))
+const hydrateQuickRole = (role: QuickRoleKey, payload: ModelsQuickRoleSnapshot) => {
+    quickRoles.value[role] = {
+        providerName: payload.provider_name || '',
+        baseUrl: payload.base_url || '',
+        apiKey: payload.api_key || '',
+        apiStyle: payload.api_style || 'openai-completions',
+        modelId: payload.model_id || '',
+        displayName: payload.display_name || '',
+        reasoning: Boolean(payload.reasoning),
+        inputTypes: ((payload.input_types || []) as InputType[]).filter(item => inputTypeOptions.includes(item)),
+    }
+}
+
+const quickRoleSummary = computed(() =>
+    quickRoleOrder.map(role => {
+        const payload = snapshot.value?.quick_roles[role]
+        return {
+            role,
+            label: roleLabels[role],
+            ready: Boolean(payload?.ready),
+            modelKey: payload?.model_key || '',
+        }
+    })
+)
 
 const roleCards = computed(() =>
     roleOrder.map(role => {
@@ -268,6 +345,7 @@ const roleCards = computed(() =>
             bindingOptions: poolOptions,
             candidateOptions: roleCandidateOptions(role),
             capabilityText: roleCapabilityText[role],
+            selectionStrategy: roleConfig?.selectionStrategy || 'priority',
         }
     })
 )
@@ -366,6 +444,7 @@ const hydrateModelsConfigForm = (payload: Record<string, unknown>) => {
                 continue
             }
             const cost = asObject(rawModel.cost) || {}
+            const limits = asObject(rawModel.limits) || {}
             const model: ModelForm = {
                 uid: nextUid('model'),
                 id: String(rawModel.id || '').trim(),
@@ -380,9 +459,14 @@ const hydrateModelsConfigForm = (payload: Record<string, unknown>) => {
                     cacheWrite: coerceNumber(cost.cacheWrite, 0, 0),
                     extras: omitKeys(cost, ['input', 'output', 'cacheRead', 'cacheWrite']),
                 },
+                limits: {
+                    dailyTokens: coerceInteger(limits.dailyTokens, 0, 0),
+                    dailyImages: coerceInteger(limits.dailyImages, 0, 0),
+                    extras: omitKeys(limits, ['dailyTokens', 'dailyImages']),
+                },
                 contextWindow: coerceInteger(rawModel.contextWindow, 1000000, 1),
                 maxTokens: coerceInteger(rawModel.maxTokens, 65536, 1),
-                extras: omitKeys(rawModel, ['id', 'name', 'reasoning', 'input', 'output', 'cost', 'contextWindow', 'maxTokens']),
+                extras: omitKeys(rawModel, ['id', 'name', 'reasoning', 'input', 'output', 'cost', 'limits', 'contextWindow', 'maxTokens']),
             }
             provider.models.push(model)
             if (provider.name && model.id) {
@@ -395,17 +479,19 @@ const hydrateModelsConfigForm = (payload: Record<string, unknown>) => {
 
     const rawModelBindings = asObject(payload.model) || {}
     const rawPools = asObject(payload.models) || {}
+    const rawSelection = asObject(payload.selection) || {}
     const roles = {} as Record<RoleKey, RoleConfigForm>
 
     for (const role of roleOrder) {
-        const bindingKey =
-            roleStorageKeys[role].find(key => typeof rawModelBindings[key] === 'string' && String(rawModelBindings[key]).trim()) ||
-            primaryRoleStorageKey(role)
+        const bindingKey = primaryRoleStorageKey(role)
         const selectedModelKey = String(rawModelBindings[bindingKey] || '').trim()
-        const poolKey =
-            roleStorageKeys[role].find(key => Object.prototype.hasOwnProperty.call(rawPools, key)) ||
-            primaryRoleStorageKey(role)
+        const poolKey = primaryRoleStorageKey(role)
         const rawPool = rawPools[poolKey]
+        const rawSelectionValue = rawSelection[role]
+        const selectionPayload =
+            typeof rawSelectionValue === 'string'
+                ? { strategy: rawSelectionValue }
+                : asObject(rawSelectionValue) || {}
         const poolUids: string[] = []
         const poolMetaByUid: Record<string, Record<string, unknown>> = {}
 
@@ -437,18 +523,17 @@ const hydrateModelsConfigForm = (payload: Record<string, unknown>) => {
             poolKey,
             poolUids,
             poolMetaByUid,
+            selectionStrategy: normalizeSelectionStrategy(selectionPayload.strategy),
+            selectionExtras: omitKeys(selectionPayload, ['strategy']),
         }
     }
 
     modelConfigForm.value = {
         mode: String(payload.mode || '').trim() || 'merge',
-        topLevelExtras: omitKeys(payload, ['mode', 'model', 'models', 'providers']),
-        modelExtras: Object.fromEntries(
-            Object.entries(rawModelBindings).filter(([key]) => !managedRoleKeys.has(key))
-        ),
-        poolExtras: Object.fromEntries(
-            Object.entries(rawPools).filter(([key]) => !managedRoleKeys.has(key))
-        ),
+        topLevelExtras: omitKeys(payload, ['mode', 'model', 'models', 'providers', 'selection']),
+        modelExtras: {},
+        poolExtras: {},
+        selectionExtras: {},
         providers,
         roles,
     }
@@ -456,10 +541,11 @@ const hydrateModelsConfigForm = (payload: Record<string, unknown>) => {
     modelsConfigError.value = ''
 }
 
-const hydrate = (payload: RuntimeSnapshot) => {
+const hydrate = (payload: ModelsSnapshot) => {
     snapshot.value = payload
-    corsInput.value = (payload.runtime_config.cors.allowed_origins || []).join('\n')
     hydrateModelsConfigForm(payload.models_config.payload || {})
+    hydrateQuickRole('primary', payload.quick_roles.primary)
+    hydrateQuickRole('routing', payload.quick_roles.routing)
     errorText.value = ''
     successText.value = ''
 }
@@ -469,10 +555,10 @@ const load = async () => {
     errorText.value = ''
     successText.value = ''
     try {
-        const response = await getRuntimeSnapshot()
+        const response = await getModelsSnapshot()
         hydrate(response.data)
     } catch (error) {
-        errorText.value = parseErrorMessage(error, '运行配置加载失败')
+        errorText.value = parseErrorMessage(error, '模型配置加载失败')
     } finally {
         loading.value = false
     }
@@ -483,18 +569,10 @@ const resetModelsConfigForm = () => {
         return
     }
     hydrateModelsConfigForm(snapshot.value.models_config.payload || {})
+    hydrateQuickRole('primary', snapshot.value.quick_roles.primary)
+    hydrateQuickRole('routing', snapshot.value.quick_roles.routing)
     modelsConfigError.value = ''
     successText.value = ''
-}
-
-const togglePlatform = (name: string, value: boolean) => {
-    if (!snapshot.value) return
-    snapshot.value.runtime_config.platforms[name] = value
-}
-
-const toggleFeature = (name: string, value: boolean) => {
-    if (!snapshot.value) return
-    snapshot.value.runtime_config.features[name] = value
 }
 
 const addProvider = () => {
@@ -590,12 +668,58 @@ const setRoleBinding = (role: RoleKey, modelUid: string) => {
     }
 }
 
+const applyQuickRolesToModelConfigForm = () => {
+    const form = modelConfigForm.value
+    if (!form) {
+        return
+    }
+
+    for (const role of quickRoleOrder) {
+        const quick = quickRoles.value[role]
+        const providerName = quick.providerName.trim()
+        const modelId = quick.modelId.trim()
+        if (!providerName || !modelId) {
+            continue
+        }
+
+        let provider = form.providers.find(item => item.name.trim() === providerName)
+        if (!provider) {
+            provider = createEmptyProvider()
+            provider.name = providerName
+            form.providers.push(provider)
+        }
+        provider.baseUrl = quick.baseUrl.trim()
+        provider.apiKey = quick.apiKey
+        provider.api = quick.apiStyle.trim() || 'openai-completions'
+
+        let model = provider.models.find(item => item.id.trim() === modelId)
+        if (!model) {
+            model = createEmptyModel()
+            provider.models.push(model)
+        }
+        model.id = modelId
+        model.name = quick.displayName.trim() || modelId
+        model.reasoning = Boolean(quick.reasoning)
+        model.input = quick.inputTypes.length ? [...quick.inputTypes] : (role === 'primary' ? ['text', 'image', 'voice'] : ['text'])
+        if (!model.output.length) {
+            model.output = ['text']
+        }
+
+        const modelKey = buildModelKey(providerName, modelId)
+        const option = availableModelOptions.value.find(item => item.key === modelKey)
+        if (option) {
+            setRoleBinding(role, option.uid)
+        }
+    }
+}
+
 const buildModelsConfigSubmission = () => {
     const form = modelConfigForm.value
     if (!form) {
         return null
     }
 
+    applyQuickRolesToModelConfigForm()
     modelsConfigError.value = ''
     const providersPayload: Record<string, unknown> = {}
     const modelKeyByUid: Record<string, string> = {}
@@ -641,6 +765,11 @@ const buildModelsConfigSubmission = () => {
                     cacheRead: coerceNumber(model.cost.cacheRead, 0, 0),
                     cacheWrite: coerceNumber(model.cost.cacheWrite, 0, 0),
                 },
+                limits: {
+                    ...model.limits.extras,
+                    dailyTokens: coerceInteger(model.limits.dailyTokens, 0, 0),
+                    dailyImages: coerceInteger(model.limits.dailyImages, 0, 0),
+                },
                 contextWindow: coerceInteger(model.contextWindow, 1000000, 1),
                 maxTokens: coerceInteger(model.maxTokens, 65536, 1),
             })
@@ -655,14 +784,14 @@ const buildModelsConfigSubmission = () => {
         }
     }
 
-    const modelPayload: Record<string, unknown> = { ...form.modelExtras }
-    const poolsPayload: Record<string, unknown> = { ...form.poolExtras }
-    const modelRoles: Record<string, string> = {}
+    const modelPayload: Record<string, unknown> = {}
+    const poolsPayload: Record<string, unknown> = {}
+    const selectionPayload: Record<string, unknown> = {}
 
     for (const role of roleOrder) {
         const roleConfig = form.roles[role]
-        const bindingKey = roleConfig.bindingKey || primaryRoleStorageKey(role)
-        const poolKey = roleConfig.poolKey || primaryRoleStorageKey(role)
+        const bindingKey = primaryRoleStorageKey(role)
+        const poolKey = primaryRoleStorageKey(role)
         const selectedModelKey = roleConfig.bindingUid ? modelKeyByUid[roleConfig.bindingUid] : ''
 
         if (roleConfig.bindingUid && !selectedModelKey) {
@@ -671,7 +800,6 @@ const buildModelsConfigSubmission = () => {
         }
         if (selectedModelKey) {
             modelPayload[bindingKey] = selectedModelKey
-            modelRoles[role] = selectedModelKey
         }
 
         const poolPayload: Record<string, Record<string, unknown>> = {}
@@ -685,15 +813,19 @@ const buildModelsConfigSubmission = () => {
         if (Object.keys(poolPayload).length > 0) {
             poolsPayload[poolKey] = poolPayload
         }
+
+        selectionPayload[role] = {
+            strategy: normalizeSelectionStrategy(roleConfig.selectionStrategy),
+        }
     }
 
     return {
-        modelRoles,
         modelsConfig: {
             ...form.topLevelExtras,
             mode: form.mode.trim() || 'merge',
             model: modelPayload,
             models: poolsPayload,
+            selection: selectionPayload,
             providers: providersPayload,
         },
     }
@@ -711,18 +843,13 @@ const save = async () => {
     }
     saving.value = true
     try {
-        const response = await patchRuntimeSnapshot({
-            platforms: snapshot.value.runtime_config.platforms,
-            features: snapshot.value.runtime_config.features,
-            cors_allowed_origins: corsInput.value.split('\n').map(item => item.trim()).filter(Boolean),
-            model_roles: submission.modelRoles,
+        const response = await patchModelsSnapshot({
             models_config: submission.modelsConfig,
-            memory_provider: snapshot.value.memory.provider,
         })
-        hydrate(response.data)
-        successText.value = '运行配置已保存'
+        hydrate(response.data.snapshot)
+        successText.value = '模型配置已保存'
     } catch (error) {
-        errorText.value = parseErrorMessage(error, '运行配置保存失败')
+        errorText.value = parseErrorMessage(error, '模型配置保存失败')
     } finally {
         saving.value = false
     }
@@ -751,10 +878,10 @@ onMounted(load)
     <section class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
       <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <div class="text-xs uppercase tracking-[0.24em] text-slate-400">Runtime</div>
-          <h2 class="mt-1 text-2xl font-semibold text-slate-900">运行配置</h2>
+          <div class="text-xs uppercase tracking-[0.24em] text-slate-400">Models</div>
+          <h2 class="mt-1 text-2xl font-semibold text-slate-900">模型配置</h2>
           <p class="mt-2 max-w-3xl text-sm leading-7 text-slate-500">
-            模型配置已经展开为结构化表单，直接在这里维护 `mode`、角色绑定、角色池、provider 和模型参数，不再要求手改 `models.json`。
+            顶部优先完成 Primary / Routing 的首次配置，下方保留完整结构化编辑器维护 provider、模型目录、角色池和选择策略。
           </p>
         </div>
         <button
@@ -781,51 +908,110 @@ onMounted(load)
 
     <div v-if="loading" class="flex items-center gap-2 rounded-[28px] border border-slate-200 bg-white px-5 py-4 text-sm text-slate-500 shadow-sm">
       <Loader2 class="h-4 w-4 animate-spin" />
-      正在加载配置
+      正在加载模型配置
     </div>
 
     <template v-else-if="snapshot && modelConfigForm">
-      <section class="grid gap-6 xl:grid-cols-2">
-        <div class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-          <div class="text-sm font-semibold text-slate-900">平台开关</div>
-          <div class="mt-4 space-y-3">
-            <label v-for="[name, enabled] in platformEntries" :key="name" class="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-              <div>
-                <div class="text-sm text-slate-700">{{ name }}</div>
-                <div class="text-xs text-slate-500">控制对应 channel 是否注册和启动</div>
-              </div>
-              <input :checked="enabled" type="checkbox" class="h-4 w-4" @change="togglePlatform(name, ($event.target as HTMLInputElement).checked)">
-            </label>
+      <section class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+        <div class="flex items-center justify-between gap-4">
+          <div>
+            <div class="text-sm font-semibold text-slate-900">快速开始</div>
+            <div class="mt-1 text-sm text-slate-500">第一次安装时先补齐 Primary 和 Routing，保存后就可以回到运行配置页继续完成文档与渠道。</div>
+          </div>
+          <div class="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-6 text-slate-600">
+            <div>models.json：{{ snapshot.models_config.path }}</div>
+            <div>文件状态：{{ snapshot.models_config.exists ? '已存在' : '将首次创建' }}</div>
           </div>
         </div>
 
-        <div class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-          <div class="text-sm font-semibold text-slate-900">功能开关</div>
-          <div class="mt-4 space-y-3">
-            <label v-for="[name, enabled] in featureEntries" :key="name" class="flex items-center justify-between rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-              <div>
-                <div class="text-sm text-slate-700">{{ name }}</div>
-                <div class="text-xs text-slate-500">控制 Web console 与后台功能入口</div>
-              </div>
-              <input :checked="enabled" type="checkbox" class="h-4 w-4" @change="toggleFeature(name, ($event.target as HTMLInputElement).checked)">
-            </label>
+        <div class="mt-5 flex flex-wrap gap-3">
+          <div
+            v-for="item in quickRoleSummary"
+            :key="item.role"
+            class="rounded-full px-3 py-1.5 text-xs font-medium"
+            :class="item.ready ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'"
+          >
+            {{ item.ready ? '已就绪' : '待配置' }} · {{ item.label }} · {{ item.modelKey || '未设置' }}
           </div>
+        </div>
+
+        <div class="mt-6 grid gap-6 xl:grid-cols-2">
+          <article
+            v-for="role in quickRoleOrder"
+            :key="role"
+            class="rounded-[24px] border border-slate-200 bg-slate-50 p-5"
+          >
+            <div class="flex items-center justify-between gap-3">
+              <div class="flex items-center gap-3">
+                <div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-white text-slate-700">
+                  <Bot class="h-4 w-4" />
+                </div>
+                <div>
+                  <div class="text-xs uppercase tracking-[0.2em] text-slate-400">{{ roleLabels[role] }}</div>
+                  <div class="mt-1 text-sm text-slate-500">用于首装快速补齐核心模型连接。</div>
+                </div>
+              </div>
+              <span class="rounded-full bg-white px-2.5 py-1 text-xs text-slate-500">{{ role }}</span>
+            </div>
+
+            <div class="mt-4 grid gap-4 md:grid-cols-2">
+              <label class="space-y-2">
+                <div class="text-sm font-medium text-slate-700">Provider 名称</div>
+                <input v-model="quickRoles[role].providerName" type="text" placeholder="例如 openai" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400">
+              </label>
+              <label class="space-y-2">
+                <div class="text-sm font-medium text-slate-700">模型 ID</div>
+                <input v-model="quickRoles[role].modelId" type="text" placeholder="例如 gpt-5.4" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400">
+              </label>
+              <label class="space-y-2 md:col-span-2">
+                <div class="text-sm font-medium text-slate-700">Base URL</div>
+                <input v-model="quickRoles[role].baseUrl" type="text" placeholder="https://api.example.com/v1" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400">
+              </label>
+              <label class="space-y-2 md:col-span-2">
+                <div class="text-sm font-medium text-slate-700">API Key</div>
+                <input v-model="quickRoles[role].apiKey" type="text" placeholder="sk-..." class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400">
+              </label>
+              <label class="space-y-2">
+                <div class="text-sm font-medium text-slate-700">展示名称</div>
+                <input v-model="quickRoles[role].displayName" type="text" placeholder="可留空" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400">
+              </label>
+              <label class="space-y-2">
+                <div class="text-sm font-medium text-slate-700">API 形式</div>
+                <input v-model="quickRoles[role].apiStyle" type="text" placeholder="openai-completions" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none transition focus:border-cyan-400">
+              </label>
+            </div>
+
+            <div class="mt-4 flex flex-wrap gap-3">
+              <label class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700">
+                <input v-model="quickRoles[role].reasoning" type="checkbox" class="h-4 w-4">
+                开启 reasoning
+              </label>
+              <label
+                v-for="inputType in inputTypeOptions"
+                :key="`${role}-${inputType}`"
+                class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700"
+              >
+                <input v-model="quickRoles[role].inputTypes" type="checkbox" :value="inputType" class="h-4 w-4">
+                {{ inputType }}
+              </label>
+            </div>
+          </article>
         </div>
       </section>
 
-      <section class="grid gap-6 xl:grid-cols-[minmax(0,1.35fr)_360px]">
-        <div class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
+      <section class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
           <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <div class="text-sm font-semibold text-slate-900">模型配置</div>
-                    <div class="mt-1 text-sm text-slate-500">
-                        在同一块里同时维护角色绑定、角色池、provider 和具体模型参数。删除 provider 或模型时，相关角色引用会一起清理。
-                    </div>
+              <div class="text-sm font-semibold text-slate-900">高级编辑器</div>
+              <div class="mt-1 text-sm text-slate-500">
+                在同一块里维护角色绑定、角色池、provider 和具体模型参数。删除 provider 或模型时，相关角色引用会一起清理。
+              </div>
               <div class="mt-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs leading-6 text-slate-600">
                 <div>路径：{{ snapshot.models_config.path }}</div>
                 <div>文件状态：{{ snapshot.models_config.exists ? '已存在' : '将首次创建' }}</div>
                 <div>Provider：{{ modelConfigForm.providers.length }} 个</div>
                 <div>模型：{{ availableModelOptions.length }} 个</div>
+                <div>说明：文本/多模态模型按今日 tokens 限制，生图模型按今日产图张数限制</div>
               </div>
             </div>
             <div class="flex flex-wrap gap-3">
@@ -897,6 +1083,22 @@ onMounted(load)
 
               <div class="mt-3 text-xs leading-6 text-slate-500">
                 当前绑定：{{ card.currentKey || '未设置' }}
+              </div>
+
+              <label class="mt-4 block space-y-2">
+                <div class="text-sm font-medium text-slate-700">池内选择策略</div>
+                <select
+                  v-model="modelConfigForm.roles[card.role].selectionStrategy"
+                  class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 outline-none focus:border-cyan-400"
+                >
+                  <option v-for="strategy in selectionStrategyOptions" :key="`${card.role}-${strategy}`" :value="strategy">
+                    {{ selectionStrategyLabels[strategy] }}
+                  </option>
+                </select>
+              </label>
+
+              <div class="mt-3 text-xs leading-6 text-slate-500">
+                当前策略：{{ selectionStrategyLabels[card.selectionStrategy] }}
               </div>
 
               <div class="mt-4">
@@ -1075,6 +1277,22 @@ onMounted(load)
                   </div>
 
                   <div class="mt-5">
+                    <div class="text-sm font-medium text-slate-700">Daily Limits</div>
+                    <div class="mt-3 grid gap-4 md:grid-cols-2">
+                      <label class="space-y-2">
+                        <div class="text-xs uppercase tracking-[0.16em] text-slate-400">Daily Tokens</div>
+                        <input v-model.number="model.limits.dailyTokens" type="number" min="0" step="1" class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-cyan-400 focus:bg-white">
+                        <div class="text-xs leading-6 text-slate-500">0 表示不限。用于文本、多模态理解、路由等按 token 计费的模型。</div>
+                      </label>
+                      <label class="space-y-2">
+                        <div class="text-xs uppercase tracking-[0.16em] text-slate-400">Daily Images</div>
+                        <input v-model.number="model.limits.dailyImages" type="number" min="0" step="1" class="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none transition focus:border-cyan-400 focus:bg-white">
+                        <div class="text-xs leading-6 text-slate-500">0 表示不限。用于生图模型的每日产图张数上限。</div>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="mt-5">
                     <div class="text-sm font-medium text-slate-700">Cost</div>
                     <div class="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
                       <label class="space-y-2">
@@ -1099,26 +1317,6 @@ onMounted(load)
               </div>
             </article>
           </div>
-        </div>
-
-        <div class="space-y-6">
-          <div class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-            <div class="text-sm font-semibold text-slate-900">CORS Allowlist</div>
-            <div class="mt-1 text-sm text-slate-500">每行一个 Origin，生产环境不要使用宽泛通配。</div>
-            <textarea v-model="corsInput" class="mt-4 min-h-[220px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm leading-7 outline-none focus:border-cyan-400 focus:bg-white" placeholder="https://app.example.com&#10;http://127.0.0.1:8764" />
-          </div>
-
-          <div class="rounded-[28px] border border-slate-200 bg-white p-6 shadow-sm">
-            <div class="text-sm font-semibold text-slate-900">Memory Provider</div>
-            <div class="mt-1 text-sm text-slate-500">这里只切换 provider，不在 Web 里直接改密钥。</div>
-            <select v-model="snapshot.memory.provider" class="mt-4 w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 outline-none focus:border-cyan-400 focus:bg-white">
-              <option v-for="provider in snapshot.memory.providers" :key="provider" :value="provider">{{ provider }}</option>
-            </select>
-            <div class="mt-4 rounded-2xl bg-slate-950 p-4 text-xs leading-6 text-slate-200">
-              {{ JSON.stringify(snapshot.memory.active_settings, null, 2) }}
-            </div>
-          </div>
-        </div>
       </section>
     </template>
   </div>

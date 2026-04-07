@@ -75,7 +75,7 @@ async def process_feature_request(ctx: UnifiedContext, description: str) -> int:
         get_client_for_model,
         DATA_DIR,
     )  # lazy import to avoid top level issues if moved
-    from core.model_config import get_current_model
+    from core.model_config import select_model_for_role
     from services.openai_adapter import generate_text
     from user_context import get_or_create_session_id
 
@@ -99,7 +99,7 @@ async def process_feature_request(ctx: UnifiedContext, description: str) -> int:
 """
 
     try:
-        model_to_use = get_current_model()
+        model_to_use = select_model_for_role("primary")
         client_to_use = get_client_for_model(model_to_use, is_async=True)
         if client_to_use is None:
             raise RuntimeError("OpenAI async client is not initialized")

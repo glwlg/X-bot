@@ -34,7 +34,7 @@ from core.skill_cli import (
 prepare_default_env(REPO_ROOT)
 
 from core.config import get_client_for_model
-from core.model_config import get_current_model
+from core.model_config import select_model_for_role
 from extension.skills.builtin.credential_manager.scripts.store import get_credential
 from services.openai_adapter import generate_text
 from services.web_summary_service import fetch_webpage_content
@@ -417,7 +417,7 @@ async def _generate_xiaohongshu_note_json(
         "6. 仅返回 JSON 对象，不要额外解释。"
     )
 
-    model_to_use = get_current_model()
+    model_to_use = select_model_for_role("primary")
     if not model_to_use:
         raise RuntimeError("No text model configured in config/models.json")
     async_client = get_client_for_model(model_to_use, is_async=True)
@@ -534,7 +534,7 @@ async def _generate_article_json(topic: str, search_context: str) -> dict[str, A
         f"}}"
     )
 
-    model_to_use = get_current_model()
+    model_to_use = select_model_for_role("primary")
     if not model_to_use:
         raise RuntimeError("No text model configured in config/models.json")
     async_client = get_client_for_model(model_to_use, is_async=True)

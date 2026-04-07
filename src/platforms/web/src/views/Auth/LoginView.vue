@@ -64,7 +64,7 @@ const handleSubmit = async () => {
         const response = await login(email.value.trim(), password.value)
         authStore.setToken(response.data.access_token)
         await authStore.fetchUser()
-        await router.push(bootstrapMode.value && authStore.isAdmin ? '/admin/setup' : '/chat')
+        await router.push(bootstrapMode.value && authStore.isAdmin ? '/admin/runtime' : '/chat')
     } catch (err: any) {
         error.value = err?.response?.data?.detail || (bootstrapMode.value ? '初始化失败' : '登录失败')
     } finally {

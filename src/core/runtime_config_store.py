@@ -37,7 +37,7 @@ class RuntimeConfigStore:
                 "telegram": True,
                 "discord": True,
                 "dingtalk": True,
-                "weixin": True,
+                "weixin": False,
                 "web": True,
             },
             "features": {

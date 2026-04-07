@@ -7,7 +7,7 @@ import re
 from typing import Any, Dict, List, cast
 
 from core.config import get_client_for_model
-from core.model_config import get_current_model
+from core.model_config import select_model_for_role
 from extension.skills.registry import skill_registry as skill_loader
 
 logger = logging.getLogger(__name__)
@@ -166,7 +166,7 @@ class SkillArgPlanner:
         current_args: Dict[str, Any],
         validation_error: str,
     ) -> Dict[str, Any]:
-        model_to_use = get_current_model()
+        model_to_use = select_model_for_role("primary")
         client = cast(Any, _resolve_planner_client(model_to_use))
         if client is None:
             return {}

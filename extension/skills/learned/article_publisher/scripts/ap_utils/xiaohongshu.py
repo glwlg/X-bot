@@ -80,7 +80,7 @@ async def generate_xiaohongshu_note_json(
     article_data: dict[str, Any],
 ) -> dict[str, Any]:
     from core.config import get_client_for_model
-    from core.model_config import get_current_model, resolve_models_config_path
+    from core.model_config import resolve_models_config_path, select_model_for_role
     from services.openai_adapter import generate_text
 
     article_plain = article_plain_text(article_data)
@@ -98,7 +98,7 @@ async def generate_xiaohongshu_note_json(
         "6. 仅返回 JSON 对象，不要额外解释。"
     )
 
-    model_to_use = get_current_model()
+    model_to_use = select_model_for_role("primary")
     if not model_to_use:
         raise RuntimeError(
             f"No text model configured in {resolve_models_config_path()}"

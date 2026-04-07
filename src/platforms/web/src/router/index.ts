@@ -193,10 +193,10 @@ const router = createRouter({
             meta: { title: '登录', public: true },
         },
         {
-            path: '/admin/setup',
-            name: 'AdminSetup',
-            component: () => import('@/views/Admin/SetupView.vue'),
-            meta: { title: '初始化配置', requiresAdmin: true },
+            path: '/admin/runtime',
+            name: 'AdminRuntime',
+            component: () => import('@/views/Admin/RuntimeConfigView.vue'),
+            meta: { title: '运行配置', requiresAdmin: true },
         },
         {
             path: '/admin/users',
@@ -205,10 +205,10 @@ const router = createRouter({
             meta: { title: '用户管理', requiresOperator: true },
         },
         {
-            path: '/admin/runtime',
-            name: 'AdminRuntime',
-            component: () => import('@/views/Admin/RuntimeView.vue'),
-            meta: { title: '运行配置', requiresAdmin: true },
+            path: '/admin/models',
+            name: 'AdminModels',
+            component: () => import('@/views/Admin/ModelConfigView.vue'),
+            meta: { title: '模型配置', requiresAdmin: true },
         },
         {
             path: '/admin/diagnostics',

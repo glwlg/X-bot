@@ -320,6 +320,45 @@ def _extract_response_text(response: Any) -> str:
     return "\n".join(chunk for chunk in chunks if chunk)
 
 
+def _extract_image_output_count(
+    response: Any,
+    *,
+    request_kwargs: dict[str, Any] | None = None,
+    operation: str = "",
+) -> int:
+    normalized_operation = str(operation or "").strip().lower()
+    if normalized_operation.startswith("images."):
+        data = _read_field(response, "data")
+        if isinstance(data, list) and data:
+            return len(data)
+
+    count = 0
+    choices = _read_field(response, "choices")
+    if isinstance(choices, list):
+        for choice in choices:
+            images = _read_field(choice, "message", "images")
+            if isinstance(images, list) and images:
+                count += len(images)
+                continue
+            content = _read_field(choice, "message", "content")
+            if isinstance(content, list):
+                for item in content:
+                    if isinstance(item, dict) and (
+                        item.get("image_url")
+                        or item.get("b64_json")
+                        or str(item.get("type") or "").strip().lower()
+                        in {"image", "image_url", "output_image"}
+                    ):
+                        count += 1
+    if count > 0:
+        return count
+
+    requested_n = _int_value((request_kwargs or {}).get("n"))
+    if requested_n > 0 and str(_read_field(response, "created") or "").strip():
+        return requested_n
+    return 0
+
+
 def _estimate_usage_metrics(
     *,
     request_kwargs: dict[str, Any] | None,
@@ -329,6 +368,11 @@ def _estimate_usage_metrics(
     normalized_operation = str(operation or "").strip().lower()
     input_tokens = _estimate_request_tokens(request_kwargs)
     output_tokens = 0
+    image_outputs = _extract_image_output_count(
+        response,
+        request_kwargs=request_kwargs,
+        operation=operation,
+    )
 
     if normalized_operation in {
         "chat.completions.create",
@@ -350,12 +394,14 @@ def _estimate_usage_metrics(
             "input_tokens": 0,
             "output_tokens": 0,
             "total_tokens": 0,
+            "image_outputs": max(0, image_outputs),
         }
     return {
         "estimated": True,
         "input_tokens": max(0, input_tokens),
         "output_tokens": max(0, output_tokens),
         "total_tokens": max(0, total_tokens),
+        "image_outputs": max(0, image_outputs),
     }
 
 
@@ -428,6 +474,21 @@ def _extract_usage_metrics(
                 _int_value(estimated_metrics.get("output_tokens")),
             )
             total_tokens = max(total_tokens, _int_value(estimated_metrics.get("total_tokens")))
+    image_outputs = _int_value(
+        _first_int(
+            usage,
+            ("image_count",),
+            ("output_image_count",),
+            ("images",),
+        )
+    )
+    if image_outputs <= 0:
+        estimated_metrics = _estimate_usage_metrics(
+            request_kwargs=request_kwargs,
+            response=response,
+            operation=operation,
+        )
+        image_outputs = _int_value(estimated_metrics.get("image_outputs"))
 
     return {
         "usage_present": bool(usage_present),
@@ -435,6 +496,7 @@ def _extract_usage_metrics(
         "input_tokens": max(0, input_tokens),
         "output_tokens": max(0, output_tokens),
         "total_tokens": max(0, total_tokens),
+        "image_outputs": max(0, image_outputs),
         "cache_read_tokens": max(0, cache_read_tokens),
         "cache_write_tokens": max(0, cache_write_tokens),
         "cache_hit": bool(cache_read_tokens > 0),
@@ -507,6 +569,7 @@ def _blank_summary_row(model_key: str) -> dict[str, Any]:
         "input_tokens": 0,
         "output_tokens": 0,
         "total_tokens": 0,
+        "image_outputs": 0,
         "cache_hit_requests": 0,
         "cache_read_tokens": 0,
         "cache_write_tokens": 0,
@@ -526,6 +589,19 @@ class LlmUsageStore:
         return conn
 
     def _ensure_db(self) -> None:
+        def _ensure_columns(conn: sqlite3.Connection) -> None:
+            existing_columns = {
+                str(row["name"] or "").strip()
+                for row in conn.execute(f"PRAGMA table_info({_USAGE_TABLE})").fetchall()
+            }
+            if "image_outputs" not in existing_columns:
+                conn.execute(
+                    f"""
+                    ALTER TABLE {_USAGE_TABLE}
+                    ADD COLUMN image_outputs INTEGER NOT NULL DEFAULT 0
+                    """
+                )
+
         if self._db_ready:
             return
         with self._lock:
@@ -547,6 +623,7 @@ class LlmUsageStore:
                         input_tokens INTEGER NOT NULL DEFAULT 0,
                         output_tokens INTEGER NOT NULL DEFAULT 0,
                         total_tokens INTEGER NOT NULL DEFAULT 0,
+                        image_outputs INTEGER NOT NULL DEFAULT 0,
                         cache_hit_requests INTEGER NOT NULL DEFAULT 0,
                         cache_read_tokens INTEGER NOT NULL DEFAULT 0,
                         cache_write_tokens INTEGER NOT NULL DEFAULT 0,
@@ -568,6 +645,7 @@ class LlmUsageStore:
                     ON {_USAGE_TABLE} (last_used_at)
                     """
                 )
+                _ensure_columns(conn)
             self._db_ready = True
 
     def record_event(
@@ -605,6 +683,7 @@ class LlmUsageStore:
             "input_tokens": _int_value(metrics.get("input_tokens")),
             "output_tokens": _int_value(metrics.get("output_tokens")),
             "total_tokens": _int_value(metrics.get("total_tokens")),
+            "image_outputs": _int_value(metrics.get("image_outputs")),
             "cache_hit_requests": 1 if metrics.get("cache_hit") else 0,
             "cache_read_tokens": _int_value(metrics.get("cache_read_tokens")),
             "cache_write_tokens": _int_value(metrics.get("cache_write_tokens")),
@@ -623,6 +702,7 @@ class LlmUsageStore:
             "input_tokens",
             "output_tokens",
             "total_tokens",
+            "image_outputs",
             "cache_hit_requests",
             "cache_read_tokens",
             "cache_write_tokens",
@@ -640,6 +720,7 @@ class LlmUsageStore:
             "input_tokens",
             "output_tokens",
             "total_tokens",
+            "image_outputs",
             "cache_hit_requests",
             "cache_read_tokens",
             "cache_write_tokens",
@@ -663,6 +744,7 @@ class LlmUsageStore:
             increments["input_tokens"],
             increments["output_tokens"],
             increments["total_tokens"],
+            increments["image_outputs"],
             increments["cache_hit_requests"],
             increments["cache_read_tokens"],
             increments["cache_write_tokens"],
@@ -712,6 +794,7 @@ class LlmUsageStore:
                         COALESCE(SUM(input_tokens), 0) AS input_tokens,
                         COALESCE(SUM(output_tokens), 0) AS output_tokens,
                         COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                        COALESCE(SUM(image_outputs), 0) AS image_outputs,
                         COALESCE(SUM(cache_hit_requests), 0) AS cache_hit_requests,
                         COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
                         COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
@@ -734,6 +817,7 @@ class LlmUsageStore:
                     "input_tokens",
                     "output_tokens",
                     "total_tokens",
+                    "image_outputs",
                     "cache_hit_requests",
                     "cache_read_tokens",
                     "cache_write_tokens",
@@ -754,13 +838,14 @@ class LlmUsageStore:
                         COALESCE(SUM(input_tokens), 0) AS input_tokens,
                         COALESCE(SUM(output_tokens), 0) AS output_tokens,
                         COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                        COALESCE(SUM(image_outputs), 0) AS image_outputs,
                         COALESCE(SUM(cache_hit_requests), 0) AS cache_hit_requests,
                         COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
                         COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens
                     FROM {_USAGE_TABLE}
                     {where_sql}
                     GROUP BY model_key
-                    ORDER BY total_tokens DESC, requests DESC, model_key ASC
+                    ORDER BY total_tokens DESC, image_outputs DESC, requests DESC, model_key ASC
                     """
                     ,
                     params,
@@ -778,6 +863,7 @@ class LlmUsageStore:
                 "input_tokens": _int_value(row["input_tokens"]),
                 "output_tokens": _int_value(row["output_tokens"]),
                 "total_tokens": _int_value(row["total_tokens"]),
+                "image_outputs": _int_value(row["image_outputs"]),
                 "cache_hit_requests": _int_value(row["cache_hit_requests"]),
                 "cache_read_tokens": _int_value(row["cache_read_tokens"]),
                 "cache_write_tokens": _int_value(row["cache_write_tokens"]),
@@ -785,6 +871,84 @@ class LlmUsageStore:
             for row in rows
         ]
         return overall
+
+    def summarize_models(
+        self,
+        model_keys: list[str],
+        *,
+        day: str | None = None,
+    ) -> dict[str, dict[str, int]]:
+        """按模型汇总日用量，默认取今天。"""
+        self._ensure_db()
+        normalized_keys = [
+            str(model_key or "").strip()
+            for model_key in model_keys
+            if str(model_key or "").strip()
+        ]
+        summary = {
+            model_key: _blank_summary_row(model_key)
+            for model_key in normalized_keys
+        }
+        if not normalized_keys:
+            return summary
+
+        effective_day = _today_iso() if day is None else str(day or "").strip()
+        placeholders = ", ".join("?" for _ in normalized_keys)
+        params: list[Any] = []
+        where_clauses = [f"model_key IN ({placeholders})"]
+        params.extend(normalized_keys)
+        if effective_day:
+            where_clauses.insert(0, "day = ?")
+            params.insert(0, effective_day)
+        where_sql = f"WHERE {' AND '.join(where_clauses)}"
+
+        with self._lock:
+            with self._connect() as conn:
+                rows = conn.execute(
+                    f"""
+                    SELECT
+                        model_key,
+                        COALESCE(SUM(requests), 0) AS requests,
+                        COALESCE(SUM(success_requests), 0) AS success_requests,
+                        COALESCE(SUM(failed_requests), 0) AS failed_requests,
+                        COALESCE(SUM(usage_requests), 0) AS usage_requests,
+                        COALESCE(SUM(missing_usage_requests), 0) AS missing_usage_requests,
+                        COALESCE(SUM(estimated_token_requests), 0) AS estimated_token_requests,
+                        COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                        COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                        COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                        COALESCE(SUM(image_outputs), 0) AS image_outputs,
+                        COALESCE(SUM(cache_hit_requests), 0) AS cache_hit_requests,
+                        COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
+                        COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens
+                    FROM {_USAGE_TABLE}
+                    {where_sql}
+                    GROUP BY model_key
+                    """,
+                    params,
+                ).fetchall()
+
+        for row in rows:
+            model_key = str(row["model_key"] or "").strip()
+            if not model_key:
+                continue
+            summary[model_key] = {
+                "model_key": model_key,
+                "requests": _int_value(row["requests"]),
+                "success_requests": _int_value(row["success_requests"]),
+                "failed_requests": _int_value(row["failed_requests"]),
+                "usage_requests": _int_value(row["usage_requests"]),
+                "missing_usage_requests": _int_value(row["missing_usage_requests"]),
+                "estimated_token_requests": _int_value(row["estimated_token_requests"]),
+                "input_tokens": _int_value(row["input_tokens"]),
+                "output_tokens": _int_value(row["output_tokens"]),
+                "total_tokens": _int_value(row["total_tokens"]),
+                "image_outputs": _int_value(row["image_outputs"]),
+                "cache_hit_requests": _int_value(row["cache_hit_requests"]),
+                "cache_read_tokens": _int_value(row["cache_read_tokens"]),
+                "cache_write_tokens": _int_value(row["cache_write_tokens"]),
+            }
+        return summary
 
     def render_summary(
         self,
@@ -813,6 +977,7 @@ class LlmUsageStore:
             f"- 输入 tokens：`{summary.get('input_tokens', 0)}`",
             f"- 输出 tokens：`{summary.get('output_tokens', 0)}`",
             f"- 总 tokens：`{summary.get('total_tokens', 0)}`",
+            f"- 图片产出数：`{summary.get('image_outputs', 0)}`",
             f"- 缓存命中请求：`{summary.get('cache_hit_requests', 0)}`",
             f"- 缓存命中 tokens：`{summary.get('cache_read_tokens', 0)}`",
             f"- 缓存写入 tokens：`{summary.get('cache_write_tokens', 0)}`",
@@ -827,6 +992,7 @@ class LlmUsageStore:
                 f"- `{row['model_key']}` | req={row['requests']} | ok={row['success_requests']} | "
                 f"est={row['estimated_token_requests']} | in={row['input_tokens']} | "
                 f"out={row['output_tokens']} | total={row['total_tokens']} | "
+                f"images={row['image_outputs']} | "
                 f"cache_hit={row['cache_hit_requests']} | cache_read={row['cache_read_tokens']}"
             )
         if len(rows) > len(shown):

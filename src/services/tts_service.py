@@ -8,7 +8,7 @@ import tempfile
 from typing import Any
 
 from core.config import get_client_for_model
-from core.model_config import get_model_id_for_api, get_voice_model
+from core.model_config import get_model_id_for_api, select_model_for_role
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ async def synthesize_speech(
     response_format: str = "mp3",
     instructions: str = "",
 ) -> bytes:
-    model_key = str(get_voice_model() or "").strip()
+    model_key = str(select_model_for_role("voice") or "").strip()
     if not model_key:
         return b""
     client = get_client_for_model(model_key, is_async=True)

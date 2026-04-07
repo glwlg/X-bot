@@ -17,7 +17,7 @@ import httpx
 from telegram.error import BadRequest
 
 from core.config import is_user_allowed, get_client_for_model
-from core.model_config import get_voice_model
+from core.model_config import select_model_for_role
 from core.platform.exceptions import MediaProcessingError
 from services.openai_adapter import build_messages
 from user_context import add_message, bind_delivery_target, get_user_context
@@ -406,7 +406,7 @@ def _build_audio_contents(
 
 async def _run_audio_prompt(prompt: str, voice_bytes: bytes, mime_type: str) -> str:
     last_error: Exception | None = None
-    voice_model = get_voice_model()
+    voice_model = select_model_for_role("voice")
     client: Any = _resolve_voice_client(voice_model)
     if client is None:
         logger.error("Voice model call skipped: OpenAI async client is not initialized")

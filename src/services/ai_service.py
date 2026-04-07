@@ -38,14 +38,14 @@ def _missing_model_error_message(input_type: str) -> str:
     config_path = resolve_models_config_path()
     if normalized_input_type == "image":
         return (
-            f"当前未配置可用的图片识别模型，请在 {config_path} 的 "
+            f"当前没有可用的图片识别模型（可能未配置，或已达到当日用量上限），请在 {config_path} 的 "
             "model.image / model.vision 与 models.image / models.vision 中配置支持 image 输入的模型"
         )
     if normalized_input_type == "voice":
         return (
-            f"当前未配置可用的语音模型，请在 {config_path} 中配置支持 voice 输入的模型"
+            f"当前没有可用的语音模型（可能未配置，或已达到当日用量上限），请在 {config_path} 中配置支持 voice 输入的模型"
         )
-    return "No candidate model available for current request"
+    return "No candidate model available for current request (missing config or daily quota exhausted)"
 
 
 def _split_text_for_streaming(text: str, max_chars: int) -> list[str]:

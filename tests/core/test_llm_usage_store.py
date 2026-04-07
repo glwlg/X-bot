@@ -35,6 +35,7 @@ def _insert_usage_row(
     input_tokens: int,
     output_tokens: int,
     total_tokens: int,
+    image_outputs: int = 0,
     cache_hit_requests: int = 0,
     cache_read_tokens: int = 0,
     cache_write_tokens: int = 0,
@@ -58,12 +59,13 @@ def _insert_usage_row(
                 input_tokens,
                 output_tokens,
                 total_tokens,
+                image_outputs,
                 cache_hit_requests,
                 cache_read_tokens,
                 cache_write_tokens,
                 first_used_at,
                 last_used_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 day,
@@ -78,6 +80,7 @@ def _insert_usage_row(
                 input_tokens,
                 output_tokens,
                 total_tokens,
+                image_outputs,
                 cache_hit_requests,
                 cache_read_tokens,
                 cache_write_tokens,
@@ -305,7 +308,57 @@ def test_wrap_openai_client_records_sync_image_requests_without_usage(
     assert summary["missing_usage_requests"] == 1
     assert summary["estimated_token_requests"] == 1
     assert summary["input_tokens"] > 0
+    assert summary["image_outputs"] == 1
     assert summary["models"][0]["model_key"] == "demo/image-gen"
+    assert summary["models"][0]["image_outputs"] == 1
+
+
+def test_summarize_models_defaults_to_today_and_includes_image_outputs(
+    tmp_path, monkeypatch
+):
+    db_path = _reset_llm_usage_store(tmp_path, monkeypatch)
+    today = datetime.now().astimezone().date().isoformat()
+
+    _insert_usage_row(
+        db_path,
+        day=today,
+        session_id="session-a",
+        model_key="demo/text",
+        requests=2,
+        success_requests=2,
+        failed_requests=0,
+        usage_requests=2,
+        missing_usage_requests=0,
+        estimated_token_requests=0,
+        input_tokens=100,
+        output_tokens=20,
+        total_tokens=120,
+    )
+    _insert_usage_row(
+        db_path,
+        day=today,
+        session_id="session-b",
+        model_key="demo/image",
+        requests=1,
+        success_requests=1,
+        failed_requests=0,
+        usage_requests=0,
+        missing_usage_requests=1,
+        estimated_token_requests=1,
+        input_tokens=12,
+        output_tokens=0,
+        total_tokens=12,
+        image_outputs=3,
+    )
+
+    summary = llm_usage_module.llm_usage_store.summarize_models(
+        ["demo/text", "demo/image", "demo/missing"]
+    )
+
+    assert summary["demo/text"]["total_tokens"] == 120
+    assert summary["demo/image"]["image_outputs"] == 3
+    assert summary["demo/missing"]["total_tokens"] == 0
+    assert summary["demo/missing"]["image_outputs"] == 0
 
 
 @pytest.mark.asyncio

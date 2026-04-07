@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from core.config import get_client_for_model
-from core.model_config import get_current_model, resolve_models_config_path
+from core.model_config import resolve_models_config_path, select_model_for_role
 from services.openai_adapter import generate_text
 
 from ap_utils import (
@@ -158,7 +158,7 @@ async def _generate_article_json(topic: str, search_context: str, word_count: in
         "}"
     )
 
-    model_to_use = get_current_model()
+    model_to_use = select_model_for_role("primary")
     if not model_to_use:
         raise RuntimeError(
             f"No text model configured in {resolve_models_config_path()}"

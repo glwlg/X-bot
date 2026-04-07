@@ -27,9 +27,9 @@ prepare_default_env(REPO_ROOT)
 
 from core.config import get_client_for_model
 from core.model_config import (
-    get_image_generation_model,
     get_model_id_for_api,
     resolve_models_config_path,
+    select_model_for_role,
 )
 from core.platform.models import UnifiedContext
 
@@ -179,14 +179,14 @@ async def execute(
         }
 
     aspect_ratio = _normalize_aspect_ratio(params.get("aspect_ratio"))
-    model_key = get_image_generation_model()
+    model_key = select_model_for_role("image_generation")
     if not model_key:
         return {
             "success": False,
             "failure_mode": "fatal",
             "text": (
-                f"❌ 未配置生图模型。请在 {resolve_models_config_path()} 中设置 "
-                "`model.image_generation`。"
+                f"❌ 当前没有可用的生图模型，可能是未配置，或已达到当日图片额度。"
+                f" 请在 {resolve_models_config_path()} 中设置 `model.image_generation`。"
             ),
         }
     client = get_client_for_model(model_key, is_async=False)

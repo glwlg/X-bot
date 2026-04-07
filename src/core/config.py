@@ -36,7 +36,6 @@ def _env_int(name: str, default: int) -> int:
 
 
 # Weixin (微信 iLink Bot) 配置
-WEIXIN_ENABLE = os.getenv("WEIXIN_ENABLE", "false").lower() == "true"
 WEIXIN_BASE_URL = os.getenv("WEIXIN_BASE_URL", "https://ilinkai.weixin.qq.com/")
 WEIXIN_CDN_BASE_URL = os.getenv(
     "WEIXIN_CDN_BASE_URL", "https://novac2c.cdn.weixin.qq.com/c2c"
