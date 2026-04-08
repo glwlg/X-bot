@@ -49,6 +49,7 @@ from ap_stages.write import write_stage
 from ap_utils import (
     as_bool,
     build_article_preview,
+    build_news_rejection_message,
     derive_topic_requirements,
     primary_author_account,
     resolve_article_author,
@@ -119,6 +120,27 @@ def _resolve_wechat_account_selector(params: dict[str, Any], topic: str) -> str:
     return ""
 
 
+def _resolve_news_rejection_message(topic: str, research_data: dict[str, Any]) -> str:
+    if not isinstance(research_data, dict):
+        return ""
+    if str(research_data.get("source_type") or "").strip().lower() != "web":
+        return ""
+
+    validation = research_data.get("news_validation")
+    if not isinstance(validation, dict) or not validation.get("recommend_reject"):
+        return ""
+
+    message = str(validation.get("reject_message") or "").strip()
+    if message:
+        return message
+
+    current_date = str(research_data.get("current_date") or "").strip()
+    requirements = derive_topic_requirements(topic, current_date=current_date)
+    subject = str(research_data.get("subject") or requirements["subject"] or topic).strip()
+    same_day_only = bool(validation.get("same_day_only") or requirements["same_day_only"])
+    return build_news_rejection_message(subject, same_day_only=same_day_only)
+
+
 async def _resolve_wechat_account(
     user_id: int | str,
     *,
@@ -172,6 +194,19 @@ async def _run_full_flow(
             "ok": False,
             "failure_mode": search_result.failure_mode,
             "text": f"❌ 搜索失败: {search_result.error}",
+            "ui": {},
+        }
+        return
+
+    news_rejection_message = _resolve_news_rejection_message(
+        topic,
+        search_result.data or {},
+    )
+    if news_rejection_message:
+        yield {
+            "ok": False,
+            "failure_mode": "recoverable",
+            "text": news_rejection_message,
             "ui": {},
         }
         return
@@ -380,6 +415,20 @@ async def _run_single_stage(
             "ui": {},
         }
         return
+
+    if stage == "search":
+        news_rejection_message = _resolve_news_rejection_message(
+            topic,
+            result.data or {},
+        )
+        if news_rejection_message:
+            yield {
+                "ok": False,
+                "failure_mode": "recoverable",
+                "text": news_rejection_message,
+                "ui": {},
+            }
+            return
 
     text_parts = [f"✅ {stage} 完成"]
     if result.output_path:

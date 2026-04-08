@@ -38,6 +38,11 @@ NON_BODY_HTML_PATTERNS = (
     r"(?is)<p[^>]*>\s*(?:免责声明[:：]?.*?|责编[:：]?.*?|责任编辑[:：]?.*?|图片来源[:：]?.*?|封面来源[:：]?.*?|欢迎在评论区.*?|欢迎留言.*?|欢迎关注.*?|感谢阅读.*?|END)\s*</p>",
     r"(?is)<h[1-6][^>]*>\s*(?:以下是.*?|以下为.*?|正文如下)\s*</h[1-6]>",
 )
+FORCED_NEWS_FILLER_RULES = (
+    (r"没有\s*新官宣", "没有新官宣"),
+    (r"虽然\s*没有\s*官宣", "虽然没有官宣"),
+    (r"值得关注(?:的)?是行业信号", "值得关注的是行业信号"),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -247,6 +252,25 @@ def derive_topic_requirements(topic: str, *, current_date: str = "") -> dict[str
         "forbidden_terms": forbidden_terms,
         "current_date": str(current_date or "").strip(),
     }
+
+
+def build_news_rejection_message(subject: str, *, same_day_only: bool) -> str:
+    safe_subject = _clean_subject_text(subject) or "该主题"
+    if same_day_only:
+        return f"今日未发现足够支撑发布的【{safe_subject}】当天新闻，不建议发文。"
+    return f"今日未发现足够支撑发布的【{safe_subject}】相关新闻素材，不建议发文。"
+
+
+def detect_forced_news_fillers(text: str) -> list[str]:
+    raw = str(text or "")
+    if not raw:
+        return []
+
+    hits: list[str] = []
+    for pattern, label in FORCED_NEWS_FILLER_RULES:
+        if re.search(pattern, raw):
+            hits.append(label)
+    return hits
 
 
 def filter_lines_by_forbidden_terms(text: str, forbidden_terms: list[str]) -> str:

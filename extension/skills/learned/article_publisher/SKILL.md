@@ -140,6 +140,27 @@ scripts/
 - 如果通过 `bash` 让 bot 执行 CLI，优先追加 `--raw-json`；CLI 会用 `tool_result=...` 输出最终结构化结果，避免把进度文本误当成 shell 错误。
 - 支持通过 `--stage` 参数单独执行某个阶段，中间产物通过 JSON 文件传递，支持断点续跑。
 
+### 新闻请求硬闸门 SOP
+
+仅对 `prefer_news=true` / `same_day_only=true` 的新闻类请求生效；非新闻类与本地素材写作流程保持原行为。
+
+1. 先校验，再写作：
+- 在 `search` 阶段必须输出结构化校验字段（`news_validation`），至少包含：
+- `has_enough_news`（是否找到足够可写新闻）
+- `candidate_source_count`（候选来源数量）
+- `suspected_same_day`（是否疑似同日）
+- `recommend_reject`（是否建议拒稿）
+- `reject_reasons`（拒稿原因）
+2. 硬闸门：
+- 若 `recommend_reject=true` 或新闻素材不足，必须在写作前终止全流程，直接返回：
+- `今日未发现足够支撑发布的【主题】当天新闻，不建议发文。`（或同等明确表达）
+- 终止后不得继续生成正文、不得生成配图、不得执行发布。
+3. 发布拦截：
+- 当 `publish=true` 且命中上述拒稿条件，必须阻止 publish，不得进入发布阶段。
+4. 文案与配图约束：
+- 新闻正文禁止出现“没有新官宣但… / 虽然没有官宣… / 值得关注的是行业信号…”等题目不成立时的硬凑表述。
+- 配图必须服务对应正文事实；不相关内容必须返回 `null`，禁止为了凑图生成泛图。
+
 ## Performance & Batching Rules
 
 - **耗时警告**: `article_publisher` 的 `write` 和 `illustrate` 阶段非常耗时（单次全流程需 2-5 分钟），且包含大量内容的结构化输出。

@@ -13,6 +13,9 @@ from services.openai_adapter import generate_text
 
 from ap_utils import (
     MAX_SEARCH_CONTEXT_CHARS,
+    article_plain_text,
+    build_news_rejection_message,
+    detect_forced_news_fillers,
     derive_topic_requirements,
     normalize_article_data,
     parse_article_json,
@@ -76,11 +79,28 @@ async def write_stage(
         if not current_date:
             current_date = str(research_data.get("current_date") or "").strip()
 
-    if not search_context:
-        return StageResult.fail("无写作素材输入")
-
     if not topic:
         topic = "未命名主题"
+    requirements = derive_topic_requirements(topic, current_date=current_date)
+
+    if (
+        research_data
+        and str(research_data.get("source_type") or "").strip().lower() == "web"
+    ):
+        news_validation = research_data.get("news_validation")
+        if isinstance(news_validation, dict) and news_validation.get("recommend_reject"):
+            reject_message = str(news_validation.get("reject_message") or "").strip()
+            if not reject_message:
+                reject_message = build_news_rejection_message(
+                    str(research_data.get("subject") or requirements["subject"] or topic),
+                    same_day_only=bool(
+                        news_validation.get("same_day_only") or requirements["same_day_only"]
+                    ),
+                )
+            return StageResult.fail(reject_message)
+
+    if not search_context:
+        return StageResult.fail("无写作素材输入")
 
     # -- generate article ------------------------------------------------------
     try:
@@ -106,6 +126,22 @@ async def write_stage(
         return StageResult.fail("文章无正文段落，生成失败")
     if total_chars < 200:
         return StageResult.fail(f"文章正文过短 ({total_chars} 字)，生成质量不足")
+
+    if requirements["prefer_news"]:
+        combined_text = "\n".join(
+            [
+                str(article_data.get("title") or ""),
+                str(article_data.get("digest") or ""),
+                article_plain_text(article_data),
+            ]
+        )
+        filler_hits = detect_forced_news_fillers(combined_text)
+        if filler_hits:
+            return StageResult.fail(
+                "写作结果包含不允许的新闻硬凑表述："
+                + "、".join(filler_hits)
+                + "。请补充有效新闻素材后再试。"
+            )
 
     # -- save ------------------------------------------------------------------
     effective_topic = str(derive_topic_requirements(topic, current_date=current_date)["subject"] or topic).strip() or topic
@@ -141,9 +177,12 @@ async def _generate_article_json(
     ]
     if requirements["prefer_news"]:
         brief_lines.append("- 按新闻综述写作，先交代事实，再说明值得关注的原因。")
+        brief_lines.append(
+            "- 严禁出现“没有新官宣但… / 虽然没有官宣… / 值得关注的是行业信号…”这类硬凑表述。"
+        )
     if requirements["same_day_only"] and requirements["current_date"]:
         brief_lines.append(
-            f"- 只使用 {requirements['current_date']} 当天的信息；如果素材不足，就保持克制，不要扩写。"
+            f"- 只使用 {requirements['current_date']} 当天的信息；素材不足时必须克制，不得硬凑。"
         )
     if requirements["body_only"] or requirements["public_readers"]:
         brief_lines.append(
@@ -180,7 +219,8 @@ async def _generate_article_json(
         '- 在每个 section 末尾加一行 <p style="margin-bottom:1.5em;"></p> 作为段间留白。\n\n'
         "**配图要求**：\n"
         "- 必须设计 1 张封面图 PROMPT（cover_prompt）。\n"
-        "- 在 2-3 个 section 中设计 image_prompt（正文插图），其余为 null。\n"
+        "- 在 1-3 个 section 中设计 image_prompt（正文插图），其余为 null。\n"
+        "- 每个 image_prompt 必须服务对应 section 的事实内容，禁止为了凑图生成无关泛图。\n"
         "- 所有图片 PROMPT 使用英文描述，适合 AI 图片生成。\n\n"
         "**输出格式**：\n"
         "- 返回严格 JSON 格式，仅返回 JSON 对象本身。\n"
