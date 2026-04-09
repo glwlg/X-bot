@@ -33,6 +33,17 @@ async def _collect_chunks(result):
     return chunks
 
 
+def _stage_success(data=None, *, files=None, output_path=None):
+    return SimpleNamespace(
+        ok=True,
+        data=data,
+        files=files or {},
+        output_path=output_path,
+        error=None,
+        failure_mode=None,
+    )
+
+
 class _ImageCtx:
     def __init__(self):
         self.calls: list[tuple[str, dict]] = []
@@ -140,25 +151,23 @@ async def test_article_publisher_calls_web_search_with_expected_params(monkeypat
 @pytest.mark.asyncio
 async def test_article_publisher_account_author_overrides_model_author(monkeypatch):
     module = _load_module()
-    monkeypatch.setattr(module, "get_current_model", lambda: "demo/current-model")
     monkeypatch.setattr(
         module,
-        "get_client_for_model",
-        lambda model_name, is_async=True: (
-            object() if model_name == "demo/current-model" and is_async else None
-        ),
-    )
-    monkeypatch.setattr(
-        module,
-        "get_credential",
-        lambda _user_id, _account_type: _async_value(
-            {"app_id": "x", "app_secret": "y", "author": "炜煜"}
+        "get_credential_entry",
+        lambda _user_id, _account_type, _selector=None: _async_value(
+            {
+                "id": "wechat-1",
+                "name": "测试号",
+                "data": {"app_id": "x", "app_secret": "y", "author": "炜煜"},
+            }
         ),
     )
 
-    async def fake_generate_text(async_client, model, contents, config=None):
-        _ = (async_client, model, contents, config)
-        return json.dumps(
+    async def fake_search_stage(*_args, **_kwargs):
+        return _stage_success({"source_type": "web"})
+
+    async def fake_write_stage(*_args, **_kwargs):
+        return _stage_success(
             {
                 "title": "测试标题",
                 "author": "深响科技局",
@@ -167,16 +176,15 @@ async def test_article_publisher_account_author_overrides_model_author(monkeypat
                 "sections": [
                     {"content": "<p>测试正文</p>", "image_prompt": None},
                 ],
-            },
-            ensure_ascii=False,
+            }
         )
 
-    monkeypatch.setattr(module, "generate_text", fake_generate_text)
-    monkeypatch.setattr(
-        module,
-        "fetch_webpage_content",
-        lambda _url: _async_value("网页内容"),
-    )
+    async def fake_illustrate_stage(*_args, **_kwargs):
+        return _stage_success(files={})
+
+    monkeypatch.setattr(module, "search_stage", fake_search_stage)
+    monkeypatch.setattr(module, "write_stage", fake_write_stage)
+    monkeypatch.setattr(module, "illustrate_stage", fake_illustrate_stage)
 
     class _FakeCtx:
         def __init__(self):
@@ -184,11 +192,6 @@ async def test_article_publisher_account_author_overrides_model_author(monkeypat
                 text="",
                 user=SimpleNamespace(id="user-1"),
             )
-
-        async def run_skill(self, skill_name: str, params: dict):
-            if skill_name == "web_search":
-                return {"text": "https://example.com/a", "files": {}}
-            raise AssertionError(f"unexpected skill call: {skill_name}")
 
     chunks = await _collect_chunks(
         module.execute(_FakeCtx(), {"topic": "OpenAI"}, runtime=None)
@@ -308,40 +311,17 @@ async def test_article_publisher_generates_xiaohongshu_draft_files(
     monkeypatch,
 ):
     module = _load_module()
-    monkeypatch.setattr(module, "get_current_model", lambda: "demo/current-model")
     monkeypatch.setattr(
         module,
-        "get_client_for_model",
-        lambda model_name, is_async=True: (
-            object() if model_name == "demo/current-model" and is_async else None
-        ),
-    )
-    monkeypatch.setattr(
-        module,
-        "get_credential",
-        lambda _user_id, account_type: _async_value(
-            {"endpoint": "https://publisher.example.com/xhs", "author": "炜煜"}
-            if account_type == "xiaohongshu_publisher"
-            else None
-        ),
+        "get_credential_entry",
+        lambda _user_id, _account_type, _selector=None: _async_value(None),
     )
 
-    captured_prompts: list[str] = []
+    async def fake_search_stage(*_args, **_kwargs):
+        return _stage_success({"source_type": "web"})
 
-    async def fake_generate_text(async_client, model, contents, config=None):
-        _ = (async_client, model, config)
-        captured_prompts.append(str(contents))
-        prompt = str(contents)
-        if "小红书编辑" in prompt:
-            return json.dumps(
-                {
-                    "title": "提示词工程怎么落地",
-                    "body": "先拆任务，再收上下文，最后固化成可复用流程。",
-                    "tags": ["提示词工程", "AI工作流", "效率工具"],
-                },
-                ensure_ascii=False,
-            )
-        return json.dumps(
+    async def fake_write_stage(*_args, **_kwargs):
+        return _stage_success(
             {
                 "title": "本地素材文章",
                 "author": "Ikaros",
@@ -350,15 +330,28 @@ async def test_article_publisher_generates_xiaohongshu_draft_files(
                 "sections": [
                     {"content": "<p>教程正文</p>", "image_prompt": "desk and notes"},
                 ],
-            },
-            ensure_ascii=False,
+            }
         )
 
-    monkeypatch.setattr(module, "generate_text", fake_generate_text)
+    async def fake_illustrate_stage(*_args, **_kwargs):
+        return _stage_success(files={})
+
+    async def fake_generate_xiaohongshu_note_json(topic, article_data):
+        assert topic == "提示词工程"
+        assert article_data["title"] == "本地素材文章"
+        return {
+            "title": "提示词工程怎么落地",
+            "body": "先拆任务，再收上下文，最后固化成可复用流程。",
+            "tags": ["提示词工程", "AI工作流", "效率工具"],
+        }
+
+    monkeypatch.setattr(module, "search_stage", fake_search_stage)
+    monkeypatch.setattr(module, "write_stage", fake_write_stage)
+    monkeypatch.setattr(module, "illustrate_stage", fake_illustrate_stage)
     monkeypatch.setattr(
         module,
-        "fetch_webpage_content",
-        lambda _url: _async_value("网页内容"),
+        "generate_xiaohongshu_note_json",
+        fake_generate_xiaohongshu_note_json,
     )
 
     class _FakeCtx:
@@ -367,13 +360,6 @@ async def test_article_publisher_generates_xiaohongshu_draft_files(
                 text="",
                 user=SimpleNamespace(id="user-1"),
             )
-
-        async def run_skill(self, skill_name: str, params: dict):
-            if skill_name == "web_search":
-                return {"text": "https://example.com/a", "files": {}}
-            if skill_name == "generate_image":
-                return {"files": {"demo.png": b"png"}}
-            raise AssertionError(f"unexpected skill call: {skill_name}")
 
     chunks = await _collect_chunks(
         module.execute(
@@ -390,7 +376,6 @@ async def test_article_publisher_generates_xiaohongshu_draft_files(
     assert "xiaohongshu_note.json" in files
     assert "提示词工程怎么落地" in files["xiaohongshu_note.txt"].decode("utf-8")
     assert "已生成小红书发布草稿附件" in str(final.get("text") or "")
-    assert any("小红书编辑" in prompt for prompt in captured_prompts)
 
 
 @pytest.mark.asyncio

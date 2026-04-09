@@ -37,10 +37,7 @@ from core.app_paths import data_dir
 
 prepare_default_env(REPO_ROOT)
 
-from extension.skills.builtin.credential_manager.scripts.store import (
-    get_credential,
-    get_credential_entry,
-)
+from extension.skills.builtin.credential_manager.scripts.store import get_credential_entry
 
 from ap_stages.illustrate import illustrate_stage
 from ap_stages.publish import publish_stage
@@ -466,10 +463,9 @@ async def execute(ctx: UnifiedContext, params: dict[str, Any], runtime=None):
         params=params,
         topic=topic,
     )
-    xiaohongshu_account = await get_credential(ctx.message.user.id, "xiaohongshu_publisher")
     accounts = {
         "wechat": wechat_account,
-        "xiaohongshu": xiaohongshu_account,
+        "xiaohongshu": None,
     }
 
     if not topic and stage not in ("write", "illustrate", "publish"):

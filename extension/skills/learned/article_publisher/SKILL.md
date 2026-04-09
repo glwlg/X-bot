@@ -135,8 +135,9 @@ scripts/
 - `publish=true` 且未显式指定渠道时，默认按 `wechat` 兼容旧行为。
 - 发布到公众号前，先用 `credential_manager` 配置 `wechat_official_account` 的 `app_id` 与 `app_secret`；同一用户下可保存多条公众号凭据。
 - 指定 `wechat_account` 时，按别名或凭据 ID 选择对应公众号；未指定时优先使用默认项，没有默认项则回退第一条公众号凭据。
-- 发布到小红书前，先用 `credential_manager` 配置 `xiaohongshu_publisher` 的 `endpoint=`，可选 `token=`、`api_key=`、`author=`。当前小红书走可配置发布通道，不假设存在官方公开内容发布 API。
-- `wechat_official_account` 和 `xiaohongshu_publisher` 都支持统一配置 `author=`；文章作者优先使用发布渠道账户里的这个值，图片水印自动派生为 `@author`。
+- 发布到小红书前，不需要通过 `credential_manager` 配置发布凭据。当前小红书发布直接走本地 `opencli xiaohongshu publish`。
+- 小红书发布前置条件是：`opencli` 已安装且在 PATH 中，`opencli xiaohongshu publish --help` 可执行，并且 `opencli doctor --sessions` 显示 bridge 已连接且存在可用的小红书会话。
+- `wechat_official_account` 支持统一配置 `author=`；文章作者优先使用可用发布账户里的这个值，否则回退到文章自身的 `author`，图片水印自动派生为 `@author`。
 - 如果通过 `bash` 让 bot 执行 CLI，优先追加 `--raw-json`；CLI 会用 `tool_result=...` 输出最终结构化结果，避免把进度文本误当成 shell 错误。
 - 支持通过 `--stage` 参数单独执行某个阶段，中间产物通过 JSON 文件传递，支持断点续跑。
 
@@ -170,7 +171,11 @@ scripts/
 ## Credential Example
 
 - `python skills/builtin/credential_manager/scripts/execute.py add wechat_official_account --data 'app_id=xxx app_secret=yyy author=炜煜'`
-- `python skills/builtin/credential_manager/scripts/execute.py add xiaohongshu_publisher --data 'endpoint=https://publisher.example.com/xhs token=xxx author=炜煜'`
+
+## OpenCLI Check
+
+- `opencli xiaohongshu publish --help`
+- `opencli doctor --sessions`
 
 ## Output
 

@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 from core.primitive_runtime import PrimitiveRuntime
@@ -41,6 +43,47 @@ async def test_primitive_runtime_bash_timeout(tmp_path):
 
     assert result["ok"] is False
     assert result["error_code"] == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_primitive_runtime_bash_kills_subprocess_on_cancel(monkeypatch, tmp_path):
+    runtime = PrimitiveRuntime(workspace_root=str(tmp_path))
+
+    class _FakeProcess:
+        def __init__(self):
+            self.returncode = None
+            self.kill_called = False
+            self.communicate_calls = 0
+
+        async def communicate(self):
+            self.communicate_calls += 1
+            if self.communicate_calls == 1:
+                await asyncio.sleep(3600)
+            return b"", b""
+
+        def kill(self):
+            self.kill_called = True
+            self.returncode = -9
+
+    fake_process = _FakeProcess()
+
+    async def fake_create_subprocess_shell(*_args, **_kwargs):
+        return fake_process
+
+    monkeypatch.setattr(
+        "core.primitive_runtime.asyncio.create_subprocess_shell",
+        fake_create_subprocess_shell,
+    )
+
+    task = asyncio.create_task(runtime.bash("sleep 3600"))
+    await asyncio.sleep(0)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert fake_process.kill_called is True
+    assert fake_process.communicate_calls >= 2
 
 
 @pytest.mark.asyncio

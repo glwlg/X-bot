@@ -25,11 +25,6 @@ permissions:
 - `explore` / `probe`、`synthesize`、`generate`、`record`、`cascade`
 - `install`、`register` 或 plugin 开发
 
-## 版本
-
-当前环境已确认：
-
-`opencli --version` -> `1.4.1`
 
 ## 默认使用流程
 

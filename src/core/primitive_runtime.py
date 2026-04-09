@@ -378,6 +378,12 @@ class PrimitiveRuntime:
                     process.communicate(),
                     timeout=timeout_sec,
                 )
+            except asyncio.CancelledError:
+                with contextlib.suppress(ProcessLookupError):
+                    process.kill()
+                with contextlib.suppress(Exception):
+                    await process.communicate()
+                raise
             except asyncio.TimeoutError:
                 with contextlib.suppress(ProcessLookupError):
                     process.kill()
