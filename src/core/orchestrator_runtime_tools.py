@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Set
 
+from core.file_artifacts import normalize_file_rows
 from core.local_file_delivery import send_local_file
 from core.tool_registry import tool_registry
 
@@ -404,6 +405,24 @@ class ToolCallDispatcher:
             "notify_user_id": notify_target["notify_user_id"],
         }
 
+    @staticmethod
+    def _build_completion_signal(
+        *,
+        status: str,
+        summary: str,
+        tool_name: str,
+        followup: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        signal = {
+            "explicit": True,
+            "status": str(status or "").strip().lower(),
+            "summary": str(summary or "").strip()[:500],
+            "tool_name": str(tool_name or "").strip(),
+        }
+        if isinstance(followup, dict) and followup:
+            signal["followup"] = dict(followup)
+        return signal
+
     async def _execute_skill_tool_binding(
         self,
         *,
@@ -562,6 +581,79 @@ class ToolCallDispatcher:
                 task_workspace_root=self.task_workspace_root,
             )
             self.todo_mark_step("act", "in_progress", f"Tool `{tool_name}` finished.")
+            return result
+
+        if tool_name == "complete_task":
+            status = str(tool_args.get("status") or "").strip().lower()
+            text = str(tool_args.get("text") or "").strip()
+            summary = str(tool_args.get("summary") or "").strip() or text[:500]
+            failure_mode = (
+                str(tool_args.get("failure_mode") or "").strip().lower()
+                or "recoverable"
+            )
+            followup = tool_args.get("followup")
+            files = normalize_file_rows(tool_args.get("files"))
+            ui = tool_args.get("ui") if isinstance(tool_args.get("ui"), dict) else {}
+
+            if status not in {
+                "done",
+                "failed",
+                "partial",
+                "waiting_user",
+                "waiting_external",
+            }:
+                return {
+                    "ok": False,
+                    "error_code": "invalid_args",
+                    "message": "complete_task.status is invalid",
+                    "failure_mode": "recoverable",
+                }
+            if not text:
+                return {
+                    "ok": False,
+                    "error_code": "invalid_args",
+                    "message": "complete_task.text is required",
+                    "failure_mode": "recoverable",
+                }
+
+            signal = self._build_completion_signal(
+                status=status,
+                summary=summary,
+                tool_name=tool_name,
+                followup=followup if isinstance(followup, dict) else None,
+            )
+            payload: Dict[str, Any] = {
+                "text": text,
+                "summary": summary,
+                "completion_signal": signal,
+            }
+            if files:
+                payload["files"] = files
+            if ui:
+                payload["ui"] = ui
+
+            result: Dict[str, Any] = {
+                "ok": status != "failed",
+                "terminal": True,
+                "task_outcome": status,
+                "text": text,
+                "summary": summary,
+                "payload": payload,
+                "completion_signal": signal,
+                "ui": ui,
+            }
+            if files:
+                result["files"] = files
+            if status == "failed":
+                result["failure_mode"] = (
+                    failure_mode if failure_mode in {"recoverable", "fatal"} else "recoverable"
+                )
+                result["message"] = text
+            self.todo_mark_step(
+                "deliver",
+                "in_progress",
+                f"Tool `complete_task` declared `{status}`.",
+            )
             return result
 
         if tool_name == "send_local_file":

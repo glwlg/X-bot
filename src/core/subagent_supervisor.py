@@ -349,20 +349,32 @@ class SubagentSupervisor:
             for run in existing_runs
             if run is not None and run.result is not None
         ]
+        success_count = sum(
+            1
+            for item in results
+            if isinstance(item, dict) and bool(item.get("ok"))
+        )
+        failure_count = max(0, len(results) - success_count)
         pending = [
             run.subagent_id
             for run in existing_runs
             if run is not None and run.result is None
         ]
-        summary = (
-            f"{len(results)} 个子任务已完成，{len(pending)} 个仍在运行。"
-            if pending
-            else f"{len(results)} 个子任务已完成。"
-        )
+        if pending:
+            summary = (
+                f"{len(results)} 个子任务已返回结果，"
+                f"其中 {success_count} 个成功、{failure_count} 个失败，"
+                f"{len(pending)} 个仍在运行。"
+            )
+        else:
+            summary = (
+                f"{len(results)} 个子任务已返回结果，"
+                f"其中 {success_count} 个成功、{failure_count} 个失败。"
+            )
         return {
             "ok": True,
             "terminal": False,
-            "task_outcome": "partial" if pending else "done",
+            "task_outcome": "partial" if pending else "collected",
             "summary": summary,
             "text": summary,
             "results": results,
@@ -372,6 +384,9 @@ class SubagentSupervisor:
                 "results": results,
                 "pending": pending,
                 "missing": missing_ids,
+                "all_completed": not pending,
+                "success_count": success_count,
+                "failure_count": failure_count,
             },
         }
 

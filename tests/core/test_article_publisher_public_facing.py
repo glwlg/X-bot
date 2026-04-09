@@ -205,12 +205,14 @@ async def test_write_prompt_includes_public_reader_guardrails(monkeypatch):
     assert result["title"] == "今日中国 AI 新闻速览"
     prompt = captured["prompt"]
     assert "主题「中国最新人工智能周边新闻」" in prompt
-    assert "公众号普通读者" in prompt
+    assert "公众号读者" in prompt
     assert "只使用 2026-04-07 当天的信息" in prompt
     assert "不要出现以下对象或相关内容：华为" in prompt
     assert "只输出正文" in prompt
     assert "严禁出现“没有新官宣但… / 虽然没有官宣… / 值得关注的是行业信号…”" in prompt
     assert "禁止为了凑图生成无关泛图" in prompt
+    assert "普通读者" not in prompt
+    assert "普通人" not in prompt
 
 
 @pytest.mark.asyncio

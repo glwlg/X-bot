@@ -6,6 +6,7 @@ import asyncio
 from typing import Any, Awaitable, Callable, cast
 
 from core.config import get_client_for_model
+from core.file_artifacts import normalize_file_rows
 from core.model_config import (
     load_models_config,
     get_model_candidates_for_input,
@@ -142,9 +143,9 @@ class AiService:
         except ValueError:
             tool_final_stream_chunk_chars = 900
         try:
-            MAX_REPEAT_TOOL_CALLS = max(2, int(os.getenv("AI_TOOL_REPEAT_GUARD", "3")))
+            MAX_REPEAT_TOOL_CALLS = max(2, int(os.getenv("AI_TOOL_REPEAT_GUARD", "5")))
         except ValueError:
-            MAX_REPEAT_TOOL_CALLS = 3
+            MAX_REPEAT_TOOL_CALLS = 5
         try:
             MAX_TOOL_CALLS_PER_TOOL = max(
                 1,
@@ -438,7 +439,7 @@ class AiService:
                                         "signature": semantic_signature,
                                     },
                                 )
-                                fallback_text = last_terminal_success_text or (
+                                fallback_text = (
                                     "⚠️ 检测到语义上重复的工具调用，已停止继续搜索。"
                                     "自动整理最终结论失败，请重试或缩小查询范围。"
                                 )
@@ -454,6 +455,12 @@ class AiService:
                                         "text_preview": final_text.replace("\n", " ")[
                                             :200
                                         ],
+                                        "text": final_text,
+                                        "completion_signal": {
+                                            "explicit": True,
+                                            "status": "failed",
+                                            "tool_name": "semantic_loop_guard",
+                                        },
                                         "source": "semantic_loop_guard",
                                     },
                                 )
@@ -508,7 +515,7 @@ class AiService:
                                         },
                                     },
                                 )
-                                fallback_text = last_terminal_success_text or (
+                                fallback_text = (
                                     "⚠️ 已达到单工具调用上限，停止继续重复调用。"
                                     "自动整理最终结论失败，请重试或缩小查询范围。"
                                 )
@@ -524,6 +531,12 @@ class AiService:
                                         "text_preview": final_text.replace("\n", " ")[
                                             :200
                                         ],
+                                        "text": final_text,
+                                        "completion_signal": {
+                                            "explicit": True,
+                                            "status": "failed",
+                                            "tool_name": "tool_budget_guard",
+                                        },
                                         "source": "tool_budget_guard",
                                     },
                                 )
@@ -573,22 +586,6 @@ class AiService:
                                         yield segment
                                 else:
                                     yield forced_reply
-                            elif (
-                                last_terminal_success_text
-                                or last_terminal_success_summary
-                            ):
-                                fallback_text = (
-                                    last_terminal_success_text
-                                    or f"✅ 任务已完成：{last_terminal_success_summary}"
-                                )
-                                if tools and tool_final_stream_enabled:
-                                    for segment in _split_text_for_streaming(
-                                        fallback_text,
-                                        tool_final_stream_chunk_chars,
-                                    ):
-                                        yield segment
-                                else:
-                                    yield fallback_text
                             else:
                                 yield (
                                     "⚠️ 检测到重复工具调用，已自动停止以避免死循环。"
@@ -612,6 +609,7 @@ class AiService:
                         turn_failures: list[str] = []
                         async_dispatch_rows: list[dict[str, str]] = []
                         terminal_short_circuit_text = ""
+                        continue_after_tool_prompt = ""
                         should_terminal_stop = False
                         for index, fc in enumerate(function_calls):
                             tool_name = str(fc.get("name") or "").strip()
@@ -800,6 +798,10 @@ class AiService:
                                         )
                                     should_terminal_stop = True
                                     break
+                                if isinstance(directive, dict):
+                                    continue_after_tool_prompt = str(
+                                        directive.get("continue_prompt") or ""
+                                    ).strip()
                             else:
                                 logger.error("No tool_executor provided!")
                                 break
@@ -818,6 +820,15 @@ class AiService:
                             completed = True
                             break
 
+                        if continue_after_tool_prompt:
+                            current_history.append(
+                                {
+                                    "role": "user",
+                                    "content": continue_after_tool_prompt,
+                                }
+                            )
+                            continue
+
                         if async_dispatch_rows:
                             notice_text = (
                                 await _synthesize_async_dispatch_notice(
@@ -831,6 +842,12 @@ class AiService:
                                     "text_preview": notice_text.replace("\n", " ")[
                                         :200
                                     ],
+                                    "text": notice_text,
+                                    "completion_signal": {
+                                        "explicit": True,
+                                        "status": "waiting_external",
+                                        "tool_name": "async_dispatch",
+                                    },
                                     "source": "async_dispatch",
                                 },
                             )
@@ -900,13 +917,29 @@ class AiService:
                                 turn_count,
                                 preview,
                             )
-                            await _emit(
+                            directive = await _emit(
                                 "final_response",
                                 {
                                     "turn": turn_count,
                                     "text_preview": preview,
+                                    "text": model_text,
                                 },
                             )
+                            continue_prompt = ""
+                            if isinstance(directive, dict):
+                                continue_prompt = str(
+                                    directive.get("continue_prompt") or ""
+                                ).strip()
+                            if continue_prompt:
+                                assistant_text_message = (
+                                    self._build_assistant_text_message(response)
+                                )
+                                if assistant_text_message:
+                                    current_history.append(assistant_text_message)
+                                current_history.append(
+                                    {"role": "user", "content": continue_prompt}
+                                )
+                                continue
                             if tools and tool_final_stream_enabled:
                                 for segment in _split_text_for_streaming(
                                     model_text,
@@ -925,6 +958,7 @@ class AiService:
                                 {
                                     "turn": turn_count,
                                     "text_preview": "",
+                                    "text": "",
                                 },
                             )
                             yield "⚠️ 抱歉，模型返回了空响应，可能是触发了安全过滤或内部错误。"
@@ -967,20 +1001,6 @@ class AiService:
                         "terminal_text_preview": last_terminal_success_text[:200],
                     },
                 )
-                if last_terminal_success_text or last_terminal_success_summary:
-                    fallback_text = (
-                        last_terminal_success_text
-                        or f"✅ 任务已完成：{last_terminal_success_summary}"
-                    )
-                    if tools and tool_final_stream_enabled:
-                        for segment in _split_text_for_streaming(
-                            fallback_text,
-                            tool_final_stream_chunk_chars,
-                        ):
-                            yield segment
-                    else:
-                        yield fallback_text
-                    return
                 yield (
                     f"⚠️ 工具调用轮次已达上限（{MAX_TURNS}），任务仍未完成。"
                     "请把任务拆分为更小步骤后重试。"
@@ -1179,6 +1199,8 @@ class AiService:
         raw_payload = tool_result.get("payload")
         if isinstance(raw_payload, dict):
             payload = dict(raw_payload)
+        elif tool_result.get("files"):
+            payload = {"files": normalize_file_rows(tool_result.get("files"))}
 
         ui_candidate = tool_result.get("ui")
         if not isinstance(ui_candidate, dict) and isinstance(payload.get("ui"), dict):
@@ -1201,6 +1223,12 @@ class AiService:
 
         if text and "text" not in payload:
             payload["text"] = text
+        if "files" not in payload and tool_result.get("files"):
+            payload["files"] = normalize_file_rows(tool_result.get("files"))
+        if "completion_signal" not in payload and isinstance(
+            tool_result.get("completion_signal"), dict
+        ):
+            payload["completion_signal"] = dict(tool_result.get("completion_signal") or {})
         if ui and "ui" not in payload:
             payload["ui"] = ui
         return text, ui, payload

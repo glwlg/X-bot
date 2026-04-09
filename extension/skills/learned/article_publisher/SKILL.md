@@ -10,11 +10,11 @@ triggers:
 - 写长文
 - 深度报道
 - 热点解读
-runtime_target: ikaros
+runtime_target: subagent
 change_level: learned
 allow_ikaros_modify: true
 allow_auto_publish: true
-rollout_target: ikaros
+rollout_target: subagent
 preflight_commands:
 - python scripts/execute.py --help
 policy_groups:

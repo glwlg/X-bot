@@ -62,7 +62,6 @@ async def test_article_publisher_returns_recoverable_error_without_topic():
     assert final.get("failure_mode") == "recoverable"
     assert "请提供文章主题" in str(final.get("text") or "")
 
-
 @pytest.mark.asyncio
 async def test_article_publisher_calls_web_search_with_expected_params(monkeypatch):
     module = _load_module()

@@ -5,6 +5,8 @@ import pytest
 
 import services.ai_service as ai_service_module
 from core.llm_usage_store import set_current_llm_usage_session_id
+from core.subagent_supervisor import SubagentSupervisor
+from core.subagent_types import SubagentResult
 from extension.skills._internal.gh_cli_service import GhCliService
 from services.ai_service import AiService
 
@@ -153,6 +155,83 @@ async def test_ai_service_emits_loop_guard_on_repeated_calls(monkeypatch):
     assert "loop_guard" in events
     assert chunks
     assert "重复工具调用" in chunks[-1]
+
+
+@pytest.mark.asyncio
+async def test_ai_service_loop_guard_does_not_emit_previous_terminal_success(
+    monkeypatch,
+):
+    service = AiService()
+    monkeypatch.setenv("AI_TOOL_REPEAT_GUARD", "2")
+    monkeypatch.setenv("AI_TOOL_SEMANTIC_REPEAT_GUARD", "99")
+    monkeypatch.setenv("AI_TOOL_MAX_CALLS_PER_TOOL", "99")
+
+    class FakeResponse:
+        def __init__(self):
+            self.choices = [
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="",
+                        tool_calls=[
+                            SimpleNamespace(
+                                id="call-1",
+                                function=SimpleNamespace(
+                                    name="bash",
+                                    arguments=json.dumps(
+                                        {
+                                            "command": "python execute.py --stage search"
+                                        },
+                                        ensure_ascii=False,
+                                    ),
+                                ),
+                            )
+                        ],
+                    )
+                )
+            ]
+
+    async def fake_create(**_kwargs):
+        return FakeResponse()
+
+    monkeypatch.setattr(
+        ai_service_module,
+        "openai_async_client",
+        SimpleNamespace(
+            chat=SimpleNamespace(completions=SimpleNamespace(create=fake_create))
+        ),
+    )
+
+    async def fake_tool_executor(_name, _args):
+        return {
+            "ok": True,
+            "terminal": True,
+            "task_outcome": "done",
+            "text": (
+                "✅ search 完成\n"
+                "输出: /home/luwei/ikaros/data/user/skills/article_publisher/articles/"
+                "2026-04-09/research.json"
+            ),
+        }
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "继续完成任务"}]}],
+        tools=[
+            {
+                "name": "bash",
+                "description": "",
+                "parameters": {"type": "object"},
+            }
+        ],
+        tool_executor=fake_tool_executor,
+        system_instruction="test",
+        event_callback=lambda _event, _payload: None,
+    ):
+        chunks.append(chunk)
+
+    assert chunks
+    assert "重复工具调用" in chunks[-1]
+    assert "research.json" not in chunks[-1]
 
 
 @pytest.mark.asyncio
@@ -498,6 +577,443 @@ async def test_ai_service_terminal_payload_uses_result_and_ui(monkeypatch):
     assert chunks[-1] == terminal_result
     assert captured["text"] == terminal_result
     assert captured["ui"].get("actions")
+
+
+@pytest.mark.asyncio
+async def test_ai_service_terminal_payload_includes_top_level_files(
+    monkeypatch, tmp_path
+):
+    service = AiService()
+    captured = {"payload": {}}
+    image_path = (tmp_path / "demo.png").resolve()
+    image_path.write_bytes(b"png")
+    files = [
+        {
+            "kind": "photo",
+            "path": str(image_path),
+            "filename": "demo.png",
+        }
+    ]
+
+    class FakeResponse:
+        def __init__(self):
+            self.choices = [
+                SimpleNamespace(
+                    message=SimpleNamespace(
+                        content="",
+                        tool_calls=[
+                            SimpleNamespace(
+                                id="call-1",
+                                function=SimpleNamespace(
+                                    name="ext_generate_image",
+                                    arguments=json.dumps(
+                                        {"prompt": "生成封面"},
+                                        ensure_ascii=False,
+                                    ),
+                                ),
+                            )
+                        ],
+                    )
+                )
+            ]
+
+    class FakeModels:
+        async def create(self, **kwargs):
+            return FakeResponse()
+
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeModels()
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    monkeypatch.setattr(ai_service_module, "openai_async_client", FakeClient())
+
+    async def fake_tool_executor(_name, _args):
+        return {
+            "ok": True,
+            "terminal": True,
+            "task_outcome": "done",
+            "text": "✅ 图片已生成。",
+            "files": files,
+        }
+
+    async def event_callback(event, payload):
+        if event == "tool_call_finished":
+            captured["payload"] = dict(payload.get("terminal_payload") or {})
+            return {"stop": True, "final_text": payload.get("terminal_text", "")}
+        return None
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "画图"}]}],
+        tools=[
+            {
+                "name": "ext_generate_image",
+                "description": "",
+                "parameters": {"type": "object"},
+            }
+        ],
+        tool_executor=fake_tool_executor,
+        system_instruction="test",
+        event_callback=event_callback,
+    ):
+        chunks.append(chunk)
+
+    assert chunks[-1] == "✅ 图片已生成。"
+    assert captured["payload"]["files"] == [{**files[0], "caption": ""}]
+
+
+@pytest.mark.asyncio
+async def test_ai_service_continues_after_await_subagents_collection(monkeypatch):
+    service = AiService()
+    supervisor = SubagentSupervisor()
+    supervisor._runs["subagent-1"] = SimpleNamespace(
+        subagent_id="subagent-1",
+        task=None,
+        result=SubagentResult(
+            subagent_id="subagent-1",
+            ok=False,
+            summary="未能加载 article_publisher",
+            text="未能加载 article_publisher",
+            error="未能加载 article_publisher",
+            diagnostic_summary="未能加载 article_publisher",
+            task_outcome="blocked",
+            failure_mode="recoverable",
+            ikaros_followup_required=True,
+        ),
+    )
+
+    class FakeModels:
+        def __init__(self):
+            self.calls = 0
+
+        async def create(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content="",
+                                tool_calls=[
+                                    SimpleNamespace(
+                                        id="call-1",
+                                        function=SimpleNamespace(
+                                            name="await_subagents",
+                                            arguments=json.dumps(
+                                                {
+                                                    "subagent_ids": ["subagent-1"],
+                                                    "wait_policy": "all",
+                                                },
+                                                ensure_ascii=False,
+                                            ),
+                                        ),
+                                    )
+                                ],
+                            )
+                        )
+                    ]
+                )
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="子任务执行失败：未能加载 article_publisher，因此没有生成公众号草稿。",
+                            tool_calls=[],
+                        )
+                    )
+                ]
+            )
+
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeModels()
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    monkeypatch.setattr(ai_service_module, "openai_async_client", FakeClient())
+
+    async def fake_tool_executor(name, args):
+        assert name == "await_subagents"
+        return await supervisor.await_subagents(
+            subagent_ids=args.get("subagent_ids") or [],
+            wait_policy=str(args.get("wait_policy") or "all"),
+        )
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "继续"}]}],
+        tools=[
+            {
+                "name": "await_subagents",
+                "description": "",
+                "parameters": {"type": "object"},
+            }
+        ],
+        tool_executor=fake_tool_executor,
+        system_instruction="test",
+        event_callback=None,
+    ):
+        chunks.append(chunk)
+
+    assert "".join(chunks) == "子任务执行失败：未能加载 article_publisher，因此没有生成公众号草稿。"
+
+
+@pytest.mark.asyncio
+async def test_ai_service_continues_after_terminal_tool_requests_retry(monkeypatch):
+    service = AiService()
+
+    class FakeModels:
+        def __init__(self):
+            self.calls = 0
+
+        async def create(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content="",
+                                tool_calls=[
+                                    SimpleNamespace(
+                                        id="call-1",
+                                        function=SimpleNamespace(
+                                            name="bash",
+                                            arguments=json.dumps(
+                                                {
+                                                    "command": "python execute.py --stage search"
+                                                },
+                                                ensure_ascii=False,
+                                            ),
+                                        ),
+                                    )
+                                ],
+                            )
+                        )
+                    ]
+                )
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="已完成文章撰写并发布到公众号草稿箱。",
+                            tool_calls=[],
+                        )
+                    )
+                ]
+            )
+
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeModels()
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    monkeypatch.setattr(ai_service_module, "openai_async_client", FakeClient())
+
+    async def fake_tool_executor(_name, _args):
+        return {
+            "ok": True,
+            "terminal": True,
+            "task_outcome": "done",
+            "text": (
+                "✅ search 完成\n"
+                "输出:\n"
+                "/home/luwei/ikaros/data/user/skills/article_publisher/articles/"
+                "2026-04-09/research.json"
+            ),
+        }
+
+    async def event_callback(event, payload):
+        if event == "tool_call_finished":
+            return {
+                "continue_prompt": (
+                    "系统提示：上一步结果只是中间产物，请继续完成整篇文章并给出最终交付。"
+                )
+            }
+        return None
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "写文章并发布"}]}],
+        tools=[
+            {
+                "name": "bash",
+                "description": "",
+                "parameters": {"type": "object"},
+            }
+        ],
+        tool_executor=fake_tool_executor,
+        system_instruction="test",
+        event_callback=event_callback,
+    ):
+        chunks.append(chunk)
+
+    assert "".join(chunks) == "已完成文章撰写并发布到公众号草稿箱。"
+
+
+@pytest.mark.asyncio
+async def test_ai_service_continues_after_final_response_requests_retry(monkeypatch):
+    service = AiService()
+
+    class FakeModels:
+        def __init__(self):
+            self.calls = 0
+
+        async def create(self, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            message=SimpleNamespace(
+                                content=(
+                                    "✅ search 完成\n"
+                                    "输出: /home/luwei/ikaros/data/user/skills/"
+                                    "article_publisher/articles/2026-04-09/research.json"
+                                ),
+                                tool_calls=[],
+                            )
+                        )
+                    ]
+                )
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="已整理好最终稿，并说明了公众号草稿已创建。",
+                            tool_calls=[],
+                        )
+                    )
+                ]
+            )
+
+    class FakeChat:
+        def __init__(self):
+            self.completions = FakeModels()
+
+    class FakeClient:
+        def __init__(self):
+            self.chat = FakeChat()
+
+    monkeypatch.setattr(ai_service_module, "openai_async_client", FakeClient())
+
+    seen = {"count": 0}
+
+    async def event_callback(event, payload):
+        if event == "final_response":
+            seen["count"] += 1
+            text = str(payload.get("text") or "")
+            if "research.json" in text:
+                return {
+                    "continue_prompt": (
+                        "系统提示：这只是检索阶段结果，请继续产出面向用户的最终交付。"
+                    )
+                }
+        return None
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "继续完成任务"}]}],
+        tools=[
+            {
+                "name": "bash",
+                "description": "",
+                "parameters": {"type": "object"},
+            }
+        ],
+        tool_executor=lambda _name, _args: None,
+        system_instruction="test",
+        event_callback=event_callback,
+    ):
+        chunks.append(chunk)
+
+    assert seen["count"] == 2
+    assert "".join(chunks) == "已整理好最终稿，并说明了公众号草稿已创建。"
+
+
+@pytest.mark.asyncio
+async def test_ai_service_max_turn_limit_does_not_emit_intermediate_terminal_text(
+    monkeypatch,
+):
+    service = AiService()
+    monkeypatch.setenv("AI_TOOL_MAX_TURNS", "2")
+    monkeypatch.setenv("AI_TOOL_REPEAT_GUARD", "99")
+    monkeypatch.setenv("AI_TOOL_SEMANTIC_REPEAT_GUARD", "99")
+    monkeypatch.setenv("AI_TOOL_MAX_CALLS_PER_TOOL", "99")
+
+    class LoopingModels:
+        async def create(self, **kwargs):
+            return SimpleNamespace(
+                choices=[
+                    SimpleNamespace(
+                        message=SimpleNamespace(
+                            content="",
+                            tool_calls=[
+                                SimpleNamespace(
+                                    id="call-1",
+                                    function=SimpleNamespace(
+                                        name="bash",
+                                        arguments=json.dumps(
+                                            {
+                                                "command": "python execute.py --stage search"
+                                            },
+                                            ensure_ascii=False,
+                                        ),
+                                    ),
+                                )
+                            ],
+                        )
+                    )
+                ]
+            )
+
+    monkeypatch.setattr(
+        ai_service_module,
+        "openai_async_client",
+        SimpleNamespace(chat=SimpleNamespace(completions=LoopingModels())),
+    )
+
+    async def fake_tool_executor(_name, _args):
+        return {
+            "ok": True,
+            "terminal": True,
+            "task_outcome": "done",
+            "text": (
+                "✅ search 完成\n"
+                "输出:\n"
+                "/home/luwei/ikaros/data/user/skills/article_publisher/articles/"
+                "2026-04-09/research.json"
+            ),
+        }
+
+    chunks = []
+    async for chunk in service.generate_response_stream(
+        message_history=[{"role": "user", "parts": [{"text": "继续写完文章"}]}],
+        tools=[
+            {
+                "name": "bash",
+                "description": "",
+                "parameters": {"type": "object"},
+            }
+        ],
+        tool_executor=fake_tool_executor,
+        system_instruction="test",
+        event_callback=None,
+    ):
+        chunks.append(chunk)
+
+    assert chunks
+    assert "工具调用轮次已达上限（2）" in chunks[-1]
+    assert "research.json" not in chunks[-1]
 
 
 @pytest.mark.asyncio

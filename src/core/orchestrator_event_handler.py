@@ -23,6 +23,7 @@ class EventLoopFlags:
     completed: bool = False
     blocked_reason: str = ""
     recovery_attempts: int = 0
+    saw_tool_call: bool = False
 
 
 class OrchestratorEventHandler:
@@ -34,6 +35,8 @@ class OrchestratorEventHandler:
         user_id: Any,
         task_id: str,
         task_inbox_id: str,
+        task_goal: str,
+        request_mode: str,
         ctx: Any,
         todo_session: Any,
         ikaros_runtime: bool,
@@ -48,6 +51,8 @@ class OrchestratorEventHandler:
         self.user_id = user_id
         self.task_id = str(task_id)
         self.task_inbox_id = str(task_inbox_id or "").strip()
+        self.task_goal = str(task_goal or "").strip()
+        self.request_mode = str(request_mode or "").strip().lower() or "chat"
         self.ctx = ctx
         self.todo_session = todo_session
         self.ikaros_runtime = bool(ikaros_runtime)
@@ -76,6 +81,80 @@ class OrchestratorEventHandler:
         blocks.append({"actions": actions})
         self.ctx.user_data["pending_ui"] = blocks
 
+    def _require_explicit_completion_signal(self) -> bool:
+        return self.request_mode == "task" and self.flags.saw_tool_call
+
+    @staticmethod
+    def _extract_completion_signal(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if not isinstance(payload, dict):
+            return {}
+        raw = payload.get("completion_signal")
+        if not isinstance(raw, dict):
+            terminal_payload = payload.get("terminal_payload")
+            if isinstance(terminal_payload, dict):
+                raw = terminal_payload.get("completion_signal")
+        if not isinstance(raw, dict):
+            return {}
+        status = str(raw.get("status") or "").strip().lower()
+        if not status:
+            status = str(payload.get("task_outcome") or "").strip().lower()
+        if not status:
+            return {}
+        signal = dict(raw)
+        signal["status"] = status
+        signal["explicit"] = bool(raw.get("explicit", True))
+        return signal
+
+    async def _build_continue_after_missing_completion_signal(
+        self,
+        *,
+        candidate_text: str,
+        origin: str,
+    ) -> Dict[str, Any]:
+        preview = str(candidate_text or "").strip().replace("\n", " ")[:220]
+        summary = preview or "missing structured completion signal"
+        self.todo_session.mark_step(
+            "verify",
+            "in_progress",
+            "Waiting for structured task closure before delivery.",
+        )
+        self.todo_session.mark_step(
+            "deliver",
+            "in_progress",
+            "Continuing execution until the task emits an explicit completion signal.",
+        )
+        if self.session_state_active:
+            await self.update_session_task(
+                status="running",
+                result_summary=summary,
+                needs_confirmation=False,
+                confirmation_deadline="",
+            )
+        await self.append_session_event(
+            f"completion_signal_required:{self.task_id}:{origin}"
+        )
+        await self.update_task_inbox_status(
+            status="running",
+            event="completion_signal_required",
+            detail=summary[:180],
+            result={
+                "completion_signal_required": {
+                    "origin": origin,
+                    "candidate_preview": summary,
+                }
+            },
+        )
+        goal_text = self.task_goal or "未提供"
+        return {
+            "continue_prompt": (
+                "系统提示：当前处于 task 模式，不能把普通工具结果或普通文本直接当作最终交付。"
+                "如果任务已经完成、失败、需要等待用户确认或等待外部条件，"
+                "请调用 `complete_task` 发出结构化完成信号；否则继续执行下一步。"
+                f"原始任务：{goal_text}。"
+                f"当前结果摘要：{summary}。"
+            )
+        }
+
     async def handle(
         self, event: str, payload: Dict[str, Any]
     ) -> Dict[str, Any] | None:
@@ -88,6 +167,7 @@ class OrchestratorEventHandler:
             return None
 
         if event == "tool_call_started":
+            self.flags.saw_tool_call = True
             tool_name = payload.get("name", "unknown")
             await self.append_session_event(
                 f"tool_call_started:{self.task_id}:{tool_name}"
@@ -124,8 +204,7 @@ class OrchestratorEventHandler:
             }
 
         if event == "final_response":
-            await self._handle_final_response(payload)
-            return None
+            return await self._handle_final_response(payload)
 
         if event == "max_turn_limit":
             await self._handle_max_turn_limit(payload)
@@ -136,6 +215,126 @@ class OrchestratorEventHandler:
             return None
 
         return None
+
+    async def _mark_waiting_external(
+        self,
+        *,
+        final_text: str,
+        detail: str,
+        result: Dict[str, Any],
+        output_text: str,
+        followup: Dict[str, Any] | None = None,
+    ) -> None:
+        metadata: Dict[str, Any] = {}
+        if isinstance(followup, dict) and followup:
+            metadata["followup"] = dict(followup)
+        if self.session_state_active:
+            await self.update_session_task(
+                status="waiting_external",
+                result_summary=final_text,
+                needs_confirmation=False,
+                confirmation_deadline="",
+            )
+        await self.append_session_event(
+            f"task_waiting_external:{self.task_id}:{detail[:120]}"
+        )
+        if self.task_inbox_id:
+            await task_inbox.update_status(
+                self.task_inbox_id,
+                "waiting_external",
+                event="waiting_external",
+                detail=detail[:180],
+                metadata=metadata,
+                result=result,
+                output={"text": output_text},
+            )
+
+    async def _mark_done(
+        self,
+        *,
+        final_text: str,
+        tool_name: str,
+        terminal_ui: Dict[str, Any],
+        terminal_payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        if terminal_ui:
+            self._append_pending_ui(terminal_ui)
+        await self.update_session_task(
+            status="done",
+            result_summary=final_text,
+            needs_confirmation=False,
+            confirmation_deadline="",
+            clear_active=True,
+        )
+        await self.append_session_event(f"terminal_tool_done:{self.task_id}:{tool_name}")
+        if self.task_inbox_id:
+            await task_inbox.complete(
+                self.task_inbox_id,
+                result={
+                    "terminal_tool": str(tool_name),
+                    "summary": final_text[:500],
+                    "ui": terminal_ui,
+                    "payload": terminal_payload,
+                },
+                final_output=final_text,
+            )
+        self.flags.completed = True
+        return {"stop": True, "final_text": final_text}
+
+    async def _mark_failed(
+        self,
+        *,
+        final_text: str,
+        tool_name: str,
+        terminal_payload: Dict[str, Any] | None = None,
+        failure_mode: str = "",
+    ) -> Dict[str, Any] | None:
+        if (
+            failure_mode == "recoverable"
+            and self.flags.recovery_attempts < self.max_recovery_attempts
+        ):
+            await self.append_session_event(
+                (
+                    f"recoverable_terminal_failure:{self.task_id}:{tool_name}:"
+                    f"attempt={self.flags.recovery_attempts}/{self.max_recovery_attempts}"
+                )
+            )
+            self.todo_session.mark_step(
+                "verify",
+                "in_progress",
+                (
+                    f"Recoverable failure detected. "
+                    f"Auto-recovery attempt {self.flags.recovery_attempts}/{self.max_recovery_attempts}."
+                ),
+            )
+            await self.update_session_task(
+                status="running",
+                result_summary=final_text,
+                needs_confirmation=False,
+                confirmation_deadline="",
+            )
+            return None
+
+        await self.update_session_task(
+            status="failed",
+            result_summary=final_text,
+            needs_confirmation=False,
+            confirmation_deadline="",
+            clear_active=True,
+        )
+        await self.append_session_event(f"terminal_tool_failed:{self.task_id}:{tool_name}")
+        if self.task_inbox_id:
+            await task_inbox.fail(
+                self.task_inbox_id,
+                error=final_text,
+                result={
+                    "terminal_tool": str(tool_name),
+                    "summary": final_text[:500],
+                    "payload": dict(terminal_payload or {}),
+                },
+            )
+        self.flags.completed = True
+        return {"stop": True, "final_text": final_text}
 
     async def _handle_tool_call_finished(
         self, payload: Dict[str, Any]
@@ -203,8 +402,12 @@ class OrchestratorEventHandler:
             or summary
             or ("✅ 工具执行完成。" if ok else f"❌ `{tool_name}` 执行失败。")
         )
+        completion_signal = self._extract_completion_signal(payload)
+        completion_status = str(
+            completion_signal.get("status") or task_outcome or ""
+        ).strip().lower()
 
-        if ok and task_outcome == "partial":
+        if ok and completion_status in {"partial", "waiting_user"}:
             deadline = (
                 datetime.datetime.now().astimezone() + datetime.timedelta(seconds=180)
             ).isoformat(timespec="seconds")
@@ -243,93 +446,169 @@ class OrchestratorEventHandler:
                     "summary": final_text[:500],
                 },
             )
+            self.flags.completed = True
+            return {"stop": True, "final_text": final_text}
         elif ok:
-            if terminal_ui:
-                self._append_pending_ui(terminal_ui)
-            await self.update_session_task(
-                status="done",
-                result_summary=final_text,
-                needs_confirmation=False,
-                confirmation_deadline="",
-                clear_active=True,
-            )
-            await self.append_session_event(
-                f"terminal_tool_done:{self.task_id}:{tool_name}"
-            )
-            if self.task_inbox_id:
-                await task_inbox.complete(
-                    self.task_inbox_id,
+            if completion_status == "waiting_external":
+                followup = (
+                    completion_signal.get("followup")
+                    if isinstance(completion_signal.get("followup"), dict)
+                    else None
+                )
+                await self._mark_waiting_external(
+                    final_text=final_text,
+                    detail=final_text,
                     result={
                         "terminal_tool": str(tool_name),
                         "summary": final_text[:500],
-                        "ui": terminal_ui,
                         "payload": terminal_payload,
                     },
-                    final_output=final_text,
+                    output_text=final_text,
+                    followup=followup,
                 )
+                self.flags.completed = True
+                return {"stop": True, "final_text": final_text}
+
+            if completion_status in {"done", ""} and completion_signal.get("explicit"):
+                return await self._mark_done(
+                    final_text=final_text,
+                    tool_name=tool_name,
+                    terminal_ui=terminal_ui,
+                    terminal_payload=terminal_payload,
+                )
+
+            if self._require_explicit_completion_signal():
+                return await self._build_continue_after_missing_completion_signal(
+                    candidate_text=final_text,
+                    origin=f"terminal_tool:{tool_name}",
+                )
+
+            return await self._mark_done(
+                final_text=final_text,
+                tool_name=tool_name,
+                terminal_ui=terminal_ui,
+                terminal_payload=terminal_payload,
+            )
         else:
-            if (
-                failure_mode == "recoverable"
-                and self.flags.recovery_attempts < self.max_recovery_attempts
-            ):
-                await self.append_session_event(
-                    (
-                        f"recoverable_terminal_failure:{self.task_id}:{tool_name}:"
-                        f"attempt={self.flags.recovery_attempts}/{self.max_recovery_attempts}"
-                    )
-                )
-                self.todo_session.mark_step(
-                    "verify",
-                    "in_progress",
-                    (
-                        f"Recoverable failure detected. "
-                        f"Auto-recovery attempt {self.flags.recovery_attempts}/{self.max_recovery_attempts}."
-                    ),
-                )
-                await self.update_session_task(
-                    status="running",
-                    result_summary=summary,
-                    needs_confirmation=False,
-                    confirmation_deadline="",
-                )
-                return None
-
-            await self.update_session_task(
-                status="failed",
-                result_summary=final_text,
-                needs_confirmation=False,
-                confirmation_deadline="",
-                clear_active=True,
+            return await self._mark_failed(
+                final_text=final_text,
+                tool_name=tool_name,
+                terminal_payload=terminal_payload,
+                failure_mode=failure_mode,
             )
-            await self.append_session_event(
-                f"terminal_tool_failed:{self.task_id}:{tool_name}"
-            )
-            if self.task_inbox_id:
-                await task_inbox.fail(
-                    self.task_inbox_id,
-                    error=final_text,
-                    result={
-                        "terminal_tool": str(tool_name),
-                        "summary": final_text[:500],
-                    },
-                )
 
-        self.flags.completed = True
-        return {"stop": True, "final_text": final_text}
-
-    async def _handle_final_response(self, payload: Dict[str, Any]) -> None:
-        if self.flags.completed and str(
-            payload.get("source") or ""
-        ).strip().lower() in {
+    async def _handle_final_response(
+        self, payload: Dict[str, Any]
+    ) -> Dict[str, Any] | None:
+        source = str(payload.get("source") or "").strip().lower()
+        if self.flags.completed and source in {
             "terminal_tool_short_circuit",
             "terminal_tool",
         }:
-            return
-        self.todo_session.mark_step("verify", "done", "Model produced final response.")
-        self.todo_session.mark_step("deliver", "done", "Final response streaming.")
+            return None
         preview = str(payload.get("text_preview", "")).strip()
         if self.ikaros_runtime:
             preview = self.sanitize_preview(preview)
+        full_text = (
+            str(payload.get("text") or payload.get("full_text") or "").strip() or preview
+        )
+        completion_signal = self._extract_completion_signal(payload)
+        completion_status = str(completion_signal.get("status") or "").strip().lower()
+
+        if completion_status in {"partial", "waiting_user"}:
+            deadline = (
+                datetime.datetime.now().astimezone() + datetime.timedelta(seconds=180)
+            ).isoformat(timespec="seconds")
+            await self.update_session_task(
+                status="waiting_user",
+                result_summary=full_text,
+                needs_confirmation=True,
+                confirmation_deadline=deadline,
+            )
+            await self.append_session_event(
+                f"task_waiting_user:{self.task_id}:final_response"
+            )
+            self._append_pending_ui(
+                {
+                    "actions": [
+                        [
+                            {"text": "继续执行", "callback_data": "task_continue"},
+                            {"text": "停止任务", "callback_data": "task_stop"},
+                        ]
+                    ]
+                },
+                replace=True,
+            )
+            final_text = (
+                f"{full_text}\n\n"
+                "请确认下一步：点击按钮，或直接回复“继续”/“停止”（3分钟内有效）。"
+            )
+            await self.update_task_inbox_status(
+                status="running",
+                event="waiting_user_confirmation",
+                detail=final_text[:180],
+                result={
+                    "ikaros_mode": "final_response_partial",
+                    "summary": final_text[:500],
+                },
+            )
+            self.flags.completed = True
+            return {"stop": True, "final_text": final_text}
+
+        if completion_status == "waiting_external":
+            followup = (
+                completion_signal.get("followup")
+                if isinstance(completion_signal.get("followup"), dict)
+                else None
+            )
+            await self._mark_waiting_external(
+                final_text=full_text,
+                detail=preview or full_text,
+                result={
+                    "ikaros_mode": "final_response_waiting_external",
+                    "summary": full_text[:500],
+                },
+                output_text=full_text,
+                followup=followup,
+            )
+            task_manager.heartbeat(self.user_id, "final_response_waiting_external")
+            self.flags.completed = True
+            return None
+
+        if completion_status in {"failed", "blocked", "cancelled", "timed_out", "error"}:
+            self.todo_session.mark_failed("Model reported a blocked outcome.")
+            if self.session_state_active:
+                await self.update_session_task(
+                    status="failed",
+                    result_summary=full_text,
+                    needs_confirmation=False,
+                    confirmation_deadline="",
+                    clear_active=True,
+                )
+                await self.append_session_event(
+                    f"final_response_blocked:{self.task_id}:{preview[:120]}"
+                )
+            if self.task_inbox_id:
+                await task_inbox.fail(
+                    self.task_inbox_id,
+                    error=full_text,
+                    result={
+                        "ikaros_mode": "final_response_blocked",
+                        "summary": full_text[:500],
+                    },
+                )
+            task_manager.heartbeat(self.user_id, "final_response_blocked")
+            self.flags.completed = True
+            return None
+
+        if self._require_explicit_completion_signal() and not completion_signal.get("explicit"):
+            return await self._build_continue_after_missing_completion_signal(
+                candidate_text=full_text,
+                origin=f"final_response:{source or 'model'}",
+            )
+
+        self.todo_session.mark_step("verify", "done", "Model produced final response.")
+        self.todo_session.mark_step("deliver", "done", "Final response streaming.")
 
         auto_followup = self._maybe_pr_followup_metadata(preview)
         if auto_followup and self.task_inbox_id:
@@ -341,14 +620,14 @@ class OrchestratorEventHandler:
                 metadata={"followup": auto_followup["followup"]},
                 result={
                     "ikaros_mode": "final_response",
-                    "summary": preview[:500],
+                    "summary": full_text[:500],
                 },
-                output={"text": preview},
+                output={"text": full_text},
             )
             if self.session_state_active:
                 await self.update_session_task(
                     status="waiting_external",
-                    result_summary=preview,
+                    result_summary=full_text,
                     needs_confirmation=False,
                     confirmation_deadline="",
                 )
@@ -363,7 +642,7 @@ class OrchestratorEventHandler:
             if current_status == "waiting_external":
                 await self.update_session_task(
                     status="waiting_external",
-                    result_summary=preview,
+                    result_summary=full_text,
                     needs_confirmation=False,
                     confirmation_deadline="",
                 )
@@ -376,7 +655,7 @@ class OrchestratorEventHandler:
             }:
                 await self.update_session_task(
                     status="done",
-                    result_summary=preview,
+                    result_summary=full_text,
                     needs_confirmation=False,
                     confirmation_deadline="",
                     clear_active=True,
@@ -398,22 +677,23 @@ class OrchestratorEventHandler:
                     detail=preview[:180],
                     result={
                         "ikaros_mode": "final_response",
-                        "summary": preview[:500],
+                        "summary": full_text[:500],
                     },
-                    output={"text": preview},
+                    output={"text": full_text},
                 )
             else:
                 await task_inbox.complete(
                     self.task_inbox_id,
                     result={
                         "ikaros_mode": "final_response",
-                        "summary": preview[:500],
+                        "summary": full_text[:500],
                     },
-                    final_output=preview,
+                    final_output=full_text,
                 )
 
         task_manager.heartbeat(self.user_id, "final_response")
         self.flags.completed = True
+        return None
 
     @staticmethod
     def _maybe_pr_followup_metadata(preview: str) -> Dict[str, Any] | None:
@@ -436,35 +716,16 @@ class OrchestratorEventHandler:
     async def _handle_max_turn_limit(self, payload: Dict[str, Any]) -> None:
         terminal_preview = str(payload.get("terminal_text_preview") or "").strip()
         terminal_summary = str(payload.get("terminal_summary") or "").strip()
-        if self.session_state_active and (terminal_preview or terminal_summary):
-            summary = (terminal_preview or terminal_summary)[:500]
-            await self.update_session_task(
-                status="done",
-                result_summary=summary,
-                needs_confirmation=False,
-                confirmation_deadline="",
-                clear_active=True,
-            )
-            await self.append_session_event(
-                f"max_turn_but_completed:{self.task_id}:{summary[:120]}"
-            )
-            if self.task_inbox_id:
-                await task_inbox.complete(
-                    self.task_inbox_id,
-                    result={
-                        "ikaros_mode": "max_turn_terminal",
-                        "summary": summary,
-                    },
-                    final_output=summary,
-                )
-            self.flags.completed = True
-            return
+        summary = (terminal_preview or terminal_summary)[:500]
+        detail = "Reached max tool-loop turns before completion."
+        if summary:
+            detail = f"{detail} Last visible intermediate result: {summary}"
 
         self.todo_session.mark_failed("Reached max tool-loop turns before completion.")
         if self.session_state_active:
             await self.update_session_task(
                 status="failed",
-                result_summary="Reached max tool-loop turns before completion.",
+                result_summary=detail,
                 needs_confirmation=False,
                 confirmation_deadline="",
                 clear_active=True,
@@ -476,9 +737,12 @@ class OrchestratorEventHandler:
         await self.update_task_inbox_status(
             status="failed",
             event="max_turn_limit",
-            detail="Reached max tool-loop turns before completion.",
-            result={"error": "max_turn_limit"},
-            final_output="",
+            detail=detail[:180],
+            result={
+                "error": "max_turn_limit",
+                "last_terminal_summary": summary,
+            },
+            final_output=summary,
         )
 
     async def _handle_loop_guard(self, payload: Dict[str, Any]) -> None:

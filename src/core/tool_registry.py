@@ -117,6 +117,66 @@ CORE_TOOLS: List[Dict[str, Any]] = [
             "required": ["command"],
         },
     },
+    {
+        "name": "complete_task",
+        "description": (
+            "Emit a structured task closure. In task mode, use this instead of replying "
+            "directly when the task is done, blocked, waiting for the user, or waiting "
+            "for an external condition."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "enum": ["done", "failed", "partial", "waiting_user", "waiting_external"],
+                    "description": "Structured closure state for the current task.",
+                },
+                "text": {
+                    "type": "string",
+                    "description": "User-facing final output or blocked/waiting explanation.",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "Optional short summary for task state tracking.",
+                },
+                "failure_mode": {
+                    "type": "string",
+                    "enum": ["recoverable", "fatal"],
+                    "default": "recoverable",
+                    "description": "Failure severity when status=failed.",
+                },
+                "files": {
+                    "type": "array",
+                    "description": "Optional user-visible file artifacts to preserve with the result.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string"},
+                            "filename": {"type": "string"},
+                            "kind": {
+                                "type": "string",
+                                "enum": ["auto", "document", "photo", "video", "audio"],
+                            },
+                            "caption": {"type": "string"},
+                        },
+                        "required": ["path"],
+                    },
+                },
+                "ui": {
+                    "type": "object",
+                    "description": "Optional UI payload for the current platform.",
+                    "properties": {},
+                },
+                "followup": {
+                    "type": "object",
+                    "description": "Optional follow-up metadata when status=waiting_external.",
+                    "properties": {},
+                },
+            },
+            "required": ["status", "text"],
+        },
+    },
 ]
 
 IKAROS_INTERNAL_TOOLS: List[Dict[str, Any]] = [

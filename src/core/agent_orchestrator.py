@@ -298,6 +298,7 @@ class AgentOrchestrator:
         system_instruction = self._build_system_instruction(
             extension_candidates,
             intent_text=routing_text or last_user_text,
+            request_mode=request_mode,
             runtime_user_id=user_id_str,
             platform_name=runtime_ctx.platform_name,
             runtime_policy_ctx=runtime_policy_ctx,
@@ -317,6 +318,8 @@ class AgentOrchestrator:
             user_id=user_id,
             task_id=str(task_id),
             task_inbox_id=task_inbox_id,
+            task_goal=task_goal,
+            request_mode=request_mode,
             ctx=ctx,
             todo_session=todo_session,
             ikaros_runtime=ikaros_runtime,
@@ -561,6 +564,7 @@ class AgentOrchestrator:
                 system_instruction = self._build_system_instruction(
                     extension_candidates,
                     intent_text=routing_text or last_user_text,
+                    request_mode=request_mode,
                     runtime_user_id=user_id_str,
                     platform_name=runtime_ctx.platform_name,
                     runtime_policy_ctx=runtime_policy_ctx,
@@ -595,7 +599,8 @@ class AgentOrchestrator:
             yield suppressed_max_turn_warning
 
         if not event_handler.flags.blocked and not event_handler.flags.completed:
-            todo_session.mark_completed("Conversation loop completed.")
+            failure_summary = "Conversation loop ended without an explicit completion signal."
+            todo_session.mark_failed(failure_summary)
             if runtime_ctx.session_state_active:
                 current = channel_runtime_store.get_active_task(
                     platform=runtime_ctx.platform_name,
@@ -607,19 +612,21 @@ class AgentOrchestrator:
                 if current_status == "waiting_external":
                     await update_session_task(
                         status="waiting_external",
-                        result_summary="Conversation loop completed.",
+                        result_summary=failure_summary,
                         needs_confirmation=False,
                         confirmation_deadline="",
                     )
                 else:
                     await update_session_task(
-                        status="done",
-                        result_summary="Conversation loop completed.",
+                        status="failed",
+                        result_summary=failure_summary,
                         needs_confirmation=False,
                         confirmation_deadline="",
                         clear_active=True,
                     )
-                await append_session_event(f"conversation_completed:{task_id}")
+                await append_session_event(
+                    f"conversation_missing_completion_signal:{task_id}"
+                )
             if task_inbox_id:
                 current_task = await task_inbox.get(task_inbox_id)
                 current_task_status = (
@@ -628,7 +635,7 @@ class AgentOrchestrator:
                     .lower()
                 )
                 auto_followup = event_handler._maybe_pr_followup_metadata(
-                    "Conversation loop completed."
+                    failure_summary
                 )
                 if auto_followup and current_task_status not in {
                     "waiting_external",
@@ -642,8 +649,8 @@ class AgentOrchestrator:
                         metadata={
                             "followup": dict(auto_followup.get("followup") or {})
                         },
-                        result={"ikaros_mode": "conversation_completed"},
-                        output={"text": "Conversation loop completed."},
+                        result={"ikaros_mode": "conversation_missing_completion_signal"},
+                        output={"text": failure_summary},
                     )
                     current_task_status = "waiting_external"
                 if current_task_status == "waiting_external":
@@ -651,16 +658,22 @@ class AgentOrchestrator:
                         task_inbox_id,
                         "waiting_external",
                         event="conversation_kept_open",
-                        detail="Conversation loop completed.",
-                        result={"ikaros_mode": "conversation_completed"},
-                        output={"text": "Conversation loop completed."},
+                        detail=failure_summary,
+                        result={
+                            "ikaros_mode": "conversation_missing_completion_signal"
+                        },
+                        output={"text": failure_summary},
                     )
                 else:
-                    await task_inbox.complete(
+                    await task_inbox.fail(
                         task_inbox_id,
-                        result={"ikaros_mode": "conversation_completed"},
-                        final_output="Conversation loop completed.",
+                        error=failure_summary,
+                        result={
+                            "ikaros_mode": "conversation_missing_completion_signal"
+                        },
                     )
+            event_handler.flags.blocked = True
+            event_handler.flags.blocked_reason = "missing_completion_signal"
 
     @staticmethod
     def _build_recovery_instruction(
@@ -699,6 +712,7 @@ class AgentOrchestrator:
         self,
         extension_candidates: list,
         intent_text: str = "",
+        request_mode: str = "",
         runtime_user_id: str = "",
         platform_name: str = "",
         runtime_policy_ctx: Dict[str, Any] | None = None,
@@ -728,7 +742,7 @@ class AgentOrchestrator:
                 if str(getattr(item, "name", "") or "").strip()
             ]
         )
-        return prompt_composer.compose_base(
+        instruction = prompt_composer.compose_base(
             runtime_user_id=runtime_user_id,
             platform="subagent_kernel" if agent_kind == "subagent" else platform_name,
             tools=tools or [],
@@ -736,6 +750,14 @@ class AgentOrchestrator:
             mode=mode,
             allowed_skill_names=allowed_skill_names,
         )
+        if str(request_mode or "").strip().lower() == "task":
+            instruction += (
+                "\n\nTask Closure Protocol:\n"
+                "- In task mode, do not end the task by replying with plain text after tool use.\n"
+                "- When the task is done, blocked, waiting for user confirmation, or waiting for an external condition, call `complete_task`.\n"
+                "- Use `complete_task.status=done|failed|partial|waiting_user|waiting_external` and put the exact user-facing output in `text`.\n"
+            )
+        return instruction
 
     def _resolve_task_workspace_root(
         self,

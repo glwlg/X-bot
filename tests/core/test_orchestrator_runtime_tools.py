@@ -151,6 +151,51 @@ async def test_ikaros_can_send_local_file_via_dispatcher(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_complete_task_dispatcher_emits_structured_terminal_payload(tmp_path):
+    async def append_event(_event: str):
+        return None
+
+    demo_file = (tmp_path / "demo.txt").resolve()
+    demo_file.write_text("done\n", encoding="utf-8")
+
+    dispatcher = ToolCallDispatcher(
+        runtime_user_id="u-complete-1",
+        platform_name="telegram",
+        task_id="task-complete-1",
+        task_inbox_id="",
+        task_workspace_root="/tmp",
+        ctx=SimpleNamespace(message=SimpleNamespace(text="完成任务"), user_data={}),
+        runtime=object(),
+        tool_broker=object(),
+        runtime_tool_allowed=lambda **_kwargs: True,
+        todo_mark_step=lambda *_args, **_kwargs: None,
+        append_session_event=append_event,
+    )
+    dispatcher.set_available_tool_names({"complete_task"})
+
+    result = await dispatcher.execute(
+        name="complete_task",
+        args={
+            "status": "done",
+            "text": "任务已完成。",
+            "summary": "done summary",
+            "files": [{"path": str(demo_file), "filename": "demo.txt"}],
+            "followup": {"ignored": True},
+        },
+        execution_policy=None,
+        started=time.perf_counter(),
+    )
+
+    assert result["ok"] is True
+    assert result["terminal"] is True
+    assert result["task_outcome"] == "done"
+    assert result["completion_signal"]["explicit"] is True
+    assert result["completion_signal"]["status"] == "done"
+    assert result["payload"]["files"][0]["filename"] == "demo.txt"
+    assert result["payload"]["text"] == "任务已完成。"
+
+
+@pytest.mark.asyncio
 async def test_ikaros_allows_loaded_skill_cli_bash_when_request_mentions_code():
     captured = {}
 

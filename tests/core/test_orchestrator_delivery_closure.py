@@ -6,6 +6,7 @@ import pytest
 import core.agent_orchestrator as orchestrator_module
 from core.agent_orchestrator import AgentOrchestrator
 from core.heartbeat_store import heartbeat_store
+from core.orchestrator_event_handler import OrchestratorEventHandler
 from core.platform.models import Chat, MessageType, UnifiedMessage, User
 from core.task_inbox import task_inbox
 from extension.skills.builtin.task_tracker.scripts.service import task_tracker_service
@@ -59,6 +60,50 @@ def _reset_task_inbox(tmp_path):
     task_inbox._tasks = {}
 
 
+def _build_event_handler(task_goal: str):
+    events: list[str] = []
+    session_updates: list[dict[str, object]] = []
+    inbox_updates: list[dict[str, object]] = []
+    todo_steps: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    todo_failures: list[str] = []
+
+    async def append_session_event(event: str):
+        events.append(event)
+
+    async def update_session_task(**kwargs):
+        session_updates.append(dict(kwargs))
+
+    async def update_task_inbox_status(**kwargs):
+        inbox_updates.append(dict(kwargs))
+
+    todo_session = SimpleNamespace(
+        mark_step=lambda *args, **kwargs: todo_steps.append((args, dict(kwargs))),
+        heartbeat=lambda *_args, **_kwargs: None,
+        add_event=lambda *_args, **_kwargs: None,
+        mark_failed=lambda message: todo_failures.append(str(message)),
+        mark_completed=lambda *_args, **_kwargs: None,
+    )
+
+    handler = OrchestratorEventHandler(
+        user_id="u-handler",
+        task_id="task-handler",
+        task_inbox_id="",
+        task_goal=task_goal,
+        request_mode="task",
+        ctx=DummyContext(user_id="u-handler"),
+        todo_session=todo_session,
+        ikaros_runtime=True,
+        session_state_active=False,
+        max_recovery_attempts=2,
+        sanitize_preview=lambda text: text,
+        build_recovery_instruction=lambda *_args, **_kwargs: "retry",
+        append_session_event=append_session_event,
+        update_session_task=update_session_task,
+        update_task_inbox_status=update_task_inbox_status,
+    )
+    return handler, events, session_updates, inbox_updates, todo_failures
+
+
 @pytest.fixture(autouse=True)
 def _stub_intent_router(monkeypatch):
     async def fake_route(**_kwargs):
@@ -104,6 +149,12 @@ async def test_terminal_extension_short_circuit_marks_done(monkeypatch, tmp_path
                     "terminal": True,
                     "task_outcome": "done",
                     "terminal_text": "✅ 部署成功并可访问。",
+                    "terminal_payload": {
+                        "completion_signal": {
+                            "explicit": True,
+                            "status": "done",
+                        }
+                    },
                     "terminal_ui": {
                         "actions": [
                             [{"text": "查看日志", "callback_data": "deploy_logs"}]
@@ -490,6 +541,10 @@ async def test_ikaros_progress_callback_receives_tool_events(monkeypatch, tmp_pa
                 {
                     "turn": 1,
                     "text_preview": "已停止 uptime-kuma。",
+                    "completion_signal": {
+                        "explicit": True,
+                        "status": "done",
+                    },
                 },
             )
         yield "已停止 uptime-kuma。"
@@ -567,6 +622,10 @@ async def test_subagent_progress_callback_receives_terminal_payload(
                     "terminal_text": "✅ 图片已生成。\n📏 比例: 1:1",
                     "terminal_payload": {
                         "text": "✅ 图片已生成。\n📏 比例: 1:1",
+                        "completion_signal": {
+                            "explicit": True,
+                            "status": "done",
+                        },
                         "files": [
                             {
                                 "kind": "photo",
@@ -742,3 +801,134 @@ async def test_final_response_auto_keeps_pr_creation_task_open(monkeypatch, tmp_
         followup.get("refs", {}).get("pr_url")
         == "https://github.com/Scenx/fuck-skill/pull/22"
     )
+
+
+@pytest.mark.asyncio
+async def test_event_handler_requests_retry_when_terminal_tool_lacks_completion_signal():
+    (
+        handler,
+        events,
+        _session_updates,
+        inbox_updates,
+        _todo_failures,
+    ) = _build_event_handler("写一篇面向公众号读者的文章并发布到公众号草稿箱")
+    await handler.handle(
+        "tool_call_started",
+        {"name": "bash", "args": {"command": "python execute.py --stage search"}},
+    )
+
+    directive = await handler.handle(
+        "tool_call_finished",
+        {
+            "name": "bash",
+            "ok": True,
+            "summary": "command finished",
+            "terminal": True,
+            "task_outcome": "done",
+            "terminal_text": "命令执行成功，生成了一些内部结果。",
+            "terminal_payload": {"text": "命令执行成功，生成了一些内部结果。"},
+        },
+    )
+
+    assert isinstance(directive, dict)
+    assert "continue_prompt" in directive
+    assert "complete_task" in str(directive.get("continue_prompt") or "")
+    assert handler.flags.completed is False
+    assert any("completion_signal_required" in event for event in events)
+    assert inbox_updates
+    assert inbox_updates[-1]["status"] == "running"
+    assert inbox_updates[-1]["event"] == "completion_signal_required"
+
+
+@pytest.mark.asyncio
+async def test_event_handler_requests_retry_for_final_response_without_completion_signal():
+    (
+        handler,
+        events,
+        _session_updates,
+        inbox_updates,
+        _todo_failures,
+    ) = _build_event_handler("写完文章后直接发布，不要只给内部文件")
+    await handler.handle(
+        "tool_call_started",
+        {"name": "bash", "args": {"command": "python execute.py"}},
+    )
+
+    directive = await handler.handle(
+        "final_response",
+        {
+            "turn": 3,
+            "text_preview": "处理看起来完成了",
+            "text": "处理看起来完成了",
+        },
+    )
+
+    assert isinstance(directive, dict)
+    assert "continue_prompt" in directive
+    assert handler.flags.completed is False
+    assert any("completion_signal_required" in event for event in events)
+    assert inbox_updates[-1]["event"] == "completion_signal_required"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_fails_when_loop_ends_without_completion_signal(
+    monkeypatch, tmp_path
+):
+    orchestrator = AgentOrchestrator()
+    orchestrator.direct_fastpath_enabled = False
+    user_id = "u_missing_completion_signal"
+
+    _reset_task_inbox(tmp_path)
+    runtime_root = (tmp_path / "runtime_tasks").resolve()
+    runtime_root.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(heartbeat_store, "root", runtime_root)
+    heartbeat_store._locks.clear()
+
+    async def fake_route(**_kwargs):
+        return RoutingDecision(
+            request_mode="task",
+            task_tracking=True,
+            candidate_skills=[],
+            reason="tracked task",
+            confidence=0.9,
+        )
+
+    monkeypatch.setattr(orchestrator_module.intent_router, "route", fake_route)
+
+    async def fake_stream(
+        message_history,
+        tools=None,
+        tool_executor=None,
+        system_instruction=None,
+        event_callback=None,
+    ):
+        del message_history, tools, tool_executor, system_instruction, event_callback
+        if False:
+            yield ""
+
+    monkeypatch.setattr(
+        orchestrator.ai_service, "generate_response_stream", fake_stream
+    )
+    monkeypatch.setattr(
+        orchestrator.extension_router, "route", lambda *_args, **_kwargs: []
+    )
+
+    ctx = DummyContext(user_id=user_id)
+    message_history = [{"role": "user", "parts": [{"text": "帮我处理这个任务"}]}]
+    chunks = [
+        chunk async for chunk in orchestrator.handle_message(ctx, message_history)
+    ]
+
+    assert chunks == []
+    task_id = str(ctx.user_data.get("task_inbox_id") or "").strip()
+    if task_id:
+        stored = await task_inbox.get(task_id)
+        assert stored is not None
+        assert stored.status == "failed"
+    state = await heartbeat_store.get_state(user_id)
+    session_events = state["status"]["session"].get("events") or []
+    assert any(
+        "conversation_missing_completion_signal" in event
+        for event in session_events
+    )
+    assert state["status"]["session"]["active_task"] is None
