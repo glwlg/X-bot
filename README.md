@@ -21,7 +21,8 @@ Ikaros 是一个 Python 多平台 AI Bot，当前采用 `Ikaros Core + API Servi
 - 任务治理：真实任务具备 task/session/heartbeat 闭环，普通闲聊不写入 `task_inbox`
 - 模型配置：默认使用 `~/.ikaros/config/models.json`，支持在聊天内通过 `/model` 查看和切换
 - LLM 用量统计：通过 `/usage` 查看按天 + 会话 + 模型聚合的 token 使用；数据持久化到 `~/.ikaros/data/bot_data.db`
-- Ikaros 开发链路：仓库类任务优先使用 `repo_workspace`、`codex_session`、`git_ops`、`gh_cli`
+- Ikaros 开发链路：仓库类任务优先使用 `repo_workspace`、`coding_session`、`git_ops`、`gh_cli`
+- 编码后端传输策略：默认采用混合模式，`codex` 继续走 CLI，`gemini-cli` 与 `opencode` 默认走 ACP；可通过 `CODING_BACKEND_*_TRANSPORT` 环境变量覆盖
 
 ## 架构概览
 

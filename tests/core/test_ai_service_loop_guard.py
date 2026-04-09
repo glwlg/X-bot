@@ -5,7 +5,7 @@ import pytest
 
 import services.ai_service as ai_service_module
 from core.llm_usage_store import set_current_llm_usage_session_id
-from ikaros.integrations.gh_cli_service import GhCliService
+from extension.skills._internal.gh_cli_service import GhCliService
 from services.ai_service import AiService
 
 

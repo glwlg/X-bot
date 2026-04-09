@@ -19,21 +19,27 @@ from core.skill_cli import (
     prepare_default_env,
     run_execute_cli,
 )
-from core.tools.codex_tools import codex_tools
+from extension.skills.runtime_context import user_request
+
+try:
+    from .service import coding_session_service
+except ImportError:
+    from service import coding_session_service
 
 prepare_default_env(REPO_ROOT)
 
 
 async def execute(ctx, params: dict, runtime=None) -> dict:
     _ = (ctx, runtime)
-    return await codex_tools.codex_session(
+    return await coding_session_service.handle(
         action=str(params.get("action") or "status"),
         session_id=str(params.get("session_id") or ""),
         workspace_id=str(params.get("workspace_id") or ""),
         cwd=str(params.get("cwd") or ""),
-        instruction=str(params.get("instruction") or ""),
+        instruction=str(params.get("instruction") or user_request(ctx, params)),
         user_reply=str(params.get("user_reply") or ""),
         backend=str(params.get("backend") or "codex"),
+        transport=str(params.get("transport") or ""),
         timeout_sec=int(params.get("timeout_sec", 2400) or 2400),
         source=str(params.get("source") or ""),
         skill_name=str(params.get("skill_name") or ""),
@@ -41,7 +47,7 @@ async def execute(ctx, params: dict, runtime=None) -> dict:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Codex session skill bridge.")
+    parser = argparse.ArgumentParser(description="Coding session skill.")
     add_common_arguments(parser)
     parser.add_argument("action", help="start | continue | status | cancel")
     parser.add_argument("--session-id", default="", help="Existing session id")
@@ -50,6 +56,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--instruction", default="", help="Coding instruction")
     parser.add_argument("--user-reply", default="", help="User answer for continue")
     parser.add_argument("--backend", default="codex", help="Coding backend")
+    parser.add_argument("--transport", default="", help="Execution transport: cli | acp")
     parser.add_argument("--source", default="", help="Optional session source tag")
     parser.add_argument("--skill-name", default="", help="Optional skill name tag")
     parser.add_argument(
@@ -69,6 +76,7 @@ def _params_from_args(args: argparse.Namespace) -> dict[str, Any]:
             "instruction": str(args.instruction or "").strip(),
             "user_reply": str(args.user_reply or "").strip(),
             "backend": str(args.backend or "codex").strip(),
+            "transport": str(args.transport or "").strip(),
             "source": str(args.source or "").strip(),
             "skill_name": str(args.skill_name or "").strip(),
             "timeout_sec": int(args.timeout_sec or 2400),

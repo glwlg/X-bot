@@ -20,23 +20,31 @@ from core.skill_cli import (
     prepare_default_env,
     run_execute_cli,
 )
-from core.tools.gh_tools import gh_tools
+from extension.skills._internal.gh_cli_service import gh_cli_service
+from extension.skills.runtime_context import notify_target
 
 prepare_default_env(REPO_ROOT)
 
 
 async def execute(ctx, params: dict, runtime=None) -> dict:
     _ = (ctx, runtime)
-    return await gh_tools.gh_cli(
+    target = notify_target(ctx, params)
+    return await gh_cli_service.handle(
         action=str(params.get("action") or "auth_status"),
         hostname=str(params.get("hostname") or "github.com"),
         scopes=params.get("scopes"),
         argv=params.get("argv"),
         cwd=str(params.get("cwd") or ""),
         timeout_sec=params.get("timeout_sec", 120),
-        notify_platform=str(params.get("notify_platform") or ""),
-        notify_chat_id=str(params.get("notify_chat_id") or ""),
-        notify_user_id=str(params.get("notify_user_id") or ""),
+        notify_platform=str(
+            params.get("notify_platform") or target.get("notify_platform") or ""
+        ),
+        notify_chat_id=str(
+            params.get("notify_chat_id") or target.get("notify_chat_id") or ""
+        ),
+        notify_user_id=str(
+            params.get("notify_user_id") or target.get("notify_user_id") or ""
+        ),
     )
 
 

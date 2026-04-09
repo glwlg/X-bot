@@ -100,7 +100,7 @@ async def test_ikaros_allows_bash_for_coding_requests_without_legacy_pipeline(
         append_session_event=append_event,
     )
     dispatcher.set_available_tool_names(
-        {"bash", "codex_session", "repo_workspace", "git_ops", "gh_cli"}
+        {"bash", "coding_session", "repo_workspace", "git_ops", "gh_cli"}
     )
 
     result = await dispatcher.execute(
@@ -182,7 +182,7 @@ async def test_ikaros_allows_loaded_skill_cli_bash_when_request_mentions_code():
         append_session_event=append_event,
     )
     dispatcher.set_available_tool_names(
-        {"bash", "codex_session", "repo_workspace", "git_ops", "gh_cli"}
+        {"bash", "coding_session", "repo_workspace", "git_ops", "gh_cli"}
     )
 
     result = await dispatcher.execute(
@@ -227,7 +227,7 @@ async def test_subagent_allows_bash_even_when_request_mentions_code(monkeypatch)
         append_session_event=append_event,
     )
     dispatcher.set_available_tool_names(
-        {"bash", "codex_session", "repo_workspace", "git_ops", "gh_cli"}
+        {"bash", "coding_session", "repo_workspace", "git_ops", "gh_cli"}
     )
 
     result = await dispatcher.execute(
@@ -266,7 +266,7 @@ async def test_ikaros_allows_bash_for_non_coding_ops(monkeypatch):
         append_session_event=append_event,
     )
     dispatcher.set_available_tool_names(
-        {"bash", "codex_session", "repo_workspace", "git_ops", "gh_cli"}
+        {"bash", "coding_session", "repo_workspace", "git_ops", "gh_cli"}
     )
 
     result = await dispatcher.execute(
@@ -305,7 +305,7 @@ async def test_ikaros_allows_write_to_repo_code_path_when_policy_allows():
         append_session_event=append_event,
     )
     dispatcher.set_available_tool_names(
-        {"write", "codex_session", "repo_workspace", "git_ops"}
+        {"write", "coding_session", "repo_workspace", "git_ops"}
     )
 
     result = await dispatcher.execute(
@@ -347,7 +347,7 @@ async def test_ikaros_passes_current_runtime_data_path_through_unchanged():
         append_session_event=append_event,
     )
     dispatcher.set_available_tool_names(
-        {"write", "codex_session", "repo_workspace", "git_ops"}
+        {"write", "coding_session", "repo_workspace", "git_ops"}
     )
 
     result = await dispatcher.execute(

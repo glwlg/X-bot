@@ -7,7 +7,7 @@ import pytest
 
 from core.heartbeat_store import heartbeat_store
 from core.task_inbox import task_inbox
-from core.task_tracker_service import task_tracker_service
+from extension.skills.builtin.task_tracker.scripts.service import task_tracker_service
 
 
 def _reset_task_inbox(tmp_path: Path) -> None:
@@ -266,7 +266,7 @@ async def test_task_tracker_announce_text_is_audited_and_deduped(
         return True
 
     monkeypatch.setattr(
-        "core.task_tracker_service.push_background_text",
+        "extension.skills.builtin.task_tracker.scripts.service.push_background_text",
         fake_push_background_text,
     )
 
@@ -319,7 +319,7 @@ async def test_task_tracker_observation_update_without_announce_does_not_push(
         return True
 
     monkeypatch.setattr(
-        "core.task_tracker_service.push_background_text",
+        "extension.skills.builtin.task_tracker.scripts.service.push_background_text",
         fake_push_background_text,
     )
 

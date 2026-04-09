@@ -8,7 +8,7 @@ from core.agent_orchestrator import AgentOrchestrator
 from core.heartbeat_store import heartbeat_store
 from core.platform.models import Chat, MessageType, UnifiedMessage, User
 from core.task_inbox import task_inbox
-from core.task_tracker_service import task_tracker_service
+from extension.skills.builtin.task_tracker.scripts.service import task_tracker_service
 from services.intent_router import RoutingDecision
 
 

@@ -83,7 +83,7 @@ async def test_orchestrator_ikaros_tool_surface_matches_current_runtime(monkeypa
         "edit",
         "bash",
         "await_subagents",
-        "codex_session",
+        "coding_session",
         "git_ops",
         "gh_cli",
         "repo_workspace",

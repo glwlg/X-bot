@@ -44,20 +44,6 @@ def workspace_state_path(workspace_id: str) -> Path:
     return (root / f"{safe_id}.json").resolve()
 
 
-def codex_session_path(session_id: str) -> Path:
-    safe_id = str(session_id or "session").strip() or "session"
-    root = (_system_root() / "codex_sessions").resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    return (root / f"{safe_id}.json").resolve()
-
-
-def codex_session_log_path(session_id: str) -> Path:
-    safe_id = str(session_id or "session").strip() or "session"
-    root = (_system_root() / "codex_sessions" / "logs").resolve()
-    root.mkdir(parents=True, exist_ok=True)
-    return (root / f"{safe_id}.log").resolve()
-
-
 def coding_sessions_root() -> Path:
     return (_system_root() / "coding_sessions").resolve()
 
@@ -86,9 +72,13 @@ def coding_session_events_path(session_id: str) -> Path:
     return (coding_session_root(session_id) / "events.jsonl").resolve()
 
 
+def coding_session_log_path(session_id: str) -> Path:
+    return (coding_session_root(session_id) / "backend.log").resolve()
+
+
 def new_workspace_id() -> str:
     return f"ws-{int(datetime.now().timestamp())}-{uuid4().hex[:8]}"
 
 
-def new_codex_session_id() -> str:
-    return f"cx-{int(datetime.now().timestamp())}-{uuid4().hex[:8]}"
+def new_coding_session_id() -> str:
+    return f"cs-{int(datetime.now().timestamp())}-{uuid4().hex[:8]}"

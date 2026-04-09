@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from core.state_paths import single_user_root
+from ikaros.dev.acp_client import run_acp_backend
 
 
 MAX_OUTPUT_CHARS = 12000
@@ -81,9 +82,40 @@ def _normalize_backend(raw: Any) -> str:
     token = str(raw or "").strip().lower()
     if token in {"gemini", "gemini_cli", "gemini-cli"}:
         return "gemini-cli"
+    if token in {"opencode", "open-code"}:
+        return "opencode"
     if token in {"codex", "openai-codex", ""}:
         return "codex"
     return "codex"
+
+
+def _normalize_transport(raw: Any) -> str:
+    token = str(raw or "").strip().lower()
+    if token in {"acp", "agent-client-protocol"}:
+        return "acp"
+    return "cli"
+
+
+def _backend_env_key(backend: str) -> str:
+    safe_backend = _normalize_backend(backend)
+    if safe_backend == "gemini-cli":
+        return "GEMINI"
+    if safe_backend == "opencode":
+        return "OPENCODE"
+    return "CODEX"
+
+
+def _default_transport_for_backend(backend: str) -> str:
+    env_key = _backend_env_key(backend)
+    specific = str(os.getenv(f"CODING_BACKEND_{env_key}_TRANSPORT", "") or "").strip()
+    if specific:
+        return _normalize_transport(specific)
+    default = str(os.getenv("CODING_BACKEND_TRANSPORT_DEFAULT", "") or "").strip()
+    if default:
+        return _normalize_transport(default)
+    if _normalize_backend(backend) in {"gemini-cli", "opencode"}:
+        return "acp"
+    return "cli"
 
 
 def _build_coding_command(backend: str, instruction: str) -> tuple[str, List[str]]:
@@ -118,6 +150,52 @@ def _build_coding_command(backend: str, instruction: str) -> tuple[str, List[str
     rendered = template.format(instruction=shlex.quote(safe_instruction))
     args = shlex.split(rendered)
     return cmd, args
+
+
+def _build_acp_command(
+    backend: str,
+    *,
+    cwd: str,
+) -> tuple[str, List[str], Dict[str, str]]:
+    safe_backend = _normalize_backend(backend)
+    safe_cwd = str(cwd or "").strip()
+    if safe_backend == "opencode":
+        cmd = str(os.getenv("CODING_BACKEND_OPENCODE_ACP_COMMAND", "opencode") or "").strip()
+        template = str(
+            os.getenv(
+                "CODING_BACKEND_OPENCODE_ACP_ARGS_TEMPLATE",
+                "acp --cwd {cwd}",
+            )
+            or ""
+        ).strip()
+        env_overrides = {
+            "OPENCODE_CLIENT": "ikaros",
+            "OPENCODE_DISABLE_MODELS_FETCH": str(
+                os.getenv("OPENCODE_DISABLE_MODELS_FETCH", "1") or "1"
+            ).strip(),
+        }
+    elif safe_backend == "gemini-cli":
+        cmd = str(
+            os.getenv(
+                "CODING_BACKEND_GEMINI_ACP_COMMAND",
+                os.getenv("CODING_BACKEND_GEMINI_COMMAND", "gemini"),
+            )
+            or ""
+        ).strip()
+        template = str(
+            os.getenv(
+                "CODING_BACKEND_GEMINI_ACP_ARGS_TEMPLATE",
+                "--experimental-acp",
+            )
+            or ""
+        ).strip()
+        env_overrides = {}
+    else:
+        raise ValueError(f"ACP transport is not supported for backend: {safe_backend}")
+
+    rendered = template.format(cwd=shlex.quote(safe_cwd))
+    args = shlex.split(rendered)
+    return cmd, args, env_overrides
 
 
 def _is_codex_trust_error(text: str) -> bool:
@@ -396,6 +474,8 @@ async def run_coding_backend(
     timeout_sec: int = 1800,
     source: str = "",
     log_path: str = "",
+    transport: str = "",
+    transport_session_id: str = "",
 ) -> Dict[str, Any]:
     safe_instruction = str(instruction or "").strip()
     if not safe_instruction:
@@ -407,6 +487,40 @@ async def run_coding_backend(
 
     configured_backend = backend or os.getenv("CODING_BACKEND_DEFAULT") or "codex"
     backend_name = _normalize_backend(configured_backend)
+    transport_name = _normalize_transport(
+        transport or _default_transport_for_backend(backend_name)
+    )
+    if transport_name == "acp":
+        try:
+            cmd, args, env_overrides = _build_acp_command(
+                backend_name,
+                cwd=str(cwd or "").strip(),
+            )
+        except ValueError as exc:
+            return {
+                "ok": False,
+                "error_code": "unsupported_transport",
+                "message": str(exc),
+                "backend": backend_name,
+                "transport": "acp",
+                "source": str(source or "").strip(),
+            }
+        env = _subprocess_env()
+        env.update(env_overrides)
+        result = await run_acp_backend(
+            command=[cmd, *args],
+            cwd=str(cwd or "").strip(),
+            instruction=safe_instruction,
+            timeout_sec=max(60, int(timeout_sec or 1800)),
+            existing_session_id=str(transport_session_id or "").strip(),
+            log_path=log_path,
+            env=env,
+        )
+        result["backend"] = backend_name
+        result["transport"] = "acp"
+        result["source"] = str(source or "").strip()
+        return result
+
     cmd, args = _build_coding_command(backend_name, safe_instruction)
     first = await run_exec(
         [cmd, *args],
@@ -415,6 +529,7 @@ async def run_coding_backend(
         log_path=log_path,
     )
     first["backend"] = backend_name
+    first["transport"] = "cli"
     first["source"] = str(source or "").strip()
     if backend_name == "codex" and _codex_output_indicates_failure(first):
         first = _force_command_failed(first)
@@ -444,6 +559,7 @@ async def run_coding_backend(
         log_path=log_path,
     )
     second["backend"] = backend_name
+    second["transport"] = "cli"
     second["source"] = str(source or "").strip()
     second["retry_hint"] = "skip_git_repo_check"
     if backend_name == "codex" and _codex_output_indicates_failure(second):

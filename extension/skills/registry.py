@@ -627,6 +627,9 @@ class SkillRegistry:
                 exported.setdefault("skill_name", str(info.get("name") or "").strip())
                 exported.setdefault("allowed_roles", list(allowed_roles))
                 exported.setdefault("ikaros_only", bool(info.get("ikaros_only")))
+                exported.setdefault("entrypoint", str(info.get("entrypoint") or "").strip())
+                exported.setdefault("skill_dir", str(info.get("skill_dir") or "").strip())
+                exported.setdefault("source", str(info.get("source") or "").strip())
                 exported.setdefault(
                     "policy_groups",
                     list(info.get("policy_groups") or []),

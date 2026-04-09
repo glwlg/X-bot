@@ -45,10 +45,18 @@ Ikaros 内部控制面工具：
 Ikaros 侧常用 direct tool：
 
 - `repo_workspace`
-- `codex_session`
+- `coding_session`
 - `git_ops`
 - `gh_cli`
 - `task_tracker`
+
+编码后端执行传输默认采用混合模式：
+
+- `codex`：CLI transport
+- `gemini-cli`：ACP transport
+- `opencode`：ACP transport
+
+如需覆盖，可使用 `CODING_BACKEND_CODEX_TRANSPORT`、`CODING_BACKEND_GEMINI_TRANSPORT`、`CODING_BACKEND_OPENCODE_TRANSPORT` 或全局 `CODING_BACKEND_TRANSPORT_DEFAULT`。
 
 约束：
 

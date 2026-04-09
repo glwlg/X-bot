@@ -4,7 +4,7 @@ import json
 import os
 from typing import Any, Dict, List
 
-from ikaros.integrations.gh_cli_service import gh_cli_service
+from extension.skills._internal.gh_cli_service import gh_cli_service
 from ikaros.integrations.github_client import GitHubClientError, parse_issue_reference
 
 

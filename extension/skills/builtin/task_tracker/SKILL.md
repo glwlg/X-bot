@@ -17,7 +17,6 @@ platform_handlers: false
 tool_exports:
 - name: task_tracker
   description: List, inspect, and update unfinished task state for AI-native closure workflows.
-  handler: ikaros.task_tracker
   prompt_hint: 需要查看未完成任务、把任务标成 `waiting_external`、记录 `done_when` / `next_review_after`、显式关闭任务（status 设为 `completed` 或 `failed`），或在自动跟进前先通知用户时，直接调用 `task_tracker`。当任务创建了 PR、部署、工单等外部依赖但尚未真正闭环时，不要直接结束任务，先用 `task_tracker` 更新状态。
   policy_groups:
   - management
@@ -82,6 +81,7 @@ permissions:
   filesystem: workspace
   shell: false
   network: limited
+entrypoint: scripts/execute.py
 ---
 
 # Task Tracker

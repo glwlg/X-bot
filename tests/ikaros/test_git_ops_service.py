@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from ikaros.dev.git_ops_service import GitOpsService
+from extension.skills.builtin.git_ops.scripts.service import GitOpsService
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -115,10 +115,13 @@ async def test_git_ops_push_falls_back_to_fork(monkeypatch):
         }
 
     monkeypatch.setattr(
-        "ikaros.dev.git_ops_service.workspace_session_service.inspect",
+        "extension.skills.builtin.git_ops.scripts.service.workspace_session_service.inspect",
         fake_inspect,
     )
-    monkeypatch.setattr("ikaros.dev.git_ops_service.run_shell", fake_run_shell)
+    monkeypatch.setattr(
+        "extension.skills.builtin.git_ops.scripts.service.run_shell",
+        fake_run_shell,
+    )
     monkeypatch.setattr(service.publisher, "_push_via_fork", fake_push_via_fork)
 
     result = await service.push(repo_root="/tmp/repo", strategy="auto")

@@ -194,7 +194,7 @@ class ToolAccessStore:
             "group:fs": "文件系统工具：read/write/edit",
             "group:primitives": "基础原语：read/write/edit/bash/load_skill",
             "group:execution": "执行类能力：bash/exec/process 与内部执行运行时",
-            "group:coding": "编码类能力：coding_backend(codex/gemini-cli)",
+            "group:coding": "编码类能力：coding_backend(codex/gemini-cli/opencode)",
             "group:feeds": "信息订阅类：rss/news feed",
             "group:ops": "部署运维类：deployment/docker",
             "group:automation": "自动化类：scheduler/reminder（不含 rss/stock）",
@@ -204,7 +204,7 @@ class ToolAccessStore:
             "group:memory": "记忆类：用户长期记忆",
             "group:skill-admin": "技能治理类：skill_manager",
             "group:skills": "扩展技能总开关：ext_*",
-            "group:management": "管理调度类：subagent、repo workspace、git/gh/codex 与任务治理直连工具",
+            "group:management": "管理调度类：subagent、repo workspace、git/gh/coding session 与任务治理直连工具",
         }
 
     @staticmethod
@@ -249,7 +249,7 @@ class ToolAccessStore:
         if kind == "backend":
             groups.add("group:execution")
             groups.add("group:backend")
-            if name in {"codex", "gemini-cli", "gemini"}:
+            if name in {"codex", "gemini-cli", "gemini", "opencode", "open-code"}:
                 groups.add("group:coding")
             if name in {"shell", "bash", "sh", "core-agent"}:
                 groups.add("group:execution")
@@ -289,15 +289,7 @@ class ToolAccessStore:
         if name in {"bash", "exec", "process"}:
             groups.add("group:execution")
             groups.add("group:primitives")
-        if name in {
-            "spawn_subagent",
-            "await_subagents",
-            "repo_workspace",
-            "codex_session",
-            "git_ops",
-            "gh_cli",
-            "task_tracker",
-        }:
+        if name in {"spawn_subagent", "await_subagents"}:
             groups.add("group:management")
             groups.add("group:execution")
         if name in {"run_extension", "list_extensions"}:

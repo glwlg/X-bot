@@ -4,7 +4,9 @@ from pathlib import Path
 import pytest
 
 from ikaros.dev.session_paths import workspace_state_path
-from ikaros.dev.workspace_session_service import WorkspaceSessionService
+from extension.skills.builtin.repo_workspace.scripts.service import (
+    WorkspaceSessionService,
+)
 
 
 def _git(repo: Path, *args: str) -> None:

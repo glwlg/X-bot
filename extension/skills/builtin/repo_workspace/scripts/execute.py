@@ -19,14 +19,18 @@ from core.skill_cli import (
     prepare_default_env,
     run_execute_cli,
 )
-from core.tools.repo_workspace_tools import repo_workspace_tools
+
+try:
+    from .service import workspace_session_service
+except ImportError:
+    from service import workspace_session_service
 
 prepare_default_env(REPO_ROOT)
 
 
 async def execute(ctx, params: dict, runtime=None) -> dict:
     _ = (ctx, runtime)
-    return await repo_workspace_tools.repo_workspace(
+    return await workspace_session_service.handle(
         action=str(params.get("action") or "prepare"),
         workspace_id=str(params.get("workspace_id") or ""),
         repo_url=str(params.get("repo_url") or ""),

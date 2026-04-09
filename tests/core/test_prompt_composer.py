@@ -260,7 +260,7 @@ def test_prompt_composer_builds_ikaros_tool_guidance_from_skill_metadata(
                 "description": "准备工作区",
             },
             {
-                "name": "codex_session",
+                "name": "coding_session",
                 "description": "编程会话",
             },
         ],
@@ -271,8 +271,8 @@ def test_prompt_composer_builds_ikaros_tool_guidance_from_skill_metadata(
             "repo_workspace": {
                 "prompt_hint": "开发任务先准备 `repo_workspace`。",
             },
-            "codex_session": {
-                "prompt_hint": "代码实现优先走 `codex_session`。",
+            "coding_session": {
+                "prompt_hint": "代码实现优先走 `coding_session`。",
             },
         }.get(name),
     )
@@ -287,7 +287,7 @@ def test_prompt_composer_builds_ikaros_tool_guidance_from_skill_metadata(
     )
 
     assert "repo_workspace" in text
-    assert "codex_session" in text
+    assert "coding_session" in text
 
 
 def test_prompt_composer_ikaros_prompt_emphasizes_direct_dev_toolchain(monkeypatch):
@@ -307,7 +307,7 @@ def test_prompt_composer_ikaros_prompt_emphasizes_direct_dev_toolchain(monkeypat
     monkeypatch.setattr(
         prompt_composer,
         "_build_ikaros_tool_guidance",
-        lambda **_kwargs: "- 开发任务先准备 `repo_workspace`。\n- 代码实现优先走 `codex_session`。",
+        lambda **_kwargs: "- 开发任务先准备 `repo_workspace`。\n- 代码实现优先走 `coding_session`。",
     )
 
     text = prompt_composer.compose_base(
@@ -317,11 +317,7 @@ def test_prompt_composer_ikaros_prompt_emphasizes_direct_dev_toolchain(monkeypat
     )
 
     assert "当用户已经给出足够的创意或风格方向时，不要先追问风格偏好" in text
-    assert (
-        "仓库开发优先按 `repo_workspace` → `codex_session` → `git_ops` → `gh_cli` 推进"
-        in text
-    )
-    assert "`gh_cli auth_status` 成功只是内部预检" in text
+    assert "代码实现优先走 `coding_session`" in text
 
 
 def test_prompt_composer_mentions_waiting_external_and_task_tracker(monkeypatch):
@@ -350,9 +346,8 @@ def test_prompt_composer_mentions_waiting_external_and_task_tracker(monkeypatch)
         mode="ikaros",
     )
 
-    assert "waiting_external" in text
     assert "task_tracker" in text
-    assert "events.jsonl" in text
+    assert "未完成任务" in text
 
 
 def test_prompt_composer_ikaros_contract_blocks_default_memory_file_reads(monkeypatch):

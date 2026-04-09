@@ -1,12 +1,12 @@
 from __future__ import annotations
 
+import inspect
 import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Set
 
 from core.local_file_delivery import send_local_file
-from core.skill_tool_handlers import skill_tool_handler_registry
 from core.tool_registry import tool_registry
 
 from extension.skills.registry import skill_registry as skill_loader
@@ -366,6 +366,44 @@ class ToolCallDispatcher:
             runtime_role=self._runtime_role(),
         )
 
+    def _notify_target(self) -> Dict[str, str]:
+        ctx_user_data = getattr(self.ctx, "user_data", None)
+        user_data = ctx_user_data if isinstance(ctx_user_data, dict) else {}
+        msg = getattr(self.ctx, "message", None)
+        msg_user = getattr(msg, "user", None)
+        msg_chat = getattr(msg, "chat", None)
+
+        platform = str(getattr(msg, "platform", "") or self.platform_name or "").strip()
+        chat_id = str(getattr(msg_chat, "id", "") or "").strip()
+        user_id = str(getattr(msg_user, "id", "") or "").strip()
+
+        forced_platform = str(user_data.get("subagent_delivery_platform") or "").strip()
+        forced_chat_id = str(user_data.get("subagent_delivery_chat_id") or "").strip()
+        if forced_platform:
+            platform = forced_platform
+        if forced_chat_id:
+            chat_id = forced_chat_id
+
+        return {
+            "notify_platform": platform,
+            "notify_chat_id": chat_id,
+            "notify_user_id": user_id,
+        }
+
+    def _skill_dispatch_context(self) -> Dict[str, Any]:
+        notify_target = self._notify_target()
+        return {
+            "runtime_user_id": str(self.runtime_user_id or "").strip(),
+            "platform_name": str(self.platform_name or "").strip(),
+            "task_id": str(self.task_id or "").strip(),
+            "task_inbox_id": str(self.task_inbox_id or "").strip(),
+            "task_workspace_root": str(self.task_workspace_root or "").strip(),
+            "user_request": self._extract_user_request(),
+            "notify_platform": notify_target["notify_platform"],
+            "notify_chat_id": notify_target["notify_chat_id"],
+            "notify_user_id": notify_target["notify_user_id"],
+        }
+
     async def _execute_skill_tool_binding(
         self,
         *,
@@ -377,11 +415,50 @@ class ToolCallDispatcher:
         if not binding:
             return None
 
-        result = await skill_tool_handler_registry.dispatch(
-            str(binding.get("handler") or "").strip(),
-            dispatcher=self,
-            args=tool_args,
-        )
+        skill_name = str(binding.get("skill_name") or "").strip()
+        entrypoint = str(binding.get("entrypoint") or "scripts/execute.py").strip()
+        if not skill_name or not entrypoint:
+            return {
+                "ok": False,
+                "error_code": "invalid_skill_tool_binding",
+                "message": f"Invalid skill tool binding: {tool_name}",
+                "failure_mode": "fatal",
+            }
+
+        script_name = entrypoint
+        if script_name.startswith("scripts/"):
+            script_name = script_name.removeprefix("scripts/")
+        script_name = script_name.lstrip("./")
+        module = skill_loader.import_skill_module(skill_name, script_name=script_name)
+        if module is None:
+            return {
+                "ok": False,
+                "error_code": "skill_entrypoint_unavailable",
+                "message": f"Skill entrypoint unavailable: {skill_name}",
+                "failure_mode": "fatal",
+            }
+
+        execute_fn = getattr(module, "execute", None)
+        if not callable(execute_fn):
+            return {
+                "ok": False,
+                "error_code": "skill_entrypoint_invalid",
+                "message": f"Skill entrypoint missing execute(): {skill_name}",
+                "failure_mode": "fatal",
+            }
+
+        resolved_args = dict(tool_args or {})
+        resolved_args["_ikaros_dispatch"] = self._skill_dispatch_context()
+        result = execute_fn(self.ctx, resolved_args, runtime=self.runtime)
+        if inspect.isawaitable(result):
+            result = await result
+        if not isinstance(result, dict):
+            return {
+                "ok": False,
+                "error_code": "skill_tool_invalid_result",
+                "message": f"Skill tool returned invalid result: {skill_name}",
+                "failure_mode": "fatal",
+            }
         return result
 
     def _should_retry_extension(self, result: Dict[str, Any]) -> bool:

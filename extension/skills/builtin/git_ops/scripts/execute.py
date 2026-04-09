@@ -19,14 +19,18 @@ from core.skill_cli import (
     prepare_default_env,
     run_execute_cli,
 )
-from core.tools.git_tools import git_tools
+
+try:
+    from .service import git_ops_service
+except ImportError:
+    from service import git_ops_service
 
 prepare_default_env(REPO_ROOT)
 
 
 async def execute(ctx, params: dict, runtime=None) -> dict:
     _ = (ctx, runtime)
-    return await git_tools.git_ops(
+    return await git_ops_service.handle(
         action=str(params.get("action") or "status"),
         workspace_id=str(params.get("workspace_id") or ""),
         repo_root=str(params.get("repo_root") or ""),

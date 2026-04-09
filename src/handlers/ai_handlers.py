@@ -241,7 +241,7 @@ def _humanize_ikaros_tool_name(tool_name: str) -> str:
         "edit": "编辑文件",
         "load_skill": "加载技能",
         "await_subagents": "等待子任务",
-        "codex_session": "编程会话",
+        "coding_session": "编程会话",
         "git_ops": "Git 操作",
         "repo_workspace": "仓库工作区",
         "spawn_subagent": "启动子任务",
@@ -305,7 +305,7 @@ def _summarize_ikaros_tool_args(
         if action:
             return "操作", action
 
-    if raw == "codex_session":
+    if raw == "coding_session":
         action = _compact_text(str(args.get("action") or ""), limit=80)
         session_id = _compact_text(str(args.get("session_id") or ""), limit=120)
         if action and session_id:

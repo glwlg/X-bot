@@ -8,11 +8,13 @@ from typing import Any, Dict, List
 
 from ikaros.dev.runtime import run_coding_backend, run_shell
 from ikaros.dev.session_paths import (
-    codex_session_log_path,
-    codex_session_path,
-    new_codex_session_id,
+    coding_session_log_path,
+    coding_session_path,
+    new_coding_session_id,
 )
-from ikaros.dev.workspace_session_service import workspace_session_service
+from extension.skills.builtin.repo_workspace.scripts.service import (
+    workspace_session_service,
+)
 
 
 _USER_INPUT_ANCHORS = (
@@ -48,7 +50,7 @@ def _short(text: str, limit: int = 240) -> str:
     return payload[:limit].rstrip() + "..."
 
 
-class CodexSessionService:
+class CodingSessionService:
     @staticmethod
     def _response(
         *,
@@ -66,13 +68,13 @@ class CodexSessionService:
             "terminal": False,
         }
         if not ok:
-            payload["error_code"] = str(error_code or "codex_session_failed").strip()
-            payload["message"] = str(text or summary or "codex session failed").strip()
+            payload["error_code"] = str(error_code or "coding_session_failed").strip()
+            payload["message"] = str(text or summary or "coding session failed").strip()
             payload["failure_mode"] = "fatal"
         return payload
 
     async def _load_state(self, session_id: str) -> Dict[str, Any] | None:
-        path = codex_session_path(session_id)
+        path = coding_session_path(session_id)
         if not path.exists():
             return None
         try:
@@ -87,7 +89,7 @@ class CodexSessionService:
         if not session_id:
             raise ValueError("session_id is required")
         record["updated_at"] = _now_iso()
-        path = codex_session_path(session_id)
+        path = coding_session_path(session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
             json.dumps(record, ensure_ascii=False, indent=2) + "\n",
@@ -190,6 +192,32 @@ class CodexSessionService:
         )
         return "\n\n".join([section for section in sections if section]).strip()
 
+    def _acp_continuation_instruction(
+        self,
+        *,
+        base_instruction: str,
+        pending_question: str,
+        user_reply: str,
+    ) -> str:
+        sections = [
+            "Continue the previous ACP coding session if it was restored successfully.",
+            f"User reply / decision: {str(user_reply or '').strip()[:1600]}",
+            (
+                "If the ACP session could not be restored, use this fallback context:\n"
+                f"- Original task: {str(base_instruction or '').strip()[:1600]}\n"
+                f"- Previous blocking question: {str(pending_question or '').strip()[:1600]}"
+            ),
+            "Do not restart from scratch unless the prior ACP session is unavailable.",
+        ]
+        return "\n\n".join([section for section in sections if section]).strip()
+
+    @staticmethod
+    def _should_resume_via_acp(session: Dict[str, Any]) -> bool:
+        return (
+            str(session.get("transport") or "").strip().lower() == "acp"
+            and bool(str(session.get("transport_session_id") or "").strip())
+        )
+
     async def _run_round(
         self,
         *,
@@ -197,12 +225,14 @@ class CodexSessionService:
         workspace: Dict[str, Any],
         instruction: str,
         backend: str,
+        transport: str,
         timeout_sec: int,
         source: str,
         user_reply: str = "",
+        transport_session_id: str = "",
     ) -> Dict[str, Any]:
         repo_root = str(workspace.get("repo_root") or "").strip()
-        log_path = str(codex_session_log_path(session_id))
+        log_path = str(coding_session_log_path(session_id))
         result = await run_coding_backend(
             instruction=instruction,
             backend=backend,
@@ -210,6 +240,8 @@ class CodexSessionService:
             timeout_sec=max(60, int(timeout_sec or 1800)),
             source=source,
             log_path=log_path,
+            transport=transport,
+            transport_session_id=transport_session_id,
         )
         question = self._extract_question(result)
         status = "done"
@@ -249,6 +281,11 @@ class CodexSessionService:
                 "repo_root": repo_root,
                 "backend": str(result.get("backend") or backend or "codex").strip()
                 or "codex",
+                "transport": str(result.get("transport") or transport or "cli").strip()
+                or "cli",
+                "transport_session_id": str(
+                    result.get("transport_session_id") or transport_session_id or ""
+                ).strip(),
                 "instruction": str(session.get("instruction") or instruction).strip(),
                 "last_instruction": instruction,
                 "last_user_reply": str(user_reply or "").strip(),
@@ -270,6 +307,7 @@ class CodexSessionService:
         cwd: str = "",
         instruction: str,
         backend: str = "codex",
+        transport: str = "",
         timeout_sec: int = 2400,
         source: str = "",
         skill_name: str = "",
@@ -278,7 +316,7 @@ class CodexSessionService:
         if not safe_instruction:
             return self._response(
                 ok=False,
-                summary="codex_session start failed",
+                summary="coding_session start failed",
                 text="instruction is required",
                 error_code="invalid_args",
             )
@@ -286,16 +324,18 @@ class CodexSessionService:
         if not workspace.get("ok"):
             return self._response(
                 ok=False,
-                summary="codex_session start failed",
+                summary="coding_session start failed",
                 text=str(workspace.get("message") or "workspace not found"),
                 error_code=str(workspace.get("error_code") or "workspace_not_found"),
             )
-        session_id = new_codex_session_id()
+        session_id = new_coding_session_id()
         initial = {
             "session_id": session_id,
             "workspace_id": str(workspace.get("workspace_id") or "").strip(),
             "repo_root": str(workspace.get("repo_root") or "").strip(),
             "backend": str(backend or "codex").strip() or "codex",
+            "transport": str(transport or "cli").strip() or "cli",
+            "transport_session_id": "",
             "source": str(source or "").strip(),
             "skill_name": str(skill_name or "").strip(),
             "instruction": safe_instruction,
@@ -304,7 +344,7 @@ class CodexSessionService:
             "pending_question": "",
             "result": {},
             "history": [],
-            "log_path": str(codex_session_log_path(session_id)),
+            "log_path": str(coding_session_log_path(session_id)),
             "created_at": _now_iso(),
             "updated_at": _now_iso(),
         }
@@ -314,8 +354,9 @@ class CodexSessionService:
             workspace=workspace,
             instruction=safe_instruction,
             backend=str(backend or "codex").strip() or "codex",
+            transport=str(transport or "").strip(),
             timeout_sec=timeout_sec,
-            source="codex_session_start",
+            source="coding_session_start",
         )
         return await self.status(session_id=session_id)
 
@@ -330,14 +371,14 @@ class CodexSessionService:
         if not session:
             return self._response(
                 ok=False,
-                summary="codex_session continue failed",
+                summary="coding_session continue failed",
                 text="session not found",
                 error_code="session_not_found",
             )
         if str(session.get("status") or "").strip().lower() != "waiting_user":
             return self._response(
                 ok=False,
-                summary="codex_session continue failed",
+                summary="coding_session continue failed",
                 text="session is not waiting for user input",
                 error_code="invalid_state",
             )
@@ -345,7 +386,7 @@ class CodexSessionService:
         if not safe_reply:
             return self._response(
                 ok=False,
-                summary="codex_session continue failed",
+                summary="coding_session continue failed",
                 text="user_reply is required",
                 error_code="invalid_args",
             )
@@ -356,19 +397,26 @@ class CodexSessionService:
         if not workspace.get("ok"):
             return self._response(
                 ok=False,
-                summary="codex_session continue failed",
+                summary="coding_session continue failed",
                 text=str(workspace.get("message") or "workspace not found"),
                 error_code=str(workspace.get("error_code") or "workspace_not_found"),
             )
-        workspace_context = await self._workspace_context(
-            str(workspace.get("repo_root") or "").strip()
-        )
-        instruction = self._continuation_instruction(
-            base_instruction=str(session.get("instruction") or "").strip(),
-            pending_question=str(session.get("pending_question") or "").strip(),
-            user_reply=safe_reply,
-            workspace_context=workspace_context,
-        )
+        if self._should_resume_via_acp(session):
+            instruction = self._acp_continuation_instruction(
+                base_instruction=str(session.get("instruction") or "").strip(),
+                pending_question=str(session.get("pending_question") or "").strip(),
+                user_reply=safe_reply,
+            )
+        else:
+            workspace_context = await self._workspace_context(
+                str(workspace.get("repo_root") or "").strip()
+            )
+            instruction = self._continuation_instruction(
+                base_instruction=str(session.get("instruction") or "").strip(),
+                pending_question=str(session.get("pending_question") or "").strip(),
+                user_reply=safe_reply,
+                workspace_context=workspace_context,
+            )
         await self._save_state(
             {**session, "status": "running", "last_user_reply": safe_reply}
         )
@@ -377,9 +425,11 @@ class CodexSessionService:
             workspace=workspace,
             instruction=instruction,
             backend=str(session.get("backend") or "codex").strip() or "codex",
+            transport=str(session.get("transport") or "").strip(),
             timeout_sec=timeout_sec,
-            source="codex_session_continue",
+            source="coding_session_continue",
             user_reply=safe_reply,
+            transport_session_id=str(session.get("transport_session_id") or "").strip(),
         )
         return await self.status(session_id=session_id)
 
@@ -388,7 +438,7 @@ class CodexSessionService:
         if not session:
             return self._response(
                 ok=False,
-                summary="codex_session status failed",
+                summary="coding_session status failed",
                 text="session not found",
                 error_code="session_not_found",
             )
@@ -419,6 +469,11 @@ class CodexSessionService:
                 "session_id": str(session.get("session_id") or "").strip(),
                 "workspace_id": str(session.get("workspace_id") or "").strip(),
                 "repo_root": str(session.get("repo_root") or "").strip(),
+                "backend": str(session.get("backend") or "").strip(),
+                "transport": str(session.get("transport") or "").strip(),
+                "transport_session_id": str(
+                    session.get("transport_session_id") or ""
+                ).strip(),
                 "status": status,
                 "question": question,
                 "log_path": str(session.get("log_path") or "").strip(),
@@ -433,7 +488,7 @@ class CodexSessionService:
         if not session:
             return self._response(
                 ok=False,
-                summary="codex_session cancel failed",
+                summary="coding_session cancel failed",
                 text="session not found",
                 error_code="session_not_found",
             )
@@ -461,6 +516,7 @@ class CodexSessionService:
         instruction: str = "",
         user_reply: str = "",
         backend: str = "codex",
+        transport: str = "",
         timeout_sec: int = 2400,
         source: str = "",
         skill_name: str = "",
@@ -472,6 +528,7 @@ class CodexSessionService:
                 cwd=cwd,
                 instruction=instruction,
                 backend=backend,
+                transport=transport,
                 timeout_sec=timeout_sec,
                 source=source,
                 skill_name=skill_name,
@@ -488,10 +545,10 @@ class CodexSessionService:
             return await self.cancel(session_id=session_id)
         return self._response(
             ok=False,
-            summary="codex_session failed",
-            text=f"unsupported codex_session action: {safe_action}",
+            summary="coding_session failed",
+            text=f"unsupported coding_session action: {safe_action}",
             error_code="unsupported_action",
         )
 
 
-codex_session_service = CodexSessionService()
+coding_session_service = CodingSessionService()

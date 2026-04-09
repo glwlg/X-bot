@@ -17,8 +17,7 @@ platform_handlers: false
 tool_exports:
 - name: repo_workspace
   description: Prepare, inspect, and clean per-session repository workspaces using managed worktrees.
-  handler: ikaros.repo_workspace
-  prompt_hint: 在开始代码开发前，优先用 `repo_workspace` 为仓库准备独立 worktree；准备完成后应继续调用 `codex_session` 或 `git_ops` 推进任务，不要只做只读分析就停下。查看当前开发目录状态或清理旧工作区时也用它。
+  prompt_hint: 在开始仓库开发前，优先用 `repo_workspace` 为仓库准备独立 worktree；准备完成后应继续调用 `coding_session` 或 `git_ops` 推进任务，不要只做只读分析就停下。查看当前开发目录状态或清理旧工作区时也用它。
   policy_groups:
   - management
   - coding

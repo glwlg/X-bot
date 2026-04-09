@@ -1,13 +1,12 @@
 ---
 api_version: v3
-name: codex_session
-description: Ikaros-side coding session bridge for starting and continuing Codex development rounds in prepared workspaces.
+name: coding_session
+description: Ikaros-side coding session skill for starting and continuing coding rounds in prepared workspaces.
 triggers:
-- codex session
-- continue coding
 - coding session
-- 继续 codex
-- ask codex
+- continue coding
+- 继续 coding
+- ask coding agent
 allowed_roles:
 - ikaros
 policy_groups:
@@ -15,10 +14,9 @@ policy_groups:
 - coding
 platform_handlers: false
 tool_exports:
-- name: codex_session
-  description: Start, continue, inspect, or cancel a Codex coding session bound to a prepared workspace.
-  handler: ikaros.codex_session
-  prompt_hint: 需要让 Codex 在某个已准备好的工作区里开发代码时，直接调用 `codex_session`。如果用户已经给了足够的创意或风格方向，就直接开始实现，不要先反问风格偏好；只有真正缺少关键约束时才提问。如果 Codex 提出澄清问题，再拿用户回复调用 `continue`。
+- name: coding_session
+  description: Start, continue, inspect, or cancel a coding session bound to a prepared workspace.
+  prompt_hint: 需要在某个已准备好的工作区里直接开发代码时，调用 `coding_session`。如果用户已经给了足够的创意或风格方向，就直接开始实现，不要先反问风格偏好；只有真正缺少关键约束时才提问。如果编码代理提出澄清问题，再拿用户回复调用 `continue`。
   policy_groups:
   - management
   - coding
@@ -45,7 +43,10 @@ tool_exports:
         description: User answer used when action=continue
       backend:
         type: string
-        description: Coding backend, defaults to codex
+        description: Coding backend, for example codex, gemini-cli, or opencode; defaults to codex
+      transport:
+        type: string
+        description: Optional execution transport, for example cli or acp
       timeout_sec:
         type: integer
         description: Timeout for each coding round
@@ -65,9 +66,9 @@ permissions:
 entrypoint: scripts/execute.py
 ---
 
-# Codex Session
+# Coding Session
 
-Ikaros 用这个技能直接驱动 Codex 开发回合。它支持在用户确认后继续同一逻辑会话，而不是把实现过程硬编码成固定流水线。
+Ikaros 用这个技能直接驱动编码回合。它支持在用户确认后继续同一逻辑会话，而不是把实现过程硬编码成固定流水线。
 
 ## CLI
 

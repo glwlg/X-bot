@@ -8,6 +8,7 @@ import pytest
 def _load_module():
     path = (
         Path(__file__).resolve().parents[2]
+        / "extension"
         / "skills"
         / "builtin"
         / "skill_manager"
@@ -27,12 +28,12 @@ def _fake_ctx():
 
 
 @pytest.mark.asyncio
-async def test_skill_manager_create_uses_codex_session(monkeypatch):
+async def test_skill_manager_create_uses_coding_session(monkeypatch):
     module = _load_module()
     calls: list[str] = []
 
-    async def fake_create_with_codex_session(**kwargs):
-        calls.append("codex_session")
+    async def fake_create_with_coding_session(**kwargs):
+        calls.append("coding_session")
         assert kwargs.get("backend") == "codex"
         return {
             "ok": True,
@@ -42,7 +43,7 @@ async def test_skill_manager_create_uses_codex_session(monkeypatch):
         }
 
     monkeypatch.setattr(
-        module, "_create_with_codex_session", fake_create_with_codex_session
+        module, "_create_with_coding_session", fake_create_with_coding_session
     )
     monkeypatch.setattr(module.skill_loader, "reload_skills", lambda: None)
     monkeypatch.setattr(
@@ -61,7 +62,7 @@ async def test_skill_manager_create_uses_codex_session(monkeypatch):
         runtime=object(),
     )
 
-    assert calls == ["codex_session"]
+    assert calls == ["coding_session"]
     assert result["created_skill_name"] == "demo_skill"
     assert result["used_backend"] == "codex"
     assert result["has_scripts"] is True
@@ -72,8 +73,8 @@ async def test_skill_manager_create_ignores_legacy_hint(monkeypatch):
     module = _load_module()
     calls: list[str] = []
 
-    async def fake_create_with_codex_session(**kwargs):
-        calls.append("codex_session")
+    async def fake_create_with_coding_session(**kwargs):
+        calls.append("coding_session")
         assert kwargs.get("backend") == "gemini-cli"
         return {
             "ok": True,
@@ -83,7 +84,7 @@ async def test_skill_manager_create_ignores_legacy_hint(monkeypatch):
         }
 
     monkeypatch.setattr(
-        module, "_create_with_codex_session", fake_create_with_codex_session
+        module, "_create_with_coding_session", fake_create_with_coding_session
     )
     monkeypatch.setattr(module.skill_loader, "reload_skills", lambda: None)
     monkeypatch.setattr(module.skill_loader, "get_skill", lambda name: {"scripts": []})
@@ -100,22 +101,22 @@ async def test_skill_manager_create_ignores_legacy_hint(monkeypatch):
         runtime=object(),
     )
 
-    assert calls == ["codex_session"]
+    assert calls == ["coding_session"]
     assert result["used_backend"] == "gemini-cli"
 
 
 @pytest.mark.asyncio
-async def test_skill_manager_modify_uses_codex_session(monkeypatch):
+async def test_skill_manager_modify_uses_coding_session(monkeypatch):
     module = _load_module()
     calls: list[str] = []
 
-    async def fake_modify_with_codex_session(**kwargs):
-        calls.append("codex_session")
+    async def fake_modify_with_coding_session(**kwargs):
+        calls.append("coding_session")
         assert kwargs.get("skill_name") == "demo_skill"
         return {"ok": True, "backend": "codex"}
 
     monkeypatch.setattr(
-        module, "_modify_with_codex_session", fake_modify_with_codex_session
+        module, "_modify_with_coding_session", fake_modify_with_coding_session
     )
 
     result = await module.execute(
@@ -128,7 +129,7 @@ async def test_skill_manager_modify_uses_codex_session(monkeypatch):
         runtime=object(),
     )
 
-    assert calls == ["codex_session"]
+    assert calls == ["coding_session"]
     assert "修改并生效" in str(result.get("text") or "")
 
 
@@ -137,13 +138,13 @@ async def test_skill_manager_modify_ignores_legacy_hint(monkeypatch):
     module = _load_module()
     calls: list[str] = []
 
-    async def fake_modify_with_codex_session(**kwargs):
-        calls.append("codex_session")
+    async def fake_modify_with_coding_session(**kwargs):
+        calls.append("coding_session")
         assert kwargs.get("backend") == "codex"
         return {"ok": True, "backend": "codex"}
 
     monkeypatch.setattr(
-        module, "_modify_with_codex_session", fake_modify_with_codex_session
+        module, "_modify_with_coding_session", fake_modify_with_coding_session
     )
 
     result = await module.execute(
@@ -157,5 +158,41 @@ async def test_skill_manager_modify_ignores_legacy_hint(monkeypatch):
         runtime=object(),
     )
 
-    assert calls == ["codex_session"]
+    assert calls == ["coding_session"]
     assert "修改并生效" in str(result.get("text") or "")
+
+
+@pytest.mark.asyncio
+async def test_skill_manager_create_accepts_opencode_backend(monkeypatch):
+    module = _load_module()
+    calls: list[str] = []
+
+    async def fake_create_with_coding_session(**kwargs):
+        calls.append("coding_session")
+        assert kwargs.get("backend") == "opencode"
+        return {
+            "ok": True,
+            "backend": "opencode",
+            "resolved_skill_name": "demo_skill",
+            "skill_md": "",
+        }
+
+    monkeypatch.setattr(
+        module, "_create_with_coding_session", fake_create_with_coding_session
+    )
+    monkeypatch.setattr(module.skill_loader, "reload_skills", lambda: None)
+    monkeypatch.setattr(module.skill_loader, "get_skill", lambda name: {"scripts": []})
+
+    result = await module.execute(
+        _fake_ctx(),
+        {
+            "action": "create",
+            "requirement": "create demo skill",
+            "skill_name": "demo_skill",
+            "coding_backend": "opencode",
+        },
+        runtime=object(),
+    )
+
+    assert calls == ["coding_session"]
+    assert result["used_backend"] == "opencode"

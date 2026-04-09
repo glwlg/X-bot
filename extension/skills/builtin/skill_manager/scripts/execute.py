@@ -30,7 +30,9 @@ from core.skill_cli import (
 prepare_default_env(REPO_ROOT)
 
 from extension.skills.registry import skill_registry as skill_loader
-from ikaros.dev.codex_session_service import codex_session_service
+from extension.skills.builtin.coding_session.scripts.service import (
+    coding_session_service,
+)
 
 project_root = str(REPO_ROOT)
 
@@ -61,6 +63,8 @@ def _normalize_backend(value: Any) -> str:
     raw = str(value or "").strip().lower()
     if raw in {"gemini", "gemini_cli", "gemini-cli"}:
         return "gemini-cli"
+    if raw in {"opencode", "open-code"}:
+        return "opencode"
     return "codex"
 
 
@@ -164,7 +168,7 @@ async def _run_local_skill_coding_task(
 ) -> Dict[str, Any]:
     _ = (_ctx, _runtime)
     source_label = str(source or f"skill_manager_{action}").strip()
-    result = await codex_session_service.start(
+    result = await coding_session_service.start(
         cwd=str(cwd or "").strip(),
         instruction=str(instruction or "").strip(),
         backend=_normalize_backend(backend),
@@ -221,7 +225,7 @@ async def _run_local_skill_coding_task(
     }
 
 
-async def _create_with_codex_session(
+async def _create_with_coding_session(
     *,
     ctx: UnifiedContext,
     runtime: Any,
@@ -317,7 +321,7 @@ async def _create_with_codex_session(
     return result
 
 
-async def _modify_with_codex_session(
+async def _modify_with_coding_session(
     *,
     ctx: UnifiedContext,
     runtime: Any,
@@ -510,7 +514,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
             return {"text": "🔇🔇🔇❌ 需要提供 skill_name 和 instruction", "ui": {}}
 
         backend = _resolve_coding_backend(params)
-        cli_result = await _modify_with_codex_session(
+        cli_result = await _modify_with_coding_session(
             ctx=ctx,
             runtime=runtime,
             skill_name=str(skill_name),
@@ -526,7 +530,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
                 "text": (
                     f"🔇🔇🔇⏸ Skill `{skill_name}` 修改需要进一步确认（session_id=`{session_id}`）。\n\n"
                     f"{question}\n\n"
-                    "请直接继续回答这个问题，我会用 `codex_session` 接着完成技能修改。"
+                    "请直接继续回答这个问题，我会用 `coding_session` 接着完成技能修改。"
                 ),
                 "ui": {},
                 "session_id": session_id,
@@ -535,7 +539,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
             used_backend = str(cli_result.get("backend") or backend)
             return {
                 "text": (
-                    f"🔇🔇🔇✅ Skill '{skill_name}' 已通过 `codex_session` "
+                    f"🔇🔇🔇✅ Skill '{skill_name}' 已通过 `coding_session` "
                     f"（backend=`{used_backend}`）修改并生效。"
                 ),
                 "ui": {},
@@ -546,7 +550,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
         )
         return {
             "text": (
-                f"🔇🔇🔇❌ ikaros 调用 `codex_session` 技能修改流程失败 "
+                f"🔇🔇🔇❌ ikaros 调用 `coding_session` 技能修改流程失败 "
                 f"(backend=`{backend}`): {summary}"
             ),
             "ui": {},
@@ -567,7 +571,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
             return {"text": "🔇🔇🔇❌ 请提供技能需求描述 (requirement)", "ui": {}}
 
         backend = _resolve_coding_backend(params)
-        cli_result = await _create_with_codex_session(
+        cli_result = await _create_with_coding_session(
             ctx=ctx,
             runtime=runtime,
             requirement=str(requirement),
@@ -583,7 +587,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
                 "text": (
                     f"🔇🔇🔇⏸ Skill 创建需要进一步确认（session_id=`{session_id}`）。\n\n"
                     f"{question}\n\n"
-                    "请直接继续回答这个问题，我会用 `codex_session` 接着完成技能创建。"
+                    "请直接继续回答这个问题，我会用 `coding_session` 接着完成技能创建。"
                 ),
                 "ui": {},
                 "session_id": session_id,
@@ -597,7 +601,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
                 has_scripts = bool(skill_info.get("scripts"))
                 return {
                     "text": (
-                        f"🔇🔇🔇✅ 技能 `{resolved_name}` 已通过 `codex_session` "
+                        f"🔇🔇🔇✅ 技能 `{resolved_name}` 已通过 `coding_session` "
                         f"（backend=`{used_backend}`）创建并生效。"
                     ),
                     "ui": {},
@@ -608,7 +612,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
                 }
             return {
                 "text": (
-                    f"🔇🔇🔇✅ ikaros 通过 `codex_session` 技能创建流程 "
+                    f"🔇🔇🔇✅ ikaros 通过 `coding_session` 技能创建流程 "
                     f"(backend=`{used_backend}`) 完成技能创建，但未识别到技能名。"
                     "请执行 `list skills` 确认。"
                 ),
@@ -621,7 +625,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
         )
         return {
             "text": (
-                f"🔇🔇🔇❌ ikaros 调用 `codex_session` 技能创建流程失败 "
+                f"🔇🔇🔇❌ ikaros 调用 `coding_session` 技能创建流程失败 "
                 f"(backend=`{backend}`): {summary}"
             ),
             "ui": {},
@@ -822,12 +826,20 @@ def _build_parser() -> argparse.ArgumentParser:
     create_parser = subparsers.add_parser("create", help="Create a new skill")
     create_parser.add_argument("requirement", help="Skill requirement")
     create_parser.add_argument("--skill-name", default="", help="Preferred skill name")
-    create_parser.add_argument("--backend", default="", help="codex or gemini-cli")
+    create_parser.add_argument(
+        "--backend",
+        default="",
+        help="codex, gemini-cli, or opencode",
+    )
 
     modify_parser = subparsers.add_parser("modify", help="Modify an existing skill")
     modify_parser.add_argument("skill_name", help="Skill name")
     modify_parser.add_argument("instruction", help="Modification instruction")
-    modify_parser.add_argument("--backend", default="", help="codex or gemini-cli")
+    modify_parser.add_argument(
+        "--backend",
+        default="",
+        help="codex, gemini-cli, or opencode",
+    )
     return parser
 
 

@@ -12,8 +12,10 @@ from ikaros.dev.publisher import (
     IkarosDevPublisher,
 )
 from ikaros.dev.runtime import run_shell
-from ikaros.dev.workspace_session_service import workspace_session_service
 from ikaros.integrations.github_client import parse_repo_slug
+from extension.skills.builtin.repo_workspace.scripts.service import (
+    workspace_session_service,
+)
 
 
 def _short(text: str, limit: int = 240) -> str:

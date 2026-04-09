@@ -16,14 +16,16 @@ def test_tool_registry_builds_skill_tools_from_loader_metadata(monkeypatch):
                 "name": "queue_status",
                 "description": "Query queue status",
                 "parameters": {"type": "object", "properties": {}},
-                "handler": "ikaros.queue.status",
+                "skill_name": "queue_skill",
+                "entrypoint": "scripts/execute.py",
                 "allowed_roles": ["ikaros"],
             },
             {
                 "name": "subagent_only_demo",
                 "description": "Subagent-only tool",
                 "parameters": {"type": "object", "properties": {}},
-                "handler": "subagent.demo",
+                "skill_name": "subagent_demo",
+                "entrypoint": "scripts/execute.py",
                 "allowed_roles": ["subagent"],
             },
         ],
@@ -35,7 +37,8 @@ def test_tool_registry_builds_skill_tools_from_loader_metadata(monkeypatch):
                 "name": "queue_status",
                 "description": "Query queue status",
                 "parameters": {"type": "object", "properties": {}},
-                "handler": "ikaros.queue.status",
+                "skill_name": "queue_skill",
+                "entrypoint": "scripts/execute.py",
                 "allowed_roles": ["ikaros"],
             }
         }.get(name),
@@ -49,7 +52,8 @@ def test_tool_registry_builds_skill_tools_from_loader_metadata(monkeypatch):
 
     assert [item["name"] for item in ikaros_tools] == ["queue_status"]
     assert [item["name"] for item in subagent_tools] == ["subagent_only_demo"]
-    assert binding["handler"] == "ikaros.queue.status"
+    assert binding["skill_name"] == "queue_skill"
+    assert binding["entrypoint"] == "scripts/execute.py"
 
 
 @pytest.mark.asyncio
@@ -66,7 +70,7 @@ async def test_runtime_tool_assembler_injects_ikaros_skill_tools():
     assert {"read", "write", "edit", "bash", "load_skill"} <= set(names)
     assert {
         "await_subagents",
-        "codex_session",
+        "coding_session",
         "git_ops",
         "gh_cli",
         "repo_workspace",
@@ -98,13 +102,35 @@ async def test_dispatcher_accepts_ikaros_runtime_only_tools_after_skill_load(
 ):
     captured = {}
 
-    async def fake_codex_session(**kwargs):
+    from extension.skills.builtin.coding_session.scripts import execute as coding_execute
+
+    async def fake_handle(**kwargs):
         captured.update(dict(kwargs))
         return {"ok": True, "summary": "ok"}
 
+    monkeypatch.setattr(coding_execute.coding_session_service, "handle", fake_handle)
     monkeypatch.setattr(
-        "core.skill_tool_handlers.codex_tools.codex_session",
-        fake_codex_session,
+        runtime_tools_module.skill_loader,
+        "get_tool_export",
+        lambda name: (
+            {
+                "name": "coding_session",
+                "skill_name": "coding_session",
+                "entrypoint": "scripts/execute.py",
+                "allowed_roles": ["ikaros"],
+            }
+            if name == "coding_session"
+            else None
+        ),
+    )
+    monkeypatch.setattr(
+        runtime_tools_module.skill_loader,
+        "import_skill_module",
+        lambda skill_name, script_name="execute.py", **_kwargs: (
+            coding_execute
+            if skill_name == "coding_session" and script_name == "execute.py"
+            else None
+        ),
     )
 
     async def append_event(_event: str):
@@ -132,25 +158,28 @@ async def test_dispatcher_accepts_ikaros_runtime_only_tools_after_skill_load(
             "await_subagents",
             "spawn_subagent",
             "repo_workspace",
-            "codex_session",
+            "coding_session",
             "git_ops",
             "gh_cli",
         },
         todo_mark_step=lambda *_args, **_kwargs: None,
         append_session_event=append_event,
     )
-    dispatcher.set_available_tool_names({"read", "write", "edit", "bash", "load_skill"})
+    dispatcher.set_available_tool_names(
+        {"read", "write", "edit", "bash", "load_skill", "coding_session"}
+    )
 
     result = await dispatcher.execute(
-        name="codex_session",
-        args={"action": "status", "session_id": "cx-1"},
+        name="coding_session",
+        args={"action": "status", "session_id": "cs-1"},
         execution_policy=None,
         started=time.perf_counter(),
     )
 
     assert result["ok"] is True
     assert captured["action"] == "status"
-    assert captured["session_id"] == "cx-1"
+    assert captured["session_id"] == "cs-1"
+    assert captured["instruction"] == "查看开发任务状态"
 
 
 @pytest.mark.asyncio

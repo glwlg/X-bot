@@ -18,7 +18,6 @@ platform_handlers: false
 tool_exports:
 - name: git_ops
   description: Inspect, diff, commit, and push prepared repository workspaces with fork-aware push fallback.
-  handler: ikaros.git_ops
   prompt_hint: 在工作区里查看代码变更、提交 commit、push 分支时优先直接用 `git_ops`；不要再用原始 `bash` 手工串联 `git status/add/commit/push`。需要开 PR 时再结合 `gh_cli`。
   policy_groups:
   - management

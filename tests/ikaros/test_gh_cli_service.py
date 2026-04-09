@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from ikaros.integrations.gh_cli_service import GhCliService, _AuthJob
+from extension.skills._internal.gh_cli_service import GhCliService, _AuthJob
 
 
 class _FakeProcess:
@@ -137,7 +137,7 @@ async def test_auth_background_completion_updates_session_and_notifies(
     monkeypatch.setattr(service, "_spawn_process", fake_spawn)
     monkeypatch.setattr(service, "_run_capture", fake_run_capture)
     monkeypatch.setattr(
-        "ikaros.integrations.gh_cli_service.push_background_text",
+        "extension.skills._internal.gh_cli_service.push_background_text",
         fake_push_background_text,
     )
 
