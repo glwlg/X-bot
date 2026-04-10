@@ -275,6 +275,100 @@ def _resolve_tool_scope(*metadata_sources: Dict[str, Any]) -> tuple[list[str], l
     return allowed_tools, allowed_skills
 
 
+def _skill_tool_name(skill_name: str) -> str:
+    safe_name = _safe_text(skill_name, limit=120)
+    if not safe_name:
+        return ""
+    return f"ext_{safe_name.replace('-', '_')}"
+
+
+def _finalize_tool_scope(
+    allowed_tools: Any,
+    allowed_skills: Any,
+) -> tuple[list[str], list[str]]:
+    normalized_tools = _normalize_tokens(allowed_tools)
+    normalized_skills = _normalize_tokens(allowed_skills)
+    if normalized_skills:
+        if "load_skill" not in normalized_tools:
+            normalized_tools.append("load_skill")
+        for skill_name in normalized_skills:
+            tool_name = _skill_tool_name(skill_name)
+            if tool_name and tool_name not in normalized_tools:
+                normalized_tools.append(tool_name)
+    return normalized_tools, normalized_skills
+
+
+async def _augment_resume_tool_scope(
+    *,
+    session_meta: Dict[str, Any],
+    task_goal: str,
+    stage_plan: Dict[str, Any],
+    user_message: str,
+    last_blocking_reason: str = "",
+) -> tuple[list[str], list[str]]:
+    allowed_tools, allowed_skills = _resolve_tool_scope(session_meta)
+    allowed_tools, allowed_skills = _finalize_tool_scope(
+        allowed_tools,
+        allowed_skills,
+    )
+
+    current_stage = get_current_stage(stage_plan) or {}
+    routing_text = "\n".join(
+        [
+            item
+            for item in (
+                _safe_text(task_goal, limit=4000),
+                _safe_text(current_stage.get("goal"), limit=4000),
+                _safe_text(last_blocking_reason, limit=1200),
+                _safe_text(user_message, limit=1200),
+            )
+            if str(item).strip()
+        ]
+    ).strip()
+    if not routing_text:
+        return allowed_tools, allowed_skills
+
+    try:
+        from core.extension_router import ExtensionRouter
+        from services.intent_router import intent_router
+
+        candidates = ExtensionRouter().route(routing_text, max_candidates=24)
+        if not candidates:
+            return allowed_tools, allowed_skills
+        decision = await intent_router.route(
+            dialog_messages=[{"role": "user", "content": routing_text}],
+            candidates=candidates,
+            max_candidates=8,
+        )
+        selected_names = {
+            str(item or "").strip()
+            for item in list(getattr(decision, "candidate_skills", []) or [])
+            if str(item or "").strip()
+        }
+        if selected_names:
+            selected_skills = [
+                str(getattr(candidate, "name", "") or "").strip()
+                for candidate in candidates
+                if str(getattr(candidate, "name", "") or "").strip() in selected_names
+            ]
+            selected_tools = [
+                str(getattr(candidate, "tool_name", "") or "").strip()
+                for candidate in candidates
+                if str(getattr(candidate, "name", "") or "").strip() in selected_names
+            ]
+            allowed_skills = _normalize_tokens([*allowed_skills, *selected_skills])
+            allowed_tools = _normalize_tokens([*allowed_tools, *selected_tools])
+            logger.info(
+                "resume_waiting_task supplemented skill scope: selected=%s merged=%s",
+                selected_skills or "none",
+                allowed_skills or "none",
+            )
+    except Exception:
+        logger.debug("resume skill scope supplementation failed", exc_info=True)
+
+    return _finalize_tool_scope(allowed_tools, allowed_skills)
+
+
 def _subagent_timeout_sec(*metadata_sources: Dict[str, Any]) -> int:
     for source in metadata_sources:
         if not isinstance(source, dict):
@@ -390,6 +484,10 @@ class IkarosClosureService:
             last_blocking_reason=last_blocking_reason,
         )
         allowed_tools, allowed_skills = _resolve_tool_scope(session_meta)
+        allowed_tools, allowed_skills = _finalize_tool_scope(
+            allowed_tools,
+            allowed_skills,
+        )
         timeout_sec = _subagent_timeout_sec(session_meta)
         tool_scope = {
             "allowed_tools": list(allowed_tools),
@@ -969,6 +1067,15 @@ class IkarosClosureService:
         stage_id = _safe_text(stage.get("id"), limit=80)
         stage_title = _safe_text(stage.get("title"), limit=200)
         delivery_target = await heartbeat_store.get_delivery_target(safe_user_id)
+        allowed_tools, allowed_skills = await _augment_resume_tool_scope(
+            session_meta=session_meta,
+            task_goal=task_goal or session_task.goal,
+            stage_plan=stage_plan,
+            user_message=safe_user_message,
+            last_blocking_reason=_safe_text(
+                active_task.get("last_blocking_reason"), limit=1200
+            ),
+        )
         dispatch_metadata = dict(session_meta)
         dispatch_metadata.update(
             {
@@ -986,6 +1093,12 @@ class IkarosClosureService:
                 "last_blocking_reason": _safe_text(
                     active_task.get("last_blocking_reason"), limit=1200
                 ),
+                "tool_scope": {
+                    "allowed_tools": list(allowed_tools),
+                    "allowed_skills": list(allowed_skills),
+                },
+                "allowed_tool_names": list(allowed_tools),
+                "allowed_skill_names": list(allowed_skills),
             }
         )
         start_result = await self._start_stage_attempt(

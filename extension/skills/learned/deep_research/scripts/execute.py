@@ -34,14 +34,36 @@ logger = logging.getLogger(__name__)
 _WEB_SEARCH_EXECUTE_MODULE = None
 
 
+def _candidate_web_search_execute_paths(repo_root: Path | None = None) -> tuple[Path, ...]:
+    root = repo_root or REPO_ROOT
+    return (
+        root
+        / "extension"
+        / "skills"
+        / "builtin"
+        / "web_search"
+        / "scripts"
+        / "execute.py",
+        root / "skills" / "builtin" / "web_search" / "scripts" / "execute.py",
+    )
+
+
+def _resolve_web_search_execute_path(repo_root: Path | None = None) -> Path:
+    candidates = _candidate_web_search_execute_paths(repo_root)
+    for path in candidates:
+        if path.exists():
+            return path
+
+    searched = ", ".join(str(path) for path in candidates)
+    raise RuntimeError(f"web_search execute module unavailable; checked: {searched}")
+
+
 def _load_web_search_execute_module():
     global _WEB_SEARCH_EXECUTE_MODULE
     if _WEB_SEARCH_EXECUTE_MODULE is not None:
         return _WEB_SEARCH_EXECUTE_MODULE
 
-    script_path = (
-        REPO_ROOT / "skills" / "builtin" / "web_search" / "scripts" / "execute.py"
-    )
+    script_path = _resolve_web_search_execute_path()
     spec = importlib.util.spec_from_file_location(
         "xbot_builtin_web_search_execute",
         script_path,

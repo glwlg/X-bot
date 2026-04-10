@@ -206,10 +206,90 @@ async def start(ctx: UnifiedContext) -> None:
     await ctx.reply(WELCOME_MESSAGE, ui=get_main_menu_ui(_access_flags(ctx)))
 
 
+async def _reset_active_task_state_for_new(ctx: UnifiedContext) -> None:
+    message = getattr(ctx, "message", None)
+    user = getattr(message, "user", None)
+    user_id = str(getattr(user, "id", "") or "").strip()
+    platform = str(getattr(message, "platform", "") or "").strip().lower()
+    if not user_id:
+        return
+
+    from core.channel_runtime_store import channel_runtime_store
+    from core.heartbeat_store import heartbeat_store
+    from core.subagent_supervisor import subagent_supervisor
+    from core.task_manager import task_manager
+
+    active_info = task_manager.get_task_info(user_id)
+    active_task_id = (
+        str(active_info.get("active_task_id") or "").strip()
+        if isinstance(active_info, dict)
+        else ""
+    )
+    channel_active = (
+        channel_runtime_store.get_active_task(
+            platform=platform,
+            platform_user_id=user_id,
+        )
+        if platform
+        else None
+    )
+    heartbeat_active = await heartbeat_store.get_session_active_task(user_id)
+    if not active_task_id:
+        active_task_id = (
+            str((channel_active or {}).get("id") or "").strip()
+            or str((heartbeat_active or {}).get("id") or "").strip()
+        )
+
+    try:
+        await task_manager.cancel_task(user_id)
+    except Exception:
+        logger.warning("new command task cancel failed for user=%s", user_id, exc_info=True)
+
+    try:
+        await subagent_supervisor.cancel_for_user(
+            user_id=user_id,
+            reason="reset_by_new_command",
+        )
+    except Exception:
+        logger.warning(
+            "new command subagent cancel failed for user=%s",
+            user_id,
+            exc_info=True,
+        )
+
+    if channel_active and platform:
+        channel_runtime_store.update_active_task(
+            platform=platform,
+            platform_user_id=user_id,
+            status="cancelled",
+            needs_confirmation=False,
+            confirmation_deadline="",
+            clear_active=True,
+            result_summary="Reset by /new command.",
+        )
+    if heartbeat_active:
+        await heartbeat_store.update_session_active_task(
+            user_id,
+            status="cancelled",
+            needs_confirmation=False,
+            confirmation_deadline="",
+            clear_active=True,
+            result_summary="Reset by /new command.",
+        )
+        await heartbeat_store.release_lock(user_id)
+    if active_task_id:
+        await heartbeat_store.append_session_event(
+            user_id,
+            f"user_new_session:{active_task_id}",
+        )
+
+
 async def handle_new_command(ctx: UnifiedContext) -> None:
     """处理 /new 命令，清空聊天上下文"""
     if not await check_permission_unified(ctx):
         return
+
+    await _reset_active_task_state_for_new(ctx)
 
     from user_context import clear_context
 

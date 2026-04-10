@@ -4,9 +4,11 @@ from types import SimpleNamespace
 
 import pytest
 
+import core.channel_runtime_store as channel_runtime_store_module
 import core.heartbeat_store as heartbeat_store_module
 import core.task_manager as task_manager_module
 import handlers.start_handlers as start_handlers
+import user_context
 from core.platform.models import Chat, MessageType, UnifiedMessage, User
 
 
@@ -71,6 +73,50 @@ class _FakeHeartbeatStore:
 
     async def append_session_event(self, user_id: str, event: str):
         self.events.append((str(user_id), str(event)))
+
+
+class _FakeChannelRuntimeStore:
+    def __init__(self, active_task=None):
+        self.active_task = active_task
+        self.updated: list[dict] = []
+        self.session_ids: list[dict] = []
+
+    def get_active_task(self, *, platform: str = "", platform_user_id: str = "", runtime_key: str = ""):
+        _ = (platform, platform_user_id, runtime_key)
+        return self.active_task
+
+    def update_active_task(
+        self,
+        *,
+        platform: str = "",
+        platform_user_id: str = "",
+        runtime_key: str = "",
+        **kwargs,
+    ):
+        payload = {
+            "platform": str(platform),
+            "platform_user_id": str(platform_user_id),
+            "runtime_key": str(runtime_key),
+        }
+        payload.update(dict(kwargs))
+        self.updated.append(payload)
+
+    def set_session_id(
+        self,
+        *,
+        session_id: str,
+        platform: str = "",
+        platform_user_id: str = "",
+        runtime_key: str = "",
+    ):
+        self.session_ids.append(
+            {
+                "session_id": str(session_id),
+                "platform": str(platform),
+                "platform_user_id": str(platform_user_id),
+                "runtime_key": str(runtime_key),
+            }
+        )
 
 
 class _FakeSubagentSupervisor:
@@ -291,3 +337,82 @@ async def test_button_callback_continue_resumes_waiting_task(monkeypatch):
         ("u-callback", "user_confirm_continue:mgr-continue")
     ]
     assert "已恢复执行" in ctx.replies[-1]
+
+
+@pytest.mark.asyncio
+async def test_new_command_resets_active_task_state(monkeypatch):
+    async def _allow(_ctx):
+        return True
+
+    monkeypatch.setattr(start_handlers, "check_permission_unified", _allow)
+
+    fake_task_manager = _FakeTaskManager(
+        active_info={
+            "active_task_id": "mgr-new-1",
+        },
+        cancelled_desc=None,
+    )
+    fake_heartbeat_store = _FakeHeartbeatStore(
+        active_task={"id": "mgr-new-1", "status": "waiting_user"}
+    )
+    fake_channel_store = _FakeChannelRuntimeStore(
+        active_task={"id": "mgr-new-1", "status": "waiting_user"}
+    )
+    fake_subagent_supervisor = _FakeSubagentSupervisor(
+        {
+            "cancelled": 1,
+            "task_ids": ["subagent-1"],
+        }
+    )
+
+    monkeypatch.setattr(task_manager_module, "task_manager", fake_task_manager)
+    monkeypatch.setattr(heartbeat_store_module, "heartbeat_store", fake_heartbeat_store)
+    monkeypatch.setattr(
+        channel_runtime_store_module,
+        "channel_runtime_store",
+        fake_channel_store,
+    )
+    monkeypatch.setattr(user_context, "channel_runtime_store", fake_channel_store)
+    monkeypatch.setattr(
+        "core.subagent_supervisor.subagent_supervisor",
+        fake_subagent_supervisor,
+    )
+
+    ctx = _DummyContext("u-new", text="/new")
+    await start_handlers.handle_new_command(ctx)
+
+    assert fake_task_manager.cancel_calls == ["u-new"]
+    assert fake_subagent_supervisor.calls == [
+        {
+            "user_id": "u-new",
+            "reason": "reset_by_new_command",
+        }
+    ]
+    assert fake_channel_store.updated == [
+        {
+            "platform": "telegram",
+            "platform_user_id": "u-new",
+            "runtime_key": "",
+            "status": "cancelled",
+            "needs_confirmation": False,
+            "confirmation_deadline": "",
+            "clear_active": True,
+            "result_summary": "Reset by /new command.",
+        }
+    ]
+    assert fake_heartbeat_store.updated == [
+        (
+            "u-new",
+            {
+                "status": "cancelled",
+                "needs_confirmation": False,
+                "confirmation_deadline": "",
+                "clear_active": True,
+                "result_summary": "Reset by /new command.",
+            },
+        )
+    ]
+    assert fake_heartbeat_store.released == ["u-new"]
+    assert fake_heartbeat_store.events == [("u-new", "user_new_session:mgr-new-1")]
+    assert fake_channel_store.session_ids
+    assert "已开启新对话" in ctx.replies[-1]

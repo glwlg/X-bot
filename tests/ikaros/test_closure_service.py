@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from core.heartbeat_store import heartbeat_store
 from core.task_inbox import task_inbox
+import core.extension_router as extension_router_module
 from ikaros.planning.stage_planner import normalize_stage_plan
 import ikaros.relay.closure_service as closure_module
+import services.intent_router as intent_router_module
 from shared.contracts.dispatch import TaskEnvelope
 
 
@@ -519,3 +522,120 @@ async def test_resume_waiting_task_treats_text_as_adjustment(monkeypatch, _isola
     assert adjustments[-1]["message"] == "把范围限制在最近 7 天，并先检查现有容器状态"
     assert metadata["task_inbox_id"] == session.task_id
     assert metadata["session_task_id"] == session.task_id
+
+
+@pytest.mark.asyncio
+async def test_resume_waiting_task_supplements_skill_scope(monkeypatch, _isolated_state):
+    session = await task_inbox.submit(
+        source="user_chat",
+        goal="先补全三条内容，再整理成公众号文章",
+        user_id="u-5",
+        metadata={
+            "original_user_request": "先补全三条内容，再整理成公众号文章",
+            "stage_plan": _two_stage_plan("先补全三条内容，再整理成公众号文章"),
+            "tool_scope": {
+                "allowed_tools": ["read", "bash"],
+                "allowed_skills": ["article_publisher"],
+            },
+        },
+    )
+    await task_inbox.update_status(
+        session.task_id,
+        "waiting_user",
+        event="stage_blocked",
+        detail="blocked",
+    )
+    await heartbeat_store.set_delivery_target("u-5", "telegram", "chat-5")
+    await heartbeat_store.set_session_active_task(
+        "u-5",
+        {
+            "id": "mgr-5",
+            "session_task_id": session.task_id,
+            "task_inbox_id": session.task_id,
+            "goal": session.goal,
+            "status": "waiting_user",
+            "source": "user_chat",
+            "stage_index": 1,
+            "stage_total": 2,
+            "stage_id": "stage-1",
+            "stage_title": "收集信息",
+            "attempt_index": 1,
+            "needs_confirmation": True,
+            "confirmation_deadline": "",
+            "last_blocking_reason": "需要补抓网页原文",
+        },
+    )
+
+    calls: list[dict] = []
+
+    async def fake_spawn(**kwargs):
+        calls.append(dict(kwargs))
+        return {
+            "ok": True,
+            "subagent_id": "subagent-resume-2",
+            "task_id": "tsk-resume-2",
+        }
+
+    def fake_extension_route(self, user_text: str, max_candidates: int = 10):
+        _ = (self, user_text, max_candidates)
+        return [
+            SimpleNamespace(name="article_publisher", tool_name="ext_article_publisher"),
+            SimpleNamespace(name="web_search", tool_name="ext_web_search"),
+            SimpleNamespace(name="web_extractor", tool_name="ext_web_extractor"),
+        ]
+
+    async def fake_intent_route(**kwargs):
+        _ = kwargs
+        return SimpleNamespace(
+            request_mode="task",
+            candidate_skills=["web_search", "web_extractor"],
+            confidence=0.98,
+            reason="resume_scope_test",
+            task_tracking=True,
+            raw="",
+        )
+
+    monkeypatch.setattr(
+        closure_module.subagent_supervisor,
+        "spawn",
+        fake_spawn,
+    )
+    monkeypatch.setattr(
+        extension_router_module.ExtensionRouter,
+        "route",
+        fake_extension_route,
+    )
+    monkeypatch.setattr(
+        intent_router_module.intent_router,
+        "route",
+        fake_intent_route,
+    )
+
+    resume = await closure_module.ikaros_closure_service.resume_waiting_task(
+        user_id="u-5",
+        user_message="这一步先用 web_search 和 web_extractor 补抓最近 7 天的网页正文",
+        source="text",
+    )
+
+    assert resume["ok"] is True
+    assert len(calls) == 1
+    assert set(calls[0]["allowed_skills"]) == {
+        "article_publisher",
+        "web_search",
+        "web_extractor",
+    }
+    assert {"read", "bash", "load_skill"} <= set(calls[0]["allowed_tools"])
+    assert {
+        "ext_article_publisher",
+        "ext_web_search",
+        "ext_web_extractor",
+    } <= set(calls[0]["allowed_tools"])
+
+    metadata = dict(calls[0].get("task_metadata") or {})
+    tool_scope = dict(metadata.get("tool_scope") or {})
+    assert "load_skill" in list(tool_scope.get("allowed_tools") or [])
+    assert set(tool_scope.get("allowed_skills") or []) == {
+        "article_publisher",
+        "web_search",
+        "web_extractor",
+    }
