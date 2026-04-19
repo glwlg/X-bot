@@ -82,6 +82,24 @@ const formatDate = (iso: string) => {
     return `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getDate()).padStart(2, '0')}`
 }
 
+const getRecordDelta = (record: RecordItem) => {
+    const currentAccountName = account.value?.name
+    if (!currentAccountName) {
+        return record.type === '收入' ? record.amount : -record.amount
+    }
+
+    if (record.type === '收入') return record.amount
+    if (record.type === '支出') return -record.amount
+    if (record.type === '转账') {
+        if (record.target_account === currentAccountName) return record.amount
+        if (record.account === currentAccountName) return -record.amount
+    }
+
+    return record.type === '收入' ? record.amount : -record.amount
+}
+
+const isPositiveRecord = (record: RecordItem) => getRecordDelta(record) > 0
+
 const loadData = async () => {
     loading.value = true
     try {
@@ -301,8 +319,8 @@ onMounted(loadData)
                 </div>
               </div>
               <div class="text-right">
-                <span :class="['font-semibold text-sm', rec.type === '收入' ? 'text-indigo-500' : 'text-rose-500']">
-                  {{ rec.type === '收入' ? '+' : '-' }}¥{{ formatMoney(rec.amount) }}
+                <span :class="['font-semibold text-sm', isPositiveRecord(rec) ? 'text-indigo-500' : 'text-rose-500']">
+                  {{ isPositiveRecord(rec) ? '+' : '-' }}¥{{ formatMoney(Math.abs(getRecordDelta(rec))) }}
                 </span>
               </div>
             </RouterLink>
