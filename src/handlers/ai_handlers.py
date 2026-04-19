@@ -397,6 +397,12 @@ def _build_ikaros_progress_text(snapshot: dict[str, Any]) -> str:
         lines.append("动作：工具失败后自动重试")
     elif event == "loop_guard":
         lines.append("动作：检测到重复调用，已触发循环保护")
+        repeat_details = _compact_text(
+            str(payload.get("repeat_details") or ""),
+            limit=260,
+        )
+        if repeat_details:
+            lines.append(f"重复调用：`{repeat_details}`")
     elif event == "max_turn_limit":
         lines.append("动作：工具回合达到上限，准备收敛结果")
     elif event == "semantic_loop_guard":

@@ -30,6 +30,7 @@ SAME_DAY_NEWS_PATTERNS = (
     r"只写当天新闻",
     r"只看当天新闻",
 )
+EXPLICIT_DATE_RE = re.compile(r"\b(20\d{2}-\d{2}-\d{2})\b")
 PUBLIC_READER_KEYWORDS = ("公众号", "读者", "公众", "面向公众", "面向读者")
 BODY_ONLY_KEYWORDS = ("非正文", "只输出正文", "仅输出正文", "不要包含非正文", "不要写非正文")
 IGNORED_FORBIDDEN_TERMS = {"子任务", "非正文", "正文", "内容", "公众号", "文章"}
@@ -230,14 +231,18 @@ def derive_topic_requirements(topic: str, *, current_date: str = "") -> dict[str
     subject = extract_primary_subject(raw) or raw
     forbidden_terms = extract_forbidden_terms(raw)
     explicit_news_request = any(keyword in raw for keyword in NEWS_TOPIC_KEYWORDS)
-    same_day_only = any(re.search(pattern, raw) for pattern in SAME_DAY_NEWS_PATTERNS)
+    explicit_date_match = EXPLICIT_DATE_RE.search(raw)
+    explicit_date = str(explicit_date_match.group(1) if explicit_date_match else "").strip()
+    same_day_phrase = any(re.search(pattern, raw) for pattern in SAME_DAY_NEWS_PATTERNS)
+    same_day_only = same_day_phrase or bool(explicit_date)
     prefer_news = explicit_news_request or same_day_only
     public_readers = any(keyword in raw for keyword in PUBLIC_READER_KEYWORDS)
     body_only = any(keyword in raw for keyword in BODY_ONLY_KEYWORDS)
 
+    effective_current_date = str(current_date or explicit_date or "").strip()
     search_parts = [subject]
-    if same_day_only and current_date:
-        search_parts.append(current_date)
+    if same_day_only and effective_current_date:
+        search_parts.append(effective_current_date)
     search_query = " ".join(part for part in search_parts if str(part).strip()).strip()
 
     return {
@@ -250,7 +255,7 @@ def derive_topic_requirements(topic: str, *, current_date: str = "") -> dict[str
         "public_readers": public_readers,
         "body_only": body_only,
         "forbidden_terms": forbidden_terms,
-        "current_date": str(current_date or "").strip(),
+        "current_date": effective_current_date,
     }
 
 

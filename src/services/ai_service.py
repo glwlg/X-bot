@@ -169,6 +169,7 @@ class AiService:
         repeat_tool_call_count = 0
         repeat_semantic_tool_call_count = 0
         per_tool_call_count: dict[str, int] = {}
+        repeated_tool_call_batches: list[dict[str, Any]] = []
         last_terminal_success_text = ""
         last_terminal_success_summary = ""
         last_terminal_tool_name = ""
@@ -555,13 +556,22 @@ class AiService:
                             repeat_semantic_tool_call_count = 0
 
                         signature = self._build_tool_signature(function_calls)
+                        repeat_batch = self._snapshot_tool_call_batch(
+                            function_calls,
+                            turn=turn_count,
+                        )
                         if signature == last_tool_signature:
                             repeat_tool_call_count += 1
+                            repeated_tool_call_batches.append(repeat_batch)
                         else:
                             last_tool_signature = signature
                             repeat_tool_call_count = 1
+                            repeated_tool_call_batches = [repeat_batch]
 
                         if repeat_tool_call_count >= MAX_REPEAT_TOOL_CALLS:
+                            repeat_details = self._format_repeated_tool_call_batches(
+                                repeated_tool_call_batches
+                            )
                             loop_payload = {
                                 "turn": turn_count,
                                 "repeat_count": repeat_tool_call_count,
@@ -570,6 +580,8 @@ class AiService:
                                     for item in function_calls
                                 ],
                                 "signature": signature,
+                                "repeated_calls": repeated_tool_call_batches,
+                                "repeat_details": repeat_details,
                             }
                             directive = await _emit("loop_guard", loop_payload)
                             forced_reply = (
@@ -587,9 +599,14 @@ class AiService:
                                 else:
                                     yield forced_reply
                             else:
+                                detail_block = (
+                                    f"\n重复调用详情：\n{repeat_details}"
+                                    if repeat_details
+                                    else ""
+                                )
                                 yield (
                                     "⚠️ 检测到重复工具调用，已自动停止以避免死循环。"
-                                    "请查看当前结果并按需继续。"
+                                    f"{detail_block}\n请查看当前结果并按需继续。"
                                 )
                             completed = True
                             break
@@ -1317,6 +1334,110 @@ class AiService:
                 args_str = str(args_obj)
             signatures.append(f"{name}:{args_str}")
         return "|".join(signatures)
+
+    @staticmethod
+    def _snapshot_tool_call_batch(
+        function_calls: list[dict[str, Any]],
+        *,
+        turn: int,
+    ) -> dict[str, Any]:
+        calls: list[dict[str, Any]] = []
+        for fc in function_calls:
+            name = str(fc.get("name") or "").strip()
+            args_obj = fc.get("args")
+            if not isinstance(args_obj, dict):
+                args_obj = {}
+            calls.append(
+                {
+                    "name": name,
+                    "args": AiService._sanitize_tool_args_for_diagnostics(args_obj),
+                }
+            )
+        return {"turn": turn, "calls": calls}
+
+    @staticmethod
+    def _sanitize_tool_args_for_diagnostics(
+        value: Any,
+        *,
+        max_items: int = 20,
+        max_string_chars: int = 300,
+    ) -> Any:
+        if isinstance(value, dict):
+            sanitized: dict[str, Any] = {}
+            items = list(value.items())
+            for key, item in items[:max_items]:
+                sanitized[str(key)] = AiService._sanitize_tool_args_for_diagnostics(
+                    item,
+                    max_items=max_items,
+                    max_string_chars=max_string_chars,
+                )
+            if len(items) > max_items:
+                sanitized["..."] = f"{len(items) - max_items} more fields omitted"
+            return sanitized
+        if isinstance(value, list):
+            sanitized_list = [
+                AiService._sanitize_tool_args_for_diagnostics(
+                    item,
+                    max_items=max_items,
+                    max_string_chars=max_string_chars,
+                )
+                for item in value[:max_items]
+            ]
+            if len(value) > max_items:
+                sanitized_list.append(f"... {len(value) - max_items} more items omitted")
+            return sanitized_list
+        if isinstance(value, str):
+            compact = " ".join(value.split())
+            if len(compact) > max_string_chars:
+                return compact[:max_string_chars].rstrip() + "..."
+            return compact
+        return value
+
+    @staticmethod
+    def _format_repeated_tool_call_batches(
+        batches: list[dict[str, Any]],
+        *,
+        max_batches: int = 6,
+        max_chars: int = 1_600,
+    ) -> str:
+        if not batches:
+            return ""
+
+        lines: list[str] = []
+        for index, batch in enumerate(batches[:max_batches], start=1):
+            turn = int(batch.get("turn") or 0)
+            call_items = batch.get("calls")
+            if not isinstance(call_items, list):
+                call_items = []
+            rendered_calls: list[str] = []
+            for call in call_items:
+                if not isinstance(call, dict):
+                    continue
+                name = str(call.get("name") or "").strip() or "<unknown>"
+                try:
+                    args_text = json.dumps(
+                        call.get("args") or {},
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                except Exception:
+                    args_text = str(call.get("args") or {})
+                rendered_calls.append(f"`{name}` 参数 {args_text}")
+            if not rendered_calls:
+                rendered_calls.append("无可用参数")
+            prefix = f"第{index}次"
+            if turn > 0:
+                prefix += f"（回合 {turn}）"
+            lines.append(f"{prefix}：{'；'.join(rendered_calls)}")
+
+        remaining = len(batches) - max_batches
+        if remaining > 0:
+            lines.append(f"... 另有 {remaining} 次相同调用已省略")
+
+        text = "\n".join(lines).strip()
+        if len(text) > max_chars:
+            return text[:max_chars].rstrip() + "..."
+        return text
 
     @staticmethod
     def _should_apply_cost_guards(tool_name: str) -> bool:

@@ -286,6 +286,24 @@ def test_build_ikaros_progress_text_omits_final_response_action_line():
     assert "动作：" not in text
 
 
+def test_build_ikaros_progress_text_includes_loop_guard_details():
+    text = ai_handlers._build_ikaros_progress_text(
+        {
+            "event": "loop_guard",
+            "task_id": "mgr-loop",
+            "turn": 2,
+            "repeat_details": (
+                "第1次（回合 1）：`read` 参数 {\"path\": \"a.txt\"}\n"
+                "第2次（回合 2）：`read` 参数 {\"path\": \"a.txt\"}"
+            ),
+        }
+    )
+
+    assert "动作：检测到重复调用，已触发循环保护" in text
+    assert "重复调用：" in text
+    assert "\"path\": \"a.txt\"" in text
+
+
 @pytest.mark.asyncio
 async def test_try_handle_waiting_confirmation_treats_text_as_adjustment(monkeypatch):
     class _FakeHeartbeatStore:

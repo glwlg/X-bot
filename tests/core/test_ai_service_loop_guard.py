@@ -93,6 +93,7 @@ async def test_ai_service_upstream_requests_force_stream_and_session_id(monkeypa
 async def test_ai_service_emits_loop_guard_on_repeated_calls(monkeypatch):
     service = AiService()
     events = []
+    captured_payloads = []
 
     class FakePart:
         def __init__(self):
@@ -141,6 +142,8 @@ async def test_ai_service_emits_loop_guard_on_repeated_calls(monkeypatch):
 
     async def event_callback(event, payload):
         events.append(event)
+        if event == "loop_guard":
+            captured_payloads.append(dict(payload))
 
     chunks = []
     async for chunk in service.generate_response_stream(
@@ -153,8 +156,15 @@ async def test_ai_service_emits_loop_guard_on_repeated_calls(monkeypatch):
         chunks.append(chunk)
 
     assert "loop_guard" in events
+    assert captured_payloads
+    assert captured_payloads[-1]["repeated_calls"] == [
+        {"turn": 1, "calls": [{"name": "read", "args": {"path": "a.txt"}}]},
+        {"turn": 2, "calls": [{"name": "read", "args": {"path": "a.txt"}}]},
+    ]
+    assert "第1次（回合 1）" in captured_payloads[-1]["repeat_details"]
     assert chunks
     assert "重复工具调用" in chunks[-1]
+    assert "`read` 参数 {\"path\": \"a.txt\"}" in chunks[-1]
 
 
 @pytest.mark.asyncio

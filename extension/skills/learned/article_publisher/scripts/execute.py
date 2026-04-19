@@ -89,6 +89,10 @@ async def _resolve_current_date(ctx: UnifiedContext, topic: str) -> str:
     if not requirements["same_day_only"]:
         return ""
 
+    explicit_date = str(requirements.get("current_date") or "").strip()
+    if explicit_date:
+        return explicit_date
+
     fallback = datetime.now().strftime("%Y-%m-%d")
     try:
         result = await ctx.run_skill("daily_query", {"query_type": "time"})

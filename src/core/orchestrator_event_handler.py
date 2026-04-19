@@ -746,6 +746,7 @@ class OrchestratorEventHandler:
         )
 
     async def _handle_loop_guard(self, payload: Dict[str, Any]) -> None:
+        repeat_details = str(payload.get("repeat_details") or "").strip()
         if self.session_state_active:
             await self.update_session_task(
                 status="failed",
@@ -762,7 +763,12 @@ class OrchestratorEventHandler:
         await self.update_task_inbox_status(
             status="failed",
             event="loop_guard",
-            detail="Loop guard triggered due to repeated tool calls.",
-            result={"error": "loop_guard"},
+            detail=repeat_details[:180]
+            or "Loop guard triggered due to repeated tool calls.",
+            result={
+                "error": "loop_guard",
+                "repeat_count": int(payload.get("repeat_count") or 0),
+                "repeated_calls": payload.get("repeated_calls") or [],
+            },
             final_output="",
         )
