@@ -310,6 +310,126 @@ async def test_ai_service_fails_over_to_backup_model_on_request_error(monkeypatc
     assert backup_client.chat.completions.calls[0]["model"] == "bailian/qwen3.5-flash"
 
 
+def test_ai_service_image_request_prefers_primary_pool_when_primary_supports_image(
+    monkeypatch,
+):
+    service = AiService()
+    calls: list[tuple[str, str]] = []
+
+    def _fake_candidates(input_type, pool_type="primary", **_kwargs):
+        if input_type == "image" and pool_type == "primary":
+            return ["proxy/gpt-5-codex"]
+        if input_type == "image" and pool_type == "vision":
+            return ["proxy/gpt-4.1"]
+        return []
+
+    def _fake_model_for_input(input_type, pool_type="primary"):
+        calls.append((input_type, pool_type))
+        if input_type == "image" and pool_type == "primary":
+            return "proxy/gpt-5-codex"
+        if input_type == "image" and pool_type == "vision":
+            return "proxy/gpt-4.1"
+        return ""
+
+    monkeypatch.setattr(
+        ai_service_module,
+        "get_configured_model",
+        lambda role: "proxy/gpt-5-codex" if role == "primary" else "",
+    )
+    monkeypatch.setattr(
+        ai_service_module,
+        "get_model_candidates_for_input",
+        _fake_candidates,
+    )
+    monkeypatch.setattr(
+        ai_service_module,
+        "get_model_for_input",
+        _fake_model_for_input,
+    )
+    monkeypatch.setattr(
+        ai_service_module,
+        "get_model_id_for_api",
+        lambda model_key=None: str(model_key or "").split("/", 1)[-1],
+    )
+
+    model, input_type, pool_type = service._get_model_for_request(
+        [
+            {
+                "role": "user",
+                "parts": [
+                    {"text": "这张图有什么问题"},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/png",
+                            "data": "ZmFrZQ==",
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+    assert (model, input_type, pool_type) == ("proxy/gpt-5-codex", "image", "primary")
+    assert calls == [("image", "primary")]
+
+
+def test_ai_service_image_request_uses_vision_when_primary_is_text_only(monkeypatch):
+    service = AiService()
+    calls: list[tuple[str, str]] = []
+
+    monkeypatch.setattr(
+        ai_service_module,
+        "get_configured_model",
+        lambda role: "proxy/gpt-5.4" if role == "primary" else "",
+    )
+    monkeypatch.setattr(
+        ai_service_module,
+        "get_model_candidates_for_input",
+        lambda input_type, pool_type="primary", **_kwargs: (
+            []
+            if input_type == "image" and pool_type == "primary"
+            else ["proxy/gpt-4.1"]
+        ),
+    )
+
+    def _fake_model_for_input(input_type, pool_type="primary"):
+        calls.append((input_type, pool_type))
+        return (
+            "proxy/gpt-4.1" if input_type == "image" and pool_type == "vision" else ""
+        )
+
+    monkeypatch.setattr(
+        ai_service_module,
+        "get_model_for_input",
+        _fake_model_for_input,
+    )
+    monkeypatch.setattr(
+        ai_service_module,
+        "get_model_id_for_api",
+        lambda model_key=None: str(model_key or "").split("/", 1)[-1],
+    )
+
+    model, input_type, pool_type = service._get_model_for_request(
+        [
+            {
+                "role": "user",
+                "parts": [
+                    {"text": "识别这张图片"},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/jpeg",
+                            "data": "ZmFrZQ==",
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+    assert (model, input_type, pool_type) == ("proxy/gpt-4.1", "image", "vision")
+    assert calls == [("image", "vision")]
+
+
 @pytest.mark.asyncio
 async def test_ai_service_image_request_raises_clear_error_without_image_model(
     monkeypatch,

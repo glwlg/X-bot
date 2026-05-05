@@ -461,8 +461,30 @@ async def _send_result_files(
     ctx: UnifiedContext,
     file_rows: list[dict[str, str]],
 ) -> bool:
-    delivered = False
+    prepared_rows: list[dict[str, str]] = []
     for item in list(file_rows or []):
+        if not isinstance(item, dict):
+            continue
+        path_text = str(item.get("path") or "").strip()
+        if not path_text:
+            continue
+        try:
+            resolved_path = str(Path(path_text).expanduser().resolve())
+        except Exception:
+            continue
+        kind = str(item.get("kind") or "document").strip().lower() or "document"
+        filename = str(item.get("filename") or "").strip() or Path(resolved_path).name
+        prepared_rows.append(
+            {
+                "path": resolved_path,
+                "kind": kind,
+                "filename": filename,
+                "caption": str(item.get("caption") or "").strip()[:500],
+            }
+        )
+
+    delivered = False
+    for item in merge_file_rows(prepared_rows):
         path_text = str(item.get("path") or "").strip()
         if not path_text:
             continue

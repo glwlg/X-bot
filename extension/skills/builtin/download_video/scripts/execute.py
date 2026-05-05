@@ -8,6 +8,8 @@ import sys
 from pathlib import Path
 from typing import Dict, Any
 
+from core.file_artifacts import classify_file_kind
+
 REPO_ROOT = Path(__file__).resolve().parents[5]
 SRC_ROOT = REPO_ROOT / "src"
 SCRIPT_ROOT = Path(__file__).resolve().parent
@@ -140,15 +142,7 @@ async def execute(ctx: UnifiedContext, params: dict, runtime=None) -> Dict[str, 
     if not url:
         return {"text": _download_usage_text(), "ui": _download_menu_ui()}
 
-    # Helper function handles finding platform_ctx internally or we pass logic
-    # But stateless execute might not have interaction flow.
-    # We'll reuse process_video_download which expects ctx.
-
-    # We need to ensure process_video_download works.
-    # It replies to ctx.
-    await process_video_download(ctx, url, audio_only=(format_type == "audio"))
-
-    return {"text": "🔇🔇🔇✅ 视频下载任务已提交", "ui": {}}
+    return await process_video_download(ctx, url, audio_only=(format_type == "audio"))
 
 
 async def download_command(ctx: UnifiedContext):
@@ -167,13 +161,30 @@ async def download_command(ctx: UnifiedContext):
             "ui": _download_menu_ui(),
         }
 
-    await process_video_download(ctx, url, audio_only=(mode == "audio"))
-    return None
+    return await process_video_download(ctx, url, audio_only=(mode == "audio"))
+
+
+def _build_download_file_payload(file_path: str, *, audio_only: bool = False) -> dict[str, str]:
+    path = str(file_path or "").strip()
+    filename = Path(path).name
+    kind = "audio" if audio_only else classify_file_kind(filename)
+    caption = "🎵 仅音频 (视频提取)" if audio_only else ""
+    return {"path": path, "filename": filename, "kind": kind, "caption": caption}
+
+
+async def _delete_message_safely(ctx: UnifiedContext, message: Any) -> None:
+    msg_id = getattr(message, "message_id", getattr(message, "id", None))
+    if not msg_id:
+        return
+    try:
+        await ctx.delete_message(message_id=msg_id)
+    except Exception:
+        logger.debug("Failed to delete progress message", exc_info=True)
 
 
 async def process_video_download(
     ctx: UnifiedContext, url: str, audio_only: bool = False
-) -> None:
+) -> Dict[str, Any]:
     """
     Core video download logic, shared by direct command and AI router.
     """
@@ -182,7 +193,7 @@ async def process_video_download(
 
     if not ctx.platform_ctx:
         logger.error("Platform context missing in process_video_download")
-        return
+        return {"text": "❌ 下载失败：缺少平台上下文。", "ui": {}}
 
     format_text = "音频" if audio_only else "视频"
 
@@ -207,7 +218,7 @@ async def process_video_download(
                     )
             except:
                 pass
-        return
+        return {"text": f"❌ 下载失败: {result.error_message or '未知错误'}", "ui": {}}
 
     file_path = result.file_path
 
@@ -237,68 +248,34 @@ async def process_video_download(
                 f"您可以选择：",
                 ui=ui,
             )
-        return
+        return {
+            "text": (
+                f"⚠️ **视频文件过大 ({result.file_size_mb:.1f}MB)**\n\n"
+                f"超过 Telegram 限制 (50MB)，无法直接发送。\n"
+                f"您可以选择："
+            ),
+            "ui": ui,
+        }
 
-    # 如果下载成功且大小合适，发送文件
-    if file_path and os.path.exists(file_path):
-        logger.info(f"Downloaded to {file_path}. Uploading to chat {chat_id}.")
-        try:
-            if audio_only:
-                # 发送音频文件
-                await ctx.reply_audio(
-                    audio=open(file_path, "rb"), caption="🎵 仅音频 (视频提取)"
-                )
-            else:
-                # 发送视频并获取返回的消息（包含 file_id）
-                sent_message = await ctx.reply_video(
-                    video=open(file_path, "rb"), supports_streaming=True
-                )
+    if not file_path or not os.path.exists(file_path):
+        return {"text": "❌ 下载失败：未找到下载后的文件。", "ui": {}}
 
-                # 记录视频文件路径以供 AI 分析
-                file_id = None
-                if hasattr(sent_message, "video") and sent_message.video:
-                    file_id = sent_message.video.file_id
-                elif hasattr(sent_message, "attachments") and sent_message.attachments:
-                    file_id = str(sent_message.attachments[0].id)
-                elif hasattr(sent_message, "document") and sent_message.document:
-                    file_id = sent_message.document.file_id
+    logger.info("Downloaded to %s. Returning file payload for unified delivery.", file_path)
 
-                if file_id:
-                    from extension.skills.builtin.download_video.scripts.store import (
-                        save_video_cache,
-                    )
+    # 记录统计。文件发送交给统一交付链路，skill 本身不直接 reply_audio/reply_video。
+    from stats import increment_stat
 
-                    await save_video_cache(file_id, file_path)
-                    logger.info(f"Video cached: {file_id} -> {file_path}")
+    try:
+        await increment_stat(user_id, "downloads")
+    except Exception:
+        logger.debug("Failed to increment download stats", exc_info=True)
 
-                # 记录统计
-                from stats import increment_stat
-
-                try:
-                    await increment_stat(user_id, "downloads")
-                except:
-                    pass
-
-            # 删除进度消息
-            msg_id = getattr(
-                processing_message,
-                "message_id",
-                getattr(processing_message, "id", None),
-            )
-            if msg_id:
-                await ctx.delete_message(message_id=msg_id)
-
-        except Exception as e:
-            logger.error(f"Failed to send video to chat {chat_id}: {e}")
-            msg_id = getattr(
-                processing_message,
-                "message_id",
-                getattr(processing_message, "id", None),
-            )
-            if msg_id:
-                await ctx.edit_message(
-                    msg_id, "❌ 发送视频失败，可能是网络问题或格式不受支持。"
-                )
+    await _delete_message_safely(ctx, processing_message)
+    return {
+        "text": f"✅ {format_text}下载完成。",
+        "files": [_build_download_file_payload(file_path, audio_only=audio_only)],
+        "ui": {},
+    }
 
 
 async def handle_video_actions(ctx: UnifiedContext) -> None:
@@ -330,10 +307,10 @@ async def handle_video_actions(ctx: UnifiedContext) -> None:
             logger.error(f"Error editing message in handle_video_actions: {e}")
             pass
 
-        await process_video_download(ctx, url, audio_only=False)
+        return await process_video_download(ctx, url, audio_only=False)
 
 
-async def handle_large_file_action(ctx: UnifiedContext) -> None:
+async def handle_large_file_action(ctx: UnifiedContext) -> Dict[str, Any] | None:
     """处理大文件操作的回调"""
     await ctx.answer_callback()
 
@@ -396,14 +373,17 @@ async def handle_large_file_action(ctx: UnifiedContext) -> None:
                     ctx.message.id, "❌ 提取的音频也超过 50MB，无法发送。"
                 )
             else:
-                await ctx.reply_audio(
-                    audio=open(final_path, "rb"),
-                    caption="🎵 仅音频 (从大视频提取)",
-                )
-                try:
-                    await ctx.delete_message(message_id=ctx.message.id)
-                except:
-                    pass
+                await _delete_message_safely(ctx, ctx.message)
+                return {
+                    "text": "✅ 音频提取完成。",
+                    "files": [
+                        {
+                            **_build_download_file_payload(final_path, audio_only=True),
+                            "caption": "🎵 仅音频 (从大视频提取)",
+                        }
+                    ],
+                    "ui": {},
+                }
 
     except Exception as e:
         logger.error(f"Error handling large file action: {e}")

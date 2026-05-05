@@ -20,6 +20,9 @@ class _FakeDeliveryCtx:
         )
         self.user_data = {}
         self.documents: list[dict[str, object]] = []
+        self.photos: list[dict[str, object]] = []
+        self.videos: list[dict[str, object]] = []
+        self.audios: list[dict[str, object]] = []
 
     async def reply_document(self, document, filename=None, caption=None, **kwargs):
         self.documents.append(
@@ -31,6 +34,18 @@ class _FakeDeliveryCtx:
             }
         )
         return SimpleNamespace(id="doc")
+
+    async def reply_photo(self, photo, caption=None, **kwargs):
+        self.photos.append({"photo": photo, "caption": caption, "kwargs": dict(kwargs)})
+        return SimpleNamespace(id="photo")
+
+    async def reply_video(self, video, caption=None, **kwargs):
+        self.videos.append({"video": video, "caption": caption, "kwargs": dict(kwargs)})
+        return SimpleNamespace(id="video")
+
+    async def reply_audio(self, audio, caption=None, **kwargs):
+        self.audios.append({"audio": audio, "caption": caption, "kwargs": dict(kwargs)})
+        return SimpleNamespace(id="audio")
 
 
 def test_runtime_tool_retry_policy_uses_structured_error_codes_only():
@@ -147,7 +162,14 @@ async def test_ikaros_can_send_local_file_via_dispatcher(tmp_path, monkeypatch):
 
     assert result["ok"] is True
     assert result["terminal"] is False
-    assert ctx.documents
+    assert ctx.documents == []
+    assert ctx.photos == []
+    assert ctx.videos == []
+    assert ctx.audios == []
+    assert result["files"] == result["payload"]["files"]
+    assert result["files"][0]["path"] == str(target)
+    assert result["files"][0]["filename"] == "README.md"
+    assert result["files"][0]["caption"] == "请查收"
 
 
 @pytest.mark.asyncio

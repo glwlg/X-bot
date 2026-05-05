@@ -92,36 +92,6 @@ def _platform_supports_local_delivery(
     return True, ""
 
 
-async def _send_document(
-    ctx: UnifiedContext,
-    *,
-    path_obj: Path,
-    filename: str,
-    caption: str | None,
-) -> str:
-    document: str | bytes = str(path_obj)
-    output_name = filename
-    if filename.lower().endswith(".md"):
-        try:
-            from services.md_converter import adapt_md_file_for_platform
-
-            adapted_bytes, adapted_name = adapt_md_file_for_platform(
-                file_bytes=path_obj.read_bytes(),
-                filename=filename,
-                platform=str(getattr(ctx.message, "platform", "") or ""),
-            )
-            document = adapted_bytes
-            output_name = adapted_name
-        except Exception:
-            document = str(path_obj)
-    await ctx.reply_document(
-        document=document,
-        filename=output_name,
-        caption=caption,
-    )
-    return output_name
-
-
 async def send_local_file(
     ctx: UnifiedContext,
     *,
@@ -191,33 +161,8 @@ async def send_local_file(
     output_name = Path(str(filename or "").strip()).name or path_obj.name
     safe_caption = str(caption or "").strip()[:500] or None
 
-    try:
-        if delivery_kind == "photo":
-            await ctx.reply_photo(str(path_obj), caption=safe_caption)
-            delivered_name = output_name
-        elif delivery_kind == "video":
-            await ctx.reply_video(str(path_obj), caption=safe_caption)
-            delivered_name = output_name
-        elif delivery_kind == "audio":
-            await ctx.reply_audio(str(path_obj), caption=safe_caption)
-            delivered_name = output_name
-        else:
-            delivered_name = await _send_document(
-                ctx,
-                path_obj=path_obj,
-                filename=output_name,
-                caption=safe_caption,
-            )
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error_code": "send_failed",
-            "message": str(exc),
-            "text": f"❌ 发送文件失败：{exc}",
-            "failure_mode": "recoverable",
-        }
-
-    summary_text = f"📎 已发送文件：{delivered_name}"
+    delivered_name = output_name
+    summary_text = f"📎 已准备发送文件：{delivered_name}"
     file_payload = {
         "path": str(path_obj),
         "filename": delivered_name,
@@ -242,21 +187,25 @@ async def send_local_file(
             )
     except Exception:
         pass
+    delivered_size = int(path_obj.stat().st_size or 0)
     return {
         "ok": True,
         "terminal": False,
-        "summary": f"Sent local file {delivered_name}",
+        "summary": f"Prepared local file {delivered_name}",
         "text": summary_text,
         "payload": {
             "text": summary_text,
-            "files": [file_payload],
+            "files": [dict(file_payload)],
         },
-        "files": [file_payload],
+        "files": [dict(file_payload)],
         "data": {
             "path": str(path_obj),
             "filename": delivered_name,
             "kind": delivery_kind,
-            "size_bytes": int(path_obj.stat().st_size or 0),
+            "caption": safe_caption or "",
+            "size": delivered_size,
+            "size_bytes": delivered_size,
             "platform": safe_platform,
+            "already_delivered": False,
         },
     }

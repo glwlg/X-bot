@@ -59,6 +59,18 @@ class _FakeCtx:
         return SimpleNamespace(id="audio")
 
 
+def _assert_prepared_file_payload(result: dict[str, object]) -> list[dict[str, object]]:
+    files = result.get("files")
+    assert isinstance(files, list)
+    assert len(files) == 1
+    payload = result.get("payload")
+    assert isinstance(payload, dict)
+    payload_files = payload.get("files")
+    assert isinstance(payload_files, list)
+    assert payload_files == files
+    return files
+
+
 @pytest.mark.asyncio
 async def test_send_local_file_sends_existing_relative_document(tmp_path):
     target = (tmp_path / "docs" / "report.txt").resolve()
@@ -75,13 +87,22 @@ async def test_send_local_file_sends_existing_relative_document(tmp_path):
 
     assert result["ok"] is True
     assert result["terminal"] is False
-    assert ctx.documents
-    assert ctx.documents[0]["document"] == str(target)
-    assert ctx.documents[0]["filename"] == "report.txt"
-    assert ctx.documents[0]["caption"] == "请查收"
-    assert result["payload"]["files"][0]["path"] == str(target)
-    assert result["payload"]["files"][0]["filename"] == "report.txt"
-    assert result["payload"]["files"][0]["kind"] == "document"
+    assert ctx.documents == []
+    assert ctx.photos == []
+    assert ctx.videos == []
+    assert ctx.audios == []
+    files = _assert_prepared_file_payload(result)
+    assert files[0]["path"] == str(target)
+    assert files[0]["filename"] == "report.txt"
+    assert files[0]["kind"] == "document"
+    assert files[0]["caption"] == "请查收"
+    assert result["data"]["path"] == str(target)
+    assert result["data"]["filename"] == "report.txt"
+    assert result["data"]["kind"] == "document"
+    assert result["data"]["caption"] == "请查收"
+    assert result["data"]["size"] == len("hello".encode("utf-8"))
+    assert result["data"]["platform"] == "telegram"
+    assert result["data"]["already_delivered"] is False
 
 
 @pytest.mark.asyncio
@@ -118,8 +139,12 @@ async def test_send_local_file_falls_back_to_document_for_weixin_audio(
     )
 
     assert result["ok"] is True
-    assert ctx.documents
+    assert ctx.documents == []
+    assert ctx.photos == []
+    assert ctx.videos == []
     assert ctx.audios == []
+    files = _assert_prepared_file_payload(result)
+    assert files[0]["kind"] == "document"
 
 
 @pytest.mark.asyncio
@@ -138,8 +163,13 @@ async def test_send_local_file_allows_readable_absolute_path_outside_workspace(t
     )
 
     assert result["ok"] is True
-    assert ctx.photos
-    assert ctx.photos[0]["photo"] == str(external)
+    assert ctx.documents == []
+    assert ctx.photos == []
+    assert ctx.videos == []
+    assert ctx.audios == []
+    files = _assert_prepared_file_payload(result)
+    assert files[0]["path"] == str(external)
+    assert files[0]["kind"] == "photo"
 
 
 @pytest.mark.asyncio
@@ -156,8 +186,33 @@ async def test_send_local_file_buffers_heartbeat_delivery_files(tmp_path):
     )
 
     assert result["ok"] is True
+    _assert_prepared_file_payload(result)
     assert ctx.user_data["heartbeat_pending_files"][0]["path"] == str(target)
     assert (
         ctx.user_data["heartbeat_pending_files"][0]["filename"]
         == "baby_camera_latest.jpg"
     )
+
+
+@pytest.mark.asyncio
+async def test_send_local_file_video_prepares_payload_without_immediate_delivery(tmp_path):
+    target = (tmp_path / "clip.mp4").resolve()
+    target.write_bytes(b"fake-video")
+    ctx = _FakeCtx(platform="telegram")
+
+    result = await send_local_file(
+        ctx,
+        path=str(target),
+        task_workspace_root=str(tmp_path),
+    )
+
+    assert result["ok"] is True
+    assert ctx.videos == []
+    assert ctx.documents == []
+    assert ctx.photos == []
+    assert ctx.audios == []
+    files = _assert_prepared_file_payload(result)
+    assert files[0]["path"] == str(target)
+    assert files[0]["kind"] == "video"
+    assert result["data"]["kind"] == "video"
+    assert result["data"]["already_delivered"] is False

@@ -183,7 +183,7 @@ IKAROS_INTERNAL_TOOLS: List[Dict[str, Any]] = [
     {
         "name": "send_local_file",
         "description": (
-            "Send an existing safe server-side file to the current user as an attachment. "
+            "Prepare an existing safe server-side file for user delivery by the final outer handler. "
             "Use this when the user explicitly asks to receive a file, not just its contents."
         ),
         "parameters": {

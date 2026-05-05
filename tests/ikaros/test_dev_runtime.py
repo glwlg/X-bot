@@ -34,9 +34,16 @@ def test_default_transport_uses_mixed_mode_when_unset(monkeypatch):
     monkeypatch.delenv("CODING_BACKEND_GEMINI_TRANSPORT", raising=False)
     monkeypatch.delenv("CODING_BACKEND_OPENCODE_TRANSPORT", raising=False)
 
-    assert runtime_module._default_transport_for_backend("codex") == "cli"
+    assert runtime_module._default_transport_for_backend("codex") == "app-server"
     assert runtime_module._default_transport_for_backend("gemini-cli") == "acp"
     assert runtime_module._default_transport_for_backend("opencode") == "acp"
+
+
+def test_transport_normalization_accepts_codex_app_server_aliases():
+    assert runtime_module._normalize_transport("app-server") == "app-server"
+    assert runtime_module._normalize_transport("codex_app_server") == "app-server"
+    assert runtime_module._normalize_transport("acp") == "acp"
+    assert runtime_module._normalize_transport("anything-else") == "cli"
 
 
 def test_codex_output_failure_detection_from_readonly_message():
@@ -85,6 +92,7 @@ async def test_run_coding_backend_turns_zero_exit_readonly_into_failure(monkeypa
     result = await runtime_module.run_coding_backend(
         instruction="create file",
         backend="codex",
+        transport="cli",
         cwd="/tmp",
         timeout_sec=120,
         source="test",
@@ -139,6 +147,126 @@ async def test_run_coding_backend_routes_to_acp_transport(monkeypatch):
     assert captured["instruction"] == "implement feature"
     assert captured["existing_session_id"] == "acp-sess-prev"
     assert captured["env"]["OPENCODE_CLIENT"] == "ikaros"
+
+
+@pytest.mark.asyncio
+async def test_run_coding_backend_routes_codex_to_app_server_transport(monkeypatch):
+    captured = {}
+
+    async def fake_run_codex_app_server_backend(
+        *,
+        command,
+        cwd,
+        instruction,
+        timeout_sec,
+        existing_thread_id="",
+        log_path="",
+        env=None,
+        model="",
+        effort="",
+        approval_policy="",
+        sandbox="",
+        approval_decision="",
+    ):
+        captured.update(
+            {
+                "command": command,
+                "cwd": cwd,
+                "instruction": instruction,
+                "timeout_sec": timeout_sec,
+                "existing_thread_id": existing_thread_id,
+                "log_path": log_path,
+                "env": dict(env or {}),
+                "model": model,
+                "effort": effort,
+                "approval_policy": approval_policy,
+                "sandbox": sandbox,
+                "approval_decision": approval_decision,
+            }
+        )
+        return {
+            "ok": True,
+            "summary": "done",
+            "stdout": "done",
+            "transport_session_id": "thread-1",
+        }
+
+    monkeypatch.setenv("CODING_BACKEND_CODEX_APP_SERVER_MODEL", "gpt-test")
+    monkeypatch.setenv("CODING_BACKEND_CODEX_APP_SERVER_EFFORT", "high")
+    monkeypatch.setattr(
+        runtime_module,
+        "run_codex_app_server_backend",
+        fake_run_codex_app_server_backend,
+    )
+
+    result = await runtime_module.run_coding_backend(
+        instruction="implement feature",
+        backend="codex",
+        transport="app-server",
+        cwd="/tmp",
+        timeout_sec=120,
+        source="test",
+        transport_session_id="thread-prev",
+    )
+
+    assert result["ok"] is True
+    assert result["backend"] == "codex"
+    assert result["transport"] == "app-server"
+    assert captured["command"] == ["codex", "app-server", "--listen", "stdio://"]
+    assert captured["cwd"] == "/tmp"
+    assert captured["instruction"] == "implement feature"
+    assert captured["existing_thread_id"] == "thread-prev"
+    assert captured["model"] == "gpt-test"
+    assert captured["effort"] == "high"
+    assert captured["approval_policy"] == "never"
+    assert captured["sandbox"] == "workspace-write"
+    assert captured["approval_decision"] == "accept"
+
+
+@pytest.mark.asyncio
+async def test_run_coding_backend_falls_back_when_default_app_server_unavailable(
+    monkeypatch,
+):
+    async def fake_run_codex_app_server_backend(**kwargs):
+        _ = kwargs
+        return {
+            "ok": False,
+            "error_code": "command_failed",
+            "message": "error: unrecognized subcommand 'app-server'",
+            "summary": "error: unrecognized subcommand 'app-server'",
+        }
+
+    async def fake_run_exec(command, *, cwd, timeout_sec=1200, log_path=""):
+        _ = (timeout_sec, log_path)
+        return {
+            "ok": True,
+            "summary": "cli done",
+            "stdout": "cli done",
+            "stderr": "",
+            "command": " ".join(command),
+            "cwd": cwd,
+        }
+
+    monkeypatch.delenv("CODING_BACKEND_CODEX_TRANSPORT", raising=False)
+    monkeypatch.setattr(
+        runtime_module,
+        "run_codex_app_server_backend",
+        fake_run_codex_app_server_backend,
+    )
+    monkeypatch.setattr(runtime_module, "run_exec", fake_run_exec)
+
+    result = await runtime_module.run_coding_backend(
+        instruction="implement feature",
+        backend="codex",
+        cwd="/tmp",
+        timeout_sec=120,
+        source="test",
+    )
+
+    assert result["ok"] is True
+    assert result["transport"] == "cli"
+    assert result["fallback_from_transport"] == "app-server"
+    assert result["app_server_error"]["error_code"] == "command_failed"
 
 
 @pytest.mark.asyncio

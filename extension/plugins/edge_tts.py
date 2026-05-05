@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
+import time
 from typing import Any
 
 from core.extension_base import PluginExtension
@@ -40,6 +42,9 @@ _RAW_SKIP_PREFIXES = (
     "🛑",
     "🔇",
 )
+_VOICE_OUTPUT_DEDUPE_TTL_SECONDS = 120.0
+_VOICE_OUTPUT_DEDUPE_MAX_KEYS = 512
+_voice_output_recent_keys: dict[str, float] = {}
 
 
 def _safe_text(value: Any) -> str:
@@ -115,6 +120,56 @@ def _plain_text_for_tts(text: str) -> str:
     return rendered.strip()
 
 
+def _voice_output_dedupe_key(ctx, rendered_text: str) -> str:
+    message = getattr(ctx, "message", None)
+    chat = getattr(message, "chat", None)
+    user = getattr(message, "user", None)
+    message_date = getattr(message, "date", None)
+    if hasattr(message_date, "isoformat"):
+        date_key = message_date.isoformat()
+    else:
+        date_key = _safe_text(message_date)
+
+    text_digest = hashlib.sha256(str(rendered_text or "").encode("utf-8")).hexdigest()
+    return "|".join(
+        (
+            _safe_text(getattr(message, "platform", "")).lower(),
+            _safe_text(getattr(chat, "id", "")),
+            _safe_text(getattr(user, "id", ""))
+            or _safe_text(getattr(ctx, "effective_user_id", "")),
+            _safe_text(getattr(message, "id", "")),
+            date_key,
+            text_digest[:24],
+        )
+    )
+
+
+def _claim_voice_output(ctx, rendered_text: str) -> bool:
+    now = time.monotonic()
+    expired = [
+        key
+        for key, seen_at in _voice_output_recent_keys.items()
+        if now - seen_at > _VOICE_OUTPUT_DEDUPE_TTL_SECONDS
+    ]
+    for key in expired:
+        _voice_output_recent_keys.pop(key, None)
+
+    key = _voice_output_dedupe_key(ctx, rendered_text)
+    if key in _voice_output_recent_keys:
+        logger.info("Skip duplicate voice output for key=%s", key)
+        return False
+
+    _voice_output_recent_keys[key] = now
+    if len(_voice_output_recent_keys) > _VOICE_OUTPUT_DEDUPE_MAX_KEYS:
+        oldest = sorted(
+            _voice_output_recent_keys.items(),
+            key=lambda item: item[1],
+        )
+        for old_key, _ in oldest[: len(_voice_output_recent_keys) // 4]:
+            _voice_output_recent_keys.pop(old_key, None)
+    return True
+
+
 def _should_emit_voice_output(ctx, text: str) -> bool:
     if not runtime_config_store.is_voice_output_enabled(default=False):
         return False
@@ -170,9 +225,11 @@ async def _deliver_voice_output(ctx, audio_bytes: bytes) -> None:
                     return
                 except Exception:
                     logger.warning(
-                        "Telegram voice-note delivery failed; fallback to audio.",
+                        "Telegram voice-note delivery failed after send attempt; "
+                        "skip audio fallback to avoid duplicate delivery.",
                         exc_info=True,
                     )
+                    return
             else:
                 logger.info("Telegram voice transcode unavailable; fallback to audio.")
     await ctx.reply_audio(audio_bytes, filename="voice.mp3")
@@ -185,6 +242,9 @@ async def _after_text_reply(ctx, text: str, response: Any) -> None:
 
     config = runtime_config_store.get_voice_output_config()
     rendered = _plain_text_for_tts(text)
+    if not _claim_voice_output(ctx, rendered):
+        return
+
     audio_bytes = await synthesize_edge_tts_speech(
         rendered,
         voice=_safe_text(config.get("voice")) or "zh-CN-XiaoxiaoNeural",

@@ -165,6 +165,73 @@ async def test_coding_session_acp_continue_reuses_transport_session(
     assert continued["data"]["transport_session_id"] == "acp-session-2"
     assert captured["calls"]
     assert "继续，直接改代码" in captured["calls"][0]["instruction"]
-    assert "Continue the previous ACP coding session" in captured["calls"][0]["instruction"]
+    assert (
+        "Continue the previous stateful coding session"
+        in captured["calls"][0]["instruction"]
+    )
     assert captured["calls"][0]["transport"] == "acp"
     assert captured["calls"][0]["transport_session_id"] == "acp-session-1"
+
+
+@pytest.mark.asyncio
+async def test_coding_session_app_server_continue_reuses_transport_session(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path / "data"))
+    workspace_dir = tmp_path / "workspace"
+    workspace_dir.mkdir(parents=True, exist_ok=True)
+    captured = {"calls": []}
+
+    async def fake_run_coding_backend(**kwargs):
+        captured["calls"].append(kwargs)
+        return {
+            "ok": True,
+            "backend": "codex",
+            "transport": "app-server",
+            "transport_session_id": "thread-2",
+            "summary": "done",
+            "stdout": "implemented",
+        }
+
+    monkeypatch.setattr(
+        "extension.skills.builtin.coding_session.scripts.service.run_coding_backend",
+        fake_run_coding_backend,
+    )
+
+    service = CodingSessionService()
+    created = await service._save_state(
+        {
+            "session_id": "cs-codex-app",
+            "workspace_id": "",
+            "repo_root": str(workspace_dir),
+            "backend": "codex",
+            "transport": "app-server",
+            "transport_session_id": "thread-1",
+            "instruction": "base instruction",
+            "status": "waiting_user",
+            "summary": "waiting",
+            "pending_question": "请选择是否继续",
+            "result": {},
+            "history": [],
+            "log_path": str(tmp_path / "data" / "log.txt"),
+            "created_at": "2026-03-13T00:00:00+08:00",
+        }
+    )
+    assert created["session_id"] == "cs-codex-app"
+
+    continued = await service.continue_session(
+        session_id="cs-codex-app",
+        user_reply="继续，直接改代码",
+    )
+
+    assert continued["ok"] is True
+    assert continued["data"]["transport"] == "app-server"
+    assert continued["data"]["transport_session_id"] == "thread-2"
+    assert captured["calls"]
+    assert "继续，直接改代码" in captured["calls"][0]["instruction"]
+    assert (
+        "Continue the previous stateful coding session"
+        in captured["calls"][0]["instruction"]
+    )
+    assert captured["calls"][0]["transport"] == "app-server"
+    assert captured["calls"][0]["transport_session_id"] == "thread-1"

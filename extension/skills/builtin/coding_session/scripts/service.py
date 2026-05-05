@@ -192,7 +192,7 @@ class CodingSessionService:
         )
         return "\n\n".join([section for section in sections if section]).strip()
 
-    def _acp_continuation_instruction(
+    def _stateful_continuation_instruction(
         self,
         *,
         base_instruction: str,
@@ -200,21 +200,22 @@ class CodingSessionService:
         user_reply: str,
     ) -> str:
         sections = [
-            "Continue the previous ACP coding session if it was restored successfully.",
+            "Continue the previous stateful coding session if it was restored successfully.",
             f"User reply / decision: {str(user_reply or '').strip()[:1600]}",
             (
-                "If the ACP session could not be restored, use this fallback context:\n"
+                "If the stateful session could not be restored, use this fallback context:\n"
                 f"- Original task: {str(base_instruction or '').strip()[:1600]}\n"
                 f"- Previous blocking question: {str(pending_question or '').strip()[:1600]}"
             ),
-            "Do not restart from scratch unless the prior ACP session is unavailable.",
+            "Do not restart from scratch unless the prior coding session is unavailable.",
         ]
         return "\n\n".join([section for section in sections if section]).strip()
 
     @staticmethod
-    def _should_resume_via_acp(session: Dict[str, Any]) -> bool:
+    def _should_resume_via_stateful_transport(session: Dict[str, Any]) -> bool:
         return (
-            str(session.get("transport") or "").strip().lower() == "acp"
+            str(session.get("transport") or "").strip().lower()
+            in {"acp", "app-server"}
             and bool(str(session.get("transport_session_id") or "").strip())
         )
 
@@ -401,8 +402,8 @@ class CodingSessionService:
                 text=str(workspace.get("message") or "workspace not found"),
                 error_code=str(workspace.get("error_code") or "workspace_not_found"),
             )
-        if self._should_resume_via_acp(session):
-            instruction = self._acp_continuation_instruction(
+        if self._should_resume_via_stateful_transport(session):
+            instruction = self._stateful_continuation_instruction(
                 base_instruction=str(session.get("instruction") or "").strip(),
                 pending_question=str(session.get("pending_question") or "").strip(),
                 user_reply=safe_reply,

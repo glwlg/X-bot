@@ -13,6 +13,30 @@ def _extract_block(messages, block_type):
     return next(block for block in content if block.get("type") == block_type)
 
 
+def test_build_messages_maps_image_inline_data_to_image_url_data_url() -> None:
+    messages = build_messages(
+        contents=[
+            {
+                "role": "user",
+                "parts": [
+                    {"text": "看图回答"},
+                    {
+                        "inline_data": {
+                            "mime_type": "image/png",
+                            "data": "ZmFrZS1pbWFnZS1kYXRh",
+                        }
+                    },
+                ],
+            }
+        ]
+    )
+
+    image_block = _extract_block(messages, "image_url")
+    assert image_block["image_url"]["url"] == (
+        "data:image/png;base64,ZmFrZS1pbWFnZS1kYXRh"
+    )
+
+
 def test_build_messages_maps_ogg_to_file() -> None:
     messages = build_messages(
         contents=[

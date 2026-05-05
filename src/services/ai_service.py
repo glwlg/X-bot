@@ -9,6 +9,7 @@ from core.config import get_client_for_model
 from core.file_artifacts import normalize_file_rows
 from core.model_config import (
     load_models_config,
+    get_configured_model,
     get_model_candidates_for_input,
     get_model_for_input,
     get_model_id_for_api,
@@ -1481,7 +1482,18 @@ class AiService:
                         has_image = True
 
         input_type = "image" if has_image else "text"
-        pool_type = "vision" if input_type == "image" else "primary"
+        pool_type = "primary"
+        if input_type == "image":
+            primary_model = get_configured_model("primary")
+            primary_image_candidates = get_model_candidates_for_input(
+                "image",
+                pool_type="primary",
+            )
+            pool_type = (
+                "primary"
+                if primary_model and primary_model in primary_image_candidates
+                else "vision"
+            )
         model = get_model_for_input(input_type, pool_type=pool_type)
         model_id = get_model_id_for_api(model)
         logger.info(
