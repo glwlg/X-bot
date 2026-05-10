@@ -774,8 +774,9 @@ class SkillRegistry:
             module = importlib.util.module_from_spec(spec)
             sys.modules[module_name] = module
             script_dir = os.path.dirname(script_path)
-            if script_dir not in sys.path:
-                sys.path.insert(0, script_dir)
+            for import_root in (scripts_root, script_dir):
+                if import_root not in sys.path:
+                    sys.path.insert(0, import_root)
             spec.loader.exec_module(module)
 
             self._loaded_modules[cache_key] = module

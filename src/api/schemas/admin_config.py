@@ -97,7 +97,7 @@ class ModelsConfigPatchRequest(BaseModel):
 class ModelsLatencyCheckRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    role: Literal["primary", "routing"]
+    role: Literal["primary", "routing", "vision", "image_generation", "voice"]
     provider_name: str
     base_url: str | None = None
     api_key: str | None = None

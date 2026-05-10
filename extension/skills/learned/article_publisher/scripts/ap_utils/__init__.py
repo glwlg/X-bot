@@ -298,24 +298,113 @@ def author_watermark(author: str) -> str:
     return f"@{safe_author or 'Ikaros'}"
 
 
-def augment_image_prompt(prompt: str, author: str) -> str:
-    safe_watermark = author_watermark(author)
-    instructions = [
-        "vector illustration",
-        "flat style",
-        "tech vibe",
-        "high quality",
-        "4k",
-        f'include exactly one subtle creator watermark text "{safe_watermark}"',
-        "place the watermark in a bottom corner",
-        "do not include any other text",
-        "no logo",
-        "no signature",
-        "no copyright mark",
-        "no extra watermark",
-        "no publisher name",
+def _compact_for_prompt(text: str, *, limit: int) -> str:
+    compact = re.sub(r"[ \t]+", " ", str(text or "")).strip()
+    compact = re.sub(r"\n{3,}", "\n\n", compact)
+    if len(compact) > limit:
+        compact = compact[:limit].rstrip() + "\n[内容过长，已截断]"
+    return compact
+
+
+def _infographic_article_context(
+    article_data: dict[str, Any],
+    *,
+    image_idx: int,
+) -> tuple[str, str]:
+    title = str(article_data.get("title") or "").strip()
+    digest = str(article_data.get("digest") or "").strip()
+    section_blocks: list[str] = []
+    focus_block = ""
+
+    for idx, section in enumerate(list(article_data.get("sections") or []), start=1):
+        plain = html_to_plain_text(str(section.get("content") or ""))
+        plain = _compact_for_prompt(plain, limit=600)
+        if not plain:
+            continue
+        block = f"{idx}. {plain}"
+        section_blocks.append(block)
+        if image_idx >= 0 and idx == image_idx + 1:
+            focus_block = block
+
+    lines: list[str] = []
+    if title:
+        lines.append(f"标题：{title}")
+    if digest:
+        lines.append(f"摘要：{digest}")
+    if section_blocks:
+        lines.append("正文要点：")
+        lines.extend(section_blocks)
+
+    full_context = _compact_for_prompt(
+        "\n".join(lines),
+        limit=1800,
+    )
+    focus_lines: list[str] = []
+    if title:
+        focus_lines.append(f"标题：{title}")
+    if digest:
+        focus_lines.append(f"摘要：{digest}")
+    if focus_block:
+        focus_lines.append(f"本节要点：\n{focus_block}")
+    elif full_context:
+        focus_lines.append(full_context)
+
+    focus_context = _compact_for_prompt(
+        "\n".join(focus_lines),
+        limit=600,
+    )
+    return full_context, focus_context
+
+
+def augment_image_prompt(
+    prompt: str,
+    author: str,
+    *,
+    article_data: dict[str, Any] | None = None,
+    image_type: str = "",
+    image_idx: int = -1,
+) -> str:
+    _ = author
+    full_context = ""
+    focus_context = ""
+    if isinstance(article_data, dict):
+        full_context, focus_context = _infographic_article_context(
+            article_data,
+            image_idx=image_idx,
+        )
+
+    base_prompt = str(prompt or "").strip()
+    if image_type == "cover":
+        parts = [
+            "请根据提供的文章内容创建一张吸引眼球的微信公众号封面图。",
+            "视觉风格：手绘插画风格，比例为 2.35:1 的公众号封面构图；色彩鲜明、对比强烈，确保在小尺寸预览时依然醒目；风格统一，避免写实元素，保持整体手绘质感。",
+            "构图要求：主视觉元素居中或偏左，右侧预留标题区域；添加 1-2 个简洁的卡通形象、图标或知名人物剪影来增强记忆点；若涉及敏感或版权人物，用风格相似的替代形象；大量留白，突出核心信息，避免画面拥挤。",
+            "文字处理：默认使用中文；标题文字大而醒目，控制在 8 个汉字以内；可添加 1 行副标题或关键词标签；字体风格与手绘插画协调统一。",
+            "吸引力法则：使用悬念、数字、痛点等钩子元素激发点击欲望；视觉元素可以夸张、有反差；色彩搭配参考橙黄、蓝紫、红黑等高对比组合。",
+            "不要水印，不要签名，不要版权标记，不要政治内容，不要成人内容。",
+        ]
+        if base_prompt:
+            parts.append(f"原始封面意图：{base_prompt}")
+        if full_context:
+            parts.append(f"请根据以下文章内容提炼封面标题和画面元素：\n{full_context}")
+        return "\n\n".join(parts)
+
+    target = "当前段落信息图"
+    parts = [
+        "生成一张适合微信公众号文章和社媒传播的中文信息图，风格参考科技博主刷完资料后随手整理的长图。",
+        "不要 PPT 风格，不要官方报告腔，不要泛插画，不要只画抽象背景或无信息装饰。",
+        "浅色底，蓝绿橙作为点缀；信息密度高但排版清楚；使用连接线、节点、迷你图标、代码框、芯片、服务器、机器人、股票折线等装饰元素。",
+        "必须使用简体中文排版，文字要清楚可读；优先保留标题、小标题、关键事实和要点；可以压缩句子但不要改变事实。",
+        "不要人物，不要水印，不要签名，不要版权标记，不要政治内容，不要成人内容。",
+        f"图片用途：{target}。",
     ]
-    return f"{prompt}, " + ", ".join(instructions)
+    if base_prompt:
+        parts.append(f"原始配图意图：{base_prompt}")
+    if focus_context and image_type != "cover":
+        parts.append(f"本图重点内容：\n{focus_context}")
+    if full_context and image_type == "cover":
+        parts.append(f"请准确整理并排版以下文章内容：\n{full_context}")
+    return "\n\n".join(parts)
 
 
 # ---------------------------------------------------------------------------

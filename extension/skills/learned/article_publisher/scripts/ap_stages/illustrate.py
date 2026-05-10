@@ -121,7 +121,13 @@ async def _generate_images(
     async def gen_img(task: tuple[str, int, str]) -> tuple[str, int, bytes | None]:
         image_type, image_idx, prompt = task
         try:
-            full_prompt = augment_image_prompt(prompt, author)
+            full_prompt = augment_image_prompt(
+                prompt,
+                author,
+                article_data=article_data,
+                image_type=image_type,
+                image_idx=image_idx,
+            )
             result = await ctx.run_skill(
                 "generate_image",
                 {"prompt": full_prompt, "aspect_ratio": "16:9"},

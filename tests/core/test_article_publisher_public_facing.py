@@ -304,7 +304,12 @@ async def test_execute_hard_stops_before_write_when_news_insufficient(monkeypatc
     monkeypatch.setattr(module, "write_stage", fake_write_stage)
     monkeypatch.setattr(module, "illustrate_stage", fake_illustrate_stage)
     monkeypatch.setattr(module, "publish_stage", fake_publish_stage)
-    monkeypatch.setattr(module, "get_credential", lambda *_args, **_kwargs: _async_value(None))
+    monkeypatch.setattr(
+        module,
+        "get_credential",
+        lambda *_args, **_kwargs: _async_value(None),
+        raising=False,
+    )
     monkeypatch.setattr(
         module,
         "get_credential_entry",

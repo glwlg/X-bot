@@ -107,15 +107,21 @@ async def add_scheduled_task(
 async def get_all_active_tasks(
     user_id: int | str | None = None,
 ) -> list[dict[str, Any]]:
-    rows = await _read_user_scheduled_tasks(user_id or "")
+    rows = await get_all_scheduled_tasks(user_id)
     return [item for item in rows if bool(item.get("is_active", True))]
+
+
+async def get_all_scheduled_tasks(
+    user_id: int | str | None = None,
+) -> list[dict[str, Any]]:
+    return await _read_user_scheduled_tasks(user_id or "")
 
 
 async def update_task_status(
     task_id: int,
     is_active: bool,
     user_id: int | str | None = None,
-) -> None:
+) -> bool:
     tid = int(task_id)
     rows = await _read_user_scheduled_tasks(user_id or "")
     changed = False
@@ -128,6 +134,8 @@ async def update_task_status(
         break
     if changed:
         await _write_user_scheduled_tasks(user_id or "", rows)
+        return True
+    return False
 
 
 async def update_task_delivery_target(
@@ -193,6 +201,7 @@ __all__ = [
     "add_scheduled_task",
     "delete_task",
     "get_all_active_tasks",
+    "get_all_scheduled_tasks",
     "update_scheduled_task",
     "update_task_delivery_target",
     "update_task_status",

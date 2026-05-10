@@ -1,0 +1,3 @@
+generate_image timed out after 180 seconds
+generate_image timed out after 180 seconds
+tool_result={"ok": true, "text": "🔇🔇🔇【文章内容】\n\n# 中国AI最新三件事：数据、密态训练、伦理审查正在一起加速\n*By 炜煜*\n\n> 今天的中国人工智能新闻，重点不在谁又做了一个会聊天的模型，而在三块更底层的拼图：首批具身交互多模态语料数据集发布，高性能密态训练引擎亮相，工业和信息化部启动人工智能科技伦理审查与服务先导计划。它们共同指向一个变化：AI正在从“能用”走向“可控、安全、能进现场”。\n\n![Cover](img_cover_-1.png)\n\n---\n✅ 已发布到公众号草稿箱（硅基天平），MediaID: `pYA4adgu3szUt_Y8gIwanYNsMfzUeLVpHSiBoNk5E-ZXZFJy3cgB0u9P8xaPVyeK`", "files": {"img_cover_-1.png": "<binary:6625900 bytes>", "img_section_0.png": "<binary:6209363 bytes>"}, "ui": {}, "task_outcome": "done", "terminal": true, "progress_messages": ["🔍 正在搜索并整理素材...", "✍️ 正在构思文章结构与配图设计...", "🎨 正在并行绘制封面与插图...", "📤 正在发布..."]}

@@ -39,8 +39,10 @@ export interface ModelsPatchResponse {
     snapshot: ModelsSnapshot
 }
 
+export type ModelsLatencyRole = 'primary' | 'routing' | 'vision' | 'image_generation' | 'voice'
+
 export interface ModelsLatencyCheckPayload {
-    role: 'primary' | 'routing'
+    role: ModelsLatencyRole
     provider_name: string
     base_url?: string
     api_key?: string
@@ -49,7 +51,7 @@ export interface ModelsLatencyCheckPayload {
 }
 
 export interface ModelsLatencyCheckResponse {
-    role: 'primary' | 'routing'
+    role: ModelsLatencyRole
     model_key: string
     elapsed_ms: number
     response_preview: string

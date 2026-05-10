@@ -37,7 +37,7 @@ async def get_tasks(
     session: AsyncSession = Depends(get_async_session),
 ):
     platform_uid = await _resolve_platform_uid(current_user, session)
-    return await scheduler_store.get_all_active_tasks(platform_uid)
+    return await scheduler_store.get_all_scheduled_tasks(platform_uid)
 
 
 @router.post("")
@@ -79,8 +79,14 @@ async def update_task_status(
 ):
     platform_uid = await _resolve_platform_uid(current_user, session)
     try:
-        await scheduler_store.update_task_status(task_id, status.is_active, platform_uid)
+        ok = await scheduler_store.update_task_status(
+            task_id, status.is_active, platform_uid
+        )
+        if not ok:
+            raise HTTPException(status_code=404, detail="Task not found")
         return {"success": True}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

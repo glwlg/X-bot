@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -7,8 +9,12 @@ from api.auth.models import User
 from api.core.database import get_async_session
 from api.api.binding_helpers import get_primary_platform_user_id
 from extension.skills.learned.stock_watch.scripts import store as stock_watch_store
+from extension.skills.learned.stock_watch.scripts.services.stock_service import (
+    fetch_stock_quotes,
+)
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class StockAdd(BaseModel):
@@ -45,13 +51,11 @@ async def get_watchlist(
     codes = [s["stock_code"] for s in stocks if s.get("stock_code")]
     quotes_map: dict[str, dict] = {}
     try:
-        from services.stock_service import fetch_stock_quotes
-
         quotes = await fetch_stock_quotes(codes)
         for q in quotes:
             quotes_map[q["code"]] = q
-    except Exception:
-        pass  # graceful fallback: no quotes
+    except Exception as exc:
+        logger.warning("Failed to fetch watchlist stock quotes: %s", exc)
 
     # Merge quotes into stock list
     result = []

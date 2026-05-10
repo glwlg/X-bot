@@ -1,24 +1,34 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 import {
-    Cable,
-    Gauge,
+    ArrowRight,
+    CalendarDays,
+    CheckCircle2,
+    Globe2,
     HeartPulse,
     KeyRound,
     Link2,
     MessageSquareText,
     Radio,
-    Settings2,
-    ShieldCheck,
+    RefreshCw,
+    Shield,
     TrendingUp,
+    UsersRound,
     WalletCards,
     Zap,
 } from 'lucide-vue-next'
 
+import { getAdminAudit, getDiagnostics } from '@/api/admin'
+import request from '@/api/request'
 import { useAuthStore } from '@/stores/auth'
 
 const authStore = useAuthStore()
+const diagnostics = ref<Record<string, any> | null>(null)
+const auditItems = ref<Array<Record<string, any>>>([])
+const healthStatus = ref<'loading' | 'ok' | 'error'>('loading')
+const diagnosticsStatus = ref<'idle' | 'loading' | 'ok' | 'forbidden' | 'error'>('idle')
+const lastUpdatedAt = ref<Date | null>(null)
 
 const roleLabel = computed(() => {
     if (authStore.isAdmin) return '管理员'
@@ -28,629 +38,851 @@ const roleLabel = computed(() => {
 
 const workspaceCards = computed(() => [
     {
-        title: 'Chat',
-        description: 'Primary AI interaction portal with conversational memory.',
+        title: 'Chat 对话',
+        description: 'AI 对话门户，支持文本与多模态交互。',
         to: '/chat',
         icon: MessageSquareText,
-        tone: 'pink',
     },
     {
-        title: 'Bind',
-        description: 'Manage external service connections and API hooks.',
+        title: 'Bind 绑定',
+        description: '管理外部服务连接与 API Hooks。',
         to: '/bindings',
         icon: Link2,
-        tone: 'cyan',
     },
     {
-        title: 'Keys',
-        description: 'Manage publishing credentials and multi-account delivery targets.',
+        title: 'Keys 凭据',
+        description: '管理发布凭据与多账户投递目标。',
         to: '/credentials',
         icon: KeyRound,
-        tone: 'cyan',
     },
     {
-        title: 'RSS',
-        description: 'Automated news harvesting and ethereal intelligence feeds.',
+        title: 'RSS 订阅源',
+        description: '自动化新闻抓取与情报订阅。',
         to: '/modules/rss',
         icon: Radio,
-        tone: 'silver',
     },
     {
-        title: 'Scheduling',
-        description: 'Temporal management and automated task execution.',
+        title: 'Scheduling 任务调度',
+        description: '临时任务管理与自动化执行。',
         to: '/modules/scheduler',
-        icon: Cable,
-        tone: 'silver',
+        icon: CalendarDays,
     },
     {
-        title: 'Heartbeat',
-        description: 'Real-time system health and pulse monitoring metrics.',
+        title: 'Heartbeat 心跳监控',
+        description: '实时监控系统健康与心跳指标。',
         to: '/modules/monitor',
         icon: HeartPulse,
-        tone: 'silver',
     },
     {
-        title: 'Stocks',
-        description: 'Market analysis and ethereal financial forecasting.',
+        title: 'Stocks 市场追踪',
+        description: '市场分析与金融预测追踪。',
         to: '/modules/watchlist',
         icon: TrendingUp,
-        tone: 'silver',
     },
     {
-        title: 'Billing',
-        description: 'Usage quotas and resource allocation accounting.',
+        title: 'Accounting 智能记账',
+        description: '记录收支、资产账户与预算统计。',
         to: '/accounting',
         icon: WalletCards,
-        tone: 'silver',
     },
 ])
 
-const adminCards = computed(() => {
-    const cards = []
+const platformEntries = computed(() =>
+    Object.entries(diagnostics.value?.runtime_config?.platforms || {}).map(([name, enabled]) => ({
+        name,
+        enabled: Boolean(enabled),
+        configured: Boolean(diagnostics.value?.platform_env?.[name]?.configured),
+    }))
+)
 
-    if (authStore.isAdmin) {
-        cards.push({
-            title: 'Runtime',
-            description: 'Configure admin identity, channels, docs and runtime controls.',
-            to: '/admin/runtime',
-            icon: Zap,
-            tone: 'pink',
-        })
-    }
+const enabledPlatforms = computed(() =>
+    platformEntries.value.filter(item => item.enabled)
+)
 
-    if (authStore.isOperator) {
-        cards.push({
-            title: 'Users',
-            description: 'Control operator identities, roles and channel access.',
-            to: '/admin/users',
-            icon: ShieldCheck,
-            tone: 'cyan',
-        })
-        cards.push({
-            title: 'Diagnostics',
-            description: 'Inspect service state, queues and runtime health telemetry.',
-            to: '/admin/diagnostics',
-            icon: Gauge,
-            tone: 'silver',
-        })
-    }
+const configuredPlatforms = computed(() =>
+    platformEntries.value.filter(item => item.configured)
+)
 
-    if (authStore.isAdmin) {
-        cards.push({
-            title: 'Models',
-            description: 'Manage providers, bindings, model pools and execution selection.',
-            to: '/admin/models',
-            icon: Settings2,
-            tone: 'pink',
-        })
-    }
-
-    return cards
-})
-
-const spotlightActions = computed(() => {
-    const actions = []
-
-    if (authStore.isAdmin) {
-        actions.push({
-            title: '运行配置',
-            label: '运行配置',
-            to: '/admin/runtime',
-            icon: Zap,
-            tone: 'pink',
-        })
-    }
-
-    actions.push({
-        title: '助手对话',
-        label: '助手对话',
-        to: '/chat',
-        icon: MessageSquareText,
-        tone: 'pink',
-    })
-
-    actions.push({
-        title: '记账',
-        label: '记账',
-        to: '/accounting',
+const statCards = computed(() => [
+    {
+        label: '渠道',
+        alias: 'Channel',
+        value: diagnostics.value ? String(enabledPlatforms.value.length) : '未知',
+        detail: diagnostics.value
+            ? `已启用 ${enabledPlatforms.value.length} / ${platformEntries.value.length} 个渠道，已配置 ${configuredPlatforms.value.length} 个`
+            : '需要诊断权限获取渠道状态',
+        icon: Globe2,
+        tone: 'blue',
+    },
+    {
+        label: '角色',
+        alias: 'Role',
+        value: roleLabel.value,
+        detail: authStore.user?.email || '当前登录用户',
+        icon: UsersRound,
+        tone: 'teal',
+    },
+    {
+        label: '模块数',
+        alias: 'Modules',
+        value: String(workspaceCards.value.length),
+        detail: '当前控制台可见工作空间入口',
         icon: WalletCards,
-        tone: 'silver',
+        tone: 'violet',
+    },
+    {
+        label: '安全策略',
+        alias: 'Security',
+        value: 'RBAC',
+        detail: `当前权限：${authStore.user?.role || 'viewer'}`,
+        icon: Shield,
+        tone: 'blue',
+    },
+])
+
+const formatAuditTime = (value: unknown) => {
+    const raw = String(value || '').trim()
+    if (!raw) return '-'
+    const date = new Date(raw)
+    if (Number.isNaN(date.getTime())) return raw
+    return date.toLocaleString('zh-CN', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
     })
+}
 
-    if (authStore.isAdmin) {
-        actions.push({
-            title: '模型配置',
-            label: '模型配置',
-            to: '/admin/models',
-            icon: Settings2,
-            tone: 'pink',
-        })
-    } else if (authStore.isOperator) {
-        actions.push({
-            title: '诊断',
-            label: '诊断',
-            to: '/admin/diagnostics',
-            icon: Gauge,
-            tone: 'cyan',
-        })
-    }
+const recentActivities = computed(() =>
+    auditItems.value.slice(0, 5).map(item => ({
+        title: String(item.action || '审计记录'),
+        detail: String(item.summary || item.target || item.actor || '无摘要'),
+        time: formatAuditTime(item.ts),
+        tone: String(item.status || '').toLowerCase() === 'success' ? 'green' : 'amber',
+        icon: Shield,
+    }))
+)
 
-    return actions
+const configFiles = computed(() => diagnostics.value?.config_files || {})
+
+const systemRows = computed(() => [
+    {
+        label: 'API 服务',
+        value: healthStatus.value === 'ok' ? '健康检查通过' : healthStatus.value === 'loading' ? '检查中' : '健康检查失败',
+        ok: healthStatus.value === 'ok',
+    },
+    {
+        label: '诊断接口',
+        value: diagnosticsStatus.value === 'ok'
+            ? '已获取诊断数据'
+            : diagnosticsStatus.value === 'forbidden'
+                ? '当前账号无诊断权限'
+                : diagnosticsStatus.value === 'loading'
+                    ? '加载中'
+                    : '未获取诊断数据',
+        ok: diagnosticsStatus.value === 'ok',
+    },
+    {
+        label: '配置文件',
+        value: diagnostics.value
+            ? `env ${configFiles.value.env_exists ? '存在' : '缺失'} / memory ${configFiles.value.memory_exists ? '存在' : '缺失'}`
+            : '未知',
+        ok: Boolean(configFiles.value.env_exists && configFiles.value.memory_exists),
+    },
+    {
+        label: 'Memory',
+        value: diagnostics.value?.memory?.provider || '未知',
+        ok: Boolean(diagnostics.value?.memory?.provider),
+    },
+    {
+        label: '平台配置',
+        value: diagnostics.value
+            ? `${configuredPlatforms.value.length} / ${platformEntries.value.length} 已配置`
+            : '未知',
+        ok: diagnostics.value ? configuredPlatforms.value.length >= enabledPlatforms.value.length : false,
+    },
+])
+
+const systemStatusText = computed(() => {
+    if (healthStatus.value === 'loading' || diagnosticsStatus.value === 'loading') return '检查中'
+    if (healthStatus.value !== 'ok') return '异常'
+    if (diagnosticsStatus.value === 'forbidden') return '基础正常，诊断无权限'
+    if (diagnosticsStatus.value !== 'ok') return '基础正常，诊断未知'
+    const hasBadRows = systemRows.value.some(row => !row.ok)
+    return hasBadRows ? '需检查' : '正常'
 })
 
-const statusCards = computed(() => [
-    { label: '渠道', value: 'Web', tone: 'cyan' },
-    { label: '角色', value: roleLabel.value, tone: 'pink' },
-    { label: '模块', value: String(workspaceCards.value.length).padStart(2, '0'), tone: 'silver' },
-    { label: '安全', value: 'RBAC', tone: 'cyan' },
-])
+const lastUpdatedText = computed(() => {
+    if (!lastUpdatedAt.value) return '尚未更新'
+    return lastUpdatedAt.value.toLocaleTimeString('zh-CN', {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+    })
+})
+
+const gitHeadShort = computed(() => {
+    const head = String(diagnostics.value?.version?.git_head || '').trim()
+    return head ? head.slice(0, 12) : '未知'
+})
+
+const loadDashboardStatus = async () => {
+    healthStatus.value = 'loading'
+    diagnosticsStatus.value = authStore.isOperator ? 'loading' : 'forbidden'
+    try {
+        await request.get('/health')
+        healthStatus.value = 'ok'
+    } catch {
+        healthStatus.value = 'error'
+    }
+
+    if (!authStore.isOperator) {
+        diagnostics.value = null
+        auditItems.value = []
+        lastUpdatedAt.value = new Date()
+        return
+    }
+
+    try {
+        const [diagResponse, auditResponse] = await Promise.all([getDiagnostics(), getAdminAudit()])
+        diagnostics.value = diagResponse.data
+        auditItems.value = auditResponse.data.items || []
+        diagnosticsStatus.value = 'ok'
+    } catch (error: any) {
+        diagnostics.value = null
+        auditItems.value = []
+        diagnosticsStatus.value = error?.response?.status === 403 ? 'forbidden' : 'error'
+    } finally {
+        lastUpdatedAt.value = new Date()
+    }
+}
+
+onMounted(loadDashboardStatus)
 </script>
 
 <template>
-  <div class="home-dashboard">
-    <section class="home-hero">
-      <div class="home-hero-copy">
-        <div class="home-ai-pulse" />
-        <div class="home-hero-kicker font-body">工作空间 <span>- Ikaros</span></div>
-        <p class="home-hero-text">
-          系统核心已激活。Sentinel 正在监控 {{ workspaceCards.length }} 个带有 RBAC 高级安全权限的活动模块。
-        </p>
-
-        <div class="home-status-grid">
-          <article
-            v-for="card in statusCards"
-            :key="card.label"
-            class="home-status-pill"
-            :class="`tone-${card.tone}`"
-          >
-            <div class="home-status-label">{{ card.label }}</div>
-            <div class="home-status-value font-display">{{ card.value }}</div>
-          </article>
-        </div>
+  <div class="dashboard-page">
+    <section class="welcome-panel">
+      <div>
+        <h1>欢迎回来，{{ roleLabel }}</h1>
+        <p>IKAROS Ethereal Sentinel 控制台已加载；系统状态来自实时健康检查与诊断接口。</p>
       </div>
-
-      <aside class="home-spotlight">
-        <div class="home-spotlight-head">
-          <div class="home-spotlight-kicker">重点操作</div>
-          <div class="home-spotlight-badge">+</div>
+      <div class="welcome-status">
+        <div class="status-pill" :class="{ warning: systemStatusText !== '正常' }">
+          <span />
+          系统状态：{{ systemStatusText }}
         </div>
+        <button type="button" @click="loadDashboardStatus">
+          最后更新：{{ lastUpdatedText }}
+          <RefreshCw class="h-4 w-4" :class="{ 'animate-spin': healthStatus === 'loading' || diagnosticsStatus === 'loading' }" />
+        </button>
+      </div>
+    </section>
 
-        <div class="home-spotlight-list">
+    <section class="stat-grid">
+      <RouterLink
+        v-for="card in statCards"
+        :key="card.label"
+        to="/admin/diagnostics"
+        class="stat-card"
+        :class="`tone-${card.tone}`"
+      >
+        <div class="stat-icon">
+          <component :is="card.icon" class="h-8 w-8" />
+        </div>
+        <div class="stat-copy">
+          <div class="stat-label">{{ card.label }} <span>({{ card.alias }})</span></div>
+          <div class="stat-value">{{ card.value }}</div>
+          <p>{{ card.detail }}</p>
+        </div>
+        <ArrowRight class="stat-arrow h-5 w-5" />
+      </RouterLink>
+    </section>
+
+    <section class="dashboard-grid">
+      <div class="workspace-panel">
+        <div class="section-heading">
+          <h2>工作空间 <span>/ Workspace</span></h2>
+        </div>
+        <div class="workspace-grid">
           <RouterLink
-            v-for="action in spotlightActions"
-            :key="action.to"
-            :to="action.to"
-            class="home-spotlight-item"
-            :class="`tone-${action.tone}`"
+            v-for="card in workspaceCards"
+            :key="card.to"
+            :to="card.to"
+            class="workspace-card"
           >
-            <div class="home-spotlight-item-left">
-              <div class="home-spotlight-icon">
-                <component :is="action.icon" class="h-5 w-5" />
-              </div>
-              <span>{{ action.title }}</span>
+            <div class="workspace-icon">
+              <component :is="card.icon" class="h-7 w-7" />
             </div>
-            <span class="home-spotlight-label">{{ action.label }}</span>
+            <div>
+              <h3>{{ card.title }}</h3>
+              <p>{{ card.description }}</p>
+            </div>
+            <ArrowRight class="workspace-arrow h-5 w-5" />
           </RouterLink>
         </div>
+      </div>
+
+      <aside class="side-stack">
+        <section class="side-panel activity-panel">
+          <div class="side-heading">
+            <h2>近期活动 <span>/ Recent Activity</span></h2>
+            <a href="#">查看全部</a>
+          </div>
+          <div class="activity-list">
+            <article v-for="item in recentActivities" :key="item.title" class="activity-item">
+              <span class="activity-dot" :class="item.tone" />
+              <div class="activity-icon">
+                <component :is="item.icon" class="h-4 w-4" />
+              </div>
+              <div class="activity-copy">
+                <h3>{{ item.title }}</h3>
+                <p>{{ item.detail }}</p>
+              </div>
+              <time>{{ item.time }}</time>
+            </article>
+            <div v-if="!recentActivities.length" class="empty-note">
+              {{ authStore.isOperator ? '暂无管理员审计记录。' : '当前账号无权限查看审计记录。' }}
+            </div>
+          </div>
+        </section>
+
+        <section class="side-panel status-panel">
+          <div class="side-heading">
+            <h2>系统状态 <span>/ System Status</span></h2>
+            <a href="#">查看详情</a>
+          </div>
+          <div class="status-grid">
+            <div class="status-list">
+              <div v-for="row in systemRows" :key="row.label" class="status-row">
+                <span :class="{ warning: !row.ok }">
+                  <CheckCircle2 v-if="row.ok" class="h-3.5 w-3.5" />
+                  <Zap v-else class="h-3.5 w-3.5" />
+                </span>
+                <strong>{{ row.label }}</strong>
+                <em>{{ row.value }}</em>
+              </div>
+            </div>
+            <div class="diagnostic-card">
+              <div class="load-title">诊断摘要</div>
+              <div class="diagnostic-metrics">
+                <div><span>平台</span><strong>{{ diagnostics ? `${enabledPlatforms.length}/${platformEntries.length}` : '未知' }}</strong></div>
+                <div><span>Memory</span><strong>{{ diagnostics?.memory?.provider || '未知' }}</strong></div>
+                <div><span>Git</span><strong>{{ gitHeadShort }}</strong></div>
+              </div>
+              <p>
+                {{ diagnosticsStatus === 'ok'
+                  ? '数据来自 /admin/diagnostics。'
+                  : diagnosticsStatus === 'forbidden'
+                    ? '当前账号没有诊断权限。'
+                    : '暂未获取诊断数据。' }}
+              </p>
+            </div>
+          </div>
+        </section>
       </aside>
-    </section>
-
-    <section class="home-section">
-      <div class="home-section-head">
-        <h2 class="home-section-title font-display">工作空间</h2>
-        <div class="home-section-rule" />
-      </div>
-
-      <div class="home-card-grid">
-        <RouterLink
-          v-for="card in workspaceCards"
-          :key="card.to"
-          :to="card.to"
-          class="home-card"
-          :class="`tone-${card.tone}`"
-        >
-          <div class="home-card-icon">
-            <component :is="card.icon" class="h-6 w-6" />
-          </div>
-
-          <div class="home-card-copy">
-            <h3 class="home-card-title font-display">{{ card.title }}</h3>
-            <p class="home-card-description">{{ card.description }}</p>
-          </div>
-        </RouterLink>
-      </div>
-    </section>
-
-    <section v-if="adminCards.length" class="home-section">
-      <div class="home-section-head">
-        <h2 class="home-section-title font-display">管理员</h2>
-        <div class="home-section-rule" />
-      </div>
-
-      <div class="home-card-grid admin-grid">
-        <RouterLink
-          v-for="card in adminCards"
-          :key="card.to"
-          :to="card.to"
-          class="home-card"
-          :class="`tone-${card.tone}`"
-        >
-          <div class="home-card-icon">
-            <component :is="card.icon" class="h-6 w-6" />
-          </div>
-
-          <div class="home-card-copy">
-            <h3 class="home-card-title font-display">{{ card.title }}</h3>
-            <p class="home-card-description">{{ card.description }}</p>
-          </div>
-        </RouterLink>
-      </div>
     </section>
   </div>
 </template>
 
 <style scoped>
-.home-dashboard {
-  --surface: #10131a;
-  --surface-low: #191c22;
-  --surface-high: #272a31;
-  --primary: #ffcbd5;
-  --secondary: #c6c6c6;
-  --tertiary: #66eaff;
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  gap: 4.25rem;
-  padding: 1.6rem 0 4rem;
-  color: #f5f7fb;
-}
-
-.home-dashboard::before {
-  content: '';
-  position: absolute;
-  top: 1rem;
-  left: 6%;
-  width: 30rem;
-  height: 16rem;
-  background: radial-gradient(circle, rgba(102, 234, 255, 0.14) 0%, rgba(255, 203, 213, 0.12) 36%, transparent 72%);
-  filter: blur(88px);
-  opacity: 0.56;
-  pointer-events: none;
-}
-
-.home-hero {
-  position: relative;
+.dashboard-page {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 330px;
-  gap: 2.5rem;
-  align-items: start;
+  gap: 24px;
 }
 
-.home-hero-copy {
-  position: relative;
-  padding-top: 2.75rem;
+.welcome-panel,
+.stat-card,
+.workspace-panel,
+.side-panel {
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: var(--shadow-card);
 }
 
-.home-ai-pulse {
-  position: absolute;
-  top: -1.2rem;
-  left: -3rem;
-  width: 28rem;
-  height: 16rem;
-  background: radial-gradient(circle, rgba(102, 234, 255, 0.18) 0%, rgba(255, 203, 213, 0.14) 35%, transparent 72%);
-  filter: blur(82px);
-  opacity: 0.58;
-  pointer-events: none;
-}
-
-.home-hero-kicker {
-  position: relative;
-  z-index: 1;
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: rgba(255, 255, 255, 0.88);
-}
-
-.home-hero-kicker span {
-  color: var(--primary);
-}
-
-.home-hero-text {
-  position: relative;
-  z-index: 1;
-  margin: 1.15rem 0 0;
-  max-width: 52rem;
-  font-size: 1.4rem;
-  line-height: 1.75;
-  color: rgba(255, 255, 255, 0.76);
-}
-
-.home-status-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1.35rem;
-  margin-top: 2.75rem;
-}
-
-.home-status-pill {
-  min-height: 7rem;
-  padding: 1.25rem 1.45rem;
-  border-radius: 2rem;
-  background: rgba(25, 28, 34, 0.92);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04), 0 24px 48px rgba(0, 0, 0, 0.18);
-}
-
-.home-status-label {
-  font-size: 0.82rem;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.46);
-}
-
-.home-status-value {
-  margin-top: 0.68rem;
-  font-size: 2.45rem;
-  line-height: 1;
-  font-weight: 700;
-}
-
-.home-spotlight {
-  padding: 1.7rem;
-  border-radius: 2.4rem;
-  background: rgba(25, 28, 34, 0.9);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04), 0 32px 80px rgba(0, 0, 0, 0.24);
-  backdrop-filter: blur(28px);
-}
-
-.home-spotlight-head {
+.welcome-panel {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 24px;
+  min-height: 128px;
+  padding: 28px 30px;
 }
 
-.home-spotlight-kicker {
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: var(--primary);
-}
-
-.home-spotlight-badge {
-  display: grid;
-  place-items: center;
-  width: 1.6rem;
-  height: 1.6rem;
-  border-radius: 999px;
-  background: rgba(255, 203, 213, 0.12);
-  color: var(--primary);
-  font-weight: 700;
-}
-
-.home-spotlight-list {
-  display: grid;
-  gap: 0.85rem;
-  margin-top: 1.15rem;
-}
-
-.home-spotlight-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1.1rem;
-  border-radius: 1.35rem;
-  background: rgba(16, 19, 26, 0.72);
-  color: #fff;
-  text-decoration: none;
-  transition: transform 0.2s ease, background-color 0.2s ease;
-}
-
-.home-spotlight-item:hover {
-  transform: translateY(-2px);
-  background: rgba(39, 42, 49, 0.96);
-}
-
-.home-spotlight-item-left {
-  display: flex;
-  align-items: center;
-  gap: 0.9rem;
-  font-size: 1.08rem;
-  font-weight: 700;
-}
-
-.home-spotlight-icon {
-  display: grid;
-  place-items: center;
-  width: 2.75rem;
-  height: 2.75rem;
-  border-radius: 1.1rem;
-  background: rgba(39, 42, 49, 0.95);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-}
-
-.home-spotlight-label {
-  color: rgba(255, 255, 255, 0.6);
-  font-size: 1rem;
-}
-
-.home-section {
-  display: flex;
-  flex-direction: column;
-  gap: 1.65rem;
-}
-
-.home-section-head {
-  display: flex;
-  align-items: center;
-  gap: 1.2rem;
-}
-
-.home-section-title {
+.welcome-panel h1 {
   margin: 0;
-  font-size: 3rem;
+  color: var(--text-strong);
+  font-size: 25px;
+  font-weight: 800;
+}
+
+.welcome-panel p {
+  margin: 16px 0 0;
+  color: var(--text-body);
+  font-size: 15px;
+}
+
+.welcome-status {
+  display: grid;
+  justify-items: end;
+  gap: 14px;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.status-pill,
+.welcome-status button {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: var(--text-body);
+  padding: 11px 16px;
+}
+
+.status-pill span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--success);
+}
+
+.status-pill.warning span {
+  background: var(--warning);
+}
+
+.welcome-status button {
+  background: transparent;
+  padding: 0;
+  color: var(--text-muted);
+}
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 22px;
+}
+
+.stat-card {
+  display: grid;
+  grid-template-columns: 76px minmax(0, 1fr) 20px;
+  align-items: center;
+  gap: 18px;
+  min-height: 132px;
+  padding: 22px 24px;
+  color: inherit;
+  text-decoration: none;
+}
+
+.stat-icon,
+.workspace-icon,
+.activity-icon {
+  display: grid;
+  place-items: center;
+  border-radius: 18px;
+  background: var(--brand-blue-soft);
+  color: var(--brand-blue);
+}
+
+.stat-icon {
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+}
+
+.tone-teal .stat-icon {
+  background: #e7f8f5;
+  color: #0f9f8f;
+}
+
+.tone-violet .stat-icon {
+  background: #f1e8ff;
+  color: #7c3aed;
+}
+
+.stat-label {
+  color: var(--text-body);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.stat-label span {
+  color: var(--text-subtle);
+  font-weight: 600;
+}
+
+.stat-value {
+  margin-top: 6px;
+  color: var(--text-strong);
+  font-size: 28px;
+  font-weight: 800;
   line-height: 1;
 }
 
-.home-section-rule {
-  flex: 1;
-  height: 1px;
-  background: linear-gradient(90deg, rgba(255, 203, 213, 0.32), rgba(255, 203, 213, 0));
-  opacity: 0.7;
+.stat-copy p {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 14px;
 }
 
-.home-card-grid {
+.stat-arrow,
+.workspace-arrow {
+  justify-self: end;
+  color: var(--text-subtle);
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 590px;
+  gap: 22px;
+}
+
+.workspace-panel {
+  padding: 22px 24px;
+}
+
+.section-heading h2,
+.side-heading h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 20px;
+  font-weight: 800;
+}
+
+.section-heading span,
+.side-heading span {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.workspace-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 1.5rem;
+  gap: 18px;
+  margin-top: 18px;
 }
 
-.home-card {
+.workspace-card {
   position: relative;
+  display: grid;
+  align-content: start;
+  gap: 22px;
+  min-height: 244px;
+  padding: 24px 22px;
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  background: #fff;
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.workspace-card:hover {
+  border-color: #9ec5ff;
+  box-shadow: 0 18px 38px rgba(47, 124, 246, 0.08);
+}
+
+.workspace-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+}
+
+.workspace-card h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 18px;
+  font-weight: 800;
+}
+
+.workspace-card p {
+  margin: 12px 0 0;
+  color: var(--text-muted);
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.workspace-arrow {
+  position: absolute;
+  right: 22px;
+  bottom: 22px;
+}
+
+.side-stack {
+  display: grid;
+  gap: 18px;
+}
+
+.side-panel {
+  padding: 20px 24px;
+}
+
+.side-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.side-heading a {
+  color: var(--brand-blue);
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.activity-list {
+  display: grid;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.activity-item {
+  display: grid;
+  grid-template-columns: 9px 36px minmax(0, 1fr) 70px;
+  align-items: center;
+  gap: 14px;
+}
+
+.activity-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--brand-blue);
+}
+
+.activity-dot.green {
+  background: var(--success);
+}
+
+.activity-dot.amber {
+  background: var(--warning);
+}
+
+.activity-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  color: #667085;
+  background: #f2f4f7;
+}
+
+.activity-copy h3 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.activity-copy p,
+.activity-item time {
+  margin: 4px 0 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.activity-item time {
+  margin: 0;
+  text-align: right;
+}
+
+.empty-note {
+  border: 1px dashed var(--panel-border);
+  border-radius: 10px;
+  background: #fbfdff;
+  color: var(--text-muted);
+  padding: 18px;
+  text-align: center;
+}
+
+.status-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 252px;
+  gap: 22px;
+  margin-top: 18px;
+}
+
+.status-list {
+  display: grid;
+  gap: 16px;
+}
+
+.status-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) minmax(120px, auto);
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.status-row span {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--success);
+  color: #fff;
+}
+
+.status-row span.warning {
+  background: var(--warning);
+}
+
+.status-row strong {
+  color: var(--text-strong);
+}
+
+.status-row em {
+  color: var(--text-muted);
+  font-style: normal;
+  text-align: right;
+}
+
+.load-card,
+.diagnostic-card {
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 14px 16px;
+}
+
+.load-title {
+  color: var(--text-strong);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.load-card svg {
+  width: 100%;
+  height: 82px;
+  margin-top: 8px;
+}
+
+.load-card path:first-child {
+  fill: none;
+  stroke: var(--brand-blue);
+  stroke-width: 3;
+}
+
+.load-card path:last-child {
+  fill: rgba(47, 124, 246, 0.10);
+  stroke: none;
+}
+
+.load-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.load-metrics div {
+  display: grid;
+  gap: 3px;
+}
+
+.load-metrics span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.load-metrics strong {
+  color: var(--brand-blue);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.diagnostic-metrics {
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.diagnostic-metrics div {
+  display: grid;
+  gap: 4px;
+}
+
+.diagnostic-metrics span {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.diagnostic-metrics strong {
   overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  min-height: 18.25rem;
-  padding: 1.9rem;
-  border-radius: 2rem;
-  background: rgba(25, 28, 34, 0.94);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04), 0 30px 60px rgba(0, 0, 0, 0.18);
-  color: #fff;
-  text-decoration: none;
-  transition: transform 0.24s ease, background-color 0.24s ease, box-shadow 0.24s ease;
+  color: var(--brand-blue);
+  font-size: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.home-card:hover {
-  transform: translateY(-4px);
-  background: rgba(31, 35, 43, 0.98);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05), 0 34px 68px rgba(0, 0, 0, 0.24);
+.diagnostic-card p {
+  margin: 14px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
 }
 
-.home-card::after {
-  content: '';
-  position: absolute;
-  inset: auto -20% -28% 38%;
-  height: 52%;
-  background: radial-gradient(circle, rgba(102, 234, 255, 0.08), transparent 68%);
-  pointer-events: none;
-}
+@media (max-width: 1600px) {
+  .dashboard-grid {
+    grid-template-columns: minmax(0, 1fr) 470px;
+  }
 
-.home-card-icon {
-  display: grid;
-  place-items: center;
-  width: 4rem;
-  height: 4rem;
-  border-radius: 1.35rem;
-  background: rgba(39, 42, 49, 0.96);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-}
-
-.home-card-copy {
-  margin-top: auto;
-}
-
-.home-card-title {
-  margin: 0;
-  font-size: 2.05rem;
-  line-height: 1.05;
-}
-
-.home-card-description {
-  margin: 0.95rem 0 0;
-  font-size: 1rem;
-  line-height: 1.6;
-  color: rgba(255, 255, 255, 0.62);
-}
-
-.tone-pink .home-status-value {
-  color: var(--primary);
-  text-shadow: 0 0 18px rgba(255, 203, 213, 0.16);
-}
-
-.tone-cyan .home-status-value {
-  color: var(--tertiary);
-  text-shadow: 0 0 18px rgba(102, 234, 255, 0.18);
-}
-
-.tone-silver .home-status-value {
-  color: #f2f4f7;
-}
-
-.tone-pink .home-spotlight-icon,
-.tone-pink .home-card-icon {
-  color: var(--primary);
-  background: rgba(255, 203, 213, 0.12);
-}
-
-.tone-cyan .home-spotlight-icon,
-.tone-cyan .home-card-icon {
-  color: var(--tertiary);
-  background: rgba(102, 234, 255, 0.12);
-}
-
-.tone-silver .home-spotlight-icon,
-.tone-silver .home-card-icon {
-  color: var(--secondary);
-  background: rgba(198, 198, 198, 0.1);
-}
-
-.tone-pink.home-card::after {
-  background: radial-gradient(circle, rgba(255, 203, 213, 0.12), transparent 68%);
-}
-
-.tone-cyan.home-card::after {
-  background: radial-gradient(circle, rgba(102, 234, 255, 0.12), transparent 68%);
-}
-
-.admin-grid .home-card {
-  min-height: 16.5rem;
-}
-
-@media (max-width: 1460px) {
-  .home-card-grid {
+  .workspace-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .status-grid {
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
 @media (max-width: 1180px) {
-  .home-hero {
+  .stat-grid,
+  .dashboard-grid {
     grid-template-columns: 1fr;
   }
 
-  .home-status-grid {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .home-card-grid {
+  .workspace-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
-@media (max-width: 760px) {
-  .home-dashboard {
-    gap: 3rem;
-    padding-bottom: 2rem;
-  }
-
-  .home-hero-copy {
-    padding-top: 1.5rem;
-  }
-
-  .home-hero-text {
-    font-size: 1.08rem;
-  }
-
-  .home-section-title {
-    font-size: 2.2rem;
-  }
-
-  .home-status-grid,
-  .home-card-grid {
+@media (max-width: 720px) {
+  .welcome-panel,
+  .stat-card {
     grid-template-columns: 1fr;
   }
 
-  .home-card {
-    min-height: 15rem;
+  .welcome-panel {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 22px;
+  }
+
+  .welcome-status {
+    justify-items: start;
+  }
+
+  .stat-grid,
+  .workspace-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-card {
+    min-height: 190px;
+  }
+
+  .activity-item {
+    grid-template-columns: 9px 36px minmax(0, 1fr);
+  }
+
+  .activity-item time {
+    grid-column: 3;
+    text-align: left;
   }
 }
 </style>

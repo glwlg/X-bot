@@ -137,7 +137,7 @@ scripts/
 - 指定 `wechat_account` 时，按别名或凭据 ID 选择对应公众号；未指定时优先使用默认项，没有默认项则回退第一条公众号凭据。
 - 发布到小红书前，不需要通过 `credential_manager` 配置发布凭据。当前小红书发布直接走本地 `opencli xiaohongshu publish`。
 - 小红书发布前置条件是：`opencli` 已安装且在 PATH 中，`opencli xiaohongshu publish --help` 可执行，并且 `opencli doctor --sessions` 显示 bridge 已连接且存在可用的小红书会话。
-- `wechat_official_account` 支持统一配置 `author=`；文章作者优先使用可用发布账户里的这个值，否则回退到文章自身的 `author`，图片水印自动派生为 `@author`。
+- `wechat_official_account` 支持统一配置 `author=`；文章作者优先使用可用发布账户里的这个值，否则回退到文章自身的 `author`。封面图默认生成无水印公众号手绘封面，正文配图默认生成无水印中文信息图。
 - 如果通过 `bash` 让 bot 执行 CLI，优先追加 `--raw-json`；CLI 会用 `tool_result=...` 输出最终结构化结果，避免把进度文本误当成 shell 错误。
 - 支持通过 `--stage` 参数单独执行某个阶段，中间产物通过 JSON 文件传递，支持断点续跑。
 

@@ -3,38 +3,43 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { RouterLink, RouterView, useRoute } from 'vue-router'
 import {
     Activity,
-    Bell,
     Cable,
-    CircleHelp,
+    ChevronsLeft,
     Gauge,
     HeartPulse,
+    Home,
     KeyRound,
     LayoutGrid,
     Link2,
     LogOut,
     Menu,
     MessageSquareText,
+    Moon,
     Puzzle,
     Radio,
-    Search,
     Settings2,
     ShieldUser,
+    Sun,
     X,
     Zap,
 } from 'lucide-vue-next'
 
 import { useAuthStore } from '@/stores/auth'
+import { useThemeStore } from '@/stores/theme'
 
 const route = useRoute()
 const authStore = useAuthStore()
+const themeStore = useThemeStore()
 
 const isSidebarOpen = ref(false)
 const isMobile = ref(false)
+const isSidebarCollapsed = ref(false)
 
 const checkMobile = () => {
     isMobile.value = window.innerWidth <= 1024
-    if (!isMobile.value) {
-        isSidebarOpen.value = true
+    isSidebarOpen.value = !isMobile.value
+    if (isMobile.value) {
+        isSidebarCollapsed.value = false
     }
 }
 
@@ -48,6 +53,12 @@ const closeSidebar = () => {
     }
 }
 
+const toggleSidebarCollapsed = () => {
+    if (!isMobile.value) {
+        isSidebarCollapsed.value = !isSidebarCollapsed.value
+    }
+}
+
 onMounted(() => {
     checkMobile()
     window.addEventListener('resize', checkMobile)
@@ -57,27 +68,16 @@ onUnmounted(() => {
     window.removeEventListener('resize', checkMobile)
 })
 
-const isHomeRoute = computed(() =>
-    route.path === '/home' || route.path.startsWith('/home/')
+const identityPrimary = computed(() =>
+    authStore.user?.display_name || authStore.user?.username || authStore.user?.email || '管理员'
 )
 
-const identityPrimary = computed(() =>
-    authStore.user?.display_name || authStore.user?.username || authStore.user?.email || '未登录'
-)
+const identityEmail = computed(() => authStore.user?.email || 'admin@example.com')
 
 const identityInitial = computed(() => {
     const source = String(identityPrimary.value).trim()
-    return source ? source.charAt(0).toUpperCase() : 'I'
+    return source ? source.charAt(0).toUpperCase() : 'A'
 })
-
-const showIdentityEmail = computed(() =>
-    Boolean(authStore.user?.email) && authStore.user?.email !== identityPrimary.value
-)
-
-const handleLogout = async () => {
-    await authStore.logout()
-    window.location.href = '/login'
-}
 
 const etherealPrimaryNav = computed(() => [
     { label: '控制面板', to: '/home', icon: LayoutGrid },
@@ -107,16 +107,14 @@ const etherealAdminNav = computed(() => {
     return items
 })
 
-const currentTitle = computed(() => String(route.meta.title || 'Ikaros'))
-
 const routeAlias = computed(() => {
     const aliasByName: Record<string, string> = {
-        Home: 'Home',
+        Home: 'Dashboard',
         Chat: 'Chat',
-        Bindings: 'Bindings',
-        Credentials: 'Credentials',
+        Bindings: 'Bind',
+        Credentials: 'Keys',
         ModuleRss: 'RSS',
-        ModuleScheduler: 'Scheduler',
+        ModuleScheduler: 'Scheduling',
         ModuleMonitor: 'Heartbeat',
         ModuleWatchlist: 'Stocks',
         AdminRuntime: 'Runtime',
@@ -129,7 +127,11 @@ const routeAlias = computed(() => {
     return aliasByName[String(route.name || '')] || 'Console'
 })
 
-const shellTrail = computed(() => `${currentTitle.value} / ${routeAlias.value}`)
+const currentTitle = computed(() => String(route.meta.title || '控制面板'))
+
+const shellRoot = computed(() =>
+    route.path.startsWith('/admin') ? '管理中心' : '控制面板'
+)
 
 const isNavActive = (to: string) =>
     route.path === to || route.path.startsWith(`${to}/`)
@@ -140,69 +142,100 @@ const handleNavClick = () => {
     }
 }
 
+const handleLogout = async () => {
+    await authStore.logout()
+    window.location.href = '/login'
+}
 </script>
 
 <template>
   <div class="ethereal-shell">
-    <!-- Mobile Header with Menu Button -->
     <header class="mobile-header">
-      <div class="mobile-brand">IKAROS</div>
-      <button type="button" class="mobile-menu-btn" @click="toggleSidebar" aria-label="Toggle menu">
-        <Menu v-if="!isSidebarOpen" class="h-6 w-6" />
-        <X v-else class="h-6 w-6" />
+      <button type="button" class="mobile-menu-btn" @click="toggleSidebar" aria-label="切换菜单">
+        <Menu v-if="!isSidebarOpen" class="h-5 w-5" />
+        <X v-else class="h-5 w-5" />
+      </button>
+      <div class="mobile-brand">
+        <span class="brand-cube">◆</span>
+        IKAROS
+      </div>
+      <button type="button" class="ethereal-icon-button compact" aria-label="切换主题" @click="themeStore.toggleTheme()">
+        <Sun v-if="themeStore.isDark" class="h-4 w-4" />
+        <Moon v-else class="h-4 w-4" />
       </button>
     </header>
 
-    <!-- Overlay for mobile -->
     <div
       v-if="isMobile && isSidebarOpen"
       class="sidebar-overlay"
       @click="closeSidebar"
     />
 
-    <aside class="ethereal-sidebar" :class="{ 'is-open': isSidebarOpen }">
+    <aside class="ethereal-sidebar" :class="{ 'is-open': isSidebarOpen, 'is-collapsed': isSidebarCollapsed }">
       <div class="ethereal-brand">
-        <div class="font-display ethereal-brand-mark">IKAROS</div>
-        <div class="ethereal-brand-subtitle">ETHEREAL SENTINEL V2.4</div>
+        <div class="ethereal-logo">
+          <div class="ethereal-logo-mark">
+            <span>◆</span>
+          </div>
+          <div>
+            <div class="ethereal-brand-mark">IKAROS</div>
+            <div class="ethereal-brand-subtitle">ETHEREAL SENTINEL</div>
+          </div>
+        </div>
+        <button
+          type="button"
+          class="sidebar-collapse"
+          :class="{ 'is-collapsed': isSidebarCollapsed }"
+          :aria-label="isSidebarCollapsed ? '展开菜单' : '收起菜单'"
+          :title="isSidebarCollapsed ? '展开菜单' : '收起菜单'"
+          @click="toggleSidebarCollapsed"
+        >
+          <ChevronsLeft class="h-4 w-4" />
+        </button>
       </div>
 
-      <div class="ethereal-nav-block">
-        <div class="ethereal-nav-label">工作空间</div>
-        <RouterLink
-          v-for="item in etherealPrimaryNav"
-          :key="item.to"
-          :to="item.to"
-          class="ethereal-nav-item"
-          :class="{ 'is-active': isNavActive(item.to) }"
-          @click="handleNavClick"
-        >
-          <component :is="item.icon" class="ethereal-nav-icon" />
-          <span>{{ item.label }}</span>
-        </RouterLink>
-      </div>
+      <nav class="ethereal-nav">
+        <div class="ethereal-nav-block">
+          <div class="ethereal-nav-label">工作空间</div>
+          <RouterLink
+            v-for="item in etherealPrimaryNav"
+            :key="item.to"
+            :to="item.to"
+            class="ethereal-nav-item"
+            :class="{ 'is-active': isNavActive(item.to) }"
+            @click="handleNavClick"
+          >
+            <component :is="item.icon" class="ethereal-nav-icon" />
+            <span>{{ item.label }}</span>
+          </RouterLink>
+        </div>
 
-      <div v-if="etherealAdminNav.length" class="ethereal-nav-block">
-        <div class="ethereal-nav-label">管理员</div>
-        <RouterLink
-          v-for="item in etherealAdminNav"
-          :key="item.to"
-          :to="item.to"
-          class="ethereal-nav-item"
-          :class="{ 'is-active': isNavActive(item.to) }"
-          @click="handleNavClick"
-        >
-          <component :is="item.icon" class="ethereal-nav-icon" />
-          <span>{{ item.label }}</span>
-        </RouterLink>
-      </div>
+        <div v-if="etherealAdminNav.length" class="ethereal-nav-block">
+          <div class="ethereal-nav-label">管理员</div>
+          <RouterLink
+            v-for="item in etherealAdminNav"
+            :key="item.to"
+            :to="item.to"
+            class="ethereal-nav-item"
+            :class="{ 'is-active': isNavActive(item.to) }"
+            @click="handleNavClick"
+          >
+            <component :is="item.icon" class="ethereal-nav-icon" />
+            <span>{{ item.label }}</span>
+          </RouterLink>
+        </div>
+      </nav>
 
       <div class="ethereal-sidebar-footer">
         <div class="ethereal-identity">
           <div class="ethereal-avatar">{{ identityInitial }}</div>
           <div class="ethereal-identity-copy">
             <div class="ethereal-identity-name">{{ identityPrimary }}</div>
-            <div v-if="showIdentityEmail" class="ethereal-identity-email">{{ authStore.user?.email }}</div>
-            <div class="ethereal-identity-role">{{ authStore.user?.role || 'viewer' }}</div>
+            <div class="ethereal-identity-email">{{ identityEmail }}</div>
+            <div class="ethereal-identity-role">
+              <span />
+              在线
+            </div>
           </div>
         </div>
 
@@ -213,170 +246,271 @@ const handleNavClick = () => {
       </div>
     </aside>
 
-    <section class="ethereal-main-shell" :class="{ 'sidebar-open': isSidebarOpen && isMobile }">
+    <section class="ethereal-main-shell">
       <header class="ethereal-topbar">
         <div class="ethereal-trail">
-          <span class="ethereal-trail-label">指挥中心</span>
-          <span class="ethereal-trail-divider" />
-          <span class="ethereal-trail-path">{{ shellTrail }}</span>
+          <Home class="ethereal-trail-home h-4 w-4" />
+          <span>{{ shellRoot }}</span>
+          <span class="ethereal-trail-divider">/</span>
+          <strong>{{ currentTitle }}</strong>
+          <span class="ethereal-trail-divider">/</span>
+          <span>{{ routeAlias }}</span>
         </div>
 
         <div class="ethereal-topbar-actions">
-          <button type="button" class="ethereal-icon-button" aria-label="通知">
-            <Bell class="h-4 w-4" />
-          </button>
-          <button type="button" class="ethereal-icon-button" aria-label="加速">
-            <Zap class="h-4 w-4" />
-          </button>
-          <button type="button" class="ethereal-icon-button" aria-label="帮助">
-            <CircleHelp class="h-4 w-4" />
-          </button>
-
-          <label class="ethereal-search">
-            <Search class="h-4 w-4" />
-            <input type="search" placeholder="全局扫描..." />
-          </label>
+          <div class="ethereal-top-avatar">{{ identityInitial }}</div>
         </div>
       </header>
 
-      <main class="ethereal-main-scroll" :class="{ 'is-home-route': isHomeRoute }">
-        <div
-          class="ethereal-view-slot"
-          :class="isHomeRoute ? 'ethereal-home-slot' : 'ethereal-page-frame ethereal-page-scope'"
-        >
+      <main class="ethereal-main-scroll">
+        <div class="ethereal-view-slot">
           <RouterView />
         </div>
       </main>
+
+      <footer class="ethereal-footer">
+        <span>© 2025 IKAROS Ethereal Sentinel. 保留所有权利。</span>
+      </footer>
     </section>
   </div>
 </template>
 
 <style scoped>
 .ethereal-shell {
-  position: relative;
   display: flex;
   height: 100vh;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 18% 78%, rgba(102, 234, 255, 0.08), transparent 24%),
-    radial-gradient(circle at 78% 18%, rgba(255, 203, 213, 0.08), transparent 20%),
-    linear-gradient(180deg, #10131a 0%, #0f141c 100%);
-  color: #f5f7fb;
-}
-
-.ethereal-shell::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(135deg, rgba(255, 203, 213, 0.02), transparent 35%, rgba(102, 234, 255, 0.02));
-  pointer-events: none;
+  background: #f7f9fc;
+  color: #0f172a;
 }
 
 .ethereal-sidebar {
   position: relative;
-  z-index: 1;
-  width: 320px;
+  width: 296px;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 2.25rem;
-  padding: 2rem 1.2rem 1.5rem;
-  background: rgba(16, 19, 26, 0.78);
-  backdrop-filter: blur(28px);
-  box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.04);
+  padding: 24px 16px 22px;
+  background: rgba(255, 255, 255, 0.92);
+  border-right: 1px solid #e6ebf2;
+  box-shadow: 8px 0 32px rgba(15, 23, 42, 0.03);
   overflow-y: auto;
+  transition: width 0.22s ease, padding 0.22s ease;
+}
+
+.ethereal-sidebar.is-collapsed {
+  width: 86px;
+  padding-inline: 12px;
+  overflow-x: hidden;
 }
 
 .ethereal-brand {
-  padding: 0.5rem 0.6rem 0 0.7rem;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 72px;
+  padding: 0 8px;
+}
+
+.ethereal-sidebar.is-collapsed .ethereal-brand {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  min-height: 90px;
+  padding: 0;
+}
+
+.ethereal-logo {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ethereal-sidebar.is-collapsed .ethereal-logo {
+  justify-content: center;
+}
+
+.ethereal-logo-mark {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #2877ff, #5ca2ff);
+  color: white;
+  box-shadow: 0 14px 28px rgba(38, 113, 255, 0.22);
+}
+
+.ethereal-logo-mark span,
+.brand-cube {
+  font-size: 14px;
+  line-height: 1;
 }
 
 .ethereal-brand-mark {
-  font-size: 2.35rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: #ffcbd5;
+  font-size: 27px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: 0;
+  color: #07111f;
 }
 
 .ethereal-brand-subtitle {
-  margin-top: 0.55rem;
-  font-size: 0.82rem;
-  letter-spacing: 0.34em;
-  color: rgba(255, 255, 255, 0.72);
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  color: #8a97aa;
+}
+
+.ethereal-sidebar.is-collapsed .ethereal-logo > div:last-child,
+.ethereal-sidebar.is-collapsed .ethereal-nav-label,
+.ethereal-sidebar.is-collapsed .ethereal-nav-item span,
+.ethereal-sidebar.is-collapsed .ethereal-identity-copy,
+.ethereal-sidebar.is-collapsed .ethereal-logout {
+  display: none;
+}
+
+.sidebar-collapse {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  background: transparent;
+  color: #667085;
+  cursor: pointer;
+}
+
+.sidebar-collapse.is-collapsed {
+  position: static;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #e0e7f0;
+  border-radius: 8px;
+  background: #ffffff;
+  box-shadow: 0 6px 14px rgba(15, 23, 42, 0.06);
+}
+
+.sidebar-collapse.is-collapsed svg {
+  transform: rotate(180deg);
+}
+
+.ethereal-nav {
+  display: grid;
+  gap: 34px;
+  padding-top: 18px;
+}
+
+.ethereal-sidebar.is-collapsed .ethereal-nav {
+  gap: 20px;
+  padding-top: 16px;
 }
 
 .ethereal-nav-block {
   display: grid;
-  gap: 0.6rem;
-  padding: 0 0.35rem;
+  gap: 9px;
 }
 
 .ethereal-nav-label {
-  margin-bottom: 0.4rem;
-  font-size: 0.74rem;
-  letter-spacing: 0.24em;
-  text-transform: uppercase;
-  color: rgba(255, 255, 255, 0.42);
+  padding: 0 14px 4px;
+  font-size: 13px;
+  color: #98a2b3;
 }
 
 .ethereal-nav-item {
   display: flex;
   align-items: center;
-  gap: 0.95rem;
-  min-height: 3.5rem;
-  padding: 0 1.05rem;
-  border-radius: 1.45rem;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.74);
+  gap: 14px;
+  min-height: 48px;
+  padding: 0 16px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  color: #344054;
+  font-size: 15px;
+  font-weight: 600;
   text-decoration: none;
-  transition: transform 0.2s ease, background-color 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+  transition: background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+
+.ethereal-sidebar.is-collapsed .ethereal-nav-item {
+  justify-content: center;
+  gap: 0;
+  min-height: 44px;
+  padding: 0;
 }
 
 .ethereal-nav-item:hover {
-  transform: translateX(2px);
-  background: rgba(39, 42, 49, 0.82);
-  color: #fff;
+  background: #f4f8ff;
+  color: #156df5;
 }
 
 .ethereal-nav-item.is-active {
-  background: linear-gradient(135deg, rgba(255, 203, 213, 0.18), rgba(102, 234, 255, 0.08));
-  color: #fff;
-  box-shadow: inset 0 0 0 1px rgba(255, 203, 213, 0.12), 0 24px 48px rgba(0, 0, 0, 0.18);
+  border-color: #2f7cf6;
+  background: linear-gradient(180deg, #f7fbff 0%, #eef6ff 100%);
+  color: #1469f2;
+  box-shadow: 0 8px 18px rgba(40, 119, 255, 0.09);
 }
 
 .ethereal-nav-icon {
-  width: 1.1rem;
-  height: 1.1rem;
-  color: currentColor;
-  opacity: 0.92;
+  width: 17px;
+  height: 17px;
+}
+
+.ethereal-sidebar.is-collapsed .ethereal-nav-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .ethereal-sidebar-footer {
   margin-top: auto;
   display: grid;
-  gap: 1rem;
-  padding: 0.65rem 0.35rem 0;
+  gap: 18px;
+  padding: 22px 4px 0;
+}
+
+.ethereal-sidebar.is-collapsed .ethereal-sidebar-footer {
+  justify-items: center;
+  padding-inline: 0;
 }
 
 .ethereal-identity {
-  display: flex;
+  display: grid;
+  grid-template-columns: 42px minmax(0, 1fr);
   align-items: center;
-  gap: 1rem;
-  padding: 1rem 1rem 1rem 0.95rem;
-  border-radius: 1.7rem;
-  background: rgba(32, 36, 44, 0.92);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e6ebf2;
+  border-radius: 14px;
+  background: #fbfdff;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.04);
+}
+
+.ethereal-sidebar.is-collapsed .ethereal-identity {
+  grid-template-columns: 42px;
+  padding: 8px;
+}
+
+.ethereal-avatar,
+.ethereal-top-avatar {
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: #e8f1ff;
+  color: #1f6fff;
+  font-weight: 800;
 }
 
 .ethereal-avatar {
-  display: grid;
-  place-items: center;
-  width: 3.35rem;
-  height: 3.35rem;
-  border-radius: 999px;
-  background: linear-gradient(135deg, rgba(255, 203, 213, 0.88), rgba(255, 157, 173, 0.78));
-  color: #10131a;
-  font-weight: 800;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+}
+
+.ethereal-top-avatar {
+  width: 40px;
+  height: 40px;
 }
 
 .ethereal-identity-copy {
@@ -384,396 +518,315 @@ const handleNavClick = () => {
 }
 
 .ethereal-identity-name {
-  font-size: 1.06rem;
+  font-size: 14px;
   font-weight: 700;
-  color: #f8f8fb;
+  color: #101828;
 }
 
-.ethereal-identity-email,
-.ethereal-identity-role {
-  margin-top: 0.2rem;
-  font-size: 0.84rem;
-  color: rgba(255, 255, 255, 0.64);
+.ethereal-identity-email {
+  margin-top: 2px;
   overflow: hidden;
+  color: #667085;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.ethereal-identity-role {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  color: #22c55e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.ethereal-identity-role span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #22c55e;
 }
 
 .ethereal-logout {
   display: inline-flex;
   align-items: center;
-  gap: 0.7rem;
+  gap: 10px;
   width: max-content;
-  padding: 0.2rem 0.2rem 0.2rem 0.35rem;
+  border: 0;
   background: transparent;
-  color: rgba(255, 255, 255, 0.78);
-  border: none;
-  font: inherit;
+  color: #344054;
+  font-size: 14px;
   cursor: pointer;
 }
 
-.ethereal-logout:hover {
-  color: #fff;
-}
-
 .ethereal-main-shell {
-  position: relative;
-  z-index: 1;
-  flex: 1;
+  display: flex;
   min-width: 0;
   min-height: 0;
-  height: 100vh;
-  display: flex;
+  flex: 1;
   flex-direction: column;
-  padding: 1.2rem 1.6rem 1.35rem;
-  overflow: hidden;
+  background: #f7f9fc;
 }
 
 .ethereal-topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1.25rem;
-  padding: 0.15rem 0.35rem 1.1rem;
+  gap: 22px;
+  min-height: 78px;
+  padding: 0 32px;
+  border-bottom: 1px solid #e6ebf2;
+  background: rgba(255, 255, 255, 0.86);
+  backdrop-filter: blur(18px);
 }
 
 .ethereal-trail {
   display: flex;
   align-items: center;
-  gap: 1rem;
+  gap: 12px;
   min-width: 0;
+  color: #475467;
+  font-size: 17px;
+  white-space: nowrap;
 }
 
-.ethereal-trail-label {
-  font-size: 0.95rem;
-  font-weight: 700;
-  letter-spacing: 0.16em;
-  color: #66eaff;
-  text-transform: uppercase;
+.ethereal-trail-home {
+  color: #667085;
+}
+
+.ethereal-trail strong {
+  color: #101828;
+  font-size: 18px;
 }
 
 .ethereal-trail-divider {
-  width: 1px;
-  height: 1.5rem;
-  background: linear-gradient(180deg, transparent, rgba(255, 255, 255, 0.26), transparent);
-}
-
-.ethereal-trail-path {
-  font-size: 1.55rem;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.88);
+  color: #98a2b3;
 }
 
 .ethereal-topbar-actions {
   display: flex;
   align-items: center;
-  gap: 0.85rem;
+  gap: 0;
 }
 
 .ethereal-icon-button {
   display: grid;
   place-items: center;
-  width: 2.75rem;
-  height: 2.75rem;
-  border-radius: 999px;
-  background: rgba(25, 28, 34, 0.92);
-  color: rgba(255, 203, 213, 0.86);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-  border: none;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: #344054;
   cursor: pointer;
-  transition: transform 0.2s ease, background-color 0.2s ease, color 0.2s ease;
+}
+
+.ethereal-icon-button.compact {
+  width: 34px;
+  height: 34px;
 }
 
 .ethereal-icon-button:hover {
-  transform: translateY(-1px);
-  background: rgba(39, 42, 49, 0.96);
-  color: #fff;
-}
-
-.ethereal-search {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  min-width: 19rem;
-  height: 3rem;
-  padding: 0 1rem;
-  border-radius: 999px;
-  background: rgba(25, 28, 34, 0.92);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.48);
-}
-
-.ethereal-search input {
-  width: 100%;
-  background: transparent;
-  border: none;
-  outline: none;
-  color: rgba(255, 255, 255, 0.88);
-  font: inherit;
-}
-
-.ethereal-search input::placeholder {
-  color: rgba(255, 255, 255, 0.42);
+  background: #f2f7ff;
+  color: #1469f2;
 }
 
 .ethereal-main-scroll {
-  position: relative;
   min-height: 0;
   flex: 1;
-  overflow-y: auto;
-  overflow-x: hidden;
-  padding: 0 0.35rem 2.75rem;
-  scrollbar-gutter: stable both-edges;
-  overscroll-behavior: contain;
-}
-
-.ethereal-main-scroll.is-home-route {
-  overflow-y: scroll;
-}
-
-.ethereal-main-scroll::-webkit-scrollbar {
-  width: 10px;
-}
-
-.ethereal-main-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.ethereal-main-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
-  border-radius: 999px;
-}
-
-.ethereal-main-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.22);
+  overflow: auto;
+  padding: 24px 28px;
 }
 
 .ethereal-view-slot {
   min-height: 100%;
 }
 
-.ethereal-home-slot {
-  min-height: 100%;
-}
-
-.ethereal-page-frame {
-  min-height: 100%;
-  border-radius: 2.15rem;
-  background:
-    linear-gradient(180deg, rgba(16, 19, 26, 0.62), rgba(16, 19, 26, 0.5)),
-    radial-gradient(circle at top left, rgba(255, 203, 213, 0.05), transparent 34%);
-  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04), 0 32px 72px rgba(0, 0, 0, 0.14);
-  overflow: hidden;
-}
-
-/* Mobile Header - only visible on mobile */
-.mobile-header {
-  display: none;
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 100;
-  height: 56px;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 1rem;
-  background: rgba(16, 19, 26, 0.95);
-  backdrop-filter: blur(20px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.mobile-brand {
-  font-size: 1.25rem;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  color: #ffcbd5;
-}
-
-.mobile-menu-btn {
+.ethereal-footer {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border-radius: 10px;
-  background: rgba(255, 255, 255, 0.08);
-  border: none;
-  color: #f5f7fb;
-  cursor: pointer;
-  transition: background-color 0.2s;
+  justify-content: flex-start;
+  min-height: 52px;
+  padding: 0 32px;
+  border-top: 1px solid #e6ebf2;
+  background: #ffffff;
+  color: #7d8da3;
+  font-size: 13px;
 }
 
-.mobile-menu-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-/* Sidebar overlay for mobile */
+.mobile-header,
 .sidebar-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.5);
-  z-index: 40;
-  backdrop-filter: blur(4px);
+  display: none;
 }
 
-/* Mobile responsive styles */
+@media (max-width: 1280px) {
+  .ethereal-sidebar {
+    width: 270px;
+  }
+
+  .ethereal-sidebar.is-collapsed {
+    width: 86px;
+  }
+}
+
 @media (max-width: 1024px) {
   .mobile-header {
+    position: fixed;
+    z-index: 70;
+    inset: 0 0 auto;
     display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 58px;
+    padding: 0 14px;
+    border-bottom: 1px solid #e6ebf2;
+    background: rgba(255, 255, 255, 0.94);
+    backdrop-filter: blur(18px);
+  }
+
+  .mobile-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 800;
+    letter-spacing: 0;
+  }
+
+  .brand-cube {
+    display: grid;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 8px;
+    background: #2877ff;
+    color: #fff;
+  }
+
+  .mobile-menu-btn {
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 36px;
+    border: 1px solid #e0e7f0;
+    border-radius: 10px;
+    background: #fff;
+    color: #344054;
+  }
+
+  .sidebar-overlay {
+    position: fixed;
+    z-index: 50;
+    inset: 58px 0 0;
+    display: block;
+    background: rgba(15, 23, 42, 0.28);
+    backdrop-filter: blur(4px);
   }
 
   .ethereal-shell {
-    flex-direction: column;
-    height: 100vh;
-    overflow: hidden;
-    padding-top: 56px;
+    padding-top: 58px;
   }
 
   .ethereal-sidebar {
     position: fixed;
-    top: 56px;
-    left: 0;
+    z-index: 60;
+    top: 58px;
     bottom: 0;
-    width: 280px;
-    z-index: 50;
+    left: 0;
+    width: 284px;
     transform: translateX(-100%);
-    transition: transform 0.3s ease;
-    padding: 1.5rem 1rem 1rem;
-    gap: 1.5rem;
+    transition: transform 0.24s ease;
+  }
+
+  .ethereal-sidebar.is-collapsed {
+    width: 284px;
+    padding: 24px 16px 22px;
+  }
+
+  .ethereal-sidebar.is-collapsed .ethereal-brand {
+    justify-content: space-between;
+    padding: 0 8px;
+  }
+
+  .ethereal-sidebar.is-collapsed .ethereal-logo > div:last-child,
+  .ethereal-sidebar.is-collapsed .ethereal-nav-label,
+  .ethereal-sidebar.is-collapsed .ethereal-nav-item span,
+  .ethereal-sidebar.is-collapsed .ethereal-identity-copy,
+  .ethereal-sidebar.is-collapsed .ethereal-logout {
+    display: block;
+  }
+
+  .ethereal-sidebar.is-collapsed .ethereal-nav-item {
+    justify-content: flex-start;
+    gap: 14px;
+    min-height: 48px;
+    padding: 0 16px;
+  }
+
+  .ethereal-sidebar.is-collapsed .ethereal-identity {
+    grid-template-columns: 42px minmax(0, 1fr);
+    padding: 14px;
+  }
+
+  .ethereal-sidebar.is-collapsed .sidebar-collapse {
+    position: static;
+  }
+
+  .ethereal-sidebar.is-collapsed .sidebar-collapse svg {
+    transform: none;
   }
 
   .ethereal-sidebar.is-open {
     transform: translateX(0);
   }
 
-  .ethereal-brand {
-    padding: 0.25rem 0.5rem 0;
-  }
-
-  .ethereal-brand-mark {
-    font-size: 1.75rem;
-  }
-
-  .ethereal-nav-item {
-    min-height: 3rem;
-    padding: 0 0.875rem;
-    border-radius: 1rem;
-  }
-
-  .ethereal-avatar {
-    width: 2.75rem;
-    height: 2.75rem;
-  }
-
-  .ethereal-identity-name {
-    font-size: 0.95rem;
-  }
-
-  .ethereal-identity-email,
-  .ethereal-identity-role {
-    font-size: 0.75rem;
-  }
-
-  .ethereal-main-shell {
-    height: calc(100vh - 56px);
-    padding: 0.75rem;
-    overflow: hidden;
-    display: flex;
-    flex-direction: column;
-  }
-
   .ethereal-topbar {
-    padding: 0.5rem 0.25rem 0.75rem;
-    flex-direction: row;
-    align-items: center;
-  }
-
-  .ethereal-trail-path {
-    font-size: 1.1rem;
-  }
-
-  .ethereal-trail-label {
-    font-size: 0.75rem;
+    min-height: 64px;
+    padding: 0 18px;
   }
 
   .ethereal-topbar-actions {
-    gap: 0.5rem;
-  }
-
-  .ethereal-icon-button {
-    width: 2.25rem;
-    height: 2.25rem;
-  }
-
-  .ethereal-search {
-    display: none;
-  }
-
-  .ethereal-main-scroll {
-    padding: 0 0.25rem 1rem;
-  }
-
-  .ethereal-page-frame {
-    border-radius: 1.25rem;
-  }
-}
-
-/* Tablet responsive styles */
-@media (max-width: 1200px) and (min-width: 1025px) {
-  .ethereal-shell {
-    flex-direction: row;
-  }
-
-  .ethereal-sidebar {
-    width: 260px;
-    padding: 1.5rem 1rem;
-  }
-
-  .ethereal-main-shell {
-    padding: 1rem;
-  }
-
-  .ethereal-search {
-    min-width: 12rem;
-  }
-}
-
-@media (max-width: 780px) {
-  .ethereal-brand-mark {
-    font-size: 1.9rem;
-  }
-
-  .ethereal-trail-path {
-    font-size: 1.2rem;
-  }
-
-  .ethereal-main-shell {
-    padding: 0.75rem;
-  }
-}
-
-@media (max-width: 480px) {
-  .ethereal-topbar {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.75rem;
+    gap: 8px;
   }
 
   .ethereal-trail {
-    gap: 0.5rem;
+    font-size: 14px;
   }
 
-  .ethereal-trail-divider {
-    height: 1.25rem;
+  .ethereal-trail strong {
+    font-size: 15px;
   }
 
-  .ethereal-trail-path {
-    font-size: 1rem;
+  .ethereal-main-scroll {
+    padding: 16px;
   }
 
-  .ethereal-page-frame {
-    border-radius: 1rem;
+  .ethereal-footer {
+    display: none;
+  }
+}
+
+@media (max-width: 640px) {
+  .ethereal-top-avatar {
+    display: none;
+  }
+
+  .ethereal-topbar {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 16px;
+  }
+
+  .ethereal-trail {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .ethereal-main-scroll {
+    padding: 12px;
   }
 }
 </style>

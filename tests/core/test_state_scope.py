@@ -9,7 +9,9 @@ from core.state_paths import all_user_ids, shared_user_path, system_path, user_p
 from extension.skills.builtin.scheduler_manager.scripts.store import (
     add_scheduled_task,
     get_all_active_tasks,
+    get_all_scheduled_tasks,
     update_scheduled_task,
+    update_task_status,
 )
 from extension.skills.learned.reminder.scripts.store import (
     add_reminder,
@@ -69,6 +71,23 @@ async def test_state_store_rows_are_shared_across_runtime_user_ids(tmp_path, mon
         "alpha"
     ]
     assert [row["stock_code"] for row in await get_user_watchlist("2002")] == ["AAA"]
+
+
+@pytest.mark.asyncio
+async def test_paused_scheduled_tasks_remain_listable(tmp_path, monkeypatch):
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+
+    paused_id = await add_scheduled_task("0 8 * * *", "paused task", user_id="1001")
+    active_id = await add_scheduled_task("0 9 * * *", "active task", user_id="1001")
+
+    assert await update_task_status(paused_id, False, user_id="1001") is True
+
+    all_rows = await get_all_scheduled_tasks("2002")
+    assert [(row["id"], row["instruction"], row["is_active"]) for row in all_rows] == [
+        (paused_id, "paused task", False),
+        (active_id, "active task", True),
+    ]
+    assert [row["id"] for row in await get_all_active_tasks("2002")] == [active_id]
 
 
 @pytest.mark.asyncio

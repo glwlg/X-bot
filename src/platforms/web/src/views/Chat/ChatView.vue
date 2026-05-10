@@ -11,7 +11,9 @@ import {
     PanelLeftOpen,
     Plus,
     RefreshCw,
+    Search,
     SendHorizonal,
+    SquarePen,
     Volume2,
     X
 } from 'lucide-vue-next'
@@ -549,7 +551,13 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="chat-workbench grid h-full min-h-0 gap-0 md:grid-cols-[300px_minmax(0,1fr)]">
+  <div class="chat-page">
+    <section class="chat-title-panel">
+      <h1>对话工作台 / Chat</h1>
+      <p>与 IKAROS AI 助手对话，获取平台能力支持</p>
+    </section>
+
+    <div class="chat-workbench grid h-full min-h-0 gap-0 md:grid-cols-[330px_minmax(0,1fr)] xl:grid-cols-[340px_minmax(0,1fr)_300px]">
     <!-- Mobile overlay -->
     <div
       v-if="showSessions"
@@ -568,21 +576,24 @@ onBeforeUnmount(() => {
     >
       <div class="flex items-center justify-between">
         <div>
-          <div class="text-xs uppercase tracking-[0.24em] text-slate-400">Sessions</div>
-          <div class="mt-1 text-lg font-semibold text-slate-900">Web Chat</div>
+          <div class="text-lg font-semibold text-slate-900">会话列表</div>
         </div>
-        <button class="rounded-2xl border border-slate-200 bg-white p-2 text-slate-700 transition hover:bg-slate-100" @click="createNewSession">
+        <button class="chat-primary-small" @click="createNewSession">
           <Plus class="h-4 w-4" />
+          新建会话
         </button>
       </div>
 
-      <div class="mt-4">
+      <div class="mt-4 grid grid-cols-[minmax(0,1fr)_44px] gap-2">
+        <label class="chat-session-search">
+          <Search class="h-4 w-4" />
+          <input type="search" placeholder="搜索会话标题或内容">
+        </label>
         <button
-          class="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 transition hover:bg-slate-100"
+          class="chat-icon-only"
           @click="ensureInitialSession"
         >
           <RefreshCw class="h-4 w-4" />
-          刷新会话
         </button>
       </div>
 
@@ -597,7 +608,7 @@ onBeforeUnmount(() => {
           :key="session.id"
           class="w-full rounded-[24px] border px-4 py-4 text-left transition"
           :class="session.id === currentSessionId
-            ? 'border-cyan-300 bg-cyan-50 shadow-sm'
+            ? 'border-blue-400 bg-blue-50 shadow-sm'
             : 'border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50'"
           @click="openSession(session.id)"
         >
@@ -646,7 +657,7 @@ onBeforeUnmount(() => {
             {{ statusBadge }}
           </div>
           <div class="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-xs text-slate-500">
-            <MessageSquareText class="h-4 w-4 text-cyan-600" />
+            <MessageSquareText class="h-4 w-4 text-blue-600" />
             输入 / 使用命令
           </div>
         </div>
@@ -665,7 +676,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div v-else class="space-y-4" style="height: 60vh;overflow-y: scroll;">
+        <div v-else class="space-y-5">
           <div
             v-for="message in messages"
             :key="message.id"
@@ -673,9 +684,9 @@ onBeforeUnmount(() => {
             :class="message.role === 'user' ? 'justify-end' : 'justify-start'"
           >
             <div
-              class="max-w-[860px] rounded-[28px] border px-4 py-3 shadow-sm"
+              class="message-bubble max-w-[860px] rounded-[28px] border px-4 py-3 shadow-sm"
               :class="message.role === 'user'
-                ? 'border-cyan-200 bg-cyan-50 text-slate-900'
+                ? 'border-blue-200 bg-blue-50 text-slate-900'
                 : 'border-slate-200 bg-white text-slate-900'"
             >
               <div class="mb-2 flex items-center gap-2 text-[11px] uppercase tracking-[0.2em] text-slate-400">
@@ -792,7 +803,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
 
-        <div class="rounded-[28px] border border-slate-200 bg-slate-50 p-3">
+        <div class="composer-box rounded-[28px] border border-slate-200 bg-slate-50 p-3">
           <textarea
             v-model="composer"
             class="min-h-[110px] w-full resize-none bg-transparent px-2 py-2 text-sm leading-7 text-slate-800 outline-none"
@@ -817,7 +828,7 @@ onBeforeUnmount(() => {
             </div>
 
             <button
-              class="inline-flex items-center gap-2 rounded-2xl bg-slate-950 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-slate-800 disabled:opacity-60"
+              class="inline-flex items-center gap-2 rounded-2xl bg-blue-500 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-blue-600 disabled:opacity-60"
               :disabled="sending || !composer.trim()"
               @click="sendText"
             >
@@ -829,10 +840,90 @@ onBeforeUnmount(() => {
         </div>
       </footer>
     </section>
+
+    <aside class="chat-info-panel hidden xl:flex">
+      <section class="info-section">
+        <div class="info-heading">
+          <h2>会话信息</h2>
+          <button type="button">⌃</button>
+        </div>
+        <dl class="info-list">
+          <div>
+            <dt>会话标题</dt>
+            <dd>{{ currentSession?.title || '未命名会话' }}</dd>
+          </div>
+          <div>
+            <dt>创建时间</dt>
+            <dd>{{ currentSession?.created_at || '-' }}</dd>
+          </div>
+          <div>
+            <dt>最后更新</dt>
+            <dd>{{ currentSession?.updated_at || currentSession?.last_message_at || '-' }}</dd>
+          </div>
+          <div>
+            <dt>消息数</dt>
+            <dd>{{ messages.length }}</dd>
+          </div>
+          <div>
+            <dt>会话 ID</dt>
+            <dd class="truncate">{{ currentSession?.id || '-' }}</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="info-section">
+        <div class="info-heading">
+          <h2>快捷指令</h2>
+          <button type="button">⌃</button>
+        </div>
+        <div class="quick-command-list">
+          <button v-for="cmd in commandEntries.slice(0, 5)" :key="cmd.text" type="button" @click="selectCommand(cmd)">
+            <SquarePen class="h-4 w-4" />
+            <span>{{ cmd.label }}</span>
+            <small>{{ cmd.text }}</small>
+          </button>
+        </div>
+        <button type="button" class="manage-command-btn">
+          <Plus class="h-4 w-4" />
+          管理快捷指令
+        </button>
+      </section>
+    </aside>
+  </div>
   </div>
 </template>
 
 <style scoped>
+.chat-page {
+  display: grid;
+  min-height: calc(100vh - 154px);
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: var(--shadow-card);
+}
+
+.chat-title-panel {
+  padding: 22px 24px;
+  border-bottom: 1px solid var(--panel-border);
+  background: #fff;
+}
+
+.chat-title-panel h1 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 24px;
+  font-weight: 800;
+}
+
+.chat-title-panel p {
+  margin: 8px 0 0;
+  color: var(--text-muted);
+  font-size: 15px;
+}
+
 .chat-workbench {
   min-height: 0;
   height: 100%;
@@ -840,18 +931,64 @@ onBeforeUnmount(() => {
 }
 
 .chat-panel {
-  /* Let Tailwind control position for responsive behavior */
+  min-height: 0;
 }
 
 .chat-sessions-rail {
-  background: rgba(16, 19, 26, 0.34);
-  backdrop-filter: blur(24px);
+  background: #fbfdff;
+  overflow-y: auto;
 }
 
 .chat-canvas {
-  background:
-    linear-gradient(180deg, rgba(25, 28, 34, 0.9), rgba(16, 19, 26, 0.96));
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
   overflow: hidden;
+}
+
+.chat-primary-small {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--brand-blue);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.chat-session-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-subtle);
+}
+
+.chat-session-search input {
+  min-width: 0;
+  width: 100%;
+  border: 0 !important;
+  box-shadow: none !important;
+  outline: 0;
+  font-size: 14px;
+}
+
+.chat-icon-only {
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 40px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--text-body);
 }
 
 .chat-messages-container {
@@ -868,23 +1005,140 @@ onBeforeUnmount(() => {
 }
 
 .chat-messages-container::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: #cbd5e1;
   border-radius: 999px;
 }
 
 .chat-messages-container::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+  background: #94a3b8;
 }
 
 .chat-canvas-header,
 .chat-canvas-footer {
-  background: rgba(16, 19, 26, 0.46);
+  background: rgba(255, 255, 255, 0.94);
   backdrop-filter: blur(18px);
+}
+
+.message-bubble {
+  border-radius: 10px !important;
+}
+
+.composer-box {
+  border-color: #6aa8ff !important;
+  background: #fff !important;
+  box-shadow: 0 0 0 1px rgba(47, 124, 246, 0.08);
+}
+
+.chat-info-panel {
+  min-height: 0;
+  flex-direction: column;
+  border-left: 1px solid var(--panel-border);
+  background: #fff;
+  overflow-y: auto;
+}
+
+.info-section {
+  padding: 22px 24px;
+  border-bottom: 1px solid var(--panel-border);
+}
+
+.info-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.info-heading h2 {
+  margin: 0;
+  color: var(--text-strong);
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.info-heading button {
+  border: 0;
+  background: transparent;
+  color: var(--text-body);
+}
+
+.info-list {
+  display: grid;
+  gap: 20px;
+  margin: 22px 0 0;
+}
+
+.info-list div {
+  min-width: 0;
+}
+
+.info-list dt {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.info-list dd {
+  margin: 8px 0 0;
+  color: var(--text-strong);
+  font-size: 14px;
+}
+
+.quick-command-list {
+  display: grid;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.quick-command-list button {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 10px;
+  row-gap: 2px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--text-strong);
+  text-align: left;
+}
+
+.quick-command-list svg {
+  grid-row: span 2;
+  color: var(--brand-blue);
+}
+
+.quick-command-list span {
+  font-weight: 800;
+}
+
+.quick-command-list small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.manage-command-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 22px;
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--brand-blue);
+  padding: 10px 14px;
+  font-size: 14px;
+  font-weight: 800;
 }
 
 @media (max-width: 1280px) {
   .chat-workbench {
     min-height: auto;
+  }
+}
+
+@media (max-width: 768px) {
+  .chat-page {
+    min-height: calc(100vh - 110px);
   }
 }
 </style>
