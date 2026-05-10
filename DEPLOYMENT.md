@@ -355,6 +355,61 @@ Get-ScheduledTask -TaskName IkarosCore | Get-ScheduledTaskInfo
 - 生产环境建议只暴露反向代理端口，不直接暴露 Python 进程
 - `~/.ikaros/data`、`~/.ikaros/config` 和仓库根 `.env` 必须持久化备份
 
+### 5.1 摄像头 MediaMTX 反向代理
+
+如果 Ikaros 页面通过 HTTPS 域名访问，不建议让浏览器直接访问 `:8888` / `:8889` 端口。推荐把 MediaMTX 挂在同一个域名的路径下面：
+
+```bash
+MEDIAMTX_PROXY_PREFIX=/_mediamtx scripts/deploy_mediamtx.sh restart
+```
+
+这会让摄像头播放地址使用：
+
+```text
+/_mediamtx/webrtc/<camera-path>
+/_mediamtx/hls/<camera-path>
+```
+
+负载均衡需要配置两个路径转发，并且去掉路径前缀：
+
+```nginx
+location /_mediamtx/webrtc/ {
+    proxy_pass http://127.0.0.1:8889/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 3600s;
+    proxy_buffering off;
+}
+
+location /_mediamtx/hls/ {
+    proxy_pass http://127.0.0.1:8888/;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_read_timeout 3600s;
+    proxy_buffering off;
+}
+```
+
+Caddy 等价配置：
+
+```caddyfile
+handle_path /_mediamtx/webrtc/* {
+    reverse_proxy 127.0.0.1:8889
+}
+
+handle_path /_mediamtx/hls/* {
+    reverse_proxy 127.0.0.1:8888
+}
+```
+
+WebRTC 除了 HTTPS 入口外，还可能需要让浏览器能访问 MediaMTX 的 ICE UDP 端口，默认是 `8189/udp`。如果外网 WebRTC 仍然黑屏，先切到 HLS 验证 HTTP 反代是否正常，再检查 UDP 端口或 TURN 配置。
+
 ## 6. 部署自检清单
 
 ### 6.1 API 自检

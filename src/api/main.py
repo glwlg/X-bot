@@ -97,8 +97,33 @@ SPA_HTML_HEADERS = {
 }
 
 
+PWA_PAGE_OVERRIDES = (
+    {
+        "prefix": "accounting",
+        "manifest": "/accounting-manifest.webmanifest",
+        "title": "智能记账",
+        "status_bar": "black-translucent",
+    },
+    {
+        "prefix": "modules/cameras",
+        "manifest": "/cameras-manifest.webmanifest",
+        "title": "实时监控",
+        "status_bar": "black-translucent",
+    },
+)
+
+
+def _pwa_override_for_path(full_path: str) -> dict[str, str] | None:
+    normalized = full_path.strip("/")
+    for override in PWA_PAGE_OVERRIDES:
+        prefix = override["prefix"]
+        if normalized == prefix or normalized.startswith(f"{prefix}/"):
+            return override
+    return None
+
+
 def _serve_spa_html(full_path: str) -> FileResponse | HTMLResponse:
-    """Serve index.html with optional accounting PWA overrides."""
+    """Serve index.html with optional module-specific PWA overrides."""
     index_path = os.path.join(static_dir, "index.html")
 
     # Try to serve a real static file first
@@ -106,20 +131,21 @@ def _serve_spa_html(full_path: str) -> FileResponse | HTMLResponse:
     if full_path and os.path.isfile(file_path):
         return FileResponse(file_path)
 
-    # Generate Accounting-specific PWA headers on the fly
-    if full_path.startswith("accounting"):
+    # Generate module-specific PWA headers on the fly
+    pwa_override = _pwa_override_for_path(full_path)
+    if pwa_override:
         try:
             with open(index_path, "r", encoding="utf-8") as f:
                 html = f.read()
-            # Swap to accounting manifest
+            apple_title = pwa_override["title"]
+            status_bar_style = pwa_override["status_bar"]
             html = html.replace(
-                "/manifest.webmanifest", "/accounting-manifest.webmanifest"
+                "/manifest.webmanifest", pwa_override["manifest"]
             )
-            # Add Apple-specific PWA meta tags
-            apple_tags = """
+            apple_tags = f"""
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <meta name="apple-mobile-web-app-title" content="智能记账" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="{status_bar_style}" />
+  <meta name="apple-mobile-web-app-title" content="{apple_title}" />
   <link rel="apple-touch-icon" href="/logo.png" />
 </head>"""
             html = html.replace("</head>", apple_tags)

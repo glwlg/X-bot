@@ -90,6 +90,8 @@ api = [
     "passlib[bcrypt]>=1.7.4",
     "python-multipart>=0.0.20,<0.1.0",
     "toml>=0.10.2",
+    "cryptography>=46.0.3",
+    "onvif-zeep>=0.2.12,<0.3.0",
 ]
 dev = [
     "pytest>=8.0.0",

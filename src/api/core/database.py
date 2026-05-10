@@ -67,6 +67,7 @@ async def init_db():
     engine = get_engine()
     from api.auth.models import User, OAuthAccount  # noqa: F401
     from api.models.binding import PlatformUserBinding  # noqa: F401
+    from api.models.camera import Camera  # noqa: F401
     from api.models.accounting import (  # noqa: F401
         Book,
         Account,

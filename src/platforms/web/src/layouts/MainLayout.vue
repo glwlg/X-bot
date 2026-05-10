@@ -4,6 +4,7 @@ import { RouterLink, RouterView, useRoute } from 'vue-router'
 import {
     Activity,
     Cable,
+    Cctv,
     ChevronsLeft,
     Gauge,
     HeartPulse,
@@ -87,6 +88,7 @@ const etherealPrimaryNav = computed(() => [
     { label: '订阅源', to: '/modules/rss', icon: Radio },
     { label: '任务调度', to: '/modules/scheduler', icon: Cable },
     { label: '心跳监控', to: '/modules/monitor', icon: HeartPulse },
+    { label: '实时监控', to: '/modules/cameras', icon: Cctv },
     { label: '市场追踪', to: '/modules/watchlist', icon: Activity },
 ])
 
@@ -116,6 +118,7 @@ const routeAlias = computed(() => {
         ModuleRss: 'RSS',
         ModuleScheduler: 'Scheduling',
         ModuleMonitor: 'Heartbeat',
+        ModuleCameras: 'Cameras',
         ModuleWatchlist: 'Stocks',
         AdminRuntime: 'Runtime',
         AdminModels: 'Models',

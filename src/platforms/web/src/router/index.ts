@@ -51,6 +51,12 @@ const router = createRouter({
             meta: { title: '心跳监控' },
         },
         {
+            path: '/modules/cameras',
+            name: 'ModuleCameras',
+            component: () => import('@/views/Modules/CameraView.vue'),
+            meta: { title: '实时监控', requiresAdmin: true, fullscreen: true },
+        },
+        {
             path: '/modules/watchlist',
             name: 'ModuleWatchlist',
             component: () => import('@/views/Modules/WatchlistView.vue'),
